@@ -1,5 +1,3 @@
-# IPCheck
-
 <p align="center">
   <img width="441" height="450" src="icon.webp" alt="IPCheck">
 </p>
