@@ -4,96 +4,98 @@
   <img width="441" height="450" src="icon.webp" alt="IPCheck">
 </p>
 
-[English](README.en.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+[简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-双模式 IP 信誉检测工具：本机自检 / 查询任意公网 IP。纯 Python 标准库，零依赖，开箱即用。
+[简体中文](README.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-## 特性
+Dual-mode IP reputation checker: self-check your egress IP / query any public IP. Pure Python standard library, zero dependencies, works out of the box.
 
-- **16 个免费数据源**，无 API Key 依赖，开源免费
-- **双模式**：
-  - `[1]` 本机自检 — 检测当前设备出口 IP，含主动流媒体解锁实测、DNS 全品类检测、25 端口发信检测、61 个 DNSBL 黑名单、Cloudflare 测速
-  - `[2]` 查询 IP — 输入任意公网 IP，仅做公开情报被动查询，附流媒体可用性模拟推测与 DNS 推荐
-- **六语言 UI**：简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
-- **风险评分 0-100** + 彩色进度条，直观醒目
-- **流媒体解锁检测**：区分原生解锁 / DNS 解锁
-- **25 端口发信检测** + 61 个 DNSBL 黑名单（20 线程并发，十几秒完成）
-- **系统信息**：CPU / 内存 / 磁盘 / 虚拟化类型 + 磁盘 I/O 测速
-- **Cloudflare 测速**（仅供参考）
-- **DNS 全品类检测**：传统 DNS（UDP 53）/ DoH / DoT
-- **三平台兼容**：macOS / Windows / Linux
+## Features
 
-## 快速开始
+- **16 free data sources**, no API keys required, free and open source
+- **Dual modes**:
+  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 61 DNSBL blacklists, Cloudflare speed test
+  - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
+- **6-language UI**: 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
+- **Risk score 0–100** with a color progress bar
+- **Streaming unlock detection**: distinguishes native unlock vs DNS unlock
+- **Port 25 sending test** + 61 DNSBL blacklists (20-thread concurrent, finishes in seconds)
+- **System info**: CPU / memory / disk / virtualization + disk I/O benchmark
+- **Cloudflare speed test** (for reference only)
+- **Full DNS testing**: traditional DNS (UDP 53) / DoH / DoT
+- **Cross-platform**: macOS / Windows / Linux
+
+## Quick Start
 
 ```bash
-# VPS / Linux / macOS 一键运行（需 Python 3.8+）
+# One-liner for VPS / Linux / macOS (requires Python 3.8+)
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
 
-# Windows：下载后双击 run.bat，或
+# Windows: double-click run.bat after download, or
 python ipcheck.py
 ```
 
-无需安装任何第三方依赖，仅使用 Python 标准库。
+No third-party dependencies — Python standard library only.
 
-## 双模式说明
+## Modes
 
-### [1] 本机自检
+### [1] Self-check
 
-检测当前设备的出口 IP，流程：
+Checks the current device's egress IP:
 
-1. 被动 IP 画像（ASN / BGP / 地理位置 / IP 类型）
-2. 威胁情报（16 数据源聚合）
-3. 欺诈评分与风险因子矩阵
-4. 系统信息（CPU / 内存 / 磁盘 / 虚拟化 / 磁盘 I/O）
-5. 流媒体主动实测（TikTok / Netflix / Disney+ / YouTube / ChatGPT 等，区分原生 / DNS 解锁）
-6. DNS 全品类实测（传统 / DoH / DoT）
-7. 25 端口发信检测 + DNSBL 黑名单
-8. Cloudflare 测速
+1. Passive IP profiling (ASN / BGP / geolocation / IP type)
+2. Threat intelligence (16 aggregated sources)
+3. Fraud score and risk-factor matrix
+4. System info (CPU / memory / disk / virtualization / disk I/O)
+5. Active streaming tests (TikTok / Netflix / Disney+ / YouTube / ChatGPT, etc., native vs DNS unlock)
+6. Full DNS tests (plain / DoH / DoT)
+7. Port 25 sending test + DNSBL blacklists
+8. Cloudflare speed test
 
-### [2] 查询 IP
+### [2] Query IP
 
-输入任意公网 IP，仅做公开情报被动查询：
+Enter any public IP for passive public-intelligence lookup only:
 
-- 多源 IP 画像与位置对比
-- 威胁情报与风险评分
-- 流媒体可用性**模拟推测**（⚠️ 非实际连接测试，仅供参考）
-- 按 IP 所在国家/地区推荐可用 DNS，并列出已知不可用项
+- Multi-source IP profiling and location comparison
+- Threat intelligence and risk scoring
+- Simulated streaming availability inference (⚠️ NOT actual connection tests, reference only)
+- DNS recommendations based on the IP's country/region, plus known-blocked entries
 
-## 数据源（16 个免费源）
+## Data Sources (16 free sources)
 
-| 类别 | 数据源 |
-|------|--------|
-| IP 画像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| 威胁情报 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
-| 网络 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
-| 黑名单 | DNSBL（61 个公开黑名单） |
+| Category | Sources |
+|----------|---------|
+| IP profiling | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
+| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| Network | RIPEstat (ASN/BGP), PTR (reverse DNS), Shodan InternetDB |
+| Blacklists | DNSBL (61 public blacklists) |
 
-> 如需增强检测，可在 `~/.check_ip_keys` 中配置自有 API Key（VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore），Key 仅保存在本地，永不上传。
+> For enhanced checks, you may add your own API keys (VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore) in `~/.check_ip_keys`. Keys stay on your machine and are never uploaded.
 
-## 与同类工具对比
+## Comparison
 
-| 功能 | IPCheck | xykt/IPQuality | ip-check-tool |
-|------|---------|----------------|---------------|
-| 界面语言 | 6 种 | 中 / 英 | 中 / 英 |
-| Windows 兼容 | ✅ | ⚠️ 部分 | ⚠️ 部分 |
-| DNSBL 检测 | ✅ 61 个（并发） | ❌ | ⚠️ 少量 |
-| 流媒体解锁区分（原生/DNS） | ✅ | ✅ | ⚠️ |
-| 系统信息 + 磁盘 I/O | ✅ | ❌ | ❌ |
-| DNS 全品类（DoH/DoT） | ✅ | ⚠️ | ❌ |
-| 零依赖（纯标准库） | ✅ | ❌ | ❌ |
-| 开源协议 | MIT | AGPL-3.0 | MIT |
+| Feature | IPCheck | xykt/IPQuality | ip-check-tool |
+|---------|---------|----------------|---------------|
+| UI languages | 6 | zh / en | zh / en |
+| Windows support | ✅ | ⚠️ partial | ⚠️ partial |
+| DNSBL checks | ✅ 61 (concurrent) | ❌ | ⚠️ few |
+| Streaming unlock type (native/DNS) | ✅ | ✅ | ⚠️ |
+| System info + disk I/O | ✅ | ❌ | ❌ |
+| Full DNS (DoH/DoT) | ✅ | ⚠️ | ❌ |
+| Zero dependencies (stdlib only) | ✅ | ❌ | ❌ |
+| License | MIT | AGPL-3.0 | MIT |
 
-## 截图
+## Screenshots
 
-（占位：模式1 / 模式2 / 风险评分 / 流媒体实测）
+(placeholder: mode 1 / mode 2 / risk score / streaming tests)
 
 ## License
 
-MIT License — 详见 [LICENSE](LICENSE)。
+MIT License — see [LICENSE](LICENSE).
 
-## 免责声明
+## Disclaimer
 
-- 本工具仅供学习与研究使用。
-- 所有数据均来自公开情报源聚合，被动查询结果不保证实时准确，「无证据 ≠ 无风险」。
-- 流媒体模拟推测非实际连接测试，仅供参考。
-- 请遵守当地法律法规与各数据源服务条款，不得用于攻击、滥用或非法用途。
+- For learning and research purposes only.
+- All data is aggregated from public intelligence sources; passive lookups are not guaranteed real-time accurate. No evidence ≠ no risk.
+- Simulated streaming inference is not an actual connection test; reference only.
+- Comply with local laws and each data source's terms of service. Do not use for attacks, abuse, or illegal purposes.
