@@ -29,8 +29,8 @@
 # VPS / Linux / macOS ワンライナー（Python 3.8+ が必要）
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
 
-# Windows：ダウンロード後に run.bat をダブルクリック、または
-python ipcheck.py
+# Windows PowerShell one-liner (requires Python 3.8+)
+irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
 サードパーティ依存関係なし — Python 標準ライブラリのみ使用。

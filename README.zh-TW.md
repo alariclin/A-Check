@@ -29,8 +29,8 @@
 # VPS / Linux / macOS 一鍵運行（需 Python 3.8+）
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
 
-# Windows：下載後雙擊 run.bat，或
-python ipcheck.py
+# Windows PowerShell one-liner (requires Python 3.8+)
+irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
 無需安裝任何第三方依賴，僅使用 Python 標準庫。

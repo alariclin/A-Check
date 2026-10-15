@@ -29,8 +29,8 @@
 # اجرای تک‌خطی برای VPS / Linux / macOS (نیازمند Python 3.8+‎)
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
 
-# ویندوز: پس از دانلود روی run.bat دابل‌کلیک کنید، یا
-python ipcheck.py
+# Windows PowerShell one-liner (requires Python 3.8+)
+irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
 بدون هیچ وابستگی第三方 — فقط کتابخانه استاندارد پایتون.

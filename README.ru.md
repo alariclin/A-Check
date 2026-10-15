@@ -29,8 +29,8 @@
 # Одна команда для VPS / Linux / macOS (нужен Python 3.8+)
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
 
-# Windows: после скачивания дважды кликните run.bat, либо
-python ipcheck.py
+# Windows PowerShell one-liner (requires Python 3.8+)
+irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
 Никаких сторонних зависимостей — только стандартная библиотека Python.
