@@ -62,11 +62,10 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | カテゴリ | ソース |
 |----------|--------|
 | IP プロファイリング | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| 脅威インテリジェンス | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| 脅威インテリジェンス | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | ネットワーク | RIPEstat（ASN/BGP）、PTR（逆引き）、Shodan InternetDB |
 | ブラックリスト | DNSBL（61 の公開ブラックリスト） |
 
-> 検出を強化したい場合は、`~/.check_ip_keys` に独自の API キー（VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore）を設定できます。キーはローカルにのみ保存され、アップロードされることはありません。
 
 ## 類似ツールとの比較
 

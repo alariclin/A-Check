@@ -62,11 +62,10 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | دسته | منابع |
 |------|-------|
 | پروفایل IP | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| اطلاعات تهدید | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| اطلاعات تهدید | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | شبکه | RIPEstat ‏(ASN/BGP)، ‏PTR (‏DNS معکوس)، Shodan InternetDB |
 | لیست سیاه | DNSBL ‏(۶۱ لیست سیاه عمومی) |
 
-> برای بررسی پیشرفته‌تر می‌توانید کلیدهای API خودتان (VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore) را در `~/.check_ip_keys` قرار دهید. کلیدها فقط به‌صورت محلی ذخیره می‌شوند و هرگز آپلود نمی‌شوند.
 
 ## مقایسه با ابزارهای مشابه
 

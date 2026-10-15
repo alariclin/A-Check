@@ -62,11 +62,10 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | Категория | Источники |
 |-----------|-----------|
 | Профиль IP | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | Сеть | RIPEstat (ASN/BGP), PTR (обратный DNS), Shodan InternetDB |
 | Чёрные списки | DNSBL (61 публичный чёрный список) |
 
-> Для расширенной проверки можно добавить собственные API-ключи (VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore) в `~/.check_ip_keys`. Ключи хранятся только локально и никуда не загружаются.
 
 ## Сравнение с аналогами
 

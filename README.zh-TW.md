@@ -70,11 +70,10 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | 類別 | 數據源 |
 |------|--------|
 | IP 畫像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| 威脅情報 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| 威脅情報 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | 網路 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
 | 黑名單 | DNSBL（61 個公開黑名單） |
 
-> 如需增強檢測，可在 `~/.check_ip_keys` 中配置自有 API Key（VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore），Key 僅保存在本地，永不上傳。
 
 ## 與同類工具對比
 

@@ -10,12 +10,12 @@ IPCheck is a dual-mode IP reputation checker: self-check your egress IP or query
 
 - **16 free data sources**, no API keys required, free and open source
 - **Dual modes**:
-  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 61 DNSBL blacklists, Cloudflare speed test
+  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 37 DNSBL blacklists, Cloudflare speed test
   - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
 - **6-language UI**: 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
 - **Risk score 0–100** with a color progress bar
 - **Streaming unlock detection**: distinguishes native unlock vs DNS unlock
-- **Port 25 sending test** + 61 DNSBL blacklists (20-thread concurrent, finishes in seconds)
+- **Port 25 sending test** + 37 DNSBL blacklists (20-thread concurrent, finishes in seconds)
 - **System info**: CPU / memory / disk / virtualization + disk I/O benchmark
 - **Cloudflare speed test** (for reference only)
 - **Full DNS testing**: traditional DNS (UDP 53) / DoH / DoT
@@ -69,16 +69,15 @@ Enter any public IP for passive public-intelligence lookup only:
 - Simulated streaming availability inference (⚠️ NOT actual connection tests, reference only)
 - DNS recommendations based on the IP's country/region, plus known-blocked entries
 
-## Data Sources (16 free sources)
+## Data Sources (15 free sources)
 
 | Category | Sources |
 |----------|---------|
 | IP profiling | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | Network | RIPEstat (ASN/BGP), PTR (reverse DNS), Shodan InternetDB |
 | Blacklists | DNSBL (61 public blacklists) |
 
-> For enhanced checks, you may add your own API keys (VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore) in `~/.check_ip_keys`. Keys stay on your machine and are never uploaded.
 
 ## Comparison
 
