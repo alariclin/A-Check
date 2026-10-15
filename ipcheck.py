@@ -2277,6 +2277,34 @@ def _print_streaming_inference(res):
     tiktok_banned = any(x in cc for x in ("india", "in"))
     ai_restricted = any(x in cc for x in ("china", "russia", "iran", "korea", "syria", "cuba", "hong kong", "cn", "ru", "ir", "kp", "sy", "cu", "hk"))
 
+    # 国家级防火墙封锁表（GFW 等）：该国 IP 无论住宅/机房均无法直连这些服务
+    _FW_ALL = frozenset([
+        "TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+",
+        "ChatGPT", "Gemini", "Claude", "Grok",
+        "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp",
+    ])
+    _FW_RU = frozenset(["Instagram", "Facebook", "X"])
+    _FW_IR = _FW_ALL | frozenset(["GitHub"])
+    _firewall_blocks = frozenset()
+    if any(x in cc for x in ("china", "cn", "中国")):
+        _firewall_blocks = _FW_ALL
+    elif any(x in cc for x in ("iran", "ir", "伊朗", "波斯")):
+        _firewall_blocks = _FW_IR
+    elif any(x in cc for x in ("russia", "ru", "俄罗斯")):
+        _firewall_blocks = _FW_RU
+    elif any(x in cc for x in ("korea, democratic", "kp", "朝鲜", "north korea")):
+        _firewall_blocks = _FW_ALL
+    elif any(x in cc for x in ("syria", "sy", "叙利亚")):
+        _firewall_blocks = _FW_ALL
+    elif any(x in cc for x in ("cuba", "cu", "古巴")):
+        _firewall_blocks = _FW_ALL | frozenset(["GitHub"])
+
+    def _fw_check(svc_name):
+        """若该服务被所在国防火墙封锁，直接返回屏蔽（高置信度），否则返回 None 走常规推测。"""
+        if svc_name in _firewall_blocks:
+            return T("infer_block"), "high"
+        return None
+
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
     te = s.get("tor_exit", {})
@@ -2334,25 +2362,28 @@ def _print_streaming_inference(res):
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
 
+    def _svc(name, fallback):
+        return _fw_check(name) or fallback
+
     svc_map = {
-        "TikTok": _infer_moderate(check_tiktok=True),
-        "Disney+": _infer_strict(),
-        "Netflix": _infer_moderate(),
-        "YouTube": _infer_lenient(),
-        "AmazonPV": _infer_moderate(),
-        "AppleTV+": _infer_strict(),
-        "ChatGPT": _infer_ai(),
-        "Gemini": _infer_ai(),
-        "Claude": _infer_ai(),
-        "Grok": _infer_ai(),
-        "DeepSeek": _infer_ai(),
-        "GitHub": _infer_lenient(),
-        "Reddit": _infer_strict(),
-        "Instagram": _infer_lenient(),
-        "Facebook": _infer_lenient(),
-        "X": _infer_lenient(),
-        "Line": _infer_lenient(),
-        "WhatsApp": _infer_lenient(),
+        "TikTok": _svc("TikTok", _infer_moderate(check_tiktok=True)),
+        "Disney+": _svc("Disney+", _infer_strict()),
+        "Netflix": _svc("Netflix", _infer_moderate()),
+        "YouTube": _svc("YouTube", _infer_lenient()),
+        "AmazonPV": _svc("AmazonPV", _infer_moderate()),
+        "AppleTV+": _svc("AppleTV+", _infer_strict()),
+        "ChatGPT": _svc("ChatGPT", _infer_ai()),
+        "Gemini": _svc("Gemini", _infer_ai()),
+        "Claude": _svc("Claude", _infer_ai()),
+        "Grok": _svc("Grok", _infer_ai()),
+        "DeepSeek": _svc("DeepSeek", _infer_lenient()),
+        "GitHub": _svc("GitHub", _infer_lenient()),
+        "Reddit": _svc("Reddit", _infer_strict()),
+        "Instagram": _svc("Instagram", _infer_lenient()),
+        "Facebook": _svc("Facebook", _infer_lenient()),
+        "X": _svc("X", _infer_lenient()),
+        "Line": _svc("Line", _infer_lenient()),
+        "WhatsApp": _svc("WhatsApp", _infer_lenient()),
     }
 
     warn = (
