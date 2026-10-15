@@ -1,0 +1,93 @@
+# IPCheck
+
+Dual-mode IP reputation checker: self-check your egress IP / query any public IP. Pure Python standard library, zero dependencies, works out of the box.
+
+## Features
+
+- **16 free data sources**, no API keys required, free and open source
+- **Dual modes**:
+  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 61 DNSBL blacklists, Cloudflare speed test
+  - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
+- **6-language UI**: 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
+- **Risk score 0–100** with a color progress bar
+- **Streaming unlock detection**: distinguishes native unlock vs DNS unlock
+- **Port 25 sending test** + 61 DNSBL blacklists (20-thread concurrent, finishes in seconds)
+- **System info**: CPU / memory / disk / virtualization + disk I/O benchmark
+- **Cloudflare speed test** (for reference only)
+- **Full DNS testing**: traditional DNS (UDP 53) / DoH / DoT
+- **Cross-platform**: macOS / Windows / Linux
+
+## Quick Start
+
+```bash
+# One-liner for VPS / Linux / macOS (requires Python 3.8+)
+curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
+
+# Windows: double-click run.bat after download, or
+python ipcheck.py
+```
+
+No third-party dependencies — Python standard library only.
+
+## Modes
+
+### [1] Self-check
+
+Checks the current device's egress IP:
+
+1. Passive IP profiling (ASN / BGP / geolocation / IP type)
+2. Threat intelligence (16 aggregated sources)
+3. Fraud score and risk-factor matrix
+4. System info (CPU / memory / disk / virtualization / disk I/O)
+5. Active streaming tests (TikTok / Netflix / Disney+ / YouTube / ChatGPT, etc., native vs DNS unlock)
+6. Full DNS tests (plain / DoH / DoT)
+7. Port 25 sending test + DNSBL blacklists
+8. Cloudflare speed test
+
+### [2] Query IP
+
+Enter any public IP for passive public-intelligence lookup only:
+
+- Multi-source IP profiling and location comparison
+- Threat intelligence and risk scoring
+- Simulated streaming availability inference (⚠️ NOT actual connection tests, reference only)
+- DNS recommendations based on the IP's country/region, plus known-blocked entries
+
+## Data Sources (16 free sources)
+
+| Category | Sources |
+|----------|---------|
+| IP profiling | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
+| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, SSLBL, Tor Exit Nodes |
+| Network | RIPEstat (ASN/BGP), PTR (reverse DNS), Shodan InternetDB |
+| Blacklists | DNSBL (61 public blacklists) |
+
+> For enhanced checks, you may add your own API keys (VirusTotal / AbuseIPDB / AlienVault OTX / IPQualityScore) in `~/.check_ip_keys`. Keys stay on your machine and are never uploaded.
+
+## Comparison
+
+| Feature | IPCheck | xykt/IPQuality | ip-check-tool |
+|---------|---------|----------------|---------------|
+| UI languages | 6 | zh / en | zh / en |
+| Windows support | ✅ | ⚠️ partial | ⚠️ partial |
+| DNSBL checks | ✅ 61 (concurrent) | ❌ | ⚠️ few |
+| Streaming unlock type (native/DNS) | ✅ | ✅ | ⚠️ |
+| System info + disk I/O | ✅ | ❌ | ❌ |
+| Full DNS (DoH/DoT) | ✅ | ⚠️ | ❌ |
+| Zero dependencies (stdlib only) | ✅ | ❌ | ❌ |
+| License | MIT | AGPL-3.0 | MIT |
+
+## Screenshots
+
+(placeholder: mode 1 / mode 2 / risk score / streaming tests)
+
+## License
+
+MIT License — see [LICENSE](LICENSE).
+
+## Disclaimer
+
+- For learning and research purposes only.
+- All data is aggregated from public intelligence sources; passive lookups are not guaranteed real-time accurate. No evidence ≠ no risk.
+- Simulated streaming inference is not an actual connection test; reference only.
+- Comply with local laws and each data source's terms of service. Do not use for attacks, abuse, or illegal purposes.
