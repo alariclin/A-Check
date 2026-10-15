@@ -4,6 +4,8 @@
   <img width="441" height="450" src="icon.webp" alt="IPCheck">
 </p>
 
+[简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+
 デュアルモード IP レピュテーションチェッカー：自端末の出口 IP を自己診断 / 任意のパブリック IP を照会。Python 標準ライブラリのみ、依存関係ゼロ、すぐに使えます。
 
 ## 特徴

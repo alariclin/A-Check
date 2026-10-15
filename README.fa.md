@@ -4,6 +4,8 @@
   <img width="441" height="450" src="icon.webp" alt="IPCheck">
 </p>
 
+[简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md)
+
 ابزار دوسویه بررسی اعتبار IP: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.
 
 ## ویژگی‌ها
