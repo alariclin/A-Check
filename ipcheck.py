@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-VERSION = "4.0.60"
+VERSION = "4.0.61"
 
 # ============================================================
 # 国际化 (默认中文，可切换英文)
@@ -839,11 +839,11 @@ def T(key, **kwargs):
 # ANSI 颜色
 # ============================================================
 class C:
-    RED = "\033[91m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    BLUE = "\033[94m"
-    CYAN = "\033[96m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    CYAN = "\033[36m"
     DIM = "\033[2m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
