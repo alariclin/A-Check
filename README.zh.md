@@ -25,15 +25,17 @@
 
 ## 快速开始
 
+**VPS / Linux / macOS**（需 Python 3.8+）：
 ```bash
-# VPS / Linux / macOS 一键运行（需 Python 3.8+）
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
-
-# Windows PowerShell 一键运行 (需 Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
-
-# 或下载后双击 run.bat
 ```
+
+**Windows PowerShell**（需 Python 3.8+）：
+```powershell
+irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
+```
+
+或下载下方 zip 包后双击 `run.bat`。
 
 ## 下载
 

@@ -25,15 +25,17 @@ Dual-mode IP reputation checker: self-check your egress IP / query any public IP
 
 ## Quick Start
 
+**VPS / Linux / macOS** (requires Python 3.8+):
 ```bash
-# One-liner for VPS / Linux / macOS (requires Python 3.8+)
 curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
-
-# Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
-
-# Or double-click run.bat after download
 ```
+
+**Windows PowerShell** (requires Python 3.8+):
+```powershell
+irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
+```
+
+Or download the zip below and double-click `run.bat`.
 
 No third-party dependencies — Python standard library only.
 
