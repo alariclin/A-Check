@@ -1,7 +1,7 @@
 # IPCheck
 
 <p align="center">
-  <img src="icon.webp" width="200" alt="IPCheck">
+  <img width="441" height="450" src="icon.webp" alt="IPCheck">
 </p>
 
 ابزار دوسویه بررسی اعتبار IP: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.

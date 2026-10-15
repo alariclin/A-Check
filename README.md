@@ -1,7 +1,7 @@
 # IPCheck
 
 <p align="center">
-  <img src="icon.webp" width="200" alt="IPCheck">
+  <img width="441" height="450" src="icon.webp" alt="IPCheck">
 </p>
 
 双模式 IP 信誉检测工具：本机自检 / 查询任意公网 IP。纯 Python 标准库，零依赖，开箱即用。
