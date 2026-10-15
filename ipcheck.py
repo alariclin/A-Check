@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-VERSION = "4.0.56"
+VERSION = "4.0.57"
 
 # ============================================================
 # 国际化 (默认中文，可切换英文)
@@ -863,7 +863,12 @@ class C:
     def bold(s): return f"{C.BOLD}{s}{C.RESET}"
 
 def _use_color():
-    return sys.stdout.isatty() or os.environ.get("FORCE_COLOR")
+    import os as _os
+    if _os.environ.get("NO_COLOR"):
+        return False
+    if _os.environ.get("FORCE_COLOR"):
+        return True
+    return True
 
 def _c(fn, s):
     return fn(s) if _use_color() else s
@@ -917,10 +922,7 @@ def _load_keys():
 
 KEYS = _load_keys()
 # === 内置 Key (私有版) ===
-KEYS["VT_KEY"] = "07958048679d2022ab23fce8d67f93b6803e556b8bc30b9e31ddf51ac185128f"
-KEYS["ABUSEIPDB_KEY"] = "8fcfc2dda226186706e5832dc743a68dc10ab75cdf2d9ee481bd847c10ccc070e7b4a4ce3d1862bf"
-KEYS["OTX_KEY"] = "bd85cae07204f5535a00187585e03bb9c99134c28a3a70009d9d04913554f092"
-KEYS["IPQS_KEY"] = "TvNgjNHBmBxFGZSBBgtd7xGR9NRpBInW"
+# 公开版无内置 Key (用户可自配 ~/.check_ip_keys)
 
 
 # ============================================================
@@ -1394,10 +1396,7 @@ def score_threat(s):
             pts += add; ev.append(f"VT {v['malicious']}/{v['total']} +{add}")
         elif v["suspicious"] > 0:
             pts += 15; ev.append(f"VT suspicious +15")
-    ab = s.get("abuseipdb", {})
-    if ab.get("ok") and ab["score"] > 0:
-        add = min(ab["score"] // 2, 40)
-        pts += add; ev.append(f"AbuseIPDB {ab['score']} +{add}")
+    # AbuseIPDB 已删除 (公开版)
     ox = s.get("otx", {})
     if ox.get("ok") and ox["pulses"] > 0:
         add = min(ox["pulses"] * 4, 25)
@@ -2041,13 +2040,7 @@ def print_report(res, include_streaming_inference=True):
             else:
                 print(f"  {_c(C.dim, '?')} {T('unverifiable')} {ok_msg.split(':')[0] if ':' in ok_msg else ''}")
 
-    v = s.get("virustotal", {})
-    if v.get("ok"):
-        tot = v.get("total", 0)
-        print(f"  {_c(C.green if v['malicious']==0 else C.red, '✓' if v['malicious']==0 else '✗')} "
-              f"VirusTotal: {v['malicious']}/{tot}")
-    else:
-        print(f"  {_c(C.dim, '?')} {T('unverifiable')} VirusTotal")
+    # VirusTotal 已删除 (公开版)
     if ab.get("ok"):
         if ab["score"] == 0 and ab["reports"] == 0:
             print(f"  {_c(C.green, '✓')} AbuseIPDB: {T('no_report')}")
@@ -2057,16 +2050,8 @@ def print_report(res, include_streaming_inference=True):
             print(f"  {_c(C.red, '✗')} AbuseIPDB: score {ab['score']}, {ab['reports']} reports")
     else:
         print(f"  {_c(C.dim, '?')} {T('unverifiable')} AbuseIPDB")
-    ox = s.get("otx", {})
-    _tri(True if ox.get("ok") and ox["pulses"]==0 else (False if ox.get("ok") else None),
-         f"OTX: {T('no_pulse')}", f"OTX: {ox.get('pulses', '?')} pulses")
-    q = s.get("ipqs", {})
-    if q.get("ok"):
-        fs = q["fraud_score"]
-        col = C.green if fs < 25 else (C.yellow if fs < 75 else C.red)
-        print(f"  {_c(col, '✓' if fs<25 else '!')} IPQS: {fs}/100")
-    else:
-        print(f"  {_c(C.dim, '?')} {T('unverifiable')} IPQS")
+    # OTX 已删除 (公开版)
+    # IPQS 已删除 (公开版)
     sf = s.get("stopforumspam", {})
     _tri(True if sf.get("ok") and sf["appears"]==0 else (False if sf.get("ok") else None),
          f"StopForumSpam: {T('no_hit')}", f"StopForumSpam: {sf.get('appears')} hits")
@@ -2827,12 +2812,14 @@ def get_system_info():
             info["cpu"] = platform.processor() or platform.machine()
         elif os.path.exists("/proc/cpuinfo"):
             with open("/proc/cpuinfo") as f:
-                for line in f:
-                    if "model name" in line:
-                        info["cpu"] = line.split(":")[1].strip()
-                        break
-                else:
-                    info["cpu"] = platform.processor() or "?"
+                cpuinfo = f.read()
+            import re as _re_cpu
+            m = _re_cpu.search(r'model name\s*:\s*(.+)', cpuinfo)
+            if m:
+                info["cpu"] = m.group(1).strip()
+            else:
+                m2 = _re_cpu.search(r'Model\s*:\s*(.+)', cpuinfo)
+                info["cpu"] = m2.group(1).strip() if m2 else f"ARM {platform.machine()}"
         else:
             import subprocess
             out = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
