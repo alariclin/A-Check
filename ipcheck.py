@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-VERSION = "4.0.59"
+VERSION = "4.0.60"
 
 # ============================================================
 # 国际化 (默认中文，可切换英文)
