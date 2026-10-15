@@ -35,6 +35,14 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 # 或下载后双击 run.bat
 ```
 
+## 下载
+
+| 平台 | 格式 | 用法 |
+|------|------|------|
+| macOS | `IPCheck-v4.0.61-mac.zip` | 解压后双击 `IPCheck.app` |
+| Windows | `IPCheck-v4.0.61-windows.zip` | 解压后双击 `run.bat`（自动更新） |
+| Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
+
 无需安装任何第三方依赖，仅使用 Python 标准库。
 
 ## 双模式说明

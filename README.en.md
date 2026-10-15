@@ -37,6 +37,14 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 
 No third-party dependencies — Python standard library only.
 
+## Download
+
+| Platform | Format | Usage |
+|----------|--------|-------|
+| macOS | `IPCheck-v4.0.61-mac.zip` | Unzip, double-click `IPCheck.app` |
+| Windows | `IPCheck-v4.0.61-windows.zip` | Unzip, double-click `run.bat` (auto-updates) |
+| Linux / VPS | One-liner (below) | Copy-paste into terminal |
+
 ## Modes
 
 ### [1] Self-check

@@ -33,6 +33,14 @@ curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o 
 irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
+## 下载
+
+| 平台 | 格式 | 用法 |
+|------|------|------|
+| macOS | `IPCheck-v4.0.61-mac.zip` | 解压后双击 `IPCheck.app` |
+| Windows | `IPCheck-v4.0.61-windows.zip` | 解压后双击 `run.bat`（自动更新） |
+| Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
+
 無需安裝任何第三方依賴，僅使用 Python 標準庫。
 
 ## 雙模式說明
