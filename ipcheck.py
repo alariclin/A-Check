@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-VERSION = "4.0.57"
+VERSION = "4.0.58"
 
 # ============================================================
 # 国际化 (默认中文，可切换英文)
@@ -2040,16 +2040,7 @@ def print_report(res, include_streaming_inference=True):
             else:
                 print(f"  {_c(C.dim, '?')} {T('unverifiable')} {ok_msg.split(':')[0] if ':' in ok_msg else ''}")
 
-    # VirusTotal 已删除 (公开版)
-    if ab.get("ok"):
-        if ab["score"] == 0 and ab["reports"] == 0:
-            print(f"  {_c(C.green, '✓')} AbuseIPDB: {T('no_report')}")
-            if ab.get("usage"):
-                print(f"    {T('usage')}: {usage_zh(ab['usage']) if LANG=='zh' else ab['usage']}")
-        else:
-            print(f"  {_c(C.red, '✗')} AbuseIPDB: score {ab['score']}, {ab['reports']} reports")
-    else:
-        print(f"  {_c(C.dim, '?')} {T('unverifiable')} AbuseIPDB")
+    # VirusTotal/AbuseIPDB 已删除 (公开版)
     # OTX 已删除 (公开版)
     # IPQS 已删除 (公开版)
     sf = s.get("stopforumspam", {})
@@ -2125,7 +2116,7 @@ def print_report(res, include_streaming_inference=True):
     # [3] 欺诈评分
     _section(T("sec_fraud"))
     sc = s.get("scamalytics", {})
-    for name, d in (("Scamalytics", sc), ("IPQS", q)):
+    for name, d in (("Scamalytics", sc),):
         if not d.get("ok"):
             print(f"  {name}: {_c(C.dim, T('unverifiable'))}")
             continue
