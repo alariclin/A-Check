@@ -1,5 +1,9 @@
 # IPCheck
 
+<p align="center">
+  <img src="icon.webp" width="200" alt="IPCheck">
+</p>
+
 Dual-mode IP reputation checker: self-check your egress IP / query any public IP. Pure Python standard library, zero dependencies, works out of the box.
 
 ## Features

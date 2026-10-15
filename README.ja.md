@@ -1,5 +1,9 @@
 # IPCheck
 
+<p align="center">
+  <img src="icon.webp" width="200" alt="IPCheck">
+</p>
+
 デュアルモード IP レピュテーションチェッカー：自端末の出口 IP を自己診断 / 任意のパブリック IP を照会。Python 標準ライブラリのみ、依存関係ゼロ、すぐに使えます。
 
 ## 特徴

@@ -1,5 +1,9 @@
 # IPCheck
 
+<p align="center">
+  <img src="icon.webp" width="200" alt="IPCheck">
+</p>
+
 雙模式 IP 信譽檢測工具：本機自檢 / 查詢任意公網 IP。純 Python 標準庫，零依賴，開箱即用。
 
 ## 特性
