@@ -41,7 +41,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-VERSION = "4.0.58"
+VERSION = "4.0.59"
 
 # ============================================================
 # 国际化 (默认中文，可切换英文)
@@ -2143,11 +2143,10 @@ def print_report(res, include_streaming_inference=True):
             s = re.sub(r'\033\[[0-9;]*m', '', s)
             return sum(2 if ord(c) > 127 else 1 for c in s)
         return "  " + "".join(c + " " * max(0, 12 - _vw(c)) for c in cells)
-    headers = ["", "IPQS", "Scamalytics", "proxycheck", "ipwho.is", "freeipapi"]
+    headers = ["", "Scamalytics", "proxycheck", "ipwho.is", "freeipapi"]
     print(_mrow([T("factor")] + headers[1:]))
     # 代理行
     row = [T("f_proxy"),
-           _m3(q.get("proxy")) if q.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")),
            _m3(pc.get("proxy")) if pc.get("ok") else _c(C.dim, "?"),
            _m3(wi.get("proxy")) if wi.get("ok") else _c(C.dim, "?"),
@@ -2155,37 +2154,29 @@ def print_report(res, include_streaming_inference=True):
     print(_mrow(row))
     # Tor
     row = [T("f_tor"),
-           _m3(q.get("tor")) if q.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")), _c(C.dim, T("none")),
            _c(C.dim, T("none")), _c(C.dim, T("none"))]
     print(_mrow(row))
     # VPN
     row = [T("f_vpn"),
-           _m3(q.get("vpn")) if q.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")),
            _m3(pc.get("vpn")) if pc.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")), _c(C.dim, T("none"))]
     print(_mrow(row))
     # 服务器/机房
-    srv_ipqs = None
-    if q.get("ok") and q.get("connection_type"):
-        srv_ipqs = "datacenter" in q["connection_type"].lower() or "hosting" in q["connection_type"].lower()
     dc_w, _ = is_datacenter_heuristic(wi.get("isp",""), wi.get("org","")) if wi.get("ok") else (None, "")
     row = [T("f_server"),
-           _m3i(srv_ipqs) if q.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")), _c(C.dim, T("none")),
            _m3i(dc_w) if wi.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none"))]
     print(_mrow(row))
     # 滥用
     row = [T("f_abuse"),
-           _m3(q.get("recent_abuse")) if q.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")), _c(C.dim, T("none")), _c(C.dim, T("none")),
            _c(C.dim, T("none"))]
     print(_mrow(row))
     # 机器人
     row = [T("f_bot"),
-           _m3(q.get("bot_status")) if q.get("ok") else _c(C.dim, "?"),
            _c(C.dim, T("none")), _c(C.dim, T("none")), _c(C.dim, T("none")),
            _c(C.dim, T("none"))]
     print(_mrow(row))
