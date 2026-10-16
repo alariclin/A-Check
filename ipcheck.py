@@ -2284,7 +2284,7 @@ def _print_streaming_inference(res):
         "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp",
     ])
     _FW_RU = frozenset(["Instagram", "Facebook", "X"])
-    _FW_IR = _FW_ALL | frozenset(["GitHub"])
+    _FW_IR = _FW_ALL  # 伊朗: GitHub 已按 OFAC GL D-2 (2021) 解禁，不封锁
     _firewall_blocks = frozenset()
     if any(x in cc for x in ("china", "cn", "中国")):
         _firewall_blocks = _FW_ALL
@@ -2303,6 +2303,13 @@ def _print_streaming_inference(res):
         """若该服务被所在国防火墙封锁，直接返回屏蔽（高置信度），否则返回 None 走常规推测。"""
         if svc_name in _firewall_blocks:
             return T("infer_block"), "high"
+        return None
+
+    def _fw_limit_check(svc_name):
+        """若该服务被所在国限速/降级（如俄罗斯 YouTube），返回受限，否则返回 None。"""
+        _is_ru = any(x in cc for x in ("russia", "ru", "俄罗斯"))
+        if _is_ru and svc_name == "YouTube":
+            return T("infer_limit"), "high"
         return None
 
     fe = s.get("feodo", {})
@@ -2363,7 +2370,7 @@ def _print_streaming_inference(res):
         return T("unknown"), "mid"
 
     def _svc(name, fallback):
-        return _fw_check(name) or fallback
+        return _fw_check(name) or _fw_limit_check(name) or fallback
 
     svc_map = {
         "TikTok": _svc("TikTok", _infer_moderate(check_tiktok=True)),
