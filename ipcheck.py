@@ -2273,15 +2273,36 @@ def _print_streaming_inference(res):
         ip_type_lbl = T("unknown")
     print(f"  {T('usage')}: {ip_type_lbl}")
 
-    cc = (country or "").lower()
-    is_china_mainland = any(x in cc for x in ("china", "cn", "中国", "江苏", "广东", "浙江", "北京", "上海"))
-    is_russia = any(x in cc for x in ("russia", "ru", "俄罗斯"))
-    is_iran = any(x in cc for x in ("iran", "ir", "伊朗"))
-    is_cuba = any(x in cc for x in ("cuba", "cu", "古巴"))
-    is_syria = any(x in cc for x in ("syria", "sy", "叙利亚"))
-    is_korea = any(x in cc for x in ("korea", "kp", "朝鲜"))
+    cc = (country or "").lower().strip()
 
-    tiktok_banned = is_china_mainland or any(x in cc for x in ("india", "in"))
+    def _cc_match(*keywords):
+        """精确国家匹配：全名相等或独立单词匹配，避免子串误伤（如 singapore 含 in、peru 含 ru）。"""
+        import re as _re
+        for kw in keywords:
+            kw = kw.lower()
+            if cc == kw:
+                return True
+            # 中文关键词用子串（中文无单词边界问题）
+            if any("\u4e00" <= c <= "\u9fff" for c in kw):
+                if kw in cc:
+                    return True
+                continue
+            # 英文用单词边界匹配
+            if _re.search(r"\b" + _re.escape(kw) + r"\b", cc):
+                return True
+        return False
+
+    is_china_mainland = _cc_match("china", "cn", "中国")
+    is_russia = _cc_match("russia", "ru", "俄罗斯")
+    is_iran = _cc_match("iran", "ir", "伊朗", "波斯")
+    is_cuba = _cc_match("cuba", "cu", "古巴")
+    is_syria = _cc_match("syria", "sy", "叙利亚")
+    is_korea = _cc_match("north korea", "korea, democratic", "kp", "朝鲜")
+    # 土库曼斯坦、缅甸：重度审查国家补充
+    is_turkmenistan = _cc_match("turkmenistan", "tm", "土库曼斯坦")
+    is_myanmar = _cc_match("myanmar", "mm", "缅甸")
+
+    tiktok_banned = is_china_mainland or _cc_match("india", "in")
 
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
@@ -2316,6 +2337,16 @@ def _print_streaming_inference(res):
             return service_name in blocked_in_ru
         if is_cuba or is_syria or is_korea:
             return True
+        if is_turkmenistan:
+            # 土库曼斯坦：全球审查最严之一，封锁绝大多数境外社交/流媒体
+            return service_name in {
+                "TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+",
+                "ChatGPT", "Gemini", "Claude", "Grok",
+                "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp",
+            }
+        if is_myanmar:
+            # 缅甸（2021 政变后）：封锁 Facebook、X 等
+            return service_name in {"Facebook", "X", "Instagram"}
         return False
 
     def _fw_limit_check(service_name):
