@@ -79,19 +79,6 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | 黑名单 | DNSBL（61 个公开黑名单） |
 
 
-## 与同类工具对比
-
-| 功能 | IPCheck | xykt/IPQuality | ip-check-tool |
-|------|---------|----------------|---------------|
-| 界面语言 | 6 种 | 中 / 英 | 中 / 英 |
-| Windows 兼容 | ✅ | ⚠️ 部分 | ⚠️ 部分 |
-| DNSBL 检测 | ✅ 61 个（并发） | ❌ | ⚠️ 少量 |
-| 流媒体解锁区分（原生/DNS） | ✅ | ✅ | ⚠️ |
-| 系统信息 + 磁盘 I/O | ✅ | ❌ | ❌ |
-| DNS 全品类（DoH/DoT） | ✅ | ⚠️ | ❌ |
-| 零依赖（纯标准库） | ✅ | ❌ | ❌ |
-| 开源协议 | MIT | AGPL-3.0 | MIT |
-
 ## 截图
 
 （占位：模式1 / 模式2 / 风险评分 / 流媒体实测）

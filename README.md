@@ -79,19 +79,6 @@ Enter any public IP for passive public-intelligence lookup only:
 | Blacklists | DNSBL (61 public blacklists) |
 
 
-## Comparison
-
-| Feature | IPCheck | xykt/IPQuality | ip-check-tool |
-|---------|---------|----------------|---------------|
-| UI languages | 6 | zh / en | zh / en |
-| Windows support | ✅ | ⚠️ partial | ⚠️ partial |
-| DNSBL checks | ✅ 61 (concurrent) | ❌ | ⚠️ few |
-| Streaming unlock type (native/DNS) | ✅ | ✅ | ⚠️ |
-| System info + disk I/O | ✅ | ❌ | ❌ |
-| Full DNS (DoH/DoT) | ✅ | ⚠️ | ❌ |
-| Zero dependencies (stdlib only) | ✅ | ❌ | ❌ |
-| License | MIT | AGPL-3.0 | MIT |
-
 ## Screenshots
 
 (placeholder: mode 1 / mode 2 / risk score / streaming tests)
