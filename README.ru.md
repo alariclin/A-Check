@@ -1,5 +1,5 @@
 <p align="center">
-  <img width="441" height="450" src="icon.webp" alt="IPCheck">
+  <img width="300" src="icon.webp" alt="IPCheck">
 </p>
 
 [简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [فارسی](README.fa.md)
