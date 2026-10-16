@@ -31,6 +31,11 @@ curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o 
 irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
+> **При первом запуске**:
+> - **macOS**: если Gatekeeper блокирует `run.command` ("не может быть проверен"), щёлкните правой кнопкой → Открыть → Открыть; или выполните `xattr -d com.apple.quarantine run.command`
+> - **Windows**: если SmartScreen блокирует `run.bat` ("защитил ваш компьютер"), нажмите "Подробнее" → "Выполнить в любом случае"; или правый клик → Свойства → "Разблокировать"
+> - **Linux**: при ошибке доступа сначала выполните `chmod +x run.sh`
+
 Никаких сторонних зависимостей — только стандартная библиотека Python.
 
 ## Режимы

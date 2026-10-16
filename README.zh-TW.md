@@ -35,8 +35,14 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 
 | 平台 | 格式 | 用法 |
 |------|------|------|
-| macOS | `IPCheck-v4.1.0-mac.zip` | 解压后双击 `IPCheck.app` |
+| macOS | `IPCheck-v4.1.0-mac.zip` | 解压后双击 `run.command` |
 | Windows | `IPCheck-v4.1.0-windows.zip` | 解压后双击 `run.bat` |
+
+> **首次執行提醒**：
+> - **macOS**：連按兩下 `run.command` 若被 Gatekeeper 攔截（"無法驗證"），按右鍵 → 打開 → 仍要打開；或在終端機執行 `xattr -d com.apple.quarantine run.command`
+> - **Windows**：連按兩下 `run.bat` 若觸發 SmartScreen（"已保護你的電腦"），點選"更多資訊" → "仍要執行"；或按右鍵 → 內容 → 勾選"解除封鎖"
+> - **Linux**：若提示權限不足，先執行 `chmod +x run.sh`
+
 | Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
 
 無需安裝任何第三方依賴，僅使用 Python 標準庫。

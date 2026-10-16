@@ -31,6 +31,11 @@ curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o 
 irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
+> **初回実行時の注意**：
+> - **macOS**：`run.command` が Gatekeeper にブロックされた場合（"検証できません"）、右クリック → 開く → 開く；または `xattr -d com.apple.quarantine run.command` を実行
+> - **Windows**：`run.bat` が SmartScreen にブロックされた場合、"詳細情報" → "実行" をクリック；または右クリック → プロパティ → "ブロックの解除" にチェック
+> - **Linux**：権限エラーが出た場合は先に `chmod +x run.sh` を実行
+
 サードパーティ依存関係なし — Python 標準ライブラリのみ使用。
 
 ## モード説明

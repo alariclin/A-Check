@@ -31,6 +31,11 @@ curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o 
 irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
 ```
 
+> **نکات اجرای اول**:
+> - **macOS**: اگر Gatekeeper فایل `run.command` را مسدود کرد، راست‌کلیک → باز کردن → باز کردن؛ یا `xattr -d com.apple.quarantine run.command` را اجرا کنید
+> - **Windows**: اگر SmartScreen فایل `run.bat` را مسدود کرد، روی "اطلاعات بیشتر" → "اجرا" کلیک کنید؛ یا راست‌کلیک → ویژگی‌ها → "رفع انسداد"
+> - **Linux**: در صورت خطای دسترسی، ابتدا `chmod +x run.sh` را اجرا کنید
+
 بدون هیچ وابستگی第三方 — فقط کتابخانه استاندارد پایتون.
 
 ## شرح دو حالت
