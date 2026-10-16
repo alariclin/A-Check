@@ -1065,8 +1065,13 @@ def validate_ip(s):
         ip = ipaddress.ip_address(str(s).strip())
         if isinstance(ip, ipaddress.IPv6Address):
             return None
-        # 显式拒绝私网、保留地址及组播地址
-        if not ip.is_global or ip.is_multicast:
+        # 显式拒绝私网、保留地址、组播及 Fake-IP 基准测试网段
+        if (
+            not ip.is_global
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip in ipaddress.ip_network("198.18.0.0/15")
+        ):
             return None
         return ip
     except Exception:
@@ -1167,6 +1172,31 @@ def _get_system_nameservers():
                                     pass
             except Exception:
                 pass
+        # systemd-resolved 本地 stub (127.0.0.53) 时读取真实上游
+        if ns == ["127.0.0.53"] or (len(ns) == 1 and ns[0].startswith("127.")):
+            for rp in ("/run/systemd/resolve/resolv.conf", "/run/systemd/resolve/stub-resolv.conf"):
+                try:
+                    if os.path.exists(rp):
+                        with open(rp, encoding="utf-8", errors="replace") as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith("nameserver"):
+                                    parts = line.split()
+                                    if len(parts) >= 2:
+                                        try:
+                                            ip = ipaddress.ip_address(parts[1])
+                                            if isinstance(ip, ipaddress.IPv4Address) and not str(ip).startswith("127."):
+                                                ns.append(str(ip))
+                                        except ValueError:
+                                            pass
+                        if len(ns) > 1 or (ns and not ns[0].startswith("127.")):
+                            break
+                except Exception:
+                    pass
+            # 过滤掉本地回环，只保留真实上游
+            real_ns = [x for x in ns if not x.startswith("127.")]
+            if real_ns:
+                ns = real_ns
         if not ns and sys.platform == "darwin":
             try:
                 out = subprocess.run(
@@ -2594,8 +2624,8 @@ def print_report(res, include_streaming_inference=True):
         def _norm(txt):
             txt = txt.lower().strip()
             txt = txt.replace("united states", "us").replace("china", "cn")
-            for w in ("sheng", "province", "city", "shi", "  "):
-                txt = txt.replace(w, " ")
+            txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
+            txt = txt.replace("  ", " ")
             return " ".join(txt.split())
 
         uniq = len(set(_norm(l) for _, l in locs))
@@ -2896,17 +2926,22 @@ def print_report(res, include_streaming_inference=True):
 # ============================================================
 def get_egress_ip():
     sources = [
-        "https://api.ipify.org?format=json",
+        "https://api4.ipify.org?format=json",
+        "https://4.ipw.cn/api/ip/myip?json",
+        "https://ipv4.icanhazip.com",
+        "https://checkip.amazonaws.com",
         "https://ipinfo.io/json",
-        "https://ipwho.is/",
-        "https://api.myip.com",
     ]
     for url in sources:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                d = json.loads(r.read().decode("utf-8", errors="replace"))
-                ip = d.get("ip") or d.get("ip_address")
+            with urllib.request.urlopen(req, timeout=6) as r:
+                raw = r.read(512).decode("utf-8", errors="replace").strip()
+                if raw.startswith("{"):
+                    d = json.loads(raw)
+                    ip = d.get("ip") or d.get("IP") or d.get("ip_address")
+                else:
+                    ip = raw.splitlines()[0].strip() if raw else ""
                 if ip and validate_ip(ip):
                     return str(ip)
         except Exception:
