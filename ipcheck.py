@@ -2376,9 +2376,9 @@ def _print_streaming_inference(res):
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_block"), "low"
+            return T("infer_limit"), "low"
         if is_dc:
-            return T("infer_block"), "mid"
+            return T("infer_limit"), "mid"
         if is_res:
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
@@ -2391,7 +2391,7 @@ def _print_streaming_inference(res):
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_block"), "mid"
+            return T("infer_limit"), "mid"
         if is_dc:
             return T("infer_limit"), "mid"
         if is_res:
@@ -2406,7 +2406,7 @@ def _print_streaming_inference(res):
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_block"), "mid"
+            return T("infer_limit"), "mid"
         if is_dc:
             return T("infer_limit"), "mid"
         if is_res:
