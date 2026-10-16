@@ -952,7 +952,7 @@ def _disp_width(s):
     clean = re.sub(r"\033\[[0-9;]*m", "", str(s))
     w = 0
     for ch in clean:
-        if unicodedata.combining(ch):
+        if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
             continue
         eaw = unicodedata.east_asian_width(ch)
         w += 2 if eaw in ("W", "F") else 1
@@ -2369,6 +2369,8 @@ def _print_streaming_inference(res):
     def _infer_strict(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
+        if _fw_limit_check(svc_name):
+            return T("infer_limit"), "high"
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
@@ -2382,6 +2384,8 @@ def _print_streaming_inference(res):
     def _infer_moderate(svc_name, check_tiktok=False):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
+        if _fw_limit_check(svc_name):
+            return T("infer_limit"), "high"
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
@@ -2395,6 +2399,8 @@ def _print_streaming_inference(res):
     def _infer_ai(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
+        if _fw_limit_check(svc_name):
+            return T("infer_limit"), "high"
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
@@ -2440,9 +2446,9 @@ def _print_streaming_inference(res):
     }
 
     warn = (
-        "⚠️ 以下为模拟推测，非实际连接测试"
+        "⚠ 以下为模拟推测，非实际连接测试"
         if LANG in ("zh", "zh-TW")
-        else "⚠️ Simulated inference, NOT actual connection tests"
+        else "⚠ Simulated inference, NOT actual connection tests"
     )
     print(f"  {_c(C.yellow, warn)}")
 
@@ -2459,8 +2465,8 @@ def _print_streaming_inference(res):
 
     def _conf_cell(svc):
         _, conf = svc_map.get(svc, ("", "mid"))
-        icon = {"high": "🟢", "mid": "🟡", "low": "🔴"}.get(conf, "")
-        return _pad(icon, 14)
+        col = {"high": C.green, "mid": C.yellow, "low": C.red}.get(conf, C.dim)
+        return _pad(_c(col, "●"), 14)
 
     categories = [
         (T("cat_video"), ["TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+"]),
