@@ -39,8 +39,8 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 
 | 平台 | 格式 | 用法 |
 |------|------|------|
-| macOS | `IPCheck-v4.0.61-mac.zip` | 解压后双击 `IPCheck.app` |
-| Windows | `IPCheck-v4.0.61-windows.zip` | 解压后双击 `run.bat`（自动更新） |
+| macOS | `IPCheck-v4.1.0-mac.zip` | 解压后双击 `IPCheck.app` |
+| Windows | `IPCheck-v4.1.0-windows.zip` | 解压后双击 `run.bat` |
 | Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
 
 无需安装任何第三方依赖，仅使用 Python 标准库。
@@ -76,7 +76,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | IP 画像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | 威胁情报 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | 网络 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
-| 黑名单 | DNSBL（61 个公开黑名单） |
+| 黑名单 | DNSBL（37 个公开黑名单） |
 
 
 ## 截图

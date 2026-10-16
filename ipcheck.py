@@ -45,6 +45,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+import argparse
 
 VERSION = "4.1.0"
 
@@ -2273,36 +2274,30 @@ def _print_streaming_inference(res):
         ip_type_lbl = T("unknown")
     print(f"  {T('usage')}: {ip_type_lbl}")
 
-    cc = (country or "").lower().strip()
+    cc = (country or "").lower()
 
-    def _cc_match(*keywords):
-        """精确国家匹配：全名相等或独立单词匹配，避免子串误伤（如 singapore 含 in、peru 含 ru）。"""
-        import re as _re
-        for kw in keywords:
-            kw = kw.lower()
-            if cc == kw:
-                return True
-            # 中文关键词用子串（中文无单词边界问题）
-            if any("\u4e00" <= c <= "\u9fff" for c in kw):
-                if kw in cc:
+    def _cc_match(*tokens):
+        for tk in tokens:
+            tk_l = tk.lower()
+            if len(tk_l) <= 3 and tk_l.isascii():
+                if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
-                continue
-            # 英文用单词边界匹配
-            if _re.search(r"\b" + _re.escape(kw) + r"\b", cc):
-                return True
+            else:
+                if tk_l in cc:
+                    return True
         return False
 
-    is_china_mainland = _cc_match("china", "cn", "中国")
-    is_russia = _cc_match("russia", "ru", "俄罗斯")
-    is_iran = _cc_match("iran", "ir", "伊朗", "波斯")
+    is_china_mainland = _cc_match("china", "cn", "中国") and not _cc_match(
+        "hong kong", "hk", "macau", "mo", "taiwan", "tw", "香港", "澳门", "澳門", "台湾", "台灣"
+    )
+    is_russia = _cc_match("russia", "ru", "俄罗斯", "俄羅斯")
+    is_iran = _cc_match("iran", "ir", "伊朗")
+    is_turkmenistan = _cc_match("turkmenistan", "tm", "土库曼", "土庫曼")
+    is_myanmar = _cc_match("myanmar", "mm", "burma", "缅甸", "緬甸")
     is_cuba = _cc_match("cuba", "cu", "古巴")
-    is_syria = _cc_match("syria", "sy", "叙利亚")
-    is_korea = _cc_match("north korea", "korea, democratic", "kp", "朝鲜")
-    # 土库曼斯坦、缅甸：重度审查国家补充
-    is_turkmenistan = _cc_match("turkmenistan", "tm", "土库曼斯坦")
-    is_myanmar = _cc_match("myanmar", "mm", "缅甸")
-
-    tiktok_banned = is_china_mainland or _cc_match("india", "in")
+    is_syria = _cc_match("syria", "sy", "叙利亚", "敘利亞")
+    is_korea = _cc_match("north korea", "kp", "dprk", "朝鲜", "朝鮮")
+    is_india = _cc_match("india", "in", "印度")
 
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
@@ -2315,44 +2310,60 @@ def _print_streaming_inference(res):
     )
     is_tor_exit = te.get("ok") and te.get("is_tor_exit")
 
-    # 国家级防火墙/锁区拦截表
+    # 国家级防火墙与制裁锁区表 (Sources: OONI, Freedom House 2025/2026, OFAC GL D-2 & Syria 2025 Rule, GitHub Blog)
     def _fw_check(service_name):
         if is_china_mainland:
-            blocked_in_cn = {
+            # 中国大陆 GFW: 封锁 16 项境外服务，放行本土 DeepSeek 与直连可用的 GitHub
+            return service_name in {
                 "TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+",
                 "ChatGPT", "Gemini", "Claude", "Grok",
-                "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp"
+                "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp",
             }
-            return service_name in blocked_in_cn
         if is_iran:
-            # 伊朗: GitHub 已按 OFAC GL D-2 (2021) 解禁，不封锁
-            blocked_in_ir = {
+            # 伊朗 NIN + 美方制裁: 放行 DeepSeek (非美企且未封锁) 与 GitHub (OFAC GL D-2 解禁)
+            return service_name in {
                 "TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+",
-                "ChatGPT", "Gemini", "Claude", "Grok", "DeepSeek",
-                "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp"
+                "ChatGPT", "Gemini", "Claude", "Grok",
+                "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp",
             }
-            return service_name in blocked_in_ir
         if is_russia:
-            blocked_in_ru = {"Instagram", "Facebook", "X"}
-            return service_name in blocked_in_ru
-        if is_cuba or is_syria or is_korea:
-            return True
+            # 俄罗斯 Roskomnadzor (NSdI/TSPU 2025-2026) + 美企主动锁区:
+            # YouTube 自 2025-2026 起从俄国家 DNS 移除并全面阻断；美系流媒体/AI 双向不可用
+            return service_name in {
+                "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+",
+                "ChatGPT", "Gemini", "Claude", "Grok",
+                "Instagram", "Facebook", "X",
+            }
         if is_turkmenistan:
-            # 土库曼斯坦：全球审查最严之一，封锁绝大多数境外社交/流媒体
+            # 土库曼斯坦 (Source: OONI / Freedom House 2025): 封锁主流境外流媒体/社交與美系 AI，放行 DeepSeek/GitHub
             return service_name in {
                 "TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+",
                 "ChatGPT", "Gemini", "Claude", "Grok",
                 "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp",
             }
         if is_myanmar:
-            # 缅甸（2021 政变后）：封锁 Facebook、X 等
-            return service_name in {"Facebook", "X", "Instagram"}
+            # 缅甸 (Source: OONI / Freedom House 2025): 军政府 MOTC 指令封锁主流社交平台
+            return service_name in {"Instagram", "Facebook", "X", "WhatsApp"}
+        if is_syria or is_cuba:
+            # 叙利亚 (2025-09 GitHub 官方解封) / 古巴: 仅美系商业流媒体与美系 AI 锁区，放行 GitHub/DeepSeek/TikTok
+            return service_name in {
+                "Disney+", "Netflix", "AmazonPV", "AppleTV+",
+                "ChatGPT", "Gemini", "Claude", "Grok",
+            }
+        if is_korea:
+            # 朝鲜: 除 DeepSeek 无制裁锁区外，其余境外服务均不可达或锁区
+            return service_name != "DeepSeek"
+        if is_india and service_name == "TikTok":
+            return True
         return False
 
     def _fw_limit_check(service_name):
-        """俄罗斯 YouTube 限速降级（非完全封锁），返回受限。"""
-        if is_russia and service_name == "YouTube":
+        # 政策性功能受限或区域限流 (非完全阻断)
+        if is_russia and service_name in {"TikTok", "WhatsApp"}:
             return True
+        if is_syria or is_cuba:
+            if service_name in {"YouTube", "Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp"}:
+                return True
         return False
 
     def _infer_strict(svc_name):
@@ -2369,8 +2380,6 @@ def _print_streaming_inference(res):
         return T("unknown"), "mid"
 
     def _infer_moderate(svc_name, check_tiktok=False):
-        if check_tiktok and tiktok_banned:
-            return T("infer_block"), "high"
         if _fw_check(svc_name):
             return T("infer_block"), "high"
         if is_threat or high_fraud or has_abuse:
@@ -4101,64 +4110,132 @@ def run_active(json_mode=False):
 # ============================================================
 # 主菜单与 CLI 入口
 # ============================================================
+class _CLIArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise ValueError(message)
+
+
+def _print_cli_help():
+    help_zh = f"""用法: python3 ipcheck.py [选项] [IPv4地址]
+
+{T('title')} v{VERSION} — 双模式 IP 信誉与流媒体/网络质量检测工具 (零外部依赖)
+
+位置参数:
+  IPv4地址        执行被动模式查询指定公网 IPv4 (不向目标 IP 发包)
+
+选项:
+  -h, --help      显示此帮助信息并退出
+  --active        执行主动模式 (检测本机当前出口 IP、系统硬件、流媒体解锁、DNS、25端口与测速)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active 组合使用)
+  --explain       输出评分维度与扣分规则说明
+  --zh            使用简体中文输出 (默认)
+  --zh-tw         使用繁體中文输出
+  --en            Use English output
+  --ja            日本語で出力
+  --ru            Вывод на русском языке
+  --fa            خروجی به زبان فارسی
+
+示例:
+  python3 ipcheck.py                        # 启动交互式菜单
+  python3 ipcheck.py 8.8.8.8                # 被动模式评估指定 IP
+  python3 ipcheck.py --active               # 主动模式全面检测当前本机网络
+  python3 ipcheck.py --json 8.8.8.8         # 被动模式 JSON 输出
+  python3 ipcheck.py --active --json        # 主动模式 JSON 输出 (运维自动化巡检)
+"""
+    help_en = f"""Usage: python3 ipcheck.py [OPTIONS] [IPv4_ADDRESS]
+
+{T('title')} v{VERSION} — Two-mode IP reputation, streaming unlock & network quality checker
+
+Positional arguments:
+  IPv4_ADDRESS    Run passive OSINT check on a public IPv4 address
+
+Options:
+  -h, --help      Show this help message and exit
+  --active        Run active self-check on current egress IP (streaming, DNS, port 25, speed)
+  --json          Output results in JSON format (works with passive IP or --active)
+  --explain       Show transparent scoring rules and weights
+  --zh / --zh-tw / --en / --ja / --ru / --fa
+                  Set output language
+
+Examples:
+  python3 ipcheck.py                        # Interactive menu
+  python3 ipcheck.py 8.8.8.8                # Passive check on 8.8.8.8
+  python3 ipcheck.py --active               # Active check on current connection
+  python3 ipcheck.py --json 8.8.8.8         # Passive JSON output
+  python3 ipcheck.py --active --json        # Active JSON output
+"""
+    print(help_zh if LANG in ("zh", "zh-TW") else help_en)
+
+
 def main():
     global LANG
     _init_console()
-    args = sys.argv[1:]
 
-    lang_flags = {
-        "--zh": "zh",
-        "--zh-tw": "zh-TW",
-        "--en": "en",
-        "--ja": "ja",
-        "--ru": "ru",
-        "--fa": "fa",
-    }
-    for flag, lcode in list(lang_flags.items()):
-        if flag in args:
-            LANG = lcode
-            args.remove(flag)
+    parser = _CLIArgumentParser(prog="ipcheck.py", add_help=False)
+    parser.add_argument("-h", "--help", action="store_true", dest="help")
+    parser.add_argument("--active", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--explain", action="store_true")
+    parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
+    parser.add_argument("--zh-tw", action="store_const", const="zh-TW", dest="lang")
+    parser.add_argument("--en", action="store_const", const="en", dest="lang")
+    parser.add_argument("--ja", action="store_const", const="ja", dest="lang")
+    parser.add_argument("--ru", action="store_const", const="ru", dest="lang")
+    parser.add_argument("--fa", action="store_const", const="fa", dest="lang")
+    parser.add_argument("ip", nargs="?", default=None)
 
-    if "--explain" in args:
+    try:
+        ns = parser.parse_args(sys.argv[1:])
+    except ValueError as err:
+        if "--json" in sys.argv:
+            print(json.dumps({"error": str(err)}, ensure_ascii=False))
+        else:
+            print(f"[Error] {err}\n", file=sys.stderr)
+            _print_cli_help()
+        sys.exit(2)
+
+    if ns.lang:
+        LANG = ns.lang
+
+    if ns.help:
+        _print_cli_help()
+        return
+
+    if ns.explain:
         rule_txt = SCORING_RULES.get(LANG, SCORING_RULES["en"])
         print(rule_txt)
         return
 
-    json_mode = "--json" in args
-    if json_mode:
-        args.remove("--json")
-
-    if "--active" in args:
-        args.remove("--active")
-        run_active(json_mode=json_mode)
+    if ns.active:
+        run_active(json_mode=ns.json)
         return
 
-    if json_mode:
-        ip = validate_ip(args[0]) if args else None
+    if ns.json:
+        ip = validate_ip(ns.ip) if ns.ip else None
         if not ip:
             print(json.dumps({"error": "invalid or non-public IPv4 address"}, ensure_ascii=False))
-            return
+            sys.exit(1)
         res = run_passive(ip)
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
         return
 
-    if args and not args[0].startswith("-"):
-        raw_ip = args[0].strip()
+    if ns.ip is not None:
+        raw_ip = ns.ip.strip()
         try:
             parsed = ipaddress.ip_address(raw_ip)
             if isinstance(parsed, ipaddress.IPv6Address):
                 print(T("ipv6_unsupported"))
-                return
+                sys.exit(1)
             if not parsed.is_global:
                 print(T("private_ip"))
-                return
+                sys.exit(1)
         except ValueError:
             print(T("invalid_ip"))
-            return
+            sys.exit(1)
         ip = validate_ip(raw_ip)
         if not ip:
             print(T("invalid_ip"))
-            return
+            sys.exit(1)
         res = run_passive(ip)
         print_report(res)
         recommend_dns_for_ip(res["profile"].get("country", ""))

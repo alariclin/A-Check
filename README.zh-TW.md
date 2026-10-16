@@ -8,7 +8,7 @@ IPCheck 是一款雙模式 IP 信譽檢測工具：可檢測本機出口 IP，�
 
 ## 特性
 
-- **16 個免費數據源**，無 API Key 依賴，開源免費
+- **15 個免費數據源**，無 API Key 依賴，開源免費
 - **雙模式**：
   - `[1]` 本機自檢 — 檢測當前設備出口 IP，含主動串流解鎖實測、DNS 全品類檢測、25 端口發信檢測、61 個 DNSBL 黑名單、Cloudflare 測速
   - `[2]` 查詢 IP — 輸入任意公網 IP，僅做公開情報被動查詢，附串流可用性模擬推測與 DNS 推薦
@@ -35,8 +35,8 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 
 | 平台 | 格式 | 用法 |
 |------|------|------|
-| macOS | `IPCheck-v4.0.61-mac.zip` | 解压后双击 `IPCheck.app` |
-| Windows | `IPCheck-v4.0.61-windows.zip` | 解压后双击 `run.bat`（自动更新） |
+| macOS | `IPCheck-v4.1.0-mac.zip` | 解压后双击 `IPCheck.app` |
+| Windows | `IPCheck-v4.1.0-windows.zip` | 解压后双击 `run.bat` |
 | Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
 
 無需安裝任何第三方依賴，僅使用 Python 標準庫。
@@ -65,14 +65,14 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 - 串流可用性**模擬推測**（⚠️ 非實際連接測試，僅供參考）
 - 按 IP 所在國家/地區推薦可用 DNS，並列出已知不可用項
 
-## 數據源（16 個免費源）
+## 數據源（15 個免費源）
 
 | 類別 | 數據源 |
 |------|--------|
 | IP 畫像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | 威脅情報 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | 網路 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
-| 黑名單 | DNSBL（61 個公開黑名單） |
+| 黑名單 | DNSBL（37 個公開黑名單） |
 
 
 ## 截圖

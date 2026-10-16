@@ -8,7 +8,7 @@ IPCheck is a dual-mode IP reputation checker: self-check your egress IP or query
 
 ## Features
 
-- **16 free data sources**, no API keys required, free and open source
+- **15 free data sources**, no API keys required, free and open source
 - **Dual modes**:
   - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 37 DNSBL blacklists, Cloudflare speed test
   - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
@@ -39,8 +39,8 @@ No third-party dependencies — Python standard library only.
 
 | Platform | Format | Usage |
 |----------|--------|-------|
-| macOS | `IPCheck-v4.0.61-mac.zip` | Unzip, double-click `IPCheck.app` |
-| Windows | `IPCheck-v4.0.61-windows.zip` | Unzip, double-click `run.bat` (auto-updates) |
+| macOS | `IPCheck-v4.1.0-mac.zip` | Unzip, double-click `IPCheck.app` |
+| Windows | `IPCheck-v4.1.0-windows.zip` | Unzip, double-click `run.bat` |
 | Linux / VPS | One-liner (below) | Copy-paste into terminal |
 
 ## Modes
@@ -50,7 +50,7 @@ No third-party dependencies — Python standard library only.
 Checks the current device's egress IP:
 
 1. Passive IP profiling (ASN / BGP / geolocation / IP type)
-2. Threat intelligence (16 aggregated sources)
+2. Threat intelligence (15 aggregated sources)
 3. Fraud score and risk-factor matrix
 4. System info (CPU / memory / disk / virtualization / disk I/O)
 5. Active streaming tests (TikTok / Netflix / Disney+ / YouTube / ChatGPT, etc., native vs DNS unlock)
@@ -74,7 +74,7 @@ Enter any public IP for passive public-intelligence lookup only:
 | IP profiling | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | Network | RIPEstat (ASN/BGP), PTR (reverse DNS), Shodan InternetDB |
-| Blacklists | DNSBL (61 public blacklists) |
+| Blacklists | DNSBL (37 public blacklists) |
 
 
 ## Screenshots
