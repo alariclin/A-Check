@@ -1065,9 +1065,8 @@ def validate_ip(s):
         ip = ipaddress.ip_address(str(s).strip())
         if isinstance(ip, ipaddress.IPv6Address):
             return None
-        if not ip.is_global:
-            return None
-        if ip.is_multicast:
+        # 显式拒绝私网、保留地址及组播地址
+        if not ip.is_global or ip.is_multicast:
             return None
         return ip
     except Exception:
@@ -1324,6 +1323,7 @@ class StopForumSpam(Provider):
             return {
                 "ok": True,
                 "frequency": freq,
+                "appears": freq,  # 旧字段兼容别名，计划弃用
                 "confidence": conf,
                 "last_seen": ip_data.get("lastseen", ""),
                 "ts": now_iso(),
