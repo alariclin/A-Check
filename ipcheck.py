@@ -4245,7 +4245,7 @@ def main():
             if isinstance(parsed, ipaddress.IPv6Address):
                 print(T("ipv6_unsupported"))
                 sys.exit(1)
-            if not parsed.is_global:
+            if not parsed.is_global or parsed.is_multicast:
                 print(T("private_ip"))
                 sys.exit(1)
         except ValueError:
@@ -4330,7 +4330,7 @@ def main():
                         if isinstance(_chk, ipaddress.IPv6Address):
                             print(f"  {_c(C.dim, T('ipv6_unsupported'))}")
                             continue
-                        if not _chk.is_global:
+                        if not _chk.is_global or _chk.is_multicast:
                             print(f"  {_c(C.dim, T('private_ip'))}")
                             continue
                     except ValueError:
