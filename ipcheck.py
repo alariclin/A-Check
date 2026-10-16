@@ -1067,6 +1067,8 @@ def validate_ip(s):
             return None
         if not ip.is_global:
             return None
+        if ip.is_multicast:
+            return None
         return ip
     except Exception:
         return None
@@ -1321,7 +1323,7 @@ class StopForumSpam(Provider):
             conf = float(ip_data.get("confidence") or 0.0)
             return {
                 "ok": True,
-                "appears": freq,
+                "frequency": freq,
                 "confidence": conf,
                 "last_seen": ip_data.get("lastseen", ""),
                 "ts": now_iso(),
@@ -1892,10 +1894,10 @@ Scoring rules (v4.1.0 Keyless Public Edition):
 def score_threat(s):
     pts, ev = 0, []
     f = s.get("stopforumspam", {})
-    if f.get("ok") and f.get("appears", 0) > 0:
-        add = min(f["appears"] * 3, 25)
+    if f.get("ok") and f.get("frequency", 0) > 0:
+        add = min(f["frequency"] * 3, 25)
         pts += add
-        ev.append(f"SFS {f['appears']} hits +{add}")
+        ev.append(f"SFS {f['frequency']} hits +{add}")
     si = s.get("sansisc", {})
     if si.get("ok") and si.get("attack_count", 0) > 0:
         cnt = si["attack_count"]
@@ -2259,7 +2261,7 @@ def _print_streaming_inference(res):
     high_fraud = (sc_score >= 50) or (pc_risk >= 65)
 
     sf = s.get("stopforumspam", {})
-    has_abuse = (sf.get("ok") and sf.get("appears", 0) > 0)
+    has_abuse = (sf.get("ok") and sf.get("frequency", 0) > 0)
 
     print(f"  {T('location')}: {country or '?'}")
     if is_proxy or is_vpn:
@@ -2624,9 +2626,9 @@ def print_report(res, include_streaming_inference=True):
 
     sf = s.get("stopforumspam", {})
     _tri(
-        True if sf.get("ok") and sf.get("appears", 0) == 0 else (False if sf.get("ok") else None),
+        True if sf.get("ok") and sf.get("frequency", 0) == 0 else (False if sf.get("ok") else None),
         f"StopForumSpam: {T('no_hit')}",
-        f"StopForumSpam: {sf.get('appears')} hits",
+        f"StopForumSpam: {sf.get('frequency')} hits",
         sf.get("err", ""),
     )
     us = s.get("urlscan", {})
