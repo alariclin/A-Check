@@ -2300,6 +2300,12 @@ def _print_streaming_inference(res):
     is_syria = _cc_match("syria", "sy", "叙利亚", "敘利亞")
     is_korea = _cc_match("north korea", "kp", "dprk", "朝鲜", "朝鮮")
     is_india = _cc_match("india", "in", "印度")
+    is_afghanistan = _cc_match("afghanistan", "af", "阿富汗")
+    is_somalia = _cc_match("somalia", "so", "索马里", "索馬里")
+    is_uzbekistan = _cc_match("uzbekistan", "uz", "乌兹别克斯坦", "烏茲別克斯坦")
+    is_kyrgyzstan = _cc_match("kyrgyzstan", "kg", "吉尔吉斯斯坦", "吉爾吉斯斯坦")
+    is_gabon = _cc_match("gabon", "ga", "加蓬")
+    is_jordan = _cc_match("jordan", "jo", "约旦", "約旦")
 
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
@@ -2356,6 +2362,11 @@ def _print_streaming_inference(res):
             # 朝鲜: 除 DeepSeek 无制裁锁区外，其余境外服务均不可达或锁区
             return service_name != "DeepSeek"
         if is_india and service_name == "TikTok":
+            return True
+        # TikTok 全网封锁国家 (2026最新数据): 阿富汗/索马里/乌兹别克斯坦/吉尔吉斯斯坦/加蓬/约旦
+        if service_name == "TikTok" and (
+            is_afghanistan or is_somalia or is_uzbekistan or is_kyrgyzstan or is_gabon or is_jordan
+        ):
             return True
         return False
 
