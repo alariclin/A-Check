@@ -82,7 +82,7 @@ Enter any public IP for passive public-intelligence lookup only:
 | IP profiling | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | Network | RIPEstat (ASN/BGP), PTR (reverse DNS), Shodan InternetDB |
-| Blacklists | DNSBL (37 public blacklists) |
+| Blacklists | DNSBL (29 public blacklists) |
 
 
 ## Screenshots

@@ -1295,7 +1295,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
 
 # ============================================================
-# Provider 插件架构 (全部 14 个免 Key 公开情报源)
+# Provider 插件架构 (全部 15 个免 Key 公开情报源)
 # ============================================================
 class Provider:
     """数据源基类。子类实现 check(ip) -> dict。"""
@@ -2434,9 +2434,9 @@ def _print_streaming_inference(res):
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_limit"), "low"
+            return T("infer_block"), "low"
         if is_dc:
-            return T("infer_limit"), "mid"
+            return T("infer_block"), "mid"
         if is_res:
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
@@ -2449,7 +2449,7 @@ def _print_streaming_inference(res):
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
+            return T("infer_block"), "mid"
         if is_dc:
             return T("infer_limit"), "mid"
         if is_res:
@@ -2464,7 +2464,7 @@ def _print_streaming_inference(res):
         if is_threat or high_fraud or has_abuse:
             return T("infer_block"), "low"
         if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
+            return T("infer_block"), "mid"
         if is_dc:
             return T("infer_limit"), "mid"
         if is_res:
@@ -2951,7 +2951,8 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
+            _ua = {"User-Agent": "IPCheck/4.1.0 (+https://github.com/alariclin/IPCheck)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
                 if raw.startswith("{"):
@@ -3208,9 +3209,11 @@ def test_instagram(local_ip=None):
 
 
 def test_facebook(local_ip=None):
-    code, _, _ = _active_get("https://www.facebook.com/")
+    code, body, _ = _active_get("https://www.facebook.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
     return T("blocked"), "", None
@@ -3461,7 +3464,7 @@ def test_dns_servers(timeout=3):
             sk.sendto(pkt, (ip, 53))
             d, _ = sk.recvfrom(512)
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) >= 2 and struct.unpack(">H", d[:2])[0] == tid:
+            if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
                 return {"name": name, "ip": ip, "proto": "UDP53", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -3512,7 +3515,7 @@ def test_dns_servers(timeout=3):
                     break
                 d += chunk
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) >= 2 and struct.unpack(">H", d[:2])[0] == tid:
+            if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
                 return {"name": name, "ip": ip, "proto": "DoT853", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -3961,7 +3964,7 @@ DNSBL_LISTS = [
 ]
 
 
-def check_dnsbl(ip, max_lists=37):
+def check_dnsbl(ip, max_lists=29):
     """纯 Python 并发检测权威 DNSBL 黑名单，校验返回码为 127.0.0.x (过滤 127.255.255.x 拒查码)。"""
     ip_s = str(ip)
     rev = ".".join(reversed(ip_s.split(".")))
@@ -4308,7 +4311,7 @@ def main():
 
     if ns.active:
         if ns.ip and not ns.json:
-            print("※ --active 模式检测本机出口 IP，忽略指定的 IP 参数")
+            print(_c(C.yellow, "※ --active 模式检测本机出口 IP，忽略指定的 IP 参数" if LANG in ("zh", "zh-TW") else "※ --active checks current egress IP; positional IP argument ignored"))
         run_active(json_mode=ns.json)
         return
 
@@ -4328,7 +4331,7 @@ def main():
             if isinstance(parsed, ipaddress.IPv6Address):
                 print(T("ipv6_unsupported"))
                 sys.exit(1)
-            if not parsed.is_global or parsed.is_multicast:
+            if not parsed.is_global or parsed.is_multicast or parsed.is_reserved or parsed in ipaddress.ip_network("198.18.0.0/15"):
                 print(T("private_ip"))
                 sys.exit(1)
         except ValueError:
@@ -4413,7 +4416,7 @@ def main():
                         if isinstance(_chk, ipaddress.IPv6Address):
                             print(f"  {_c(C.dim, T('ipv6_unsupported'))}")
                             continue
-                        if not _chk.is_global or _chk.is_multicast:
+                        if not _chk.is_global or _chk.is_multicast or _chk.is_reserved or _chk in ipaddress.ip_network("198.18.0.0/15"):
                             print(f"  {_c(C.dim, T('private_ip'))}")
                             continue
                     except ValueError:

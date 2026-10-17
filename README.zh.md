@@ -58,7 +58,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 检测当前设备的出口 IP，流程：
 
 1. 被动 IP 画像（ASN / BGP / 地理位置 / IP 类型）
-2. 威胁情报（16 数据源聚合）
+2. 威胁情报（15 数据源聚合）
 3. 欺诈评分与风险因子矩阵
 4. 系统信息（CPU / 内存 / 磁盘 / 虚拟化 / 磁盘 I/O）
 5. 流媒体主动实测（TikTok / Netflix / Disney+ / YouTube / ChatGPT 等，区分原生 / DNS 解锁）
@@ -82,7 +82,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | IP 画像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | 威胁情报 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | 网络 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
-| 黑名单 | DNSBL（37 个公开黑名单） |
+| 黑名单 | DNSBL（29 个公开黑名单） |
 
 
 ## 截图
