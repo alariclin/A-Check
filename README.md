@@ -44,10 +44,10 @@ No third-party dependencies — Python standard library only.
 | macOS | `IPCheck-v4.1.0-mac.zip` | Unzip, double-click `run.command` |
 | Windows | `IPCheck-v4.1.0-windows.zip` | Unzip, double-click `run.bat` |
 
-> **首次运行提醒**：
-> - **macOS**：双击 `run.command` 如被 Gatekeeper 拦截（"无法验证"），右键 → 打开 → 仍要打开；或终端运行 `xattr -d com.apple.quarantine run.command`
-> - **Windows**：双击 `run.bat` 如触发 SmartScreen（"已保护你的电脑"），点击"更多信息" → "仍要运行"；或右键 → 属性 → 勾选"解除锁定"
-> - **Linux**：如提示权限不足，先执行 `chmod +x run.sh`
+> **First-run notes**:
+> - **macOS**: If Gatekeeper blocks `run.command` ("cannot be verified"), right-click → Open → Open anyway; or run `xattr -d com.apple.quarantine run.command` in Terminal
+> - **Windows**: If SmartScreen blocks `run.bat` ("protected your PC"), click "More info" → "Run anyway"; or right-click → Properties → check "Unblock"
+> - **Linux**: If permission denied, run `chmod +x run.sh` first
 
 | Linux / VPS | One-liner (below) | Copy-paste into terminal |
 

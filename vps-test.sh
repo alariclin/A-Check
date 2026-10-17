@@ -44,15 +44,10 @@ echo "=== [6/7] --active 提示 ==="
 timeout 10 python3 ipcheck.py --active 8.8.8.8 2>&1 | head -3 || true
 
 echo "=== [7/7] DNSBL 数量 ==="
-grep -c "dnsbl" <(python3 -c "import ipcheck; print(ipcheck.DNSBL_LISTS)" 2>/dev/null) || python3 << 'PYEOF'
-import re
-s = open("ipcheck.py").read()
-m = re.search(r'DNSBL_LISTS\s*=\s*\[(.*?)\]', s, re.S)
-count = len(re.findall(r'"[^"]+\.[^"]+"', m.group(1)))
-print(f"DNSBL数量={count}")
-assert count == 29, f"期望29, 实际{count}"
-print("DNSBL=29 OK")
-PYEOF
+COUNT=$(python3 -c 'import ipcheck; print(len(ipcheck.DNSBL_LISTS))')
+echo "DNSBL数量=$COUNT"
+[ "$COUNT" = "29" ] || { echo "FAIL: 期望29, 实际$COUNT"; exit 1; }
+echo "DNSBL=29 OK"
 
 echo ""
 echo "=========================================="
