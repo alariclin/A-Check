@@ -1030,6 +1030,11 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
                 data = e.read().decode("utf-8", errors="replace")
             except Exception:
                 data = ""
+            # 5xx/429 可重试
+            if e.code >= 500 or e.code == 429:
+                last_err = f"HTTP {e.code}: {data[:120]}"
+                time.sleep(0.5)
+                continue
             return False, f"HTTP {e.code}: {data[:200]}"
         except Exception as e:
             last_err = str(e)[:120]
@@ -1770,7 +1775,11 @@ def _build_unified_profile(s):
 
     isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ""
     org = wi.get("org") or ii.get("org") or pc.get("provider") or ""
-    asn = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or ""
+    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or ""
+    try:
+        asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
+    except (ValueError, TypeError):
+        asn = None
     country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or ""
     region = wi.get("region") or ii.get("region") or db.get("state") or ""
     city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or ""
@@ -2432,7 +2441,7 @@ def _print_streaming_inference(res):
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
 
-    def _infer_moderate(svc_name, check_tiktok=False):
+    def _infer_moderate(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
         if _fw_limit_check(svc_name):
@@ -2476,7 +2485,7 @@ def _print_streaming_inference(res):
         return T("unknown"), "mid"
 
     svc_map = {
-        "TikTok": _infer_moderate("TikTok", check_tiktok=True),
+        "TikTok": _infer_moderate("TikTok"),
         "Disney+": _infer_strict("Disney+"),
         "Netflix": _infer_moderate("Netflix"),
         "YouTube": _infer_lenient("YouTube"),
@@ -3466,7 +3475,7 @@ def test_dns_servers(timeout=3):
 
     def _th(name, url):
         try:
-            _, pkt = _bq()
+            tid, pkt = _bq()
             dp = base64.urlsafe_b64encode(pkt).decode("ascii").rstrip("=")
             t0 = time.time()
             rq = urllib.request.Request(
@@ -3476,7 +3485,7 @@ def test_dns_servers(timeout=3):
             with urllib.request.urlopen(rq, timeout=timeout + 2) as rp:
                 d = rp.read()
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) >= 12:
+            if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
                 return {"name": name, "ip": url, "proto": "DoH", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -4298,6 +4307,8 @@ def main():
         return
 
     if ns.active:
+        if ns.ip and not ns.json:
+            print("※ --active 模式检测本机出口 IP，忽略指定的 IP 参数")
         run_active(json_mode=ns.json)
         return
 
