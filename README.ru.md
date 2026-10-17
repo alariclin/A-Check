@@ -2,7 +2,7 @@
   <img width="300" src="icon.webp" alt="IPCheck">
 </p>
 
-[简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [فارسی](README.fa.md)
+[简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [فارسی](README.fa.md)
 
 IPCheck — двухрежимный инструмент проверки репутации IP: самодиагностика исходящего IP / запрос любого публичного IP. Только стандартная библиотека Python, ноль зависимостей, работает сразу.
 
@@ -69,7 +69,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | Профиль IP | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | Сеть | RIPEstat (ASN/BGP), PTR (обратный DNS), Shodan InternetDB |
-| Чёрные списки | DNSBL (29 публичных чёрный список) |
+| Чёрные списки | DNSBL (29 публичных чёрных списков) |
 
 
 ## Скриншоты

@@ -2,7 +2,7 @@
   <img width="300" src="icon.webp" alt="IPCheck">
 </p>
 
-[简体中文](README.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md)
+[简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md)
 
 IPCheck ابزار دوسویه بررسی اعتبار IP است: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.
 
@@ -36,7 +36,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 > - **Windows**: اگر SmartScreen فایل `run.bat` را مسدود کرد، روی "اطلاعات بیشتر" → "اجرا" کلیک کنید؛ یا راست‌کلیک → ویژگی‌ها → "رفع انسداد"
 > - **Linux**: در صورت خطای دسترسی، ابتدا `chmod +x run.sh` را اجرا کنید
 
-بدون هیچ وابستگی第三方 — فقط کتابخانه استاندارد پایتون.
+بدون هیچ وابستگی شخص ثالث — فقط کتابخانه استاندارد پایتون.
 
 ## شرح دو حالت
 

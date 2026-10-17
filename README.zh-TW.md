@@ -2,7 +2,7 @@
   <img width="300" src="icon.webp" alt="IPCheck">
 </p>
 
-[简体中文](README.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+[简体中文](README.zh.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
 IPCheck 是一款雙模式 IP 信譽檢測工具：可檢測本機出口 IP，也可查詢任意公網 IP。純 Python 標準庫，零依賴，開箱即用。
 

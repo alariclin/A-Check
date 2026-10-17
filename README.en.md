@@ -2,7 +2,7 @@
   <img width="300" src="icon.webp" alt="IPCheck">
 </p>
 
-[简体中文](README.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+[简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
 IPCheck is a dual-mode IP reputation checker: self-check your egress IP or query any public IP. Pure Python standard library, zero dependencies, works out of the box.
 

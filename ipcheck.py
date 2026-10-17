@@ -1083,6 +1083,14 @@ def validate_ip(s):
         return None
 
 
+def _parse_asn(val):
+    if val is None:
+        return None
+    import re as _re
+    m = _re.search(r"(\d+)", str(val))
+    return int(m.group(1)) if m else None
+
+
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -1440,7 +1448,7 @@ class RIPEstat(Provider):
                     pass
             return {
                 "ok": True,
-                "asn": asn,
+                "asn": _parse_asn(asn),
                 "announced": announced,
                 "age_years": age_years,
                 "first_seen": first_seen,
@@ -1498,7 +1506,7 @@ class IPWhoIs(Provider):
                 "ok": True,
                 "isp": conn.get("isp", ""),
                 "org": conn.get("org", ""),
-                "asn": conn.get("asn"),
+                "asn": _parse_asn(conn.get("asn")),
                 "country": d.get("country", ""),
                 "country_code": d.get("country_code", ""),
                 "region": d.get("region", ""),
@@ -1539,7 +1547,7 @@ class IPInfo(Provider):
             return {
                 "ok": True,
                 "org": org,
-                "asn": org.split()[0] if org.startswith("AS") else "",
+                "asn": _parse_asn(org.split()[0]) if org.startswith("AS") else None,
                 "country": d.get("country", ""),
                 "region": d.get("region", ""),
                 "city": d.get("city", ""),
@@ -1592,7 +1600,7 @@ class ProxyCheck(Provider):
                 "vpn": d.get("vpn", "") == "yes",
                 "type": d.get("type", ""),
                 "risk": int(d.get("risk") or 0),
-                "asn": d.get("asn", ""),
+                "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
                 "range": d.get("range", ""),
                 "city": d.get("city", ""),
@@ -1652,7 +1660,7 @@ class FreeIPAPI(Provider):
                 "proxy": d.get("isProxy"),
                 "country": d.get("countryName", ""),
                 "city": d.get("cityName", ""),
-                "asn": asn_val,
+                "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -1788,7 +1796,7 @@ def _build_unified_profile(s):
         "ok": bool(isp or org or country or asn),
         "isp": isp,
         "org": org,
-        "asn": asn,
+        "asn": _parse_asn(asn),
         "country": country,
         "region": region,
         "city": city,
@@ -3639,7 +3647,7 @@ DNS_COUNTRY_DB = {
 DNS_COUNTRY_MAP = {
     "china": "cn", "cn": "cn", "中国": "cn", "china mainland": "cn",
     "russia": "ru", "ru": "ru", "russian federation": "ru", "俄罗斯": "ru", "俄羅斯": "ru",
-    "iran": "ir", "ir": "ir", "islamic republic of iran": "ir", "伊朗": "ir",
+    "iran": "ir", "ir": "ir", "islamic republic of iran": "ir", "iran, islamic republic of": "ir", "iran (islamic republic of)": "ir", "伊朗": "ir",
     "turkey": "tr", "tr": "tr", "türkiye": "tr", "turkiye": "tr", "土耳其": "tr",
 }
 
