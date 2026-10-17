@@ -72,6 +72,7 @@ LANG = "zh"
 
 STR = {
     "zh": {
+        "active_ip_ignored": "※ --active 模式检测本机出口 IP，忽略指定的 IP 参数",
         "title": "IP 信誉检测",
         "mode_select": "请选择检测模式:",
         "mode1": "[1] 本机自检 - 检测当前IP",
@@ -209,6 +210,7 @@ STR = {
         "infer_block": "可能屏蔽",
     },
     "en": {
+        "active_ip_ignored": "Note: --active mode tests this device's egress IP; the specified IP argument is ignored.",
         "title": "IP Reputation Check",
         "mode_select": "Select mode:",
         "mode1": "[1] Self-check - Test current IP",
@@ -346,6 +348,7 @@ STR = {
         "infer_block": "May block",
     },
     "zh-TW": {
+        "active_ip_ignored": "※ --active 模式偵測本機出口 IP，忽略指定的 IP 參數",
         "title": "IP 信譽檢測",
         "mode_select": "請選擇檢測模式:",
         "mode1": "[1] 本機自檢 - 檢測當前IP",
@@ -483,6 +486,7 @@ STR = {
         "infer_block": "可能屏蔽",
     },
     "ja": {
+        "active_ip_ignored": "※ --active モードは本機の出口 IP を検査します。指定した IP 引数は無視されます。",
         "title": "IPレピュテーションチェック",
         "mode_select": "検出モードを選択してください:",
         "mode1": "[1] セルフチェック - 現在のIPを検出",
@@ -620,6 +624,7 @@ STR = {
         "infer_block": "ブロック",
     },
     "ru": {
+        "active_ip_ignored": "※ Режим --active проверяет исходящий IP этого устройства; указанный IP игнорируется.",
         "title": "Проверка репутации IP",
         "mode_select": "Выберите режим проверки:",
         "mode1": "[1] Самопроверка - проверить текущий IP",
@@ -757,6 +762,7 @@ STR = {
         "infer_block": "Заблок.",
     },
     "fa": {
+        "active_ip_ignored": "※ حالت --active آیپی خروجی همین دستگاه را بررسی میکند؛ آرگومان IP نادیده گرفته میشود.",
         "title": "بررسی اعتبار IP",
         "mode_select": "حالت بررسی را انتخاب کنید:",
         "mode1": "[1] خودآزمایی - بررسی IP فعلی",
@@ -1381,7 +1387,9 @@ class Urlscan(Provider):
     name = "urlscan.io"
 
     def check(self, ip):
-        q = urllib.parse.quote(f"ip:{ip}")
+        q = urllib.parse.quote(
+            f"ip:{ip} AND (task.source:urlhaus OR task.source:openphish "
+            f"OR task.source:phishtank OR task.tags:phishing OR task.tags:malware)")
         ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -1389,9 +1397,7 @@ class Urlscan(Provider):
             d = json.loads(raw)
             if "status" in d and int(d.get("status", 200)) >= 400:
                 return {"ok": False, "err": d.get("message", "API error")}
-            results = d.get("results") or []
-            total = sum(1 for r in results
-                        if (((r.get("verdicts") or {}).get("overall") or {}).get("malicious")))
+            total = int(d.get("total", 0))
             return {"ok": True, "total": total, "ts": now_iso()}
         except Exception as e:
             return {"ok": False, "err": str(e)[:80]}
@@ -4319,7 +4325,7 @@ def main():
 
     if ns.active:
         if ns.ip and not ns.json:
-            print(_c(C.yellow, "※ --active 模式检测本机出口 IP，忽略指定的 IP 参数" if LANG in ("zh", "zh-TW") else "※ --active checks current egress IP; positional IP argument ignored"))
+            print(_c(C.yellow, T("active_ip_ignored")))
         run_active(json_mode=ns.json)
         return
 
