@@ -8,4 +8,4 @@ if [ -z "$PY" ]; then
     echo "未找到 python3，请先安装 Python 3.8+"
     exit 1
 fi
-exec $PY "$(dirname "$0")/ipcheck.py" "$@"
+exec "$PY" "$(dirname "$0")/ipcheck.py" "$@"

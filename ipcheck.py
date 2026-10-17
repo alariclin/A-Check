@@ -1368,15 +1368,17 @@ class Urlscan(Provider):
     name = "urlscan.io"
 
     def check(self, ip):
-        q = urllib.parse.quote(f"ip:{ip} AND verdicts.overall.malicious:true")
-        ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=5", use_cache=False)
+        q = urllib.parse.quote(f"ip:{ip}")
+        ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
             if "status" in d and int(d.get("status", 200)) >= 400:
                 return {"ok": False, "err": d.get("message", "API error")}
-            total = int(d.get("total", 0))
+            results = d.get("results") or []
+            total = sum(1 for r in results
+                        if (((r.get("verdicts") or {}).get("overall") or {}).get("malicious")))
             return {"ok": True, "total": total, "ts": now_iso()}
         except Exception as e:
             return {"ok": False, "err": str(e)[:80]}
@@ -1519,7 +1521,9 @@ class IPInfo(Provider):
     name = "ipinfo.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipinfo.io/{ip}/json", use_cache=False)
+        ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
+                           headers={"User-Agent": "IPCheck/4.1.0 (+https://github.com/alariclin/IPCheck)"},
+                           use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -2166,7 +2170,7 @@ def run_passive(ip):
     f_pts, f_ev = score_fraud(sources)
     r_pts, r_ev = score_reputation(sources)
     p_pts, p_ev = score_platform(sources)
-    combined = int(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
+    combined = round(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
 
     total = len(avail_providers)
     ok_count = sum(1 for p in avail_providers if sources.get(p.key, {}).get("ok"))
@@ -2330,6 +2334,7 @@ def _print_streaming_inference(res):
     is_syria = _cc_match("syria", "sy", "叙利亚", "敘利亞")
     is_korea = _cc_match("north korea", "kp", "dprk", "朝鲜", "朝鮮")
     is_india = _cc_match("india", "in", "印度")
+    is_hk = _cc_match("hong kong", "hk", "香港")
     is_afghanistan = _cc_match("afghanistan", "af", "阿富汗")
     is_somalia = _cc_match("somalia", "so", "索马里", "索馬里")
     is_uzbekistan = _cc_match("uzbekistan", "uz", "乌兹别克斯坦", "烏茲別克斯坦")
@@ -2392,6 +2397,9 @@ def _print_streaming_inference(res):
             # 朝鲜: 除 DeepSeek 无制裁锁区外，其余境外服务均不可达或锁区
             return service_name != "DeepSeek"
         if is_india and service_name == "TikTok":
+            return True
+        if is_hk and service_name == "TikTok":
+            # 香港: ByteDance 2020年撤出，港区实际用Douyin
             return True
         # TikTok 全网封锁国家 (2026最新数据): 阿富汗/索马里/乌兹别克斯坦/吉尔吉斯斯坦/加蓬/约旦
         if service_name == "TikTok" and (
@@ -2958,9 +2966,29 @@ _opener_follow = urllib.request.build_opener()
 _opener_noredir = urllib.request.build_opener(_NoRedirect)
 
 
+CHALLENGE_MARKERS = ("just a moment", "cf-chl", "attention required", "access denied",
+                       "you've been blocked", "captcha", "cf_chl")
+
+
+def _is_challenge(code, body):
+    """区分反爬/风控挑战与真实区域封锁"""
+    if code in (400, 403, 429) and body:
+        bl = body[:4096].lower()
+        return any(m in bl for m in CHALLENGE_MARKERS)
+    return False
+
+
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location)。"""
-    h = {"User-Agent": UA_BROWSER, "Accept-Language": "en-US,en;q=0.9"}
+    h = {
+        "User-Agent": UA_BROWSER,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-Dest": "document",
+    }
     if headers:
         h.update(headers)
     opener = _opener_follow if follow_redirects else _opener_noredir
@@ -3141,6 +3169,8 @@ def test_claude(local_ip=None):
     code, body, final_url = _active_get("https://claude.ai/login")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:500].lower():
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
     return T("blocked"), "", None
@@ -3150,15 +3180,19 @@ def test_grok(local_ip=None):
     code, body, _ = _active_get("https://grok.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "Access Denied" not in body:
         return T("unlocked"), "", get_unlock_type("grok.com", local_ip)
     return T("blocked"), "", None
 
 
 def test_instagram(local_ip=None):
-    code, _, _ = _active_get("https://www.instagram.com/")
+    code, body, _ = _active_get("https://www.instagram.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
     return T("blocked"), "", None
@@ -3192,9 +3226,11 @@ def test_line(local_ip=None):
 
 
 def test_whatsapp(local_ip=None):
-    code, _, _ = _active_get("https://www.whatsapp.com/")
+    code, body, _ = _active_get("https://www.whatsapp.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
     return T("blocked"), "", None
@@ -3589,20 +3625,24 @@ DNS_COUNTRY_DB = {
 }
 
 DNS_COUNTRY_MAP = {
-    "china": "cn", "cn": "cn", "中国": "cn",
-    "russia": "ru", "ru": "ru", "俄罗斯": "ru",
-    "iran": "ir", "ir": "ir", "伊朗": "ir", "波斯": "ir",
-    "turkey": "tr", "tr": "tr", "土耳其": "tr",
+    "china": "cn", "cn": "cn", "中国": "cn", "china mainland": "cn",
+    "russia": "ru", "ru": "ru", "russian federation": "ru", "俄罗斯": "ru", "俄羅斯": "ru",
+    "iran": "ir", "ir": "ir", "islamic republic of iran": "ir", "伊朗": "ir",
+    "turkey": "tr", "tr": "tr", "türkiye": "tr", "turkiye": "tr", "土耳其": "tr",
 }
 
 
+def _country_key(country):
+    c = (country or "").strip().lower()
+    if c in DNS_COUNTRY_MAP:
+        return DNS_COUNTRY_MAP[c]
+    if len(c) == 2 and c in DNS_COUNTRY_MAP.values():
+        return c
+    return "default"
+
+
 def recommend_dns_for_ip(country):
-    c = (country or "").lower().strip()
-    key = "default"
-    for k, v in DNS_COUNTRY_MAP.items():
-        if k in c:
-            key = v
-            break
+    key = _country_key(country)
     db = DNS_COUNTRY_DB[key]
     _section(T("sec_dns_rec"))
     print(f"  {_c(C.dim, T('location') + ': ' + (country or '?'))}")
@@ -3897,21 +3937,18 @@ def print_system_info(si=None, io_res=None):
     print()
 
 
-# 37 个实测存活的权威公开 DNSBL 黑名单 (已剔除 2024 关停的 16 个 SORBS 节点及 virbl/sectoor/abuse.ch 死链)
+# 29 个实测存活的权威公开 DNSBL 黑名单 (已剔除 2024 关停的 16 个 SORBS 节点及 virbl/sectoor/abuse.ch 死链)
 DNSBL_LISTS = [
     "zen.spamhaus.org", "bl.spamcop.net", "b.barracudacentral.org",
-    "ix.dnsbl.manitu.net", "dnsbl-1.uceprotect.net", "dnsbl-2.uceprotect.net",
-    "dnsbl-3.uceprotect.net", "db.wpbl.info", "bl.blocklist.de",
-    "rbl.interserver.net", "psbl.surriel.com", "ubl.unsubscore.com",
-    "dyna.spamrats.com", "noptr.spamrats.com", "spam.spamrats.com",
+    "dnsbl-1.uceprotect.net", "dnsbl-2.uceprotect.net",
+    "dnsbl-3.uceprotect.net", "bl.blocklist.de",
+    "rbl.interserver.net", "psbl.surriel.com", "dyna.spamrats.com", "noptr.spamrats.com", "spam.spamrats.com",
     "dnsbl.dronebl.org", "dnsbl.proxybl.org", "all.s5h.net",
     "blackholes.five-ten-sg.com", "dnsbl.kempt.net", "blacklist.woody.ch",
     "bogons.cymru.com", "v4.fullbogons.cymru.com", "dnsbl.spfbl.net",
     "spamrbl.imp.ch", "wormrbl.imp.ch", "rbl.megarbl.net",
-    "spamguard.leadmon.net", "netblockbl.spamgrouper.com",
-    "bl.mailspike.net", "z.mailspike.net", "dnsbl.zapbl.net",
-    "bl.nordspam.com", "spamsources.fabel.dk", "ubl.lashback.com",
-    "dnsbl.inps.de", "bl.0spam.org",
+    "z.mailspike.net", "dnsbl.zapbl.net",
+    "bl.nordspam.com", "spamsources.fabel.dk", "bl.0spam.org",
 ]
 
 

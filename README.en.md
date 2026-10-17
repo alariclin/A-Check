@@ -10,12 +10,12 @@ IPCheck is a dual-mode IP reputation checker: self-check your egress IP or query
 
 - **15 free data sources**, no API keys required, free and open source
 - **Dual modes**:
-  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 37 DNSBL blacklists, Cloudflare speed test
+  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 29 DNSBL blacklists, Cloudflare speed test
   - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
 - **6-language UI**: 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
 - **Risk score 0–100** with a color progress bar
 - **Streaming unlock detection**: distinguishes native unlock vs DNS unlock
-- **Port 25 sending test** + 37 DNSBL blacklists (20-thread concurrent, finishes in seconds)
+- **Port 25 sending test** + 29 DNSBL blacklists (20-thread concurrent, finishes in seconds)
 - **System info**: CPU / memory / disk / virtualization + disk I/O benchmark
 - **Cloudflare speed test** (for reference only)
 - **Full DNS testing**: traditional DNS (UDP 53) / DoH / DoT

@@ -10,12 +10,12 @@ IPCheck はデュアルモード IP レピュテーションチェッカーで�
 
 - **15 の無料データソース**、API キー不要、オープンソースで無料
 - **デュアルモード**：
-  - `[1]` 自己診断 — 現在のデバイスの出口 IP を検査。ストリーミングのアクティブなアンロックテスト、DNS フルテスト、25 番ポート送信テスト、37 の DNSBL ブラックリスト、Cloudflare 速度測定を含む
+  - `[1]` 自己診断 — 現在のデバイスの出口 IP を検査。ストリーミングのアクティブなアンロックテスト、DNS フルテスト、25 番ポート送信テスト、29 の DNSBL ブラックリスト、Cloudflare 速度測定を含む
   - `[2]` IP 照会 — 任意のパブリック IP を入力し、公開インテリジェンスのパッシブ照会のみ実行。ストリーミング利用可否のシミュレーション推測と DNS 推奨付き
 - **6 言語 UI**：简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
 - **リスクスコア 0–100** + カラープログレスバー
 - **ストリーミングアンロック検出**：ネイティブアンロック / DNS アンロックを区別
-- **25 番ポート送信テスト** + 37 の DNSBL ブラックリスト（20 スレッド並行、数十秒で完了）
+- **25 番ポート送信テスト** + 29 の DNSBL ブラックリスト（20 スレッド並行、数十秒で完了）
 - **システム情報**：CPU / メモリ / ディスク / 仮想化 + ディスク I/O ベンチマーク
 - **Cloudflare 速度測定**（参考用）
 - **DNS フルテスト**：従来 DNS（UDP 53）/ DoH / DoT
@@ -69,7 +69,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | IP プロファイリング | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
 | 脅威インテリジェンス | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
 | ネットワーク | RIPEstat（ASN/BGP）、PTR（逆引き）、Shodan InternetDB |
-| ブラックリスト | DNSBL（37 の公開ブラックリスト） |
+| ブラックリスト | DNSBL（29 の公開ブラックリスト） |
 
 
 ## スクリーンショット
