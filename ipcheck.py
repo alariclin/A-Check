@@ -1092,8 +1092,7 @@ def validate_ip(s):
 def _parse_asn(val):
     if val is None:
         return None
-    import re as _re
-    m = _re.search(r"(\d+)", str(val))
+    m = re.search(r"(\d+)", str(val))
     return int(m.group(1)) if m else None
 
 

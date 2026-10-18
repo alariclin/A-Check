@@ -21,7 +21,7 @@ python3 ipcheck.py 198.18.0.1 2>&1 | grep -q "不支持" && echo "Fake-IP拒绝 
 python3 ipcheck.py 999.999.999.999 2>&1 | grep -q "无效" && echo "无效IP拒绝 OK"
 
 echo "=== [4/7] 被动查询 8.8.8.8 (JSON) ==="
-timeout 90 python3 ipcheck.py 8.8.8.8 --json > result.json 2>&1
+timeout 90 python3 ipcheck.py 8.8.8.8 --json > result.json
 python3 << 'PYEOF'
 import json
 d = json.load(open("result.json"))
