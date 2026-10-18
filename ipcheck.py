@@ -7,7 +7,7 @@ IP 信誉检测 v4.1.0 — 全量修复与并发优化公开版 (零 API Key 依
 主动模式: 检测当前实际出口 IP，包含系统信息、流媒体/AI 解锁、DNS、25 端口/DNSBL 与测速。
   注意: 主动测试只能反映"当前这条线路"，不能代表任意候选 IP。
 
-数据源 (全部免 Key 公开情报，共 15 个):
+数据源 (全部免 Key 公开情报，共 17 个):
   威胁情报: Scamalytics, StopForumSpam, urlscan.io, SANS ISC, proxycheck.io,
            Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes
   注册与实体: RIPEstat, PTR/FCrDNS, DB-IP
@@ -1308,7 +1308,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
 
 # ============================================================
-# Provider 插件架构 (全部 15 个免 Key 公开情报源)
+# Provider 插件架构 (全部 17 个免 Key 公开情报源)
 # ============================================================
 class Provider:
     """数据源基类。子类实现 check(ip) -> dict。"""
@@ -1579,6 +1579,64 @@ class SANSISC(Provider):
                 "ok": True,
                 "attack_count": count,
                 "last_seen": ipinfo.get("updated", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class GreyNoise(Provider):
+    key = "greynoise"
+    name = "GreyNoise"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{ip}", use_cache=False)
+        if not ok:
+            # 404 表示该 IP 未被观测到扫描，视为非噪音（正常）
+            if "404" in raw:
+                try:
+                    d = json.loads(raw.split(":", 1)[1] if ":" in raw else "{}")
+                except Exception:
+                    d = {}
+                return {
+                    "ok": True,
+                    "noise": False,
+                    "riot": False,
+                    "classification": "",
+                    "ts": now_iso(),
+                }
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            return {
+                "ok": True,
+                "noise": bool(d.get("noise")),
+                "riot": bool(d.get("riot")),
+                "classification": d.get("classification", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IPApi(Provider):
+    key = "ipapi"
+    name = "ip-api.com"
+
+    def check(self, ip):
+        ok, raw = http_get(f"http://ip-api.com/json/{ip}?fields=status,proxy,hosting,query", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if d.get("status") != "success":
+                return {"ok": False, "err": d.get("message", "API error")}
+            return {
+                "ok": True,
+                "proxy": bool(d.get("proxy")),
+                "hosting": bool(d.get("hosting")),
                 "ts": now_iso(),
             }
         except Exception as e:

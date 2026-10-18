@@ -75,7 +75,7 @@ Enter any public IP for passive public-intelligence lookup only:
 - Simulated streaming availability inference (⚠️ NOT actual connection tests, reference only)
 - DNS recommendations based on the IP's country/region, plus known-blocked entries
 
-## Data Sources (15 free sources)
+## Data Sources (17 free sources)
 
 | Category | Sources |
 |----------|---------|

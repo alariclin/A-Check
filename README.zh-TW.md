@@ -54,7 +54,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 檢測當前設備的出口 IP，流程：
 
 1. 被動 IP 畫像（ASN / BGP / 地理位置 / IP 類型）
-2. 威脅情報（15 數據源聚合）
+2. 威脅情報（17 數據源聚合）
 3. 欺詐評分與風險因子矩陣
 4. 系統資訊（CPU / 記憶體 / 磁碟 / 虛擬化 / 磁碟 I/O）
 5. 串流主動實測（TikTok / Netflix / Disney+ / YouTube / ChatGPT 等，區分原生 / DNS 解鎖）

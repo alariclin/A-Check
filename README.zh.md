@@ -8,7 +8,7 @@ IPCheck 是一款双模式 IP 信誉检测工具：可检测本机出口 IP，�
 
 ## 特性
 
-- **15 个免费数据源**，无 API Key 依赖，开源免费
+- **17 个免费数据源**，无 API Key 依赖，开源免费
 - **双模式**：
   - `[1]` 本机自检 — 检测当前设备出口 IP，含主动流媒体解锁实测、DNS 全品类检测、25 端口发信检测、29 个 DNSBL 黑名单、Cloudflare 测速
   - `[2]` 查询 IP — 输入任意公网 IP，仅做公开情报被动查询，附流媒体可用性模拟推测与 DNS 推荐
@@ -58,7 +58,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 检测当前设备的出口 IP，流程：
 
 1. 被动 IP 画像（ASN / BGP / 地理位置 / IP 类型）
-2. 威胁情报（15 数据源聚合）
+2. 威胁情报（17 数据源聚合）
 3. 欺诈评分与风险因子矩阵
 4. 系统信息（CPU / 内存 / 磁盘 / 虚拟化 / 磁盘 I/O）
 5. 流媒体主动实测（TikTok / Netflix / Disney+ / YouTube / ChatGPT 等，区分原生 / DNS 解锁）
@@ -75,7 +75,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 - 流媒体可用性**模拟推测**（⚠️ 非实际连接测试，仅供参考）
 - 按 IP 所在国家/地区推荐可用 DNS，并列出已知不可用项
 
-## 数据源（15 个免费源）
+## 数据源（17 个免费源）
 
 | 类别 | 数据源 |
 |------|--------|
