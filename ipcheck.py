@@ -2992,6 +2992,8 @@ def _is_challenge(code, body):
     """区分反爬/风控挑战与真实区域封锁"""
     if code in (400, 403, 429) and body:
         bl = body[:4096].lower()
+        # 剥离 HTML 注释，避免注释中的 captcha 等词误命中
+        bl = re.sub(r"<!--.*?-->", "", bl)
         return any(m in bl for m in CHALLENGE_MARKERS)
     return False
 
