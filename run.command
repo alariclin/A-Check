@@ -12,4 +12,4 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-exec $PY "./ipcheck.py" "$@"
+exec "$PY" "./ipcheck.py" "$@"

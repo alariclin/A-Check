@@ -1150,7 +1150,7 @@ def _get_system_nameservers():
             ).stdout
             in_dns = False
             for line in out.splitlines():
-                if "DNS Servers" in line or "DNS 服务器" in line or "DNS 伺服器" in line:
+                if "DNS" in line:
                     in_dns = True
                     parts = line.split(":", 1)
                     if len(parts) == 2:
@@ -1388,7 +1388,7 @@ class Urlscan(Provider):
 
     def check(self, ip):
         q = urllib.parse.quote(
-            f"ip:{ip} AND (task.source:urlhaus OR task.source:openphish "
+            f"page.ip:{ip} AND (task.source:urlhaus OR task.source:openphish "
             f"OR task.source:phishtank OR task.tags:phishing OR task.tags:malware)")
         ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
