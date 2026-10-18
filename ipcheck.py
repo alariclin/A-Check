@@ -151,10 +151,10 @@ STR = {
         "risk_low": "低风险",
         "risk_medium": "中风险",
         "risk_high": "高风险",
-        "verdict_clean": "🟢 未发现明确风险信号",
-        "verdict_low": "🟡 轻微风险",
-        "verdict_medium": "🟠 中等风险",
-        "verdict_high": "🔴 高风险",
+        "verdict_clean": "● 未发现明确风险信号",
+        "verdict_low": "● 轻微风险",
+        "verdict_medium": "● 中等风险",
+        "verdict_high": "● 高风险",
         "purity": "纯净度",
         "purity_best": "极度纯净",
         "purity_good": "比较纯净",
@@ -289,10 +289,10 @@ STR = {
         "risk_low": "Low",
         "risk_medium": "Medium",
         "risk_high": "High",
-        "verdict_clean": "🟢 No clear risk signals",
-        "verdict_low": "🟡 Minor risk",
-        "verdict_medium": "🟠 Moderate risk",
-        "verdict_high": "🔴 High risk",
+        "verdict_clean": "● No clear risk signals",
+        "verdict_low": "● Minor risk",
+        "verdict_medium": "● Moderate risk",
+        "verdict_high": "● High risk",
         "purity": "Purity",
         "purity_best": "Very clean",
         "purity_good": "Fairly clean",
@@ -427,10 +427,10 @@ STR = {
         "risk_low": "低風險",
         "risk_medium": "中風險",
         "risk_high": "高風險",
-        "verdict_clean": "🟢 未發現明確風險信號",
-        "verdict_low": "🟡 輕微風險",
-        "verdict_medium": "🟠 中等風險",
-        "verdict_high": "🔴 高風險",
+        "verdict_clean": "● 未發現明確風險信號",
+        "verdict_low": "● 輕微風險",
+        "verdict_medium": "● 中等風險",
+        "verdict_high": "● 高風險",
         "purity": "純淨度",
         "purity_best": "極度純淨",
         "purity_good": "比較純淨",
@@ -565,10 +565,10 @@ STR = {
         "risk_low": "低リスク",
         "risk_medium": "中リスク",
         "risk_high": "高リスク",
-        "verdict_clean": "🟢 明確なリスクシグナルなし",
-        "verdict_low": "🟡 軽微なリスク",
-        "verdict_medium": "🟠 中程度のリスク",
-        "verdict_high": "🔴 高リスク",
+        "verdict_clean": "● 明確なリスクシグナルなし",
+        "verdict_low": "● 軽微なリスク",
+        "verdict_medium": "● 中程度のリスク",
+        "verdict_high": "● 高リスク",
         "purity": "純度",
         "purity_best": "極めてクリーン",
         "purity_good": "比較的クリーン",
@@ -703,10 +703,10 @@ STR = {
         "risk_low": "Низкий риск",
         "risk_medium": "Средний риск",
         "risk_high": "Высокий риск",
-        "verdict_clean": "🟢 Явных признаков риска нет",
-        "verdict_low": "🟡 Незначительный риск",
-        "verdict_medium": "🟠 Средний риск",
-        "verdict_high": "🔴 Высокий риск",
+        "verdict_clean": "● Явных признаков риска нет",
+        "verdict_low": "● Незначительный риск",
+        "verdict_medium": "● Средний риск",
+        "verdict_high": "● Высокий риск",
         "purity": "Чистота",
         "purity_best": "Очень чистая",
         "purity_good": "Довольно чистая",
@@ -841,10 +841,10 @@ STR = {
         "risk_low": "ریسک کم",
         "risk_medium": "ریسک متوسط",
         "risk_high": "ریسک بالا",
-        "verdict_clean": "🟢 سیگنال خطر مشخصی یافت نشد",
-        "verdict_low": "🟡 ریسک جزئی",
-        "verdict_medium": "🟠 ریسک متوسط",
-        "verdict_high": "🔴 ریسک بالا",
+        "verdict_clean": "● سیگنال خطر مشخصی یافت نشد",
+        "verdict_low": "● ریسک جزئی",
+        "verdict_medium": "● ریسک متوسط",
+        "verdict_high": "● ریسک بالا",
         "purity": "خلوص",
         "purity_best": "بسیار پاک",
         "purity_good": "نسبتاً پاک",
@@ -2460,11 +2460,9 @@ def _print_streaming_inference(res):
             return T("infer_block"), "high"
         if _fw_limit_check(svc_name):
             return T("infer_limit"), "high"
-        if is_threat or high_fraud or has_abuse:
-            return T("infer_block"), "low"
-        if is_tor or is_tor_exit or is_proxy or is_vpn:
+        if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
             return T("infer_block"), "mid"
-        if is_dc:
+        if is_proxy or is_vpn or is_dc:
             return T("infer_limit"), "mid"
         if is_res:
             return T("infer_avail"), "high"
@@ -2475,11 +2473,9 @@ def _print_streaming_inference(res):
             return T("infer_block"), "high"
         if _fw_limit_check(svc_name):
             return T("infer_limit"), "high"
-        if is_threat or high_fraud or has_abuse:
-            return T("infer_block"), "low"
-        if is_tor or is_tor_exit or is_proxy or is_vpn:
+        if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
             return T("infer_block"), "mid"
-        if is_dc:
+        if is_proxy or is_vpn or is_dc:
             return T("infer_limit"), "mid"
         if is_res:
             return T("infer_avail"), "high"
@@ -2990,8 +2986,7 @@ _opener_follow = urllib.request.build_opener()
 _opener_noredir = urllib.request.build_opener(_NoRedirect)
 
 
-CHALLENGE_MARKERS = ("just a moment", "cf-chl", "attention required", "access denied",
-                       "you've been blocked", "captcha", "cf_chl")
+CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
 
 
 def _is_challenge(code, body):
@@ -3509,6 +3504,7 @@ def test_dns_servers(timeout=3):
         return {"name": name, "ip": url, "proto": "DoH", "ok": False, "rtt_ms": None}
 
     def _tt(name, ip, sni):
+        sk = None
         ss = None
         try:
             tid, pkt = _bq()
@@ -3534,11 +3530,12 @@ def test_dns_servers(timeout=3):
         except Exception:
             pass
         finally:
-            if ss is not None:
-                try:
-                    ss.close()
-                except Exception:
-                    pass
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
         return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
 
     res = {"plain": [], "doh": [], "dot": []}
