@@ -9,9 +9,9 @@ IP 信誉检测 v4.1.0 — 全量修复与并发优化公开版 (零 API Key 依
 
 数据源 (全部免 Key 公开情报，共 17 个):
   威胁情报: Scamalytics, StopForumSpam, urlscan.io, SANS ISC, proxycheck.io,
-           Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes
+           Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise
   注册与实体: RIPEstat, PTR/FCrDNS, DB-IP
-  归属与匿名化: ipwho.is, ipinfo.io, freeipapi
+  归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com
 
 用法:
     python3 ipcheck.py                        # 交互菜单 (默认中文，可切换 6 种语言)
@@ -135,6 +135,8 @@ STR = {
         "unknown": "未知",
         "no_hit": "无命中",
         "no_record": "无恶意记录",
+        "feodo_c2": "C2 已收录",
+        "done": "检测完成",
         "no_attack": "无攻击记录",
         "not_proxy": "非代理/VPN",
         "is_proxy": "代理",
@@ -273,6 +275,8 @@ STR = {
         "unknown": "Unknown",
         "no_hit": "No hits",
         "no_record": "No malicious records",
+        "feodo_c2": "C2 listed",
+        "done": "Check complete",
         "no_attack": "No attack records",
         "not_proxy": "Not proxy/VPN",
         "is_proxy": "Proxy",
@@ -411,6 +415,8 @@ STR = {
         "unknown": "未知",
         "no_hit": "無命中",
         "no_record": "無惡意記錄",
+        "feodo_c2": "C2 已收錄",
+        "done": "檢測完成",
         "no_attack": "無攻擊記錄",
         "not_proxy": "非代理/VPN",
         "is_proxy": "代理",
@@ -549,6 +555,8 @@ STR = {
         "unknown": "不明",
         "no_hit": "ヒットなし",
         "no_record": "悪意ある記録なし",
+        "feodo_c2": "C2 登録あり",
+        "done": "チェック完了",
         "no_attack": "攻撃記録なし",
         "not_proxy": "プロキシ/VPNではない",
         "is_proxy": "プロキシ",
@@ -687,6 +695,8 @@ STR = {
         "unknown": "Неизв.",
         "no_hit": "Совпадений нет",
         "no_record": "Вредоносных записей нет",
+        "feodo_c2": "C2 в списке",
+        "done": "Проверка завершена",
         "no_attack": "Записей атак нет",
         "not_proxy": "Не прокси/VPN",
         "is_proxy": "Прокси",
@@ -825,6 +835,8 @@ STR = {
         "unknown": "نامشخص",
         "no_hit": "موردی یافت نشد",
         "no_record": "رکورد مخربی وجود ندارد",
+        "feodo_c2": "C2 در فهرست ثبت شده",
+        "done": "بررسی کامل شد",
         "no_attack": "رکورد حمله وجود ندارد",
         "not_proxy": "پروکسی/VPN نیست",
         "is_proxy": "پروکسی",
@@ -986,19 +998,24 @@ def _pad(s, width):
 _progress_lock = threading.Lock()
 
 
-def _print_progress(current, total, name=""):
-    """线程安全地打印检测进度条。JSON 模式下静默。"""
+def _render_progress_locked(current, total, name=""):
+    """渲染进度条；必须持有 _progress_lock 时调用。JSON 模式下静默。"""
     if "--json" in sys.argv:
         return
+    bar_len = 28
+    filled = int(bar_len * current / max(total, 1))
+    bar = "█" * filled + "░" * (bar_len - filled)
+    msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
+    if _disp_width(msg) > 70:
+        msg = _truncate_disp(msg, 67)
+    pad_spaces = " " * max(0, 74 - _disp_width(msg))
+    print(msg + pad_spaces, end="", flush=True)
+
+
+def _print_progress(current, total, name=""):
+    """线程安全地打印检测进度条（其它调用点继续用它）。"""
     with _progress_lock:
-        bar_len = 28
-        filled = int(bar_len * current / max(total, 1))
-        bar = "█" * filled + "░" * (bar_len - filled)
-        msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
-        if _disp_width(msg) > 70:
-            msg = _truncate_disp(msg, 67)
-        pad_spaces = " " * max(0, 74 - _disp_width(msg))
-        print(msg + pad_spaces, end="", flush=True)
+        _render_progress_locked(current, total, name)
 
 
 # ============================================================
@@ -1591,14 +1608,12 @@ class GreyNoise(Provider):
     name = "GreyNoise"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{ip}", use_cache=False)
+        # 免费版 Community 限 25 次/周，进程内缓存减少重复消耗
+        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{ip}", use_cache=True)
         if not ok:
+            # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
             # 404 表示该 IP 未被观测到扫描，视为非噪音（正常）
-            if "404" in raw:
-                try:
-                    d = json.loads(raw.split(":", 1)[1] if ":" in raw else "{}")
-                except Exception:
-                    d = {}
+            if raw.startswith("HTTP 404:"):
                 return {
                     "ok": True,
                     "noise": False,
@@ -1626,6 +1641,8 @@ class IPApi(Provider):
     name = "ip-api.com"
 
     def check(self, ip):
+        # 注: ip-api.com 免费端点仅支持明文 HTTP（https 实测 403），结果可被中间网络篡改；
+        # 若在意完整性请改用 proxycheck.io / ipwho.is（已集成，均为 https）。
         ok, raw = http_get(f"http://ip-api.com/json/{ip}?fields=status,proxy,hosting,query", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -1738,7 +1755,7 @@ class ShodanInternetDB(Provider):
     def check(self, ip):
         ok, raw = http_get(f"https://internetdb.shodan.io/{ip}", use_cache=False)
         if not ok:
-            if "404" in raw:
+            if raw.startswith("HTTP 404:"):
                 return {
                     "ok": True,
                     "ports": [],
@@ -1887,7 +1904,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    proxycheck/ipwho.is/freeipapi 代理/VPN +40
+    proxycheck/ipwho.is/freeipapi/ip-api.com 代理/VPN +40
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -1909,7 +1926,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    proxycheck/ipwho.is/freeipapi 代理/VPN +40
+    proxycheck/ipwho.is/freeipapi/ip-api.com 代理/VPN +40
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -2154,6 +2171,7 @@ def score_platform(s):
     wi = s.get("ipwhois", {})
     pc = s.get("proxycheck", {})
     fp = s.get("freeipapi", {})
+    ia = s.get("ipapi", {})
     te = s.get("tor_exit", {})
 
     dc, pat = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
@@ -2169,6 +2187,7 @@ def score_platform(s):
         (pc.get("ok") and pc.get("proxy"))
         or (wi.get("ok") and wi.get("proxy"))
         or (fp.get("ok") and fp.get("proxy") is True)
+        or (ia.get("ok") and ia.get("proxy") is True)
     )
     is_vpn = (pc.get("ok") and pc.get("vpn")) or (wi.get("ok") and wi.get("vpn"))
     if is_prx:
@@ -2233,8 +2252,7 @@ def run_passive(ip):
         try:
             with _progress_lock:
                 done_cnt[0] += 1
-                idx = done_cnt[0]
-            _print_progress(idx, total_p, p.name)
+                _render_progress_locked(done_cnt[0], total_p, p.name)
         except Exception:
             pass
         return p.key, res
@@ -2252,8 +2270,10 @@ def run_passive(ip):
     p_pts, p_ev = score_platform(sources)
     combined = round(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
 
-    total = len(avail_providers)
-    ok_count = sum(1 for p in avail_providers if sources.get(p.key, {}).get("ok"))
+    _supp = {"greynoise"}  # 周限额源（25/周），不拉低完整度分母；failed 保留全量以保透明
+    _denom = [p for p in avail_providers if p.key not in _supp]
+    total = len(_denom)
+    ok_count = sum(1 for p in _denom if sources.get(p.key, {}).get("ok"))
     failed = [p.name for p in avail_providers if not sources.get(p.key, {}).get("ok")]
     completeness = int(ok_count / total * 100) if total else 0
 
@@ -2786,12 +2806,23 @@ def print_report(res, include_streaming_inference=True):
     else:
         print(f"  {_c(C.dim, '?')} Shodan: {T('unverifiable')}")
 
+    gn = s.get("greynoise", {})
+    if gn.get("ok"):
+        _bits = []
+        if gn.get("noise"):
+            _bits.append(T("yes"))
+        if gn.get("classification"):
+            _bits.append(gn["classification"])
+        print(f"  {_c(C.dim, '·')} GreyNoise: {', '.join(_bits) if _bits else T('no_record')}")
+    else:
+        print(f"  {_c(C.dim, '?')} GreyNoise: {T('unverifiable')}")
+
     fe = s.get("feodo", {})
     if fe.get("ok"):
         listed = fe.get("listed", False)
         print(
             f"  {_c(C.red if listed else C.green, '✗' if listed else '✓')} "
-            f"Feodo: {'C2 listed' if listed else T('no_record')}"
+            f"Feodo: {T('feodo_c2') if listed else T('no_record')}"
         )
     else:
         print(f"  {_c(C.dim, '?')} Feodo: {T('unverifiable')}")
@@ -2837,6 +2868,15 @@ def print_report(res, include_streaming_inference=True):
             print(f"  {_c(C.green, '✓')} freeipapi: {T('not_proxy')}")
     else:
         print(f"  {_c(C.dim, '?')} freeipapi: {T('unverifiable')}")
+
+    ia = s.get("ipapi", {})
+    if ia.get("ok"):
+        if ia.get("proxy"):
+            print(f"  {_c(C.red, '✗')} ip-api.com: {T('is_proxy')}")
+        else:
+            print(f"  {_c(C.green, '✓')} ip-api.com: {T('not_proxy')}")
+    else:
+        print(f"  {_c(C.dim, '?')} ip-api.com: {T('unverifiable')}")
 
     # [3] 欺诈评分
     _section(T("sec_fraud"))
@@ -2995,7 +3035,7 @@ def print_report(res, include_streaming_inference=True):
 
     if include_streaming_inference:
         _print_streaming_inference(res)
-        _done_txt = "✓ " + ("检测完成" if LANG in ("zh", "zh-TW") else "Check complete")
+        _done_txt = "✓ " + T("done")
         print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
         if LANG in ("zh", "zh-TW"):
             print(f"  {_c(C.yellow, '※ 本模式为被动查询，不含主动流媒体实测 / [7] 邮局测试')}")
@@ -3049,9 +3089,9 @@ CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", 
 def _is_challenge(code, body):
     """区分反爬/风控挑战与真实区域封锁"""
     if code in (400, 403, 429) and body:
-        bl = body[:4096].lower()
-        # 剥离 HTML 注释，避免注释中的 captcha 等词误命中
-        bl = re.sub(r"<!--.*?-->", "", bl)
+        bl = body.lower()
+        # 剥离 HTML 注释（re.S 兼容多行；(?:-->|$) 处理未闭合注释），避免注释中 captcha 等词误命中
+        bl = re.sub(r"<!--.*?(?:-->|$)", "", bl, flags=re.S)[:4096]
         return any(m in bl for m in CHALLENGE_MARKERS)
     return False
 

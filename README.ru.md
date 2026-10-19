@@ -67,7 +67,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 | Категория | Источники |
 |-----------|-----------|
 | Профиль IP | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
+| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise |
 | Сеть | RIPEstat (ASN/BGP), PTR (обратный DNS), Shodan InternetDB |
 | Чёрные списки | DNSBL (29 публичных чёрных списков) |
 

@@ -45,7 +45,7 @@ irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile
 現在のデバイスの出口 IP を検査します：
 
 1. パッシブ IP プロファイリング（ASN / BGP / 位置情報 / IP タイプ）
-2. 脅威インテリジェンス（15 ソース集約）
+2. 脅威インテリジェンス（17 ソースを集約）
 3. 不正スコアとリスク要因マトリックス
 4. システム情報（CPU / メモリ / ディスク / 仮想化 / ディスク I/O）
 5. ストリーミングのアクティブテスト（TikTok / Netflix / Disney+ / YouTube / ChatGPT など、ネイティブ / DNS アンロック区別）
