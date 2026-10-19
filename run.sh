@@ -1,5 +1,5 @@
 #!/bin/bash
-# ACheck 一键运行 (Linux/macOS)
+# A-Check 一键运行 (Linux/macOS)
 
 set -e
 PY=""

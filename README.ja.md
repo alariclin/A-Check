@@ -1,10 +1,10 @@
 <p align="center">
-  <img width="300" src="icon.webp" alt="ACheck">
+  <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
 [简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-ACheck はデュアルモード IP レピュテーションチェッカーです：自端末の出口 IP を自己診断 / 任意のパブリック IP を照会。Python 標準ライブラリのみ、依存関係ゼロ、すぐに使えます。
+A-Check はデュアルモード IP レピュテーションチェッカーです：自端末の出口 IP を自己診断 / 任意のパブリック IP を照会。Python 標準ライブラリのみ、依存関係ゼロ、すぐに使えます。
 
 ## 特徴
 
@@ -25,10 +25,10 @@ ACheck はデュアルモード IP レピュテーションチェッカーです
 
 ```bash
 # VPS / Linux / macOS ワンライナー（Python 3.8+ が必要）
-curl -sL https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 
 # Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -OutFile acheck.py; python acheck.py
+irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
 ```
 
 > **初回実行時の注意**：

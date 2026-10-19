@@ -1,12 +1,12 @@
 #!/bin/bash
-# ACheck v4.1.0 VPS 隔离测试 - 跑完自动清理
+# A-Check v4.1.0 VPS 隔离测试 - 跑完自动清理
 set -e
 TDIR=$(mktemp -d /tmp/ipcheck-test-XXXXXX)
 trap "rm -rf $TDIR; echo '[清理] 临时文件已删除'" EXIT
 cd $TDIR
 
 echo "=== [1/7] 下载最新代码 ==="
-curl -sL -o acheck.py https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py
+curl -sL -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py
 python3 -m py_compile acheck.py && echo "编译 OK"
 
 echo "=== [2/7] 帮助/参数解析 ==="

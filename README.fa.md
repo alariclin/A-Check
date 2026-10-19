@@ -1,10 +1,10 @@
 <p align="center">
-  <img width="300" src="icon.webp" alt="ACheck">
+  <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
 [简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md)
 
-ACheck ابزار دوسویه بررسی اعتبار IP است: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.
+A-Check ابزار دوسویه بررسی اعتبار IP است: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.
 
 ## ویژگی‌ها
 
@@ -25,10 +25,10 @@ ACheck ابزار دوسویه بررسی اعتبار IP است: خودآزما
 
 ```bash
 # اجرای تک‌خطی برای VPS / Linux / macOS (نیازمند Python 3.8+‎)
-curl -sL https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 
 # Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -OutFile acheck.py; python acheck.py
+irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
 ```
 
 > **نکات اجرای اول**:

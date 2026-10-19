@@ -1,10 +1,10 @@
 <p align="center">
-  <img width="300" src="icon.webp" alt="ACheck">
+  <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
 [简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [فارسی](README.fa.md)
 
-ACheck — двухрежимный инструмент проверки репутации IP: самодиагностика исходящего IP / запрос любого публичного IP. Только стандартная библиотека Python, ноль зависимостей, работает сразу.
+A-Check — двухрежимный инструмент проверки репутации IP: самодиагностика исходящего IP / запрос любого публичного IP. Только стандартная библиотека Python, ноль зависимостей, работает сразу.
 
 ## Возможности
 
@@ -25,10 +25,10 @@ ACheck — двухрежимный инструмент проверки реп
 
 ```bash
 # Одна команда для VPS / Linux / macOS (нужен Python 3.8+)
-curl -sL https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 
 # Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -OutFile acheck.py; python acheck.py
+irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
 ```
 
 > **При первом запуске**:
