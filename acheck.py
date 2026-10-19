@@ -47,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import argparse
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 
 
 def _init_console():
@@ -77,9 +77,7 @@ STR = {
         "mode_select": "请选择检测模式:",
         "mode1": "[1] 本机自检 - 检测当前IP",
         "mode2": "[2] 查询 IP - 检测任意公网 IP",
-        "mode_lang": "[3] 切换语言 / Switch Language (当前: 简体中文)",
         "quit_hint": "(q 退出)",
-        "prompt_choice": "请选择 [1/2/3]: ",
         "prompt_ip": "请输入公网 IP (b 返回，q 退出): ",
         "invalid_ip": "无效的 IP 地址，请重新输入",
         "ipv6_unsupported": "暂仅支持 IPv4 公网地址",
@@ -137,6 +135,28 @@ STR = {
         "no_record": "无恶意记录",
         "feodo_c2": "C2 已收录",
         "done": "检测完成",
+        "diag_socks5_testing": "正在测试 SOCKS5 握手 %s:%s...",
+        "diag_socks5_ok": "✓ SOCKS5 握手成功，延迟 %.1f ms",
+        "diag_socks5_fail": "✗ SOCKS5 握手失败: %s",
+        "diag_socks5_abort": "※ 握手失败，终止后续检测",
+        "diag_egress_testing": "正在获取代理出口 IP...",
+        "diag_egress_ok": "出口 IP: %s",
+        "diag_egress_fail": "✗ 获取出口 IP 失败: %s",
+        "diag_reputation_testing": "正在检测出口 IP 信誉...",
+        "diag_reputation_fail": "信誉检测失败: %s",
+        "diag_dns_testing": "正在检测 DNS 泄漏...",
+        "diag_dns_leaked": "⚠ 检测到 DNS 泄漏!",
+        "diag_dns_clean": "✓ 未检测到 DNS 泄漏",
+        "diag_dns_unknown": "[无法核实] DNS 泄漏检测失败",
+        "diag_tcp_testing": "正在测试 TCP 延迟 %s:%s...",
+        "diag_tcp_ok": "平均 %.1f ms, 抖动 %.1f ms, 丢包 %.1f%%",
+        "diag_tcp_fail": "✗ TCP 连接失败",
+        "mode3": "[3] 代理诊断 - 测试 SOCKS5 代理",
+        "mode_lang": "[4] 切换语言 / Switch Language (当前: 简体中文)",
+        "prompt_choice": "请选择 [1/2/3/4]: ",
+        "prompt_proxy": "请输入代理地址 (host:port，b 返回，q 退出): ",
+        "prompt_proxy_user": "用户名 (回车跳过): ",
+        "prompt_proxy_pass": "密码: ",
         "no_attack": "无攻击记录",
         "not_proxy": "非代理/VPN",
         "is_proxy": "代理",
@@ -217,9 +237,7 @@ STR = {
         "mode_select": "Select mode:",
         "mode1": "[1] Self-check - Test current IP",
         "mode2": "[2] Query IP - Test any public IP",
-        "mode_lang": "[3] Switch Language / 切换语言 (Current: English)",
         "quit_hint": "(q to quit)",
-        "prompt_choice": "Choose [1/2/3]: ",
         "prompt_ip": "Enter public IP (b back, q quit): ",
         "invalid_ip": "Invalid IP address, try again",
         "ipv6_unsupported": "Only public IPv4 addresses are currently supported",
@@ -277,6 +295,28 @@ STR = {
         "no_record": "No malicious records",
         "feodo_c2": "C2 listed",
         "done": "Check complete",
+        "diag_socks5_testing": "Testing SOCKS5 handshake %s:%s...",
+        "diag_socks5_ok": "✓ SOCKS5 handshake OK, latency %.1f ms",
+        "diag_socks5_fail": "✗ SOCKS5 handshake failed: %s",
+        "diag_socks5_abort": "※ Handshake failed, aborting remaining checks",
+        "diag_egress_testing": "Getting proxy egress IP...",
+        "diag_egress_ok": "Egress IP: %s",
+        "diag_egress_fail": "✗ Failed to get egress IP: %s",
+        "diag_reputation_testing": "Checking egress IP reputation...",
+        "diag_reputation_fail": "Reputation check failed: %s",
+        "diag_dns_testing": "Checking for DNS leaks...",
+        "diag_dns_leaked": "⚠ DNS leak detected!",
+        "diag_dns_clean": "✓ No DNS leak detected",
+        "diag_dns_unknown": "[Unverifiable] DNS leak check failed",
+        "diag_tcp_testing": "Testing TCP latency %s:%s...",
+        "diag_tcp_ok": "avg %.1f ms, jitter %.1f ms, loss %.1f%%",
+        "diag_tcp_fail": "✗ TCP connection failed",
+        "mode3": "[3] Proxy diagnostics - Test SOCKS5 proxy",
+        "mode_lang": "[4] Switch Language (current: English)",
+        "prompt_choice": "Choose [1/2/3/4]: ",
+        "prompt_proxy": "Enter proxy address (host:port, b back, q quit): ",
+        "prompt_proxy_user": "Username (Enter to skip): ",
+        "prompt_proxy_pass": "Password: ",
         "no_attack": "No attack records",
         "not_proxy": "Not proxy/VPN",
         "is_proxy": "Proxy",
@@ -357,9 +397,7 @@ STR = {
         "mode_select": "請選擇檢測模式:",
         "mode1": "[1] 本機自檢 - 檢測當前IP",
         "mode2": "[2] 查詢 IP - 檢測任意公網 IP",
-        "mode_lang": "[3] 切換語言 / Switch Language (當前: 繁體中文)",
         "quit_hint": "(q 退出)",
-        "prompt_choice": "請選擇 [1/2/3]: ",
         "prompt_ip": "請輸入公網 IP (b 返回，q 退出): ",
         "invalid_ip": "無效的 IP 地址，請重新輸入",
         "ipv6_unsupported": "暫僅支援 IPv4 公網地址",
@@ -417,6 +455,28 @@ STR = {
         "no_record": "無惡意記錄",
         "feodo_c2": "C2 已收錄",
         "done": "檢測完成",
+        "diag_socks5_testing": "正在測試 SOCKS5 握手 %s:%s...",
+        "diag_socks5_ok": "✓ SOCKS5 握手成功，延遲 %.1f ms",
+        "diag_socks5_fail": "✗ SOCKS5 握手失敗: %s",
+        "diag_socks5_abort": "※ 握手失敗，終止後續檢測",
+        "diag_egress_testing": "正在獲取代理出口 IP...",
+        "diag_egress_ok": "出口 IP: %s",
+        "diag_egress_fail": "✗ 獲取出口 IP 失敗: %s",
+        "diag_reputation_testing": "正在檢測出口 IP 信譽...",
+        "diag_reputation_fail": "信譽檢測失敗: %s",
+        "diag_dns_testing": "正在檢測 DNS 洩漏...",
+        "diag_dns_leaked": "⚠ 檢測到 DNS 洩漏!",
+        "diag_dns_clean": "✓ 未檢測到 DNS 洩漏",
+        "diag_dns_unknown": "[無法核實] DNS 洩漏檢測失敗",
+        "diag_tcp_testing": "正在測試 TCP 延遲 %s:%s...",
+        "diag_tcp_ok": "平均 %.1f ms, 抖動 %.1f ms, 丟包 %.1f%%",
+        "diag_tcp_fail": "✗ TCP 連接失敗",
+        "mode3": "[3] 代理診斷 - 測試 SOCKS5 代理",
+        "mode_lang": "[4] 切換語言 / Switch Language (當前: 繁體中文)",
+        "prompt_choice": "請選擇 [1/2/3/4]: ",
+        "prompt_proxy": "請輸入代理地址 (host:port，b 返回，q 退出): ",
+        "prompt_proxy_user": "用戶名 (回車跳過): ",
+        "prompt_proxy_pass": "密碼: ",
         "no_attack": "無攻擊記錄",
         "not_proxy": "非代理/VPN",
         "is_proxy": "代理",
@@ -497,9 +557,7 @@ STR = {
         "mode_select": "検出モードを選択してください:",
         "mode1": "[1] セルフチェック - 現在のIPを検出",
         "mode2": "[2] IP照会 - 任意のパブリックIPを検出",
-        "mode_lang": "[3] 言語切替 / Switch Language (現在: 日本語)",
         "quit_hint": "(q 終了)",
-        "prompt_choice": "選択してください [1/2/3]: ",
         "prompt_ip": "パブリックIPを入力 (b 戻る，q 終了): ",
         "invalid_ip": "無効なIPアドレスです，再入力してください",
         "ipv6_unsupported": "現在IPv4パブリックアドレスのみサポートしています",
@@ -557,6 +615,28 @@ STR = {
         "no_record": "悪意ある記録なし",
         "feodo_c2": "C2 登録あり",
         "done": "チェック完了",
+        "diag_socks5_testing": "SOCKS5ハンドシェイクをテスト中 %s:%s...",
+        "diag_socks5_ok": "✓ SOCKS5ハンドシェイク成功、遅延 %.1f ms",
+        "diag_socks5_fail": "✗ SOCKS5ハンドシェイク失敗: %s",
+        "diag_socks5_abort": "※ ハンドシェイク失敗、残りのチェックを中止",
+        "diag_egress_testing": "プロキシ出口IPを取得中...",
+        "diag_egress_ok": "出口IP: %s",
+        "diag_egress_fail": "✗ 出口IPの取得に失敗: %s",
+        "diag_reputation_testing": "出口IPのレピュテーションを確認中...",
+        "diag_reputation_fail": "レピュテーション確認失敗: %s",
+        "diag_dns_testing": "DNSリークを確認中...",
+        "diag_dns_leaked": "⚠ DNSリークを検出!",
+        "diag_dns_clean": "✓ DNSリークなし",
+        "diag_dns_unknown": "[確認不可] DNSリーク確認失敗",
+        "diag_tcp_testing": "TCP遅延をテスト中 %s:%s...",
+        "diag_tcp_ok": "平均 %.1f ms、ジッタ %.1f ms、損失 %.1f%%",
+        "diag_tcp_fail": "✗ TCP接続失敗",
+        "mode3": "[3] プロキシ診断 - SOCKS5プロキシをテスト",
+        "mode_lang": "[4] 言語切替 (現在: 日本語)",
+        "prompt_choice": "選択してください [1/2/3/4]: ",
+        "prompt_proxy": "プロキシアドレスを入力 (host:port、b 戻る、q 終了): ",
+        "prompt_proxy_user": "ユーザー名 (Enterでスキップ): ",
+        "prompt_proxy_pass": "パスワード: ",
         "no_attack": "攻撃記録なし",
         "not_proxy": "プロキシ/VPNではない",
         "is_proxy": "プロキシ",
@@ -637,9 +717,7 @@ STR = {
         "mode_select": "Выберите режим проверки:",
         "mode1": "[1] Самопроверка - проверить текущий IP",
         "mode2": "[2] Запрос IP - проверить любой публичный IP",
-        "mode_lang": "[3] Сменить язык / Switch Language (текущий: Русский)",
         "quit_hint": "(q выход)",
-        "prompt_choice": "Выберите [1/2/3]: ",
         "prompt_ip": "Введите публичный IP (b назад, q выход): ",
         "invalid_ip": "Недействительный IP-адрес, введите снова",
         "ipv6_unsupported": "Поддерживаются только публичные адреса IPv4",
@@ -697,6 +775,28 @@ STR = {
         "no_record": "Вредоносных записей нет",
         "feodo_c2": "C2 в списке",
         "done": "Проверка завершена",
+        "diag_socks5_testing": "Тестирование SOCKS5 %s:%s...",
+        "diag_socks5_ok": "✓ SOCKS5 рукопожатие успешно, задержка %.1f мс",
+        "diag_socks5_fail": "✗ Ошибка SOCKS5: %s",
+        "diag_socks5_abort": "※ Ошибка рукопожатия, остальные проверки пропущены",
+        "diag_egress_testing": "Получение исходящего IP прокси...",
+        "diag_egress_ok": "Исходящий IP: %s",
+        "diag_egress_fail": "✗ Не удалось получить IP: %s",
+        "diag_reputation_testing": "Проверка репутации исходящего IP...",
+        "diag_reputation_fail": "Ошибка проверки репутации: %s",
+        "diag_dns_testing": "Проверка утечек DNS...",
+        "diag_dns_leaked": "⚠ Обнаружена утечка DNS!",
+        "diag_dns_clean": "✓ Утечек DNS не обнаружено",
+        "diag_dns_unknown": "[Не проверено] Ошибка проверки DNS",
+        "diag_tcp_testing": "Тестирование задержки TCP %s:%s...",
+        "diag_tcp_ok": "сред. %.1f мс, джиттер %.1f мс, потери %.1f%%",
+        "diag_tcp_fail": "✗ Ошибка TCP соединения",
+        "mode3": "[3] Диагностика прокси - тест SOCKS5",
+        "mode_lang": "[4] Сменить язык (текущий: Русский)",
+        "prompt_choice": "Выберите [1/2/3/4]: ",
+        "prompt_proxy": "Введите адрес прокси (host:port, b назад, q выход): ",
+        "prompt_proxy_user": "Имя пользователя (Enter пропустить): ",
+        "prompt_proxy_pass": "Пароль: ",
         "no_attack": "Записей атак нет",
         "not_proxy": "Не прокси/VPN",
         "is_proxy": "Прокси",
@@ -777,9 +877,7 @@ STR = {
         "mode_select": "حالت بررسی را انتخاب کنید:",
         "mode1": "[1] خودآزمایی - بررسی IP فعلی",
         "mode2": "[2] استعلام IP - بررسی هر IP عمومی",
-        "mode_lang": "[3] تغییر زبان / Switch Language (فعلی: فارسی)",
         "quit_hint": "(q خروج)",
-        "prompt_choice": "انتخاب کنید [1/2/3]: ",
         "prompt_ip": "IP عمومی وارد کنید (b بازگشت، q خروج): ",
         "invalid_ip": "آدرس IP نامعتبر است، دوباره وارد کنید",
         "ipv6_unsupported": "در حال حاضر فقط آدرس‌های عمومی IPv4 پشتیبانی می‌شوند",
@@ -837,6 +935,28 @@ STR = {
         "no_record": "رکورد مخربی وجود ندارد",
         "feodo_c2": "C2 در فهرست ثبت شده",
         "done": "بررسی کامل شد",
+        "diag_socks5_testing": "در حال تست SOCKS5 %s:%s...",
+        "diag_socks5_ok": "✓ اتصال SOCKS5 موفق، تأخیر %.1f میلی‌ثانیه",
+        "diag_socks5_fail": "✗ خطای SOCKS5: %s",
+        "diag_socks5_abort": "※ خطا در اتصال، بررسی‌های بعدی لغو شد",
+        "diag_egress_testing": "در حال دریافت IP خروجی پروکسی...",
+        "diag_egress_ok": "IP خروجی: %s",
+        "diag_egress_fail": "✗ دریافت IP ناموفق: %s",
+        "diag_reputation_testing": "در حال بررسی اعتبار IP خروجی...",
+        "diag_reputation_fail": "خطا در بررسی اعتبار: %s",
+        "diag_dns_testing": "در حال بررسی نشت DNS...",
+        "diag_dns_leaked": "⚠ نشت DNS شناسایی شد!",
+        "diag_dns_clean": "✓ نشت DNS شناسایی نشد",
+        "diag_dns_unknown": "[غیرقابل تأیید] خطا در بررسی DNS",
+        "diag_tcp_testing": "در حال تست تأخیر TCP %s:%s...",
+        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f، افت %.1f%%",
+        "diag_tcp_fail": "✗ خطای اتصال TCP",
+        "mode3": "[3] عیب‌یابی پروکسی - تست SOCKS5",
+        "mode_lang": "[4] تغییر زبان (فعلی: فارسی)",
+        "prompt_choice": "انتخاب کنید [1/2/3/4]: ",
+        "prompt_proxy": "آدرس پروکسی را وارد کنید (host:port، b بازگشت، q خروج): ",
+        "prompt_proxy_user": "نام کاربری (Enter برای رد شدن): ",
+        "prompt_proxy_pass": "رمز عبور: ",
         "no_attack": "رکورد حمله وجود ندارد",
         "not_proxy": "پروکسی/VPN نیست",
         "is_proxy": "پروکسی",
@@ -4321,6 +4441,333 @@ def run_active(json_mode=False):
 
 
 # ============================================================
+# 代理诊断 (P0: SOCKS5 握手 / 出口 IP / DNS 泄漏 / TCP 延迟)
+# 纯 Python 标准库实现, 无第三方依赖
+# ============================================================
+
+_SOCKS5_ERRORS = {
+    0x01: "General failure", 0x02: "Not allowed", 0x03: "Network unreachable",
+    0x04: "Host unreachable", 0x05: "Connection refused", 0x06: "TTL expired",
+    0x07: "Command not supported", 0x08: "Addr type not supported",
+}
+
+
+def _sock_readn(s, n):
+    """精确读 n 字节: recv() 可能短读, 必须循环"""
+    d = b""
+    while len(d) < n:
+        c = s.recv(n - len(d))
+        if not c:
+            raise OSError("connection closed by peer")
+        d += c
+    return d
+
+
+def socks5_connect(ph, pp, dh, dp, username=None, password=None,
+                   timeout=8, rdns=True):
+    """SOCKS5 CONNECT (RFC 1928/1929)。返回 (socket, 握手延迟 ms)。
+    rdns=True 即 socks5h: 域名发给代理端解析, 本地不做 DNS。"""
+    t0 = time.perf_counter()
+    s = socket.create_connection((ph, pp), timeout=timeout)
+    try:
+        s.settimeout(timeout)
+        # 1. 问候
+        s.sendall(b"\x05\x02\x00\x02" if (username and password)
+                  else b"\x05\x01\x00")
+        ver, method = _sock_readn(s, 2)
+        if ver != 0x05:
+            raise OSError("invalid SOCKS version")
+        # 2. 用户名/密码认证 (RFC 1929)
+        if method == 0x02:
+            u, p = username.encode()[:255], password.encode()[:255]
+            s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
+            if _sock_readn(s, 2) != b"\x01\x00":
+                raise OSError("authentication failed")
+        elif method == 0xFF:
+            raise OSError("proxy rejected all auth methods")
+        elif method != 0x00:
+            raise OSError("unsupported auth method %#04x" % method)
+        # 3. CONNECT 请求
+        req = b"\x05\x01\x00"
+        try:
+            req += b"\x01" + socket.inet_pton(socket.AF_INET, dh)
+        except OSError:
+            try:
+                req += b"\x04" + socket.inet_pton(socket.AF_INET6, dh)
+            except OSError:
+                if rdns:
+                    h = dh.encode("idna")[:255]
+                    req += b"\x03" + bytes([len(h)]) + h
+                else:
+                    req += b"\x01" + socket.inet_pton(
+                        socket.AF_INET, socket.gethostbyname(dh))
+        s.sendall(req + struct.pack(">H", dp))
+        # 4. 解析响应
+        ver, rep, _ = _sock_readn(s, 3)
+        if ver != 0x05 or rep != 0x00:
+            raise OSError("CONNECT failed: %s (%#04x)"
+                          % (_SOCKS5_ERRORS.get(rep, "unknown"), rep))
+        # 5. 排空 BND.ADDR (长度随 ATYP 变化, 不读掉会污染后续数据流)
+        atyp = _sock_readn(s, 1)[0]
+        if atyp == 0x01:
+            _sock_readn(s, 6)
+        elif atyp == 0x04:
+            _sock_readn(s, 18)
+        elif atyp == 0x03:
+            _sock_readn(s, _sock_readn(s, 1)[0] + 2)
+        else:
+            raise OSError("invalid ATYP %#04x" % atyp)
+        return s, (time.perf_counter() - t0) * 1000
+    except Exception:
+        s.close()
+        raise
+
+
+def socks5_probe(ph, pp, username=None, password=None, timeout=8):
+    """SOCKS5 握手冒烟测试: 对 clients3.google.com:80 做 CONNECT,
+    发 HTTP 探测, 200/204 即代理可用。返回 dict。"""
+    t0 = time.perf_counter()
+    try:
+        s, hs_ms = socks5_connect(ph, pp, "clients3.google.com", 80,
+                                  username=username, password=password,
+                                  timeout=timeout, rdns=True)
+    except Exception as e:
+        return {"ok": False, "error": str(e),
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    try:
+        s.sendall(b"GET /generate_204 HTTP/1.1\r\n"
+                  b"Host: clients3.google.com\r\n"
+                  b"User-Agent: A-Check/%s\r\n\r\n" % VERSION.encode())
+        data = _sock_readn(s, 12)
+        ok = b"204" in data or b"200" in data
+        return {"ok": ok, "latency_ms": round(hs_ms, 1),
+                "handshake_ms": round(hs_ms, 1),
+                "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+                "error": None if ok else "unexpected response: %r" % data[:12]}
+    except Exception as e:
+        return {"ok": False, "error": str(e),
+                "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    finally:
+        s.close()
+
+
+def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
+    """经 SOCKS5 代理获取出口 IP (走代理查 api.ipify.org)。
+    返回 (ip, geo_dict) 或 (None, error)。"""
+    try:
+        s, _ = socks5_connect(ph, pp, "api.ipify.org", 443,
+                              username=username, password=password,
+                              timeout=timeout, rdns=True)
+    except Exception as e:
+        return None, str(e)
+    try:
+        ctx = ssl.create_default_context()
+        tls = ctx.wrap_socket(s, server_hostname="api.ipify.org")
+        try:
+            tls.sendall(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\n"
+                        b"Connection: close\r\n\r\n")
+            raw = b""
+            while True:
+                try:
+                    c = tls.recv(4096)
+                except Exception:
+                    break
+                if not c:
+                    break
+                raw += c
+                if len(raw) > 65536:
+                    break
+            body = raw.split(b"\r\n\r\n", 1)[-1].decode(
+                "utf-8", errors="replace").strip()
+            ip = body.splitlines()[0].strip() if body else ""
+            if ip and validate_ip(ip):
+                return str(ip), None
+            return None, "invalid response: %r" % body[:60]
+        finally:
+            tls.close()
+    except Exception as e:
+        return None, str(e)
+    finally:
+        s.close()
+
+
+def get_resolver_ips(probes=3, timeout=8):
+    """查 whoami.akamai.net (A 记录), 走系统解析器。
+    Akamai 权威 DNS 把递归解析器的出口 IP 作为 A 记录返回,
+    即系统实际使用的 DNS 解析器出口 IP。返回去重后的 IP 列表。"""
+    seen = []
+    old = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
+    try:
+        for _ in range(probes):
+            try:
+                infos = socket.getaddrinfo("whoami.akamai.net", 80,
+                                           family=socket.AF_INET,
+                                           type=socket.SOCK_STREAM)
+                ip = infos[0][4][0]
+                if ip and ip not in seen:
+                    seen.append(ip)
+            except Exception:
+                continue
+    finally:
+        socket.setdefaulttimeout(old)
+    return seen
+
+
+def _ip_asn_org(ip, timeout=8):
+    """用 ipwho.is 查 ASN/归属 (A-Check 已有该源逻辑, 此处轻量复用)。"""
+    try:
+        req = urllib.request.Request(
+            "https://ipwho.is/%s?fields=asn,org,country" % ip,
+            headers={"User-Agent": UA_BROWSER})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
+        return d.get("asn"), d.get("org"), d.get("country")
+    except Exception:
+        return None, None, None
+
+
+def dns_leak_check(egress_ip=None, timeout=8):
+    """DNS 泄漏检测: 对比系统解析器 IP 与出口 IP 的 ASN/归属。
+    返回 (leaked: bool|None, detail: dict)。"""
+    egress = egress_ip or get_egress_ip()
+    resolvers = get_resolver_ips(timeout=timeout)
+    if not egress or not resolvers:
+        return None, {"error": "query failed", "egress": egress,
+                      "resolvers": resolvers}
+    e_asn, e_org, e_cc = _ip_asn_org(egress, timeout=timeout)
+    results = []
+    leaked = False
+    for rip in resolvers:
+        r_asn, r_org, r_cc = _ip_asn_org(rip, timeout=timeout)
+        same = bool(r_asn and e_asn and r_asn == e_asn)
+        results.append({"resolver": rip, "asn": r_asn, "org": r_org,
+                        "country": r_cc, "same_as_egress": same})
+        if not same:
+            leaked = True
+    return leaked, {"egress": egress, "egress_asn": e_asn,
+                    "egress_org": e_org, "egress_country": e_cc,
+                    "resolvers": results}
+
+
+def tcp_ping_stats(host, port, count=10, timeout=3):
+    """TCP connect 延迟统计: 返回
+    {ok, sent, ok_count, loss_pct, min_ms, avg_ms, max_ms, jitter_ms, samples}。
+    零 root, 跨平台。"""
+    import statistics
+    samples = []
+    t_all0 = time.perf_counter()
+    for _ in range(count):
+        t0 = time.perf_counter()
+        try:
+            s = socket.create_connection((host, port), timeout=timeout)
+            s.close()
+            samples.append((time.perf_counter() - t0) * 1000)
+        except Exception:
+            pass
+    total_ms = (time.perf_counter() - t_all0) * 1000
+    ok_n = len(samples)
+    loss = round((count - ok_n) / count * 100, 1) if count else 100.0
+    if not samples:
+        return {"ok": False, "sent": count, "ok_count": 0,
+                "loss_pct": loss, "total_ms": round(total_ms, 1)}
+    avg = statistics.mean(samples)
+    jit = (statistics.pstdev(samples) if len(samples) > 1 else 0.0)
+    return {"ok": True, "sent": count, "ok_count": ok_n,
+            "loss_pct": loss,
+            "min_ms": round(min(samples), 1),
+            "avg_ms": round(avg, 1),
+            "max_ms": round(max(samples), 1),
+            "jitter_ms": round(jit, 1),
+            "total_ms": round(total_ms, 1),
+            "samples": [round(x, 1) for x in samples]}
+
+
+def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
+                   json_mode=False):
+    """代理诊断主流程: SOCKS5 握手 -> 出口 IP -> 出口 IP 信誉 ->
+    DNS 泄漏 -> TCP 延迟。返回 dict。"""
+    out = {"proxy": "%s:%s" % (proxy_host, proxy_port),
+           "socks5": None, "egress": None, "egress_ip": None,
+           "egress_reputation": None, "dns_leak": None, "tcp_ping": None}
+
+    def _note(msg):
+        if not json_mode:
+            print(f"  {msg}")
+
+    # 1. SOCKS5 握手
+    _note(T("diag_socks5_testing") % (proxy_host, proxy_port))
+    sp = socks5_probe(proxy_host, proxy_port, username=username,
+                      password=password)
+    out["socks5"] = sp
+    if sp["ok"]:
+        _note(_c(C.green, T("diag_socks5_ok") % sp["latency_ms"]))
+    else:
+        _note(_c(C.red, T("diag_socks5_fail") % sp.get("error", "?")))
+        if not json_mode:
+            print(f"  {_c(C.dim, T('diag_socks5_abort'))}")
+        if json_mode:
+            print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+        return out
+
+    # 2. 出口 IP (经代理)
+    _note(T("diag_egress_testing"))
+    eip, eerr = proxy_egress_ip(proxy_host, proxy_port, username=username,
+                                password=password)
+    out["egress_ip"] = eip
+    if eip:
+        _note(_c(C.cyan, T("diag_egress_ok") % eip))
+        out["egress"] = {"ip": eip}
+    else:
+        _note(_c(C.red, T("diag_egress_fail") % (eerr or "?")))
+
+    # 3. 出口 IP 信誉 (复用现有被动检测)
+    if eip and validate_ip(eip):
+        _note(T("diag_reputation_testing"))
+        try:
+            res = run_passive(eip)
+            out["egress_reputation"] = {
+                "risk_level": res.get("risk_level"),
+                "threat_score": res.get("threat_score"),
+                "fraud_score": res.get("fraud_score"),
+            }
+            if not json_mode:
+                print_report(res)
+        except Exception as e:
+            _note(_c(C.dim, T("diag_reputation_fail") % e))
+
+    # 4. DNS 泄漏 (用代理出口 IP 做对比基准)
+    _note(T("diag_dns_testing"))
+    leaked, dinfo = dns_leak_check(egress_ip=eip)
+    out["dns_leak"] = {"leaked": leaked, "detail": dinfo}
+    if leaked is True:
+        _note(_c(C.red, T("diag_dns_leaked")))
+        for r in dinfo.get("resolvers", []):
+            _note("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
+                                        r.get("asn") or "?"))
+    elif leaked is False:
+        _note(_c(C.green, T("diag_dns_clean")))
+    else:
+        _note(_c(C.dim, T("diag_dns_unknown")))
+
+    # 5. TCP 延迟 (直连代理端口)
+    _note(T("diag_tcp_testing") % (proxy_host, proxy_port))
+    tp = tcp_ping_stats(proxy_host, proxy_port)
+    out["tcp_ping"] = tp
+    if tp["ok"]:
+        _note(T("diag_tcp_ok") % (tp["avg_ms"], tp["jitter_ms"],
+                                  tp["loss_pct"]))
+    else:
+        _note(_c(C.red, T("diag_tcp_fail")))
+
+    if json_mode:
+        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+    else:
+        _note(_c(C.green, T("done")))
+    return out
+
+
+# ============================================================
 # 主菜单与 CLI 入口
 # ============================================================
 class _CLIArgumentParser(argparse.ArgumentParser):
@@ -4339,7 +4786,11 @@ def _print_cli_help():
 选项:
   -h, --help      显示此帮助信息并退出
   --active        执行主动模式 (检测本机当前出口 IP、系统硬件、流媒体解锁、DNS、25端口与测速)
-  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active 组合使用)
+  --proxy HOST:PORT
+                  代理诊断模式 (SOCKS5 握手、代理出口 IP、出口 IP 信誉、DNS 泄漏、TCP 延迟)
+  --proxy-user USER / --proxy-pass PASS
+                  代理认证 (可选)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
   --explain       输出评分维度与扣分规则说明
   --zh            使用简体中文输出 (默认)
   --zh-tw         使用繁體中文输出
@@ -4354,6 +4805,8 @@ def _print_cli_help():
   python3 acheck.py --active               # 主动模式全面检测当前本机网络
   python3 acheck.py --json 8.8.8.8         # 被动模式 JSON 输出
   python3 acheck.py --active --json        # 主动模式 JSON 输出 (运维自动化巡检)
+  python3 acheck.py --proxy 127.0.0.1:1080              # 代理诊断
+  python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理诊断 JSON 输出
 """
     help_en = f"""Usage: python3 acheck.py [OPTIONS] [IPv4_ADDRESS]
 
@@ -4365,7 +4818,12 @@ Positional arguments:
 Options:
   -h, --help      Show this help message and exit
   --active        Run active self-check on current egress IP (streaming, DNS, port 25, speed)
-  --json          Output results in JSON format (works with passive IP or --active)
+  --proxy HOST:PORT
+                  Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP
+                  reputation, DNS leak check, TCP latency)
+  --proxy-user USER / --proxy-pass PASS
+                  Proxy authentication (optional)
+  --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
   --zh / --zh-tw / --en / --ja / --ru / --fa
                   Set output language
@@ -4376,6 +4834,8 @@ Examples:
   python3 acheck.py --active               # Active check on current connection
   python3 acheck.py --json 8.8.8.8         # Passive JSON output
   python3 acheck.py --active --json        # Active JSON output
+  python3 acheck.py --proxy 127.0.0.1:1080              # Proxy diagnostics
+  python3 acheck.py --proxy 127.0.0.1:1080 --json       # Proxy diagnostics JSON
 """
     print(help_zh if LANG in ("zh", "zh-TW") else help_en)
 
@@ -4389,6 +4849,10 @@ def main():
     parser.add_argument("--active", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--explain", action="store_true")
+    parser.add_argument("--proxy", metavar="HOST:PORT",
+                        help="proxy diagnostics via SOCKS5 (e.g. --proxy 127.0.0.1:1080)")
+    parser.add_argument("--proxy-user", default=None)
+    parser.add_argument("--proxy-pass", default=None)
     parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
     parser.add_argument("--zh-tw", action="store_const", const="zh-TW", dest="lang")
     parser.add_argument("--en", action="store_const", const="en", dest="lang")
@@ -4423,6 +4887,24 @@ def main():
         if ns.ip and not ns.json:
             print(_c(C.yellow, T("active_ip_ignored")))
         run_active(json_mode=ns.json)
+        return
+
+    if ns.proxy:
+        _pp = ns.proxy.strip()
+        try:
+            if _pp.startswith("["):
+                _hend = _pp.index("]")
+                _ph, _pt = _pp[1:_hend], int(_pp[_hend + 2:])
+            else:
+                _ph, _pt = _pp.rsplit(":", 1)
+                _pt = int(_pt)
+        except Exception:
+            print(json.dumps({"error": "invalid --proxy format, want HOST:PORT"},
+                             ensure_ascii=False) if ns.json
+                  else T("invalid_ip"))
+            sys.exit(2)
+        run_proxy_diag(_ph, _pt, username=ns.proxy_user,
+                       password=ns.proxy_pass, json_mode=ns.json)
         return
 
     if ns.json:
@@ -4471,12 +4953,13 @@ def main():
             print(f"  {T('mode_select')}")
             print(f"  {T('mode1')}")
             print(f"  {T('mode2')}")
+            print(f"  {T('mode3')}")
             print(f"  {T('mode_lang')}")
             print(f"  {T('quit_hint')}\n")
             choice = input(T("prompt_choice")).strip().lower()
             if choice == "q":
                 break
-            elif choice == "3":
+            elif choice == "4":
                 _langs = ["zh", "zh-TW", "en", "ja", "ru", "fa"]
                 _names = {
                     "zh": "简体中文",
@@ -4514,6 +4997,39 @@ def main():
                 continue
             elif choice == "1":
                 run_active(json_mode=False)
+            elif choice == "3":
+                # 代理诊断: 输入 host:port [+认证]
+                while True:
+                    pinp = input(T("prompt_proxy")).strip()
+                    if pinp.lower() == "q":
+                        return
+                    if pinp.lower() == "b" or pinp == "":
+                        break
+                    # 解析 host:port
+                    puser, ppass = None, None
+                    phost, pport = None, None
+                    try:
+                        if pinp.startswith("["):
+                            # [ipv6]:port
+                            hend = pinp.index("]")
+                            phost = pinp[1:hend]
+                            pport = int(pinp[hend + 2:])
+                        elif pinp.count(":") == 1:
+                            phost, _pp = pinp.rsplit(":", 1)
+                            pport = int(_pp)
+                        else:
+                            raise ValueError("bad format")
+                    except Exception:
+                        print(T("invalid_ip"))
+                        continue
+                    _u = input(T("prompt_proxy_user")).strip()
+                    if _u:
+                        puser = _u
+                        import getpass
+                        ppass = getpass.getpass(T("prompt_proxy_pass"))
+                    print()
+                    run_proxy_diag(phost, pport, username=puser,
+                                   password=ppass, json_mode=False)
             elif choice == "2":
                 while True:
                     inp = input(T("prompt_ip")).strip().lower()

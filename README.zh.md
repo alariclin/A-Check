@@ -4,7 +4,7 @@
 
 [English](README.en.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-A-Check 是一款双模式 IP 信誉检测工具：可检测本机出口 IP，也可查询任意公网 IP。纯 Python 标准库，零依赖，开箱即用。
+A-Check 是一款三模式 IP 信誉与代理诊断检测工具：可检测本机出口 IP，也可查询任意公网 IP。纯 Python 标准库，零依赖，开箱即用。
 
 ## 特性
 
@@ -12,6 +12,7 @@ A-Check 是一款双模式 IP 信誉检测工具：可检测本机出口 IP，�
 - **双模式**：
   - `[1]` 本机自检 — 检测当前设备出口 IP，含主动流媒体解锁实测、DNS 全品类检测、25 端口发信检测、29 个 DNSBL 黑名单、Cloudflare 测速
   - `[2]` 查询 IP — 输入任意公网 IP，仅做公开情报被动查询，附流媒体可用性模拟推测与 DNS 推荐
+  - `[3]` 代理诊断 — SOCKS5 握手+延迟、代理出口 IP、出口 IP 信誉、DNS 泄漏检测、TCP 延迟/抖动/丢包
 - **六语言 UI**：简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
 - **风险评分 0-100** + 彩色进度条，直观醒目
 - **流媒体解锁检测**：区分原生解锁 / DNS 解锁
@@ -39,8 +40,8 @@ irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile 
 
 | 平台 | 格式 | 用法 |
 |------|------|------|
-| macOS | `A-Check-v4.1.0-mac.zip` | 解压后双击 `run.command` |
-| Windows | `A-Check-v4.1.0-windows.zip` | 解压后双击 `run.bat` |
+| macOS | `A-Check-v4.2.0-mac.zip` | 解压后双击 `run.command` |
+| Windows | `A-Check-v4.2.0-windows.zip` | 解压后双击 `run.bat` |
 
 > **首次运行提醒**：
 > - **macOS**：双击 `run.command` 如被 Gatekeeper 拦截（"无法验证"），右键 → 打开 → 仍要打开；或终端运行 `xattr -d com.apple.quarantine run.command`
@@ -75,6 +76,16 @@ irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile 
 - 流媒体可用性**模拟推测**（⚠️ 非实际连接测试，仅供参考）
 - 按 IP 所在国家/地区推荐可用 DNS，并列出已知不可用项
 
+
+### [3] 代理诊断
+
+端到端测试你的 SOCKS5 代理:
+
+1. SOCKS5 握手 (RFC 1928) + 延迟测量
+2. 代理出口 IP 检测 (经代理)
+3. 出口 IP 信誉检测 (复用 17 源威胁情报)
+4. DNS 泄漏检测 (对比系统解析器与出口 IP 的 ASN)
+5. TCP 延迟 / 抖动 / 丢包统计
 ## 数据源（17 个免费源）
 
 | 类别 | 数据源 |

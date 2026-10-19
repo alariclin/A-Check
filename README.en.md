@@ -4,7 +4,7 @@
 
 [简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-A-Check is a dual-mode IP reputation checker: self-check your egress IP or query any public IP. Pure Python standard library, zero dependencies, works out of the box.
+A-Check is a tri-mode IP reputation & proxy diagnostics checker: self-check your egress IP or query any public IP. Pure Python standard library, zero dependencies, works out of the box.
 
 ## Features
 
@@ -12,6 +12,7 @@ A-Check is a dual-mode IP reputation checker: self-check your egress IP or query
 - **Dual modes**:
   - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 29 DNSBL blacklists, Cloudflare speed test
   - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
+  - `[3]` Proxy diagnostics — SOCKS5 handshake + latency, proxy egress IP, egress IP reputation, DNS leak check, TCP latency/jitter/loss
 - **6-language UI**: 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
 - **Risk score 0–100** with a color progress bar
 - **Streaming unlock detection**: distinguishes native unlock vs DNS unlock
@@ -39,8 +40,8 @@ No third-party dependencies — Python standard library only.
 
 | Platform | Format | Usage |
 |----------|--------|-------|
-| macOS | `A-Check-v4.1.0-mac.zip` | Unzip, double-click `run.command` |
-| Windows | `A-Check-v4.1.0-windows.zip` | Unzip, double-click `run.bat` |
+| macOS | `A-Check-v4.2.0-mac.zip` | Unzip, double-click `run.command` |
+| Windows | `A-Check-v4.2.0-windows.zip` | Unzip, double-click `run.bat` |
 | Linux / VPS | One-liner (above) | Copy-paste into terminal |
 
 > **First-run notes**:
@@ -73,6 +74,16 @@ Enter any public IP for passive public-intelligence lookup only:
 - Simulated streaming availability inference (⚠️ NOT actual connection tests, reference only)
 - DNS recommendations based on the IP's country/region, plus known-blocked entries
 
+
+### [3] Proxy Diagnostics
+
+Test your SOCKS5 proxy end-to-end:
+
+1. SOCKS5 handshake (RFC 1928) + latency measurement
+2. Proxy egress IP detection (via proxy)
+3. Egress IP reputation check (reuses the 17-source threat intel)
+4. DNS leak check (compares system resolver vs egress IP ASN)
+5. TCP latency / jitter / packet loss stats
 ## Data Sources (17 free sources)
 
 | Category | Sources |
