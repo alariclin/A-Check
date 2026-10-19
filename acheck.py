@@ -14,13 +14,13 @@ IP 信誉检测 v4.1.0 — 全量修复与并发优化公开版 (零 API Key 依
   归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com
 
 用法:
-    python3 ipcheck.py                        # 交互菜单 (默认中文，可切换 6 种语言)
-    python3 ipcheck.py 54.212.224.104         # 被动模式
-    python3 ipcheck.py --active               # 主动模式 (检测当前出口)
-    python3 ipcheck.py --json 54.212.224.104  # 被动模式 JSON 输出
-    python3 ipcheck.py --active --json        # 主动模式 JSON 输出 (运维批量巡检)
-    python3 ipcheck.py --en 54.212.224.104    # 英文输出 (亦支持 --zh-tw / --ja / --ru / --fa)
-    python3 ipcheck.py --explain              # 输出评分规则说明 (支持 6 种语言)
+    python3 acheck.py                        # 交互菜单 (默认中文，可切换 6 种语言)
+    python3 acheck.py 54.212.224.104         # 被动模式
+    python3 acheck.py --active               # 主动模式 (检测当前出口)
+    python3 acheck.py --json 54.212.224.104  # 被动模式 JSON 输出
+    python3 acheck.py --active --json        # 主动模式 JSON 输出 (运维批量巡检)
+    python3 acheck.py --en 54.212.224.104    # 英文输出 (亦支持 --zh-tw / --ja / --ru / --fa)
+    python3 acheck.py --explain              # 输出评分规则说明 (支持 6 种语言)
 """
 import base64
 import glob
@@ -1557,7 +1557,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "IPCheck/4.1.0 (+https://github.com/alariclin/IPCheck)"},
+                           headers={"User-Agent": "ACheck/4.1.0 (+https://github.com/alariclin/ACheck)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3058,7 +3058,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "IPCheck/4.1.0 (+https://github.com/alariclin/IPCheck)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "ACheck/4.1.0 (+https://github.com/alariclin/ACheck)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4329,7 +4329,7 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 def _print_cli_help():
-    help_zh = f"""用法: python3 ipcheck.py [选项] [IPv4地址]
+    help_zh = f"""用法: python3 acheck.py [选项] [IPv4地址]
 
 {T('title')} v{VERSION} — 双模式 IP 信誉与流媒体/网络质量检测工具 (零外部依赖)
 
@@ -4349,13 +4349,13 @@ def _print_cli_help():
   --fa            خروجی به زبان فارسی
 
 示例:
-  python3 ipcheck.py                        # 启动交互式菜单
-  python3 ipcheck.py 8.8.8.8                # 被动模式评估指定 IP
-  python3 ipcheck.py --active               # 主动模式全面检测当前本机网络
-  python3 ipcheck.py --json 8.8.8.8         # 被动模式 JSON 输出
-  python3 ipcheck.py --active --json        # 主动模式 JSON 输出 (运维自动化巡检)
+  python3 acheck.py                        # 启动交互式菜单
+  python3 acheck.py 8.8.8.8                # 被动模式评估指定 IP
+  python3 acheck.py --active               # 主动模式全面检测当前本机网络
+  python3 acheck.py --json 8.8.8.8         # 被动模式 JSON 输出
+  python3 acheck.py --active --json        # 主动模式 JSON 输出 (运维自动化巡检)
 """
-    help_en = f"""Usage: python3 ipcheck.py [OPTIONS] [IPv4_ADDRESS]
+    help_en = f"""Usage: python3 acheck.py [OPTIONS] [IPv4_ADDRESS]
 
 {T('title')} v{VERSION} — Two-mode IP reputation, streaming unlock & network quality checker
 
@@ -4371,11 +4371,11 @@ Options:
                   Set output language
 
 Examples:
-  python3 ipcheck.py                        # Interactive menu
-  python3 ipcheck.py 8.8.8.8                # Passive check on 8.8.8.8
-  python3 ipcheck.py --active               # Active check on current connection
-  python3 ipcheck.py --json 8.8.8.8         # Passive JSON output
-  python3 ipcheck.py --active --json        # Active JSON output
+  python3 acheck.py                        # Interactive menu
+  python3 acheck.py 8.8.8.8                # Passive check on 8.8.8.8
+  python3 acheck.py --active               # Active check on current connection
+  python3 acheck.py --json 8.8.8.8         # Passive JSON output
+  python3 acheck.py --active --json        # Active JSON output
 """
     print(help_zh if LANG in ("zh", "zh-TW") else help_en)
 
@@ -4384,7 +4384,7 @@ def main():
     global LANG
     _init_console()
 
-    parser = _CLIArgumentParser(prog="ipcheck.py", add_help=False)
+    parser = _CLIArgumentParser(prog="acheck.py", add_help=False)
     parser.add_argument("-h", "--help", action="store_true", dest="help")
     parser.add_argument("--active", action="store_true")
     parser.add_argument("--json", action="store_true")

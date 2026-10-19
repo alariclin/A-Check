@@ -1,10 +1,10 @@
 <p align="center">
-  <img width="300" src="icon.webp" alt="IPCheck">
+  <img width="300" src="icon.webp" alt="ACheck">
 </p>
 
 [简体中文](README.zh.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-IPCheck 是一款雙模式 IP 信譽檢測工具：可檢測本機出口 IP，也可查詢任意公網 IP。純 Python 標準庫，零依賴，開箱即用。
+ACheck 是一款雙模式 IP 信譽檢測工具：可檢測本機出口 IP，也可查詢任意公網 IP。純 Python 標準庫，零依賴，開箱即用。
 
 ## 特性
 
@@ -25,18 +25,18 @@ IPCheck 是一款雙模式 IP 信譽檢測工具：可檢測本機出口 IP，�
 
 ```bash
 # VPS / Linux / macOS 一鍵運行（需 Python 3.8+）
-curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -o acheck.py && python3 acheck.py
 
 # Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
+irm https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -OutFile acheck.py; python acheck.py
 ```
 
 ## 下载
 
 | 平台 | 格式 | 用法 |
 |------|------|------|
-| macOS | `IPCheck-v4.1.0-mac.zip` | 解压后双击 `run.command` |
-| Windows | `IPCheck-v4.1.0-windows.zip` | 解压后双击 `run.bat` |
+| macOS | `ACheck-v4.1.0-mac.zip` | 解压后双击 `run.command` |
+| Windows | `ACheck-v4.1.0-windows.zip` | 解压后双击 `run.bat` |
 
 > **首次執行提醒**：
 > - **macOS**：連按兩下 `run.command` 若被 Gatekeeper 攔截（"無法驗證"），按右鍵 → 打開 → 仍要打開；或在終端機執行 `xattr -d com.apple.quarantine run.command`

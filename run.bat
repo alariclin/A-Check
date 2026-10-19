@@ -2,14 +2,14 @@
 setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 set PYTHONUTF8=1
-title IPCheck v4.1.0
+title ACheck v4.1.0
 cd /d "%~dp0"
 
 where python >nul 2>&1
 if not errorlevel 1 (
     python -c "import sys; assert sys.version_info >= (3,8)" >nul 2>&1
     if not errorlevel 1 (
-        python ipcheck.py %*
+        python acheck.py %*
         set "EXIT_CODE=!errorlevel!"
         if "%~1"=="" pause
         exit /b !EXIT_CODE!
@@ -20,7 +20,7 @@ where py >nul 2>&1
 if not errorlevel 1 (
     py -3 -c "import sys; assert sys.version_info >= (3,8)" >nul 2>&1
     if not errorlevel 1 (
-        py -3 ipcheck.py %*
+        py -3 acheck.py %*
         set "EXIT_CODE=!errorlevel!"
         if "%~1"=="" pause
         exit /b !EXIT_CODE!

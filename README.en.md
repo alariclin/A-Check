@@ -1,10 +1,10 @@
 <p align="center">
-  <img width="300" src="icon.webp" alt="IPCheck">
+  <img width="300" src="icon.webp" alt="ACheck">
 </p>
 
 [简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
 
-IPCheck is a dual-mode IP reputation checker: self-check your egress IP or query any public IP. Pure Python standard library, zero dependencies, works out of the box.
+ACheck is a dual-mode IP reputation checker: self-check your egress IP or query any public IP. Pure Python standard library, zero dependencies, works out of the box.
 
 ## Features
 
@@ -25,10 +25,10 @@ IPCheck is a dual-mode IP reputation checker: self-check your egress IP or query
 
 ```bash
 # One-liner for VPS / Linux / macOS (requires Python 3.8+)
-curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -o acheck.py && python3 acheck.py
 
 # Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
+irm https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -OutFile acheck.py; python acheck.py
 
 # Or double-click run.bat after download
 ```
@@ -39,8 +39,8 @@ No third-party dependencies — Python standard library only.
 
 | Platform | Format | Usage |
 |----------|--------|-------|
-| macOS | `IPCheck-v4.1.0-mac.zip` | Unzip, double-click `run.command` |
-| Windows | `IPCheck-v4.1.0-windows.zip` | Unzip, double-click `run.bat` |
+| macOS | `ACheck-v4.1.0-mac.zip` | Unzip, double-click `run.command` |
+| Windows | `ACheck-v4.1.0-windows.zip` | Unzip, double-click `run.bat` |
 | Linux / VPS | One-liner (above) | Copy-paste into terminal |
 
 > **First-run notes**:

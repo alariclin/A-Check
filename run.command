@@ -1,5 +1,5 @@
 #!/bin/bash
-# IPCheck v4.1.0 - macOS 双击运行
+# ACheck v4.1.0 - macOS 双击运行
 # 首次运行如被 Gatekeeper 拦截：右键 → 打开 → 仍要打开
 
 cd "$(dirname "$0")"
@@ -20,4 +20,4 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-exec "$PY" "./ipcheck.py" "$@"
+exec "$PY" "./acheck.py" "$@"

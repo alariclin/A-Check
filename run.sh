@@ -1,5 +1,5 @@
 #!/bin/bash
-# IPCheck 一键运行 (Linux/macOS)
+# ACheck 一键运行 (Linux/macOS)
 
 set -e
 PY=""
@@ -15,4 +15,4 @@ if [ -z "$PY" ]; then
     echo "未找到 Python 3.8+，请先安装: https://www.python.org/downloads/"
     exit 1
 fi
-exec "$PY" "$(dirname "$0")/ipcheck.py" "$@"
+exec "$PY" "$(dirname "$0")/acheck.py" "$@"

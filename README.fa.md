@@ -1,10 +1,10 @@
 <p align="center">
-  <img width="300" src="icon.webp" alt="IPCheck">
+  <img width="300" src="icon.webp" alt="ACheck">
 </p>
 
 [简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md)
 
-IPCheck ابزار دوسویه بررسی اعتبار IP است: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.
+ACheck ابزار دوسویه بررسی اعتبار IP است: خودآزمایی IP خروجی / استعلام هر IP عمومی. فقط کتابخانه استاندارد پایتون، بدون هیچ وابستگی، آماده استفاده.
 
 ## ویژگی‌ها
 
@@ -25,10 +25,10 @@ IPCheck ابزار دوسویه بررسی اعتبار IP است: خودآزم�
 
 ```bash
 # اجرای تک‌خطی برای VPS / Linux / macOS (نیازمند Python 3.8+‎)
-curl -sL https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -o ipcheck.py && python3 ipcheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -o acheck.py && python3 acheck.py
 
 # Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/IPCheck/main/ipcheck.py -OutFile ipcheck.py; python ipcheck.py
+irm https://raw.githubusercontent.com/alariclin/ACheck/main/acheck.py -OutFile acheck.py; python acheck.py
 ```
 
 > **نکات اجرای اول**:
