@@ -1,5 +1,5 @@
 #!/bin/bash
-# A-Check v4.3.1 - macOS 双击运行
+# A-Check - macOS 双击运行
 # 首次运行如被 Gatekeeper 拦截：右键 → 打开 → 仍要打开
 
 cd "$(dirname "$0")"

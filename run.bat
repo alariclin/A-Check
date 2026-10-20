@@ -2,7 +2,7 @@
 setlocal EnableDelayedExpansion
 chcp 65001 >nul 2>&1
 set PYTHONUTF8=1
-title A-Check v4.3.1
+title A-Check
 cd /d "%~dp0"
 
 where python >nul 2>&1

@@ -5,7 +5,7 @@
 <p align="center">اعتبار IP · عیب‌یابی پروکسی · انتخاب دسته‌ای گره‌ها — ابزار تک‌فایلی پایتون</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.12.0-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/release-v4.12.1-1f883d" alt="release">
   <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
@@ -56,7 +56,7 @@ python3 acheck.py 8.8.8.8     # استعلام هر IP عمومی
 python3 acheck.py --active    # خودآزمایی
 ```
 
-بسته‌های macOS / Windows / Linux در صفحه [Releases](https://github.com/alariclin/A-Check/releases) هستند (`A-Check-v4.12.0-mac.zip` / `A-Check-v4.12.0-windows.zip` / `A-Check-v4.12.0-linux.zip`) — از حالت فشرده خارج کنید و `run.command` / `run.bat` / `run.sh` را اجرا کنید.
+بسته‌های macOS / Windows / Linux در صفحه [Releases](https://github.com/alariclin/A-Check/releases) هستند (`A-Check-v4.12.1-mac.zip` / `A-Check-v4.12.1-windows.zip` / `A-Check-v4.12.1-linux.zip`) — از حالت فشرده خارج کنید و `run.command` / `run.bat` / `run.sh` را اجرا کنید.
 
 ## روش استفاده
 
