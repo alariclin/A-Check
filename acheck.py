@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.5.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.6.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 import argparse
 import http.client
 
-VERSION = "4.5.0"
+VERSION = "4.6.0"
 
 
 def _init_console():
@@ -92,16 +92,15 @@ STR = {
         "back": "返回上级",
         "checking": "检测中",
         "sec_basic": "[1] 基础信息与 ASN/BGP",
-        "sec_type": "[1.5] IP类型属性",
-        "sec_loc": "[1.6] 多源位置对比",
+        "sec_type": "IP类型属性",
+        "sec_loc": "多源位置对比",
         "sec_threat": "[2] 威胁情报",
-        "sec_fraud": "[3] 欺诈评分",
-        "sec_matrix": "[3.5] 风险因子矩阵",
-        "sec_dims": "[4] 维度评分 (各 0-100)",
+        "sec_fraud": "[4] 欺诈与维度评分",
+        "sec_matrix": "[3] 风险因子矩阵",
         "sec_complete": "[5] 数据完整度与置信度",
         "sec_stream": "[6] 流媒体及AI服务解锁检测 (主动)",
         "sec_stream_passive": "[6] 流媒体可用性推测 (被动)",
-        "sec_mail": "[7] 25端口发信及黑名单检测",
+        "sec_mail": "25端口发信及黑名单检测",
         "sec_sys": "系统信息",
         "sec_dns": "DNS 测试与推荐",
         "sec_dns_rec": "推荐 DNS",
@@ -294,16 +293,15 @@ STR = {
         "back": "Back",
         "checking": "Checking",
         "sec_basic": "[1] Basic Info & ASN/BGP",
-        "sec_type": "[1.5] IP Type Attributes",
-        "sec_loc": "[1.6] Multi-source Location",
+        "sec_type": "IP Type Attributes",
+        "sec_loc": "Multi-source Location",
         "sec_threat": "[2] Threat Intelligence",
-        "sec_fraud": "[3] Fraud Scores",
-        "sec_matrix": "[3.5] Risk Factor Matrix",
-        "sec_dims": "[4] Dimension Scores (0-100 each)",
+        "sec_fraud": "[4] Fraud & Dimension Scores",
+        "sec_matrix": "[3] Risk Factor Matrix",
         "sec_complete": "[5] Data Completeness & Confidence",
         "sec_stream": "[6] Streaming & AI Unlock Test (Active)",
         "sec_stream_passive": "[6] Streaming Availability Inference (Passive)",
-        "sec_mail": "[7] Port 25 Sending & Blacklist",
+        "sec_mail": "Port 25 Sending & Blacklist",
         "sec_sys": "System Info",
         "sec_dns": "DNS Test & Recommendations",
         "sec_dns_rec": "Recommended DNS",
@@ -496,16 +494,15 @@ STR = {
         "back": "返回上級",
         "checking": "檢測中",
         "sec_basic": "[1] 基礎資訊與 ASN/BGP",
-        "sec_type": "[1.5] IP類型屬性",
-        "sec_loc": "[1.6] 多源位置對比",
+        "sec_type": "IP類型屬性",
+        "sec_loc": "多源位置對比",
         "sec_threat": "[2] 威脅情報",
-        "sec_fraud": "[3] 欺詐評分",
-        "sec_matrix": "[3.5] 風險因子矩陣",
-        "sec_dims": "[4] 維度評分 (各 0-100)",
+        "sec_fraud": "[4] 欺詐與維度評分",
+        "sec_matrix": "[3] 風險因子矩陣",
         "sec_complete": "[5] 數據完整度與置信度",
         "sec_stream": "[6] 串流媒體及AI服務解鎖檢測 (主動)",
         "sec_stream_passive": "[6] 串流媒體可用性推測 (被動)",
-        "sec_mail": "[7] 25端口發信及黑名單檢測",
+        "sec_mail": "25端口發信及黑名單檢測",
         "sec_sys": "系統資訊",
         "sec_dns": "DNS 測試與推薦",
         "sec_dns_rec": "推薦 DNS",
@@ -698,16 +695,15 @@ STR = {
         "back": "戻る",
         "checking": "検査中",
         "sec_basic": "[1] 基本情報と ASN/BGP",
-        "sec_type": "[1.5] IPタイプ属性",
-        "sec_loc": "[1.6] 複数ソース位置比較",
+        "sec_type": "IPタイプ属性",
+        "sec_loc": "複数ソース位置比較",
         "sec_threat": "[2] 脅威インテリジェンス",
-        "sec_fraud": "[3] 不正スコア",
-        "sec_matrix": "[3.5] リスク因子マトリックス",
-        "sec_dims": "[4] ディメンションスコア (各 0-100)",
+        "sec_fraud": "[4] 不正・次元スコア",
+        "sec_matrix": "[3] リスク因子マトリックス",
         "sec_complete": "[5] データ完全性と信頼度",
         "sec_stream": "[6] ストリーミング/AIサービス検出 (アクティブ)",
         "sec_stream_passive": "[6] ストリーミング利用可否推測 (パッシブ)",
-        "sec_mail": "[7] 25番ポート送信とブラックリスト検出",
+        "sec_mail": "25番ポート送信とブラックリスト検出",
         "sec_sys": "システム情報",
         "sec_dns": "DNSテストと推奨",
         "sec_dns_rec": "推奨DNS",
@@ -900,16 +896,15 @@ STR = {
         "back": "Назад",
         "checking": "Проверка",
         "sec_basic": "[1] Основная информация и ASN/BGP",
-        "sec_type": "[1.5] Атрибуты типа IP",
-        "sec_loc": "[1.6] Сравнение местоположения",
+        "sec_type": "Атрибуты типа IP",
+        "sec_loc": "Сравнение местоположения",
         "sec_threat": "[2] Данные об угрозах",
-        "sec_fraud": "[3] Оценка мошенничества",
-        "sec_matrix": "[3.5] Матрица факторов риска",
-        "sec_dims": "[4] Оценки по измерениям (0-100)",
+        "sec_fraud": "[4] Мошенничество и измерения",
+        "sec_matrix": "[3] Матрица факторов риска",
         "sec_complete": "[5] Полнота данных и достоверность",
         "sec_stream": "[6] Проверка стриминга/AI (активная)",
         "sec_stream_passive": "[6] Оценка доступности стриминга (пассивная)",
-        "sec_mail": "[7] Порт 25 и чёрные списки",
+        "sec_mail": "Порт 25 и чёрные списки",
         "sec_sys": "Информация о системе",
         "sec_dns": "Тест и рекомендации DNS",
         "sec_dns_rec": "Рекомендуемые DNS",
@@ -1102,16 +1097,15 @@ STR = {
         "back": "بازگشت",
         "checking": "در حال بررسی",
         "sec_basic": "[1] اطلاعات پایه و ASN/BGP",
-        "sec_type": "[1.5] ویژگی‌های نوع IP",
-        "sec_loc": "[1.6] مقایسه موقعیت چندمنبعی",
+        "sec_type": "ویژگی‌های نوع IP",
+        "sec_loc": "مقایسه موقعیت چندمنبعی",
         "sec_threat": "[2] اطلاعات تهدید",
-        "sec_fraud": "[3] امتیاز تقلب",
-        "sec_matrix": "[3.5] ماتریس عوامل خطر",
-        "sec_dims": "[4] امتیاز ابعاد (هر یک 0-100)",
+        "sec_fraud": "[4] امتیاز تقلب و ابعاد",
+        "sec_matrix": "[3] ماتریس عوامل خطر",
         "sec_complete": "[5] کامل بودن داده و اطمینان",
         "sec_stream": "[6] بررسی استریم/هوش مصنوعی (فعال)",
         "sec_stream_passive": "[6] تخمین دسترسی استریم (غیرفعال)",
-        "sec_mail": "[7] ارسال پورت 25 و لیست سیاه",
+        "sec_mail": "ارسال پورت 25 و لیست سیاه",
         "sec_sys": "اطلاعات سیستم",
         "sec_dns": "تست و پیشنهاد DNS",
         "sec_dns_rec": "DNS پیشنهادی",
@@ -1930,7 +1924,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.5.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.6.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2261,7 +2255,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.5.0 免 Key 公开版):
+评分规则 (v4.6.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2283,7 +2277,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.5.0 免 Key 公開版):
+評分規則 (v4.6.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2305,7 +2299,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.5.0 Keyless Public Edition):
+Scoring rules (v4.6.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2327,7 +2321,7 @@ Scoring rules (v4.5.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.5.0 キー不要公開版):
+スコアリングルール (v4.6.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2349,7 +2343,7 @@ Scoring rules (v4.5.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.5.0 Публичная версия без ключей):
+Правила оценки (v4.6.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2371,7 +2365,7 @@ Scoring rules (v4.5.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.5.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.6.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3001,7 +2995,7 @@ def _print_streaming_inference(res):
         print()
 
 
-def print_report(res, include_streaming_inference=True):
+def print_report(res, include_streaming_inference=True, sysinfo=None):
     s = res["sources"]
     prof = res.get("profile") or _build_unified_profile(s)
     scs = res["scores"]
@@ -3109,8 +3103,7 @@ def print_report(res, include_streaming_inference=True):
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
             return " ".join(txt.split())
 
-        # 逐源判定: 以 (国家, 城市) 投票取共识, 与共识一致 ✓, 不一致 ?
-        # (旧逻辑拿整串比对: 无 region 字段的源被格式差异误伤, 全员 ?)
+        # 方案 C 三级分档: 与共识一致 ✓ / 同国异城 ? / 异国 ✗ / 无城市无法判定 空白
         votes = {}
         for _, _, co, ci in locs:
             if ci:
@@ -3119,15 +3112,23 @@ def print_report(res, include_streaming_inference=True):
         consensus = max(votes.items(), key=lambda kv: kv[1])[0] if votes else None
         any_diff = False
         for name, loc, co, ci in locs:
-            if consensus is None:
-                agree = True
-            elif ci:
-                agree = (_norm(co), _norm(ci)) == consensus
+            if ci and consensus:
+                if (_norm(co), _norm(ci)) == consensus:
+                    mark = _c(C.green, "✓")
+                elif _norm(co) != consensus[0]:
+                    mark = _c(C.red, "✗")
+                    any_diff = True
+                else:
+                    mark = _c(C.yellow, "?")
+                    any_diff = True
+            elif consensus:
+                if _norm(co) == consensus[0]:
+                    mark = " "
+                else:
+                    mark = _c(C.red, "✗")
+                    any_diff = True
             else:
-                agree = _norm(co) == consensus[0]
-            if not agree:
-                any_diff = True
-            mark = _c(C.green, "✓") if agree else _c(C.yellow, "?")
+                mark = " "
             print(f"  {mark} {name:<12} {loc}")
         if any_diff:
             print(f"  {_c(C.yellow, T('loc_inconsistent'))}")
@@ -3135,6 +3136,10 @@ def print_report(res, include_streaming_inference=True):
         print(f"  {T('no_loc_data')}")
     if pc.get("ok") and pc.get("range"):
         print(f"  {T('ip_range')}: {pc['range']}")
+
+    # 系统信息 (主动模式: 并入 [1] 组尾, print_system_info 自带小标题)
+    if sysinfo:
+        print_system_info(sysinfo[0], sysinfo[1])
 
     # [2] 威胁情报
     _section(T("sec_threat"))
@@ -3271,19 +3276,8 @@ def print_report(res, include_streaming_inference=True):
     else:
         print(f"  {_c(C.dim, '?')} ip-api.com: {T('unverifiable')}")
 
-    # [3] 欺诈评分
-    _section(T("sec_fraud"))
+    # [3] 风险因子矩阵
     sc = s.get("scamalytics", {})
-    if not sc.get("ok"):
-        print(f"  Scamalytics: {_c(C.dim, T('unverifiable'))}")
-    else:
-        fs = sc.get("fraud_score", 0)
-        bar = _risk_bar(fs)[0]
-        lvl = sc.get("risk", "")
-        print(f"  Scamalytics: {fs}/100 {f'({lvl})' if lvl else ''}")
-        print(f"  [{bar}] {fs}/100")
-
-    # [3.5] 风险因子矩阵
     _section(T("sec_matrix"))
 
     def _m3(v):
@@ -3369,8 +3363,18 @@ def print_report(res, include_streaming_inference=True):
         ])
     )
 
-    # [4] 维度评分
-    _section(T("sec_dims"))
+    # [4] 欺诈与维度评分 (Scamalytics + 四维 + 综合)
+    _section(T("sec_fraud"))
+    sc = s.get("scamalytics", {})
+    if not sc.get("ok"):
+        print(f"  Scamalytics: {_c(C.dim, T('unverifiable'))}")
+    else:
+        fs = sc.get("fraud_score", 0)
+        bar = _risk_bar(fs)[0]
+        lvl = sc.get("risk", "")
+        print(f"  Scamalytics: {fs}/100 {f'({lvl})' if lvl else ''}")
+        print(f"  [{bar}] {fs}/100")
+
     dims = [
         (T("dim_threat"), scs["threat"]),
         (T("dim_fraud"), scs["fraud"]),
@@ -3451,7 +3455,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.5.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.6.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4615,12 +4619,11 @@ def run_active(json_mode=False):
         print(f"  {_c(C.dim, T('egress_note'))}\n")
 
     res = run_passive(egress)
-    if not json_mode:
-        print_report(res, include_streaming_inference=False)
     si = get_system_info()
     io_res = disk_io_test()
     if not json_mode:
-        print_system_info(si, io_res)
+        print_report(res, include_streaming_inference=False,
+                     sysinfo=(si, io_res))
         _section(T("sec_stream"))
 
     streaming_json = _run_streaming_table(egress, json_mode=json_mode)
@@ -5725,6 +5728,7 @@ def main():
         res = run_passive(ip)
         print_report(res)
         recommend_dns_for_ip(res["profile"].get("country", ""))
+        print_speed_section()
         return
 
     # 交互菜单 (兼容 curl | python3 - 管道运行)
@@ -5833,6 +5837,7 @@ def main():
                     run_proxy_diag(phost, pport, username=puser,
                                    password=ppass, json_mode=False)
             elif choice == "2":
+                _did_query = False
                 while True:
                     inp = input(T("prompt_ip")).strip().lower()
                     if inp == "q":
@@ -5857,6 +5862,9 @@ def main():
                     res = run_passive(ip)
                     print_report(res)
                     recommend_dns_for_ip(res["profile"].get("country", ""))
+                    _did_query = True
+                if _did_query:
+                    print_speed_section()
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
