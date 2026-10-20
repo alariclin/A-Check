@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.4.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.5.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 import argparse
 import http.client
 
-VERSION = "4.4.0"
+VERSION = "4.5.0"
 
 
 def _init_console():
@@ -138,16 +138,15 @@ STR = {
         "done": "检测完成",
         "m_batch": "批量节点测速优选",
         "m_speed": "网络测速（多地区）",
-        "sec_speed_regions": "多地区下载测速",
         "speed_col_region": "地区",
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
         "speed_note": "※ 多连接峰值口径: 与单连接实际下载速度有差异, 仅供参考",
-        "diag_speed_testing": "代理吞吐测速中 (Cloudflare)…",
-        "diag_speed_ok": "下载 %.1f Mbps · 上传 %.1f Mbps",
+        "diag_speed_testing": "代理吞吐测速中 (多地区节点)…",
+        "diag_speed_ok": "最快线路: %s · 下载 %.1f Mbps",
         "diag_speed_fail": "吞吐测速失败",
         "batch_tp_testing": "测最优节点吞吐中…",
-        "batch_tp_ok": "★ 最优节点实测下载: %.1f Mbps (经代理)",
+        "batch_tp_ok": "★ 最优节点实测下载: %.1f Mbps (经代理 · %s)",
         "batch_hint": "逐行粘贴节点 (host:port 或 socks5://[user:pass@]host:port)，空行开始测试，b 返回",
         "batch_best": "最优",
         "batch_dead": "不可用",
@@ -271,11 +270,6 @@ STR = {
         "virt_phys": "物理机",
         "virt_vm": "虚拟机",
         "virt_container": "容器",
-        "dl_test": "下载测试",
-        "ul_test": "上传测试",
-        "dl_label": "下载",
-        "ul_label": "上传",
-        "speed_fail": "测速失败",
         "infer_avail": "可能可用",
         "infer_limit": "可能受限",
         "infer_block": "可能屏蔽",
@@ -346,16 +340,15 @@ STR = {
         "done": "Check complete",
         "m_batch": "Batch node speed test & pick",
         "m_speed": "Speed test (regions)",
-        "sec_speed_regions": "Regional download speed",
         "speed_col_region": "Region",
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
         "speed_note": "※ Multi-connection peak throughput; differs from single-connection downloads, for reference only",
-        "diag_speed_testing": "Testing proxy throughput (Cloudflare)…",
-        "diag_speed_ok": "Download %.1f Mbps · Upload %.1f Mbps",
+        "diag_speed_testing": "Testing proxy throughput (regional nodes)…",
+        "diag_speed_ok": "Fastest: %s · Download %.1f Mbps",
         "diag_speed_fail": "Throughput test failed",
         "batch_tp_testing": "Testing best node throughput…",
-        "batch_tp_ok": "★ Best node measured download: %.1f Mbps (via proxy)",
+        "batch_tp_ok": "★ Best node measured download: %.1f Mbps (via proxy · %s)",
         "batch_hint": "Paste nodes line by line (host:port or socks5://[user:pass@]host:port), empty line to start, b back",
         "batch_best": "Best",
         "batch_dead": "unusable",
@@ -479,11 +472,6 @@ STR = {
         "virt_phys": "Physical",
         "virt_vm": "VM",
         "virt_container": "Container",
-        "dl_test": "Download test",
-        "ul_test": "Upload test",
-        "dl_label": "Download",
-        "ul_label": "Upload",
-        "speed_fail": "Speed test failed",
         "infer_avail": "Likely OK",
         "infer_limit": "May limit",
         "infer_block": "May block",
@@ -554,16 +542,15 @@ STR = {
         "done": "檢測完成",
         "m_batch": "批量節點測速優選",
         "m_speed": "網路測速（多地區）",
-        "sec_speed_regions": "多地區下載測速",
         "speed_col_region": "地區",
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
         "speed_note": "※ 多連接峰值口徑: 與單連接實際下載速度有差異, 僅供參考",
-        "diag_speed_testing": "代理吞吐測速中 (Cloudflare)…",
-        "diag_speed_ok": "下載 %.1f Mbps · 上傳 %.1f Mbps",
+        "diag_speed_testing": "代理吞吐測速中 (多地區節點)…",
+        "diag_speed_ok": "最快線路: %s · 下載 %.1f Mbps",
         "diag_speed_fail": "吞吐測速失敗",
         "batch_tp_testing": "測最優節點吞吐中…",
-        "batch_tp_ok": "★ 最優節點實測下載: %.1f Mbps (經代理)",
+        "batch_tp_ok": "★ 最優節點實測下載: %.1f Mbps (經代理 · %s)",
         "batch_hint": "逐行粘貼節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
         "batch_best": "最優",
         "batch_dead": "不可用",
@@ -687,11 +674,6 @@ STR = {
         "virt_phys": "實體機",
         "virt_vm": "虛擬機",
         "virt_container": "容器",
-        "dl_test": "下載測試",
-        "ul_test": "上傳測試",
-        "dl_label": "下載",
-        "ul_label": "上傳",
-        "speed_fail": "測速失敗",
         "infer_avail": "可能可用",
         "infer_limit": "可能受限",
         "infer_block": "可能屏蔽",
@@ -762,16 +744,15 @@ STR = {
         "done": "チェック完了",
         "m_batch": "ノード一括速度テスト",
         "m_speed": "速度テスト（地域別）",
-        "sec_speed_regions": "地域別ダウンロード速度",
         "speed_col_region": "地域",
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
         "speed_note": "※ 複数接続のピーク値です。単一接続の実ダウンロードとは異なります（参考値）",
-        "diag_speed_testing": "プロキシのスループットを測定中 (Cloudflare)…",
-        "diag_speed_ok": "ダウンロード %.1f Mbps · アップロード %.1f Mbps",
+        "diag_speed_testing": "プロキシのスループットを測定中 (地域別ノード)…",
+        "diag_speed_ok": "最速: %s · ダウンロード %.1f Mbps",
         "diag_speed_fail": "スループット測定に失敗",
         "batch_tp_testing": "最速ノードのスループットを測定中…",
-        "batch_tp_ok": "★ 最速ノード実測ダウンロード: %.1f Mbps (プロキシ経由)",
+        "batch_tp_ok": "★ 最速ノード実測ダウンロード: %.1f Mbps (プロキシ経由 · %s)",
         "batch_hint": "ノードを1行ずつ貼り付け (host:port または socks5://[user:pass@]host:port)、空行で開始、b 戻る",
         "batch_best": "最速",
         "batch_dead": "使用不可",
@@ -895,11 +876,6 @@ STR = {
         "virt_phys": "物理マシン",
         "virt_vm": "仮想マシン",
         "virt_container": "コンテナ",
-        "dl_test": "ダウンロード測定",
-        "ul_test": "アップロード測定",
-        "dl_label": "下り",
-        "ul_label": "上り",
-        "speed_fail": "測定失敗",
         "infer_avail": "利用可能",
         "infer_limit": "制限あり",
         "infer_block": "ブロック",
@@ -970,16 +946,15 @@ STR = {
         "done": "Проверка завершена",
         "m_batch": "Пакетный тест узлов",
         "m_speed": "Тест скорости (регионы)",
-        "sec_speed_regions": "Скорость загрузки по регионам",
         "speed_col_region": "Регион",
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
         "speed_note": "※ Пиковая пропускная способность в несколько потоков; отличается от одиночной загрузки, только для справки",
-        "diag_speed_testing": "Измерение пропускной способности прокси (Cloudflare)…",
-        "diag_speed_ok": "Загрузка %.1f Mbps · Отдача %.1f Mbps",
+        "diag_speed_testing": "Измерение пропускной способности прокси (региональные узлы)…",
+        "diag_speed_ok": "Быстрее всего: %s · Загрузка %.1f Mbps",
         "diag_speed_fail": "Тест пропускной способности не удался",
         "batch_tp_testing": "Измерение пропускной способности лучшего узла…",
-        "batch_tp_ok": "★ Лучший узел, измеренная загрузка: %.1f Mbps (через прокси)",
+        "batch_tp_ok": "★ Лучший узел, измеренная загрузка: %.1f Mbps (через прокси · %s)",
         "batch_hint": "Вставляйте узлы по одному (host:port или socks5://[user:pass@]host:port), пустая строка — старт, b назад",
         "batch_best": "Лучший",
         "batch_dead": "недоступен",
@@ -1103,11 +1078,6 @@ STR = {
         "virt_phys": "Физ. сервер",
         "virt_vm": "ВМ",
         "virt_container": "Контейнер",
-        "dl_test": "Тест загрузки",
-        "ul_test": "Тест отдачи",
-        "dl_label": "Скачивание",
-        "ul_label": "Отдача",
-        "speed_fail": "Ошибка теста скорости",
         "infer_avail": "Доступно",
         "infer_limit": "Ограничено",
         "infer_block": "Заблок.",
@@ -1178,16 +1148,15 @@ STR = {
         "done": "بررسی کامل شد",
         "m_batch": "تست دسته‌ای گره‌ها",
         "m_speed": "تست سرعت (مناطق)",
-        "sec_speed_regions": "سرعت دانلود منطقه‌ای",
         "speed_col_region": "منطقه",
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
         "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
-        "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (Cloudflare)…",
-        "diag_speed_ok": "دانلود %.1f Mbps · آپلود %.1f Mbps",
+        "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (گره‌های منطقه‌ای)…",
+        "diag_speed_ok": "سریع‌ترین: %s · دانلود %.1f Mbps",
         "diag_speed_fail": "تست توان ناموفق بود",
         "batch_tp_testing": "در حال اندازه‌گیری توان بهترین گره…",
-        "batch_tp_ok": "★ دانلود اندازه‌گیری‌شده بهترین گره: %.1f Mbps (از طریق پروکسی)",
+        "batch_tp_ok": "★ دانلود اندازه‌گیری‌شده بهترین گره: %.1f Mbps (از طریق پروکسی · %s)",
         "batch_hint": "گره‌ها را خط به خط وارد کنید (host:port یا socks5://[user:pass@]host:port)، خط خالی شروع، b بازگشت",
         "batch_best": "بهترین",
         "batch_dead": "غیرقابل استفاده",
@@ -1311,11 +1280,6 @@ STR = {
         "virt_phys": "فیزیکی",
         "virt_vm": "ماشین مجازی",
         "virt_container": "کانتینر",
-        "dl_test": "تست دانلود",
-        "ul_test": "تست آپلود",
-        "dl_label": "دانلود",
-        "ul_label": "آپلود",
-        "speed_fail": "تست سرعت ناموفق بود",
         "infer_avail": "احتمالاً باز",
         "infer_limit": "احتمال محدودیت",
         "infer_block": "احتمال مسدودی",
@@ -1966,7 +1930,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.4.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.5.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2297,7 +2261,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.4.0 免 Key 公开版):
+评分规则 (v4.5.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2319,7 +2283,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.4.0 免 Key 公開版):
+評分規則 (v4.5.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2341,7 +2305,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.4.0 Keyless Public Edition):
+Scoring rules (v4.5.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2363,7 +2327,7 @@ Scoring rules (v4.4.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.4.0 キー不要公開版):
+スコアリングルール (v4.5.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2385,7 +2349,7 @@ Scoring rules (v4.4.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.4.0 Публичная версия без ключей):
+Правила оценки (v4.5.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2407,7 +2371,7 @@ Scoring rules (v4.4.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.4.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.5.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3123,29 +3087,49 @@ def print_report(res, include_streaming_inference=True):
     _section(T("sec_loc"))
     locs = []
     if wi.get("ok"):
-        locs.append(("ipwho.is", f"{wi.get('country')} {wi.get('region')} {wi.get('city')}".strip()))
+        locs.append(("ipwho.is", f"{wi.get('country')} {wi.get('region')} {wi.get('city')}".strip(),
+                     wi.get("country"), wi.get("city")))
     if ii.get("ok") and (ii.get("country") or ii.get("city")):
-        locs.append(("ipinfo.io", f"{ii.get('country')} {ii.get('region')} {ii.get('city')}".strip()))
+        locs.append(("ipinfo.io", f"{ii.get('country')} {ii.get('region')} {ii.get('city')}".strip(),
+                     ii.get("country"), ii.get("city")))
     if db.get("ok"):
-        locs.append(("DB-IP", f"{db.get('country')} {db.get('state')} {db.get('city')}".strip()))
+        locs.append(("DB-IP", f"{db.get('country')} {db.get('state')} {db.get('city')}".strip(),
+                     db.get("country"), db.get("city")))
     if pc.get("ok") and (pc.get("country") or pc.get("city")):
-        locs.append(("proxycheck", f"{pc.get('country')} {pc.get('city')}".strip()))
+        locs.append(("proxycheck", f"{pc.get('country')} {pc.get('city')}".strip(),
+                     pc.get("country"), pc.get("city")))
     fp = s.get("freeipapi", {})
     if fp.get("ok") and (fp.get("country") or fp.get("city")):
-        locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip()))
+        locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip(),
+                     fp.get("country"), fp.get("city")))
     if locs:
         def _norm(txt):
-            txt = txt.lower().strip()
+            txt = (txt or "").lower().strip()
             txt = txt.replace("united states", "us").replace("china", "cn")
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
-            txt = txt.replace("  ", " ")
             return " ".join(txt.split())
 
-        uniq = len(set(_norm(l) for _, l in locs))
-        for name, loc in locs:
-            mark = _c(C.green, "✓") if uniq <= 2 else _c(C.yellow, "?")
+        # 逐源判定: 以 (国家, 城市) 投票取共识, 与共识一致 ✓, 不一致 ?
+        # (旧逻辑拿整串比对: 无 region 字段的源被格式差异误伤, 全员 ?)
+        votes = {}
+        for _, _, co, ci in locs:
+            if ci:
+                k = (_norm(co), _norm(ci))
+                votes[k] = votes.get(k, 0) + 1
+        consensus = max(votes.items(), key=lambda kv: kv[1])[0] if votes else None
+        any_diff = False
+        for name, loc, co, ci in locs:
+            if consensus is None:
+                agree = True
+            elif ci:
+                agree = (_norm(co), _norm(ci)) == consensus
+            else:
+                agree = _norm(co) == consensus[0]
+            if not agree:
+                any_diff = True
+            mark = _c(C.green, "✓") if agree else _c(C.yellow, "?")
             print(f"  {mark} {name:<12} {loc}")
-        if uniq > 2:
+        if any_diff:
             print(f"  {_c(C.yellow, T('loc_inconsistent'))}")
     else:
         print(f"  {T('no_loc_data')}")
@@ -3467,7 +3451,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.4.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.5.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -3832,98 +3816,6 @@ def check_mx_port25(domain, timeout=4):
         return None
 
 
-def speed_test(duration=8):
-    """Cloudflare 测速: ping + 下载 + 上传 (按实际耗时计算速率，兼容慢速网络)。"""
-    base = "https://speed.cloudflare.com"
-    dl_path = "/__down?bytes=25000000"
-    ul_path = "/__up"
-    result = {}
-
-    try:
-        rtts = []
-        for _ in range(5):
-            t0 = time.time()
-            req = urllib.request.Request(f"{base}/__down?bytes=0", headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=8) as r:
-                r.read(1)
-            rtts.append((time.time() - t0) * 1000)
-        result["ping_ms"] = round(sum(rtts) / len(rtts), 1)
-        result["jitter_ms"] = round(max(rtts) - min(rtts), 1)
-    except Exception:
-        return None
-
-    # 下载测试
-    try:
-        _print_progress(0, 3, T("dl_test"))
-        down_bytes = [0]
-        dl_lock = threading.Lock()
-        t_dl_start = time.time()
-        stop = t_dl_start + duration
-
-        def _dl():
-            while time.time() < stop:
-                try:
-                    req = urllib.request.Request(f"{base}{dl_path}", headers={"User-Agent": UA_BROWSER})
-                    with urllib.request.urlopen(req, timeout=duration + 4) as r:
-                        while time.time() < stop:
-                            chunk = r.read(256 * 1024)
-                            if not chunk:
-                                break
-                            with dl_lock:
-                                down_bytes[0] += len(chunk)
-                except Exception:
-                    break
-
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            list(ex.map(lambda _: _dl(), range(6)))
-        dl_elapsed = max(0.1, time.time() - t_dl_start)
-        result["down_mbps"] = round((down_bytes[0] * 8 / 1e6) / dl_elapsed, 2)
-        _print_progress(1, 3, T("dl_test"))
-    except Exception:
-        result["down_mbps"] = 0.0
-    if result.get("down_mbps", 0) == 0:
-        result["speed_links"] = ["https://www.speedtest.net/", "https://fast.com/"]
-
-    # 上传测试
-    try:
-        _print_progress(2, 3, T("ul_test"))
-        up_bytes = [0]
-        ul_lock = threading.Lock()
-        t_ul_start = time.time()
-        stop = t_ul_start + duration
-        payload = b"x" * (128 * 1024)
-
-        def _ul():
-            while time.time() < stop:
-                try:
-                    req = urllib.request.Request(
-                        f"{base}{ul_path}",
-                        data=payload,
-                        headers={
-                            "User-Agent": UA_BROWSER,
-                            "Content-Type": "application/octet-stream",
-                        },
-                    )
-                    with urllib.request.urlopen(req, timeout=duration + 4) as r:
-                        r.read(1)
-                    with ul_lock:
-                        up_bytes[0] += len(payload)
-                except Exception:
-                    break
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            list(ex.map(lambda _: _ul(), range(4)))
-        ul_elapsed = max(0.1, time.time() - t_ul_start)
-        result["up_mbps"] = round((up_bytes[0] * 8 / 1e6) / ul_elapsed, 2)
-        _print_progress(3, 3, T("ul_test"))
-        if "--json" not in sys.argv:
-            print("\r" + " " * 76 + "\r", end="", flush=True)
-    except Exception:
-        result["up_mbps"] = 0.0
-
-    return result
-
-
 # ============================================================
 # 多地区测速 (借鉴 bench.sh 方法论: 地区节点表 + 多连接并发测峰值)
 # 端点为 Vultr 各机房公共测速文件 (100MB), 2026-10-20 逐个实测可用
@@ -4265,7 +4157,11 @@ def recommend_dns_for_ip(country):
     print()
 
 
-def print_multinode_speed(st=None):
+def print_speed_section(json_mode=False):
+    """网速测试章节: 多地区节点下载测速表 (bench.sh 式, 多连接峰值口径)。
+    返回 rows [{region, latency_ms, down_mbps}]。"""
+    if json_mode:
+        return regional_speed_test()
     _section(T("sec_speed"))
     warn_txt = (
         "※ 仅供参考：实际速度受服务器/路由影响，非运营商承诺最大带宽"
@@ -4273,27 +4169,20 @@ def print_multinode_speed(st=None):
         else "※ For reference only: actual speed varies by server/route, not max ISP bandwidth"
     )
     print(f"  {_c(C.yellow, warn_txt)}")
-    try:
-        if st is None:
-            st = speed_test()
-        if st:
-            pm = f"{st['ping_ms']:.0f}ms"
-            dm = f"{st['down_mbps']:.1f} Mbps"
-            um = f"{st['up_mbps']:.1f} Mbps"
-            if st.get("down_mbps", 0) == 0:
-                print(f"  Ping: {_c(C.green, pm)}  {T('ul_label')}: {_c(C.green, um)}")
-                if st.get("speed_links"):
-                    for link in st["speed_links"]:
-                        print(f"    {link}")
-            else:
-                print(
-                    f"  Ping: {_c(C.green, pm)}  {T('dl_label')}: {_c(C.green, dm)}  {T('ul_label')}: {_c(C.green, um)}"
-                )
-        else:
-            print(f"  {_c(C.dim, T('speed_fail'))}")
-    except Exception:
-        print(f"  {_c(C.dim, T('speed_fail'))}")
-    return st
+    hdr = "  %-22s %-10s %s" % (T("speed_col_region"), T("speed_col_latency"),
+                                T("speed_col_down"))
+    print(_c(C.cyan, hdr))
+
+    def _row(row):
+        lat = "%.0fms" % row["latency_ms"] if row["latency_ms"] is not None \
+            else "-"
+        dl = "%.1f Mbps" % row["down_mbps"] if row["down_mbps"] else "-"
+        line = "  %-22s %-10s %s" % (row["region"], lat, dl)
+        print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
+
+    rows = regional_speed_test(on_result=_row)
+    print(f"  {_c(C.yellow, T('speed_note'))}")
+    return rows
 
 
 def get_system_info():
@@ -4782,10 +4671,7 @@ def run_active(json_mode=False):
             for b in bl[:10]:
                 print(f"    {_c(C.red, '- ' + b)}")
 
-    if not json_mode:
-        st_res = print_multinode_speed(None)
-    else:
-        st_res = speed_test()
+    st_res = print_speed_section(json_mode=json_mode)
 
     res["active"] = {
         "system": si,
@@ -4979,15 +4865,15 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self.sock = ctx.wrap_socket(raw, server_hostname=self.host)
 
 
-def _dl_proxy_worker(ph, pp, user, pwd, stop, counter, lock):
-    """经代理下载计数 worker: Cloudflare __down 循环拉流。
+def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
+    """经代理下载计数 worker: 对指定地区端点循环拉流。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
     while time.time() < stop and fails < 3:
         try:
-            conn = _SocksHTTPS("speed.cloudflare.com", ph, pp,
+            conn = _SocksHTTPS(host, ph, pp,
                                username=user, password=pwd, timeout=10)
-            conn.request("GET", "/__down?bytes=25000000",
+            conn.request("GET", path,
                          headers={"User-Agent": UA_BROWSER,
                                   "Connection": "close"})
             resp = conn.getresponse()
@@ -5004,57 +4890,43 @@ def _dl_proxy_worker(ph, pp, user, pwd, stop, counter, lock):
             time.sleep(0.2)
 
 
-def _ul_proxy_worker(ph, pp, user, pwd, stop, counter, lock):
-    """经代理上传计数 worker: Cloudflare __up 循环 POST。
-    单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
-    payload = b"x" * (128 * 1024)
-    fails = 0
-    while time.time() < stop and fails < 3:
-        try:
-            conn = _SocksHTTPS("speed.cloudflare.com", ph, pp,
-                               username=user, password=pwd, timeout=10)
-            conn.request("POST", "/__up", body=payload,
-                         headers={"User-Agent": UA_BROWSER,
-                                  "Content-Type": "application/octet-stream",
-                                  "Connection": "close"})
-            resp = conn.getresponse()
-            resp.read()
-            conn.close()
-            with lock:
-                counter[0] += len(payload)
-            fails = 0
-        except Exception:
-            fails += 1
-            time.sleep(0.2)
-
-
-def proxy_throughput(ph, pp, username=None, password=None, duration=6,
-                     include_upload=True):
-    """经 SOCKS5 代理测吞吐 (Cloudflare 端点, 多连接)。返回 dict 或 None。"""
-    out = {}
+def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
+                           streams=3):
+    """经 SOCKS5 对单个端点多连接下载测速, 返回 Mbps 或 None。"""
     counter, lock = [0], threading.Lock()
     t0 = time.time()
     stop = t0 + duration
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        list(ex.map(lambda _: _dl_proxy_worker(ph, pp, username, password,
+    with ThreadPoolExecutor(max_workers=streams) as ex:
+        list(ex.map(lambda _: _dl_proxy_worker(ph, pp, user, pwd, host, path,
                                                stop, counter, lock),
-                    range(4)))
+                    range(streams)))
     elapsed = max(0.1, time.time() - t0)
     if counter[0] == 0:
         return None
-    out["down_mbps"] = round((counter[0] * 8 / 1e6) / elapsed, 2)
-    if include_upload:
-        counter, lock = [0], threading.Lock()
-        t0 = time.time()
-        stop = t0 + duration
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            list(ex.map(lambda _: _ul_proxy_worker(ph, pp, username, password,
-                                                   stop, counter, lock),
-                        range(4)))
-        elapsed = max(0.1, time.time() - t0)
-        out["up_mbps"] = round((counter[0] * 8 / 1e6) / elapsed, 2) \
-            if counter[0] else 0.0
-    return out
+    return round((counter[0] * 8 / 1e6) / elapsed, 2)
+
+
+# 经代理测速的枢纽地区 (全量地区逐个走代理太慢/耗流量, 取 5 个代表点)
+PROXY_SPEED_HUBS = ["Singapore, SG", "Tokyo, JP", "Los Angeles, US",
+                    "Frankfurt, DE", "London, UK"]
+
+
+def proxy_speed_regions(ph, pp, username=None, password=None, duration=4,
+                        on_result=None):
+    """经 SOCKS5 代理逐枢纽下载测速。返回 (rows, best_row_or_None)。"""
+    hosts = dict(SPEED_REGIONS)
+    rows = []
+    for name in PROXY_SPEED_HUBS:
+        mbps = measure_download_proxy(ph, pp, username, password,
+                                      hosts[name], _SPEED_FILE,
+                                      duration=duration, streams=3)
+        row = {"region": name, "down_mbps": mbps}
+        rows.append(row)
+        if on_result:
+            on_result(row)
+    ok = [r for r in rows if r["down_mbps"]]
+    best = max(ok, key=lambda r: r["down_mbps"]) if ok else None
+    return rows, best
 
 
 def get_resolver_ips(probes=3, timeout=8):
@@ -5246,17 +5118,28 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     else:
         _note(_c(C.red, T("diag_tcp_fail")))
 
-    # 6. 吞吐 (经代理, Cloudflare 多连接)
+    # 6. 吞吐 (经代理, 多地区枢纽节点下载)
     _note(T("diag_speed_testing"))
+
+    def _hub_row(row):
+        if not json_mode:
+            dl = "%.1f Mbps" % row["down_mbps"] if row["down_mbps"] else "-"
+            line = "    %-22s %s" % (row["region"], dl)
+            print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
+
     try:
-        tpz = proxy_throughput(proxy_host, proxy_port, username=username,
-                               password=password)
+        trows, tbest = proxy_speed_regions(proxy_host, proxy_port,
+                                           username=username,
+                                           password=password,
+                                           on_result=_hub_row)
     except Exception:
-        tpz = None
-    out["throughput"] = tpz
-    if tpz:
-        _note(_c(C.green, T("diag_speed_ok") % (tpz.get("down_mbps", 0),
-                                               tpz.get("up_mbps", 0))))
+        trows, tbest = [], None
+    out["throughput"] = {"regions": trows,
+                         "best_mbps": tbest["down_mbps"] if tbest else None,
+                         "best_region": tbest["region"] if tbest else None}
+    if tbest:
+        _note(_c(C.green, T("diag_speed_ok") % (tbest["region"],
+                                               tbest["down_mbps"])))
     else:
         _note(_c(C.dim, T("diag_speed_fail")))
 
@@ -5363,7 +5246,7 @@ def _print_batch_results(results):
 
 
 def _batch_best_throughput(results):
-    """排名后对最优 SOCKS5 节点实测经代理下载吞吐 (附加行, 失败静默)。"""
+    """排名后对最优 SOCKS5 节点实测经代理多地区下载吞吐 (附加行)。"""
     for r in results:
         nd = r["node"]
         usable = r["tcp"].get("ok") and r.get("socks5", {}).get("ok", True)
@@ -5371,13 +5254,14 @@ def _batch_best_throughput(results):
             continue
         print(T("batch_tp_testing"))
         try:
-            tpz = proxy_throughput(nd["host"], nd["port"],
-                                   username=nd["user"], password=nd["pass"],
-                                   duration=6, include_upload=False)
+            _, tbest = proxy_speed_regions(nd["host"], nd["port"],
+                                           username=nd["user"],
+                                           password=nd["pass"], duration=4)
         except Exception:
-            tpz = None
-        if tpz:
-            print(_c(C.green, T("batch_tp_ok") % tpz.get("down_mbps", 0)))
+            tbest = None
+        if tbest:
+            print(_c(C.green, T("batch_tp_ok") % (tbest["down_mbps"],
+                                                 tbest["region"])))
         return
 
 
@@ -5582,29 +5466,12 @@ def print_menu():
 
 
 def run_speed_only(json_mode=False):
-    """菜单/CLI 入口: Cloudflare 就近测速 + 多地区下载测速表。"""
-    out = {"cloudflare": None, "regions": []}
-    st = print_multinode_speed()
-    out["cloudflare"] = st
+    """菜单/CLI 入口: 多地区下载测速表。"""
+    rows = print_speed_section(json_mode=json_mode)
     if json_mode:
-        out["regions"] = regional_speed_test()
-        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
-        return out
-    _section(T("sec_speed_regions"))
-    hdr = "  %-22s %-10s %s" % (T("speed_col_region"), T("speed_col_latency"),
-                                T("speed_col_down"))
-    print(_c(C.cyan, hdr))
-
-    def _row(row):
-        lat = "%.0fms" % row["latency_ms"] if row["latency_ms"] is not None \
-            else "-"
-        dl = "%.1f Mbps" % row["down_mbps"] if row["down_mbps"] else "-"
-        line = "  %-22s %-10s %s" % (row["region"], lat, dl)
-        print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
-
-    out["regions"] = regional_speed_test(on_result=_row)
-    print(f"  {_c(C.yellow, T('speed_note'))}")
-    return out
+        print(json.dumps({"regions": rows}, indent=2, default=str,
+                         ensure_ascii=False))
+    return rows
 
 
 def run_streaming_only():
@@ -5683,7 +5550,7 @@ def _print_cli_help():
                   代理诊断模式 (SOCKS5 握手、代理出口 IP、出口 IP 信誉、DNS 泄漏、TCP 延迟)
   --proxy-user USER / --proxy-pass PASS
                   代理认证 (可选)
-  --speed         多地区测速 (Cloudflare 就近上下行 + 各地区节点下载, 多连接峰值口径)
+  --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
   --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
   --explain       输出评分维度与扣分规则说明
   --zh            使用简体中文输出 (默认)
@@ -5718,7 +5585,7 @@ Options:
                   reputation, DNS leak check, TCP latency)
   --proxy-user USER / --proxy-pass PASS
                   Proxy authentication (optional)
-  --speed         Multi-region speed test (Cloudflare up/down + regional download nodes)
+  --speed         Multi-region speed test (regional download nodes, multi-connection peak)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
   --zh / --zh-tw / --en / --ja / --ru / --fa

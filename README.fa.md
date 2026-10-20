@@ -5,7 +5,7 @@
 <p align="center">اعتبار IP · عیب‌یابی پروکسی · انتخاب دسته‌ای گره‌ها — ابزار تک‌فایلی پایتون</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.4.0-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/release-v4.5.0-1f883d" alt="release">
   <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
@@ -38,7 +38,7 @@
 - **فهرست‌های سیاه**: ۲۹ فهرست DNSBL به‌همراه تطبیق اطلاعات تهدید (Feodo، Emerging Threats، گره‌های خروجی Tor)
 - **عیب‌یابی پروکسی**: هندشیک SOCKS5 و تأخیر، IP خروجی از طریق پروکسی با بررسی مجدد اعتبار، بررسی نشت DNS، آمار تأخیر / جیتر / اتلاف TCP
 - **انتخاب دسته‌ای گره**: چند گره (`host:port` یا `socks5://…`) را بچسبانید؛ تست سرعت همزمان با رتبه‌بندی و علامت‌گذاری خودکار بهترین گره
-- **تست سرعت**: نزدیک‌ترین Cloudflare (آپلود/دانلود) و گره‌های دانلود منطقه‌ای (حداکثر چنداتصالی)؛ عیب‌یابی پروکسی و انتخاب دسته‌ای توان واقعی از طریق پروکسی را اندازه می‌گیرند
+- **تست سرعت**: گره‌های دانلود منطقه‌ای (جدول گره به سبک bench.sh، حداکثر چنداتصالی)؛ عیب‌یابی پروکسی و انتخاب دسته‌ای توان واقعی از طریق پروکسی را اندازه می‌گیرند
 - **خودآزمایی**: بررسی کامل IP خروجی + آزمون‌های DNS (ساده / DoH / DoT) + آزمون ارسال پورت ۲۵ + اطلاعات سیستم و بنچمارک دیسک
 - **بدون وابستگی**: کتابخانه استاندارد خالص پایتون در یک فایل، نسخه عمومی بدون نیاز به کلید API؛ رابط کاربری ۶ زبانه؛ خروجی `--json` برای اسکریپت و اتوماسیون
 
@@ -56,7 +56,7 @@ python3 acheck.py 8.8.8.8     # استعلام هر IP عمومی
 python3 acheck.py --active    # خودآزمایی
 ```
 
-بسته‌های macOS / Windows / Linux در صفحه [Releases](https://github.com/alariclin/A-Check/releases) هستند (`A-Check-v4.4.0-mac.zip` / `A-Check-v4.4.0-windows.zip` / `A-Check-v4.4.0-linux.zip`) — از حالت فشرده خارج کنید و `run.command` / `run.bat` / `run.sh` را اجرا کنید.
+بسته‌های macOS / Windows / Linux در صفحه [Releases](https://github.com/alariclin/A-Check/releases) هستند (`A-Check-v4.5.0-mac.zip` / `A-Check-v4.5.0-windows.zip` / `A-Check-v4.5.0-linux.zip`) — از حالت فشرده خارج کنید و `run.command` / `run.bat` / `run.sh` را اجرا کنید.
 
 ## روش استفاده
 
@@ -67,7 +67,7 @@ python3 acheck.py --active    # خودآزمایی
 | خودآزمایی | `python3 acheck.py --active` | بررسی خروجی + استریمینگ + اطلاعات سیستم |
 | عیب‌یابی پروکسی | `python3 acheck.py --proxy HOST:PORT` | هندشیک / خروجی / نشت DNS / تأخیر (`--proxy-user` و `--proxy-pass` برای احراز هویت) |
 | انتخاب دسته‌ای | `python3 acheck.py --batch گره,گره…` | تست سرعت همزمان و رتبه‌بندی |
-| تست سرعت | `python3 acheck.py --speed` | آپلود/دانلود نزدیک‌ترین + دانلود منطقه‌ای |
+| تست سرعت | `python3 acheck.py --speed` | تست گره‌های دانلود منطقه‌ای |
 | خروجی JSON | افزودن `--json` به هر حالت | برای اسکریپت / اعلان / یکپارچه‌سازی |
 | قوانین امتیازدهی | `python3 acheck.py --explain` | متن کامل قوانین امتیازدهی سه‌بعدی |
 | زبان | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | یا تغییر از داخل منو |

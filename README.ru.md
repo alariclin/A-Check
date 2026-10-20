@@ -5,7 +5,7 @@
 <p align="center">Репутация IP · диагностика прокси · пакетный выбор узлов — однофайловый чекер на Python</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.4.0-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/release-v4.5.0-1f883d" alt="release">
   <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
@@ -38,7 +38,7 @@
 - **Чёрные списки**: 29 списков DNSBL плюс сверка с разведкой угроз (Feodo, Emerging Threats, выходные узлы Tor)
 - **Диагностика прокси**: рукопожатие SOCKS5 и задержка, исходящий IP через прокси с повторной проверкой репутации, проверка утечек DNS, статистика TCP (задержка / джиттер / потери)
 - **Пакетный выбор узлов**: вставьте несколько узлов (`host:port` или `socks5://…`) — параллельный тест скорости с рейтингом, лучший узел помечается автоматически
-- **Тест скорости**: ближайший Cloudflare (вверх/вниз) и региональные узлы загрузки (пик в несколько потоков); диагностика прокси и пакетный выбор измеряют реальную пропускную способность через прокси
+- **Тест скорости**: региональные узлы загрузки (таблица узлов в стиле bench.sh, пик в несколько потоков); диагностика прокси и пакетный выбор измеряют реальную пропускную способность через прокси
 - **Самопроверка**: полная проверка исходящего IP + тесты DNS (обычный / DoH / DoT) + тест отправки через порт 25 + системная информация и бенчмарк диска
 - **Ноль зависимостей**: чистая стандартная библиотека Python в одном файле, публичной версии не нужны API-ключи; интерфейс на 6 языках; вывод `--json` для скриптов и автоматизации
 
@@ -56,7 +56,7 @@ python3 acheck.py 8.8.8.8     # запрос любого публичного I
 python3 acheck.py --active    # самопроверка
 ```
 
-Пакеты для macOS / Windows / Linux — на странице [Releases](https://github.com/alariclin/A-Check/releases) (`A-Check-v4.4.0-mac.zip` / `A-Check-v4.4.0-windows.zip` / `A-Check-v4.4.0-linux.zip`): распаковать и запустить `run.command` / `run.bat` / `run.sh`.
+Пакеты для macOS / Windows / Linux — на странице [Releases](https://github.com/alariclin/A-Check/releases) (`A-Check-v4.5.0-mac.zip` / `A-Check-v4.5.0-windows.zip` / `A-Check-v4.5.0-linux.zip`): распаковать и запустить `run.command` / `run.bat` / `run.sh`.
 
 ## Использование
 
@@ -67,7 +67,7 @@ python3 acheck.py --active    # самопроверка
 | Самопроверка | `python3 acheck.py --active` | Исходящий IP + стриминг + система |
 | Диагностика прокси | `python3 acheck.py --proxy HOST:PORT` | Рукопожатие / исходящий / утечки DNS / задержка (`--proxy-user`, `--proxy-pass` для авторизации) |
 | Пакетный выбор | `python3 acheck.py --batch узел,узел…` | Параллельный тест скорости и рейтинг |
-| Тест скорости | `python3 acheck.py --speed` | Ближайший вверх/вниз + региональная загрузка |
+| Тест скорости | `python3 acheck.py --speed` | Региональная загрузка по узлам |
 | Вывод JSON | добавить `--json` к любому режиму | Для скриптов / уведомлений / интеграций |
 | Правила оценки | `python3 acheck.py --explain` | Полные правила трёхмерной оценки |
 | Язык | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | Или переключение в меню |
