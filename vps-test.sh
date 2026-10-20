@@ -1,5 +1,5 @@
 #!/bin/bash
-# A-Check v4.3.0 VPS 隔离测试 - 跑完自动清理
+# A-Check v4.3.1 VPS 隔离测试 - 跑完自动清理
 set -e
 TDIR=$(mktemp -d /tmp/ipcheck-test-XXXXXX)
 trap "rm -rf $TDIR; echo '[清理] 临时文件已删除'" EXIT

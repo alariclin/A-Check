@@ -42,8 +42,8 @@ No third-party dependencies — Python standard library only.
 
 | Platform | Format | Usage |
 |----------|--------|-------|
-| macOS | `A-Check-v4.3.0-mac.zip` | Unzip, double-click `run.command` |
-| Windows | `A-Check-v4.3.0-windows.zip` | Unzip, double-click `run.bat` |
+| macOS | `A-Check-v4.3.1-mac.zip` | Unzip, double-click `run.command` |
+| Windows | `A-Check-v4.3.1-windows.zip` | Unzip, double-click `run.bat` |
 | Linux / VPS | One-liner (above) | Copy-paste into terminal |
 
 > **First-run notes**:

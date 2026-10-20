@@ -40,8 +40,8 @@ irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile 
 
 | 平台 | 格式 | 用法 |
 |------|------|------|
-| macOS | `A-Check-v4.3.0-mac.zip` | 解压后双击 `run.command` |
-| Windows | `A-Check-v4.3.0-windows.zip` | 解压后双击 `run.bat` |
+| macOS | `A-Check-v4.3.1-mac.zip` | 解压后双击 `run.command` |
+| Windows | `A-Check-v4.3.1-windows.zip` | 解压后双击 `run.bat` |
 
 > **首次运行提醒**：
 > - **macOS**：双击 `run.command` 如被 Gatekeeper 拦截（"无法验证"），右键 → 打开 → 仍要打开；或终端运行 `xattr -d com.apple.quarantine run.command`
