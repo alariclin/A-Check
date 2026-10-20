@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.1.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.3.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -47,7 +47,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 import argparse
 
-VERSION = "4.2.0"
+VERSION = "4.3.0"
 
 
 def _init_console():
@@ -135,6 +135,43 @@ STR = {
         "no_record": "无恶意记录",
         "feodo_c2": "C2 已收录",
         "done": "检测完成",
+        "m_batch": "批量节点测速优选",
+        "batch_hint": "逐行粘贴节点 (host:port 或 socks5://[user:pass@]host:port)，空行开始测试，b 返回",
+        "batch_best": "最优",
+        "batch_dead": "不可用",
+        "batch_col_node": "节点",
+        "batch_col_avg": "平均",
+        "batch_col_jitter": "抖动",
+        "batch_col_loss": "丢包",
+        "batch_col_proto": "握手",
+        "bn_system": "系统",
+        "bn_hardware": "硬件",
+        "bn_network": "网络",
+        "bn_status": "状态",
+        "bn_none": "无",
+        "bn_ok": "可用",
+        "bn_untested": "未测",
+        "bn_fault": "异常",
+        "bn_cores": "核",
+        "grp_ip": "[ IP 信誉检测 ]",
+        "grp_net": "[ 代理与网络诊断 ]",
+        "grp_sys": "[ 系统与设置 ]",
+        "grp_tools": "[ 工具 ]",
+        "m_self": "本机自检 (出口 IP 全检)",
+        "m_query": "查询任意 IP",
+        "m_stream": "流媒体解锁检测",
+        "m_sysinfo": "系统信息与 IO 测试",
+        "m_lang": "切换语言 / Language",
+        "m_proxy": "代理诊断 (SOCKS5)",
+        "m_dnsleak": "DNS 泄漏检测",
+        "m_tcpping": "TCP 延迟测试",
+        "m_explain": "评分规则说明",
+        "m_quit": "退出脚本",
+        "prompt_tcp": "请输入目标 (host:port，b 返回): ",
+        "chip_egress": "出口 IPv4",
+        "chip_ipv6": "IPv6",
+        "chip_dns": "系统 DNS",
+        "prompt_choice2": "请求下发执行代号 [0-10]: ",
         "diag_socks5_testing": "正在测试 SOCKS5 握手 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 握手成功，延迟 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 握手失败: %s",
@@ -295,6 +332,43 @@ STR = {
         "no_record": "No malicious records",
         "feodo_c2": "C2 listed",
         "done": "Check complete",
+        "m_batch": "Batch node speed test & pick",
+        "batch_hint": "Paste nodes line by line (host:port or socks5://[user:pass@]host:port), empty line to start, b back",
+        "batch_best": "Best",
+        "batch_dead": "unusable",
+        "batch_col_node": "Node",
+        "batch_col_avg": "Avg",
+        "batch_col_jitter": "Jitter",
+        "batch_col_loss": "Loss",
+        "batch_col_proto": "HS",
+        "bn_system": "System",
+        "bn_hardware": "Hardware",
+        "bn_network": "Network",
+        "bn_status": "Status",
+        "bn_none": "None",
+        "bn_ok": "OK",
+        "bn_untested": "Untested",
+        "bn_fault": "Fault",
+        "bn_cores": " cores",
+        "grp_ip": "[ IP Reputation ]",
+        "grp_net": "[ Proxy & Network ]",
+        "grp_sys": "[ System & Settings ]",
+        "grp_tools": "[ Tools ]",
+        "m_self": "Self-check (full egress check)",
+        "m_query": "Query any IP",
+        "m_stream": "Streaming unlock test",
+        "m_sysinfo": "System info & IO test",
+        "m_lang": "Language / 切换语言",
+        "m_proxy": "Proxy diagnostics (SOCKS5)",
+        "m_dnsleak": "DNS leak check",
+        "m_tcpping": "TCP latency test",
+        "m_explain": "Scoring rules",
+        "m_quit": "Exit",
+        "prompt_tcp": "Enter target (host:port, b back): ",
+        "chip_egress": "Egress IPv4",
+        "chip_ipv6": "IPv6",
+        "chip_dns": "System DNS",
+        "prompt_choice2": "Enter command code [0-10]: ",
         "diag_socks5_testing": "Testing SOCKS5 handshake %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 handshake OK, latency %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 handshake failed: %s",
@@ -455,6 +529,43 @@ STR = {
         "no_record": "無惡意記錄",
         "feodo_c2": "C2 已收錄",
         "done": "檢測完成",
+        "m_batch": "批量節點測速優選",
+        "batch_hint": "逐行粘貼節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
+        "batch_best": "最優",
+        "batch_dead": "不可用",
+        "batch_col_node": "節點",
+        "batch_col_avg": "平均",
+        "batch_col_jitter": "抖動",
+        "batch_col_loss": "丟包",
+        "batch_col_proto": "握手",
+        "bn_system": "系統",
+        "bn_hardware": "硬體",
+        "bn_network": "網路",
+        "bn_status": "狀態",
+        "bn_none": "無",
+        "bn_ok": "可用",
+        "bn_untested": "未測",
+        "bn_fault": "異常",
+        "bn_cores": "核",
+        "grp_ip": "[ IP 信譽檢測 ]",
+        "grp_net": "[ 代理與網路診斷 ]",
+        "grp_sys": "[ 系統與設定 ]",
+        "grp_tools": "[ 工具 ]",
+        "m_self": "本機自檢 (出口 IP 全檢)",
+        "m_query": "查詢任意 IP",
+        "m_stream": "流媒體解鎖檢測",
+        "m_sysinfo": "系統資訊與 IO 測試",
+        "m_lang": "切換語言 / Language",
+        "m_proxy": "代理診斷 (SOCKS5)",
+        "m_dnsleak": "DNS 洩漏檢測",
+        "m_tcpping": "TCP 延遲測試",
+        "m_explain": "評分規則說明",
+        "m_quit": "退出腳本",
+        "prompt_tcp": "請輸入目標 (host:port，b 返回): ",
+        "chip_egress": "出口 IPv4",
+        "chip_ipv6": "IPv6",
+        "chip_dns": "系統 DNS",
+        "prompt_choice2": "請求下發執行代號 [0-10]: ",
         "diag_socks5_testing": "正在測試 SOCKS5 握手 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 握手成功，延遲 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 握手失敗: %s",
@@ -615,6 +726,43 @@ STR = {
         "no_record": "悪意ある記録なし",
         "feodo_c2": "C2 登録あり",
         "done": "チェック完了",
+        "m_batch": "ノード一括速度テスト",
+        "batch_hint": "ノードを1行ずつ貼り付け (host:port または socks5://[user:pass@]host:port)、空行で開始、b 戻る",
+        "batch_best": "最速",
+        "batch_dead": "使用不可",
+        "batch_col_node": "ノード",
+        "batch_col_avg": "平均",
+        "batch_col_jitter": "ジッター",
+        "batch_col_loss": "ロス",
+        "batch_col_proto": "HS",
+        "bn_system": "システム",
+        "bn_hardware": "ハードウェア",
+        "bn_network": "ネットワーク",
+        "bn_status": "状態",
+        "bn_none": "なし",
+        "bn_ok": "利用可",
+        "bn_untested": "未測定",
+        "bn_fault": "異常",
+        "bn_cores": "コア",
+        "grp_ip": "[ IPレピュテーション ]",
+        "grp_net": "[ プロキシとネットワーク ]",
+        "grp_sys": "[ システムと設定 ]",
+        "grp_tools": "[ ツール ]",
+        "m_self": "セルフチェック (出口IP全検)",
+        "m_query": "任意IP照会",
+        "m_stream": "ストリーミング解錠テスト",
+        "m_sysinfo": "システム情報とIOテスト",
+        "m_lang": "言語切替 / Language",
+        "m_proxy": "プロキシ診断 (SOCKS5)",
+        "m_dnsleak": "DNSリーク確認",
+        "m_tcpping": "TCP遅延テスト",
+        "m_explain": "スコアリングルール",
+        "m_quit": "終了",
+        "prompt_tcp": "ターゲットを入力 (host:port、b 戻る): ",
+        "chip_egress": "出口 IPv4",
+        "chip_ipv6": "IPv6",
+        "chip_dns": "システム DNS",
+        "prompt_choice2": "実行コードを入力 [0-10]: ",
         "diag_socks5_testing": "SOCKS5ハンドシェイクをテスト中 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5ハンドシェイク成功、遅延 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5ハンドシェイク失敗: %s",
@@ -775,6 +923,43 @@ STR = {
         "no_record": "Вредоносных записей нет",
         "feodo_c2": "C2 в списке",
         "done": "Проверка завершена",
+        "m_batch": "Пакетный тест узлов",
+        "batch_hint": "Вставляйте узлы по одному (host:port или socks5://[user:pass@]host:port), пустая строка — старт, b назад",
+        "batch_best": "Лучший",
+        "batch_dead": "недоступен",
+        "batch_col_node": "Узел",
+        "batch_col_avg": "Сред.",
+        "batch_col_jitter": "Джиттер",
+        "batch_col_loss": "Потери",
+        "batch_col_proto": "HS",
+        "bn_system": "Система",
+        "bn_hardware": "Железо",
+        "bn_network": "Сеть",
+        "bn_status": "Статус",
+        "bn_none": "Нет",
+        "bn_ok": "Доступно",
+        "bn_untested": "Не проверено",
+        "bn_fault": "Ошибка",
+        "bn_cores": " ядер",
+        "grp_ip": "[ Репутация IP ]",
+        "grp_net": "[ Прокси и сеть ]",
+        "grp_sys": "[ Система и настройки ]",
+        "grp_tools": "[ Инструменты ]",
+        "m_self": "Самопроверка (полная проверка)",
+        "m_query": "Запрос любого IP",
+        "m_stream": "Тест разблокировки стриминга",
+        "m_sysinfo": "Система и тест IO",
+        "m_lang": "Сменить язык / Language",
+        "m_proxy": "Диагностика прокси (SOCKS5)",
+        "m_dnsleak": "Проверка утечек DNS",
+        "m_tcpping": "Тест задержки TCP",
+        "m_explain": "Правила оценки",
+        "m_quit": "Выход",
+        "prompt_tcp": "Введите цель (host:port, b назад): ",
+        "chip_egress": "Исходящий IPv4",
+        "chip_ipv6": "IPv6",
+        "chip_dns": "Системный DNS",
+        "prompt_choice2": "Введите код команды [0-10]: ",
         "diag_socks5_testing": "Тестирование SOCKS5 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 рукопожатие успешно, задержка %.1f мс",
         "diag_socks5_fail": "✗ Ошибка SOCKS5: %s",
@@ -935,6 +1120,43 @@ STR = {
         "no_record": "رکورد مخربی وجود ندارد",
         "feodo_c2": "C2 در فهرست ثبت شده",
         "done": "بررسی کامل شد",
+        "m_batch": "تست دسته‌ای گره‌ها",
+        "batch_hint": "گره‌ها را خط به خط وارد کنید (host:port یا socks5://[user:pass@]host:port)، خط خالی شروع، b بازگشت",
+        "batch_best": "بهترین",
+        "batch_dead": "غیرقابل استفاده",
+        "batch_col_node": "گره",
+        "batch_col_avg": "میانگین",
+        "batch_col_jitter": "جیتر",
+        "batch_col_loss": "اتلاف",
+        "batch_col_proto": "HS",
+        "bn_system": "سیستم",
+        "bn_hardware": "سخت‌افزار",
+        "bn_network": "شبکه",
+        "bn_status": "وضعیت",
+        "bn_none": "ندارد",
+        "bn_ok": "در دسترس",
+        "bn_untested": "تست نشده",
+        "bn_fault": "خطا",
+        "bn_cores": "هسته",
+        "grp_ip": "[ اعتبار IP ]",
+        "grp_net": "[ پروکسی و شبکه ]",
+        "grp_sys": "[ سیستم و تنظیمات ]",
+        "grp_tools": "[ ابزارها ]",
+        "m_self": "خودآزمایی (بررسی کامل خروجی)",
+        "m_query": "استعلام هر IP",
+        "m_stream": "تست بازکردن استریمینگ",
+        "m_sysinfo": "اطلاعات سیستم و تست IO",
+        "m_lang": "تغییر زبان / Language",
+        "m_proxy": "عیب‌یابی پروکسی (SOCKS5)",
+        "m_dnsleak": "بررسی نشت DNS",
+        "m_tcpping": "تست تأخیر TCP",
+        "m_explain": "قوانین امتیازدهی",
+        "m_quit": "خروج",
+        "prompt_tcp": "هدف را وارد کنید (host:port، b بازگشت): ",
+        "chip_egress": "IPv4 خروجی",
+        "chip_ipv6": "IPv6",
+        "chip_dns": "DNS سیستم",
+        "prompt_choice2": "کد دستور را وارد کنید [0-10]: ",
         "diag_socks5_testing": "در حال تست SOCKS5 %s:%s...",
         "diag_socks5_ok": "✓ اتصال SOCKS5 موفق، تأخیر %.1f میلی‌ثانیه",
         "diag_socks5_fail": "✗ خطای SOCKS5: %s",
@@ -1677,7 +1899,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.1.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.3.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2008,7 +2230,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.1.0 免 Key 公开版):
+评分规则 (v4.3.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2030,7 +2252,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.1.0 免 Key 公開版):
+評分規則 (v4.3.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2052,7 +2274,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.1.0 Keyless Public Edition):
+Scoring rules (v4.3.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2074,7 +2296,7 @@ Scoring rules (v4.1.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.1.0 キー不要公開版):
+スコアリングルール (v4.3.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2096,7 +2318,7 @@ Scoring rules (v4.1.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.1.0 Публичная версия без ключей):
+Правила оценки (v4.3.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2118,7 +2340,7 @@ Scoring rules (v4.1.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.1.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.3.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -2443,7 +2665,7 @@ def run_passive(ip):
 # 报告输出
 # ============================================================
 def _section(title):
-    print(f"\n{_c(C.bold, title)}")
+    print(f"\n{_c(C.cyan, _c(C.bold, title))}")
 
 
 def _type_block(t):
@@ -3178,7 +3400,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.1.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.3.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4242,40 +4464,8 @@ def check_dnsbl(ip, max_lists=29):
     return total, max(0, total - marked), marked, sorted(bl)
 
 
-def run_active(json_mode=False):
-    # 每次运行主动测试前清空会话级缓存，确保切换网络/VPN 后立即生效
-    with _unlock_lock:
-        _unlock_cache.clear()
-    with _cache_lock:
-        _cache.clear()
-
-    if not json_mode:
-        print(f"\n{_c(C.bold, '=' * 60)}")
-        print(f"  {T('title')} v{VERSION}  {T('active_mode')}")
-        print(f"{_c(C.bold, '=' * 60)}")
-        print(f"  {T('detecting_egress')}")
-
-    egress = get_egress_ip()
-    if not egress:
-        if json_mode:
-            print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
-        else:
-            print(f"  {_c(C.red, T('egress_fail'))}")
-        return None
-
-    if not json_mode:
-        print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
-        print(f"  {_c(C.dim, T('egress_note'))}\n")
-
-    res = run_passive(egress)
-    if not json_mode:
-        print_report(res, include_streaming_inference=False)
-    si = get_system_info()
-    io_res = disk_io_test()
-    if not json_mode:
-        print_system_info(si, io_res)
-        _section(T("sec_stream"))
-
+def _run_streaming_table(egress, json_mode=False):
+    """流媒体解锁表 (run_active 与菜单独立入口共用), 返回 streaming_json。"""
     categories = [
         (
             "video",
@@ -4364,7 +4554,44 @@ def run_active(json_mode=False):
                 print("    " + "".join(_pad(rg, 11) for _, (_, rg, _) in results))
             print("    " + "".join(_ul(ul) for _, (_, _, ul) in results))
             print()
+    return streaming_json
 
+
+def run_active(json_mode=False):
+    # 每次运行主动测试前清空会话级缓存，确保切换网络/VPN 后立即生效
+    with _unlock_lock:
+        _unlock_cache.clear()
+    with _cache_lock:
+        _cache.clear()
+
+    if not json_mode:
+        print(f"\n{_c(C.bold, '=' * 60)}")
+        print(f"  {T('title')} v{VERSION}  {T('active_mode')}")
+        print(f"{_c(C.bold, '=' * 60)}")
+        print(f"  {T('detecting_egress')}")
+
+    egress = get_egress_ip()
+    if not egress:
+        if json_mode:
+            print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
+        else:
+            print(f"  {_c(C.red, T('egress_fail'))}")
+        return None
+
+    if not json_mode:
+        print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+        print(f"  {_c(C.dim, T('egress_note'))}\n")
+
+    res = run_passive(egress)
+    if not json_mode:
+        print_report(res, include_streaming_inference=False)
+    si = get_system_info()
+    io_res = disk_io_test()
+    if not json_mode:
+        print_system_info(si, io_res)
+        _section(T("sec_stream"))
+
+    streaming_json = _run_streaming_table(egress, json_mode=json_mode)
     if not json_mode:
         dns_res = print_dns_test(None)
         _section(T("sec_mail"))
@@ -4788,6 +5015,353 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
 
 
 # ============================================================
+# 批量节点测速优选 (借鉴 yonggekkk 节点优选: 一批节点并发测速排名)
+# ============================================================
+def _parse_node_line(line):
+    """解析一行节点: host:port / [ipv6]:port / socks5://[user:pass@]host:port。
+    返回 {host, port, proto, user, pass, raw} 或 None。"""
+    s = (line or "").strip()
+    if not s or s.startswith("#"):
+        return None
+    proto, user, pwd = "tcp", None, None
+    rest = s
+    if rest.lower().startswith("socks5://"):
+        proto = "socks5"
+        rest = rest[len("socks5://"):]
+        if "@" in rest:
+            auth, rest = rest.rsplit("@", 1)
+            if ":" in auth:
+                user, pwd = auth.split(":", 1)
+            else:
+                user = auth
+    try:
+        if rest.startswith("["):
+            hend = rest.index("]")
+            host = rest[1:hend]
+            port = int(rest[hend + 2:])
+        else:
+            host, _p = rest.rsplit(":", 1)
+            port = int(_p)
+    except Exception:
+        return None
+    if not host or not (0 < port < 65536):
+        return None
+    return {"host": host, "port": port, "proto": proto,
+            "user": user, "pass": pwd, "raw": s}
+
+
+def batch_node_test(nodes, ping_count=5):
+    """并发测一批节点: TCP 延迟统计 (+SOCKS5 握手), 按可用性+平均延迟排名。"""
+    def _one(nd):
+        r = {"node": nd}
+        r["tcp"] = tcp_ping_stats(nd["host"], nd["port"],
+                                  count=ping_count, timeout=2)
+        if nd["proto"] == "socks5":
+            r["socks5"] = socks5_probe(nd["host"], nd["port"],
+                                       username=nd["user"],
+                                       password=nd["pass"], timeout=5)
+        return r
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(_one, nodes))
+
+    def _key(r):
+        tcp_ok = bool(r["tcp"].get("ok"))
+        hs_ok = r.get("socks5", {}).get("ok", True)
+        usable = tcp_ok and hs_ok
+        avg = r["tcp"].get("avg_ms")
+        return (0 if usable else 1, avg if avg is not None else 1e9)
+    results.sort(key=_key)
+    return results
+
+
+def _print_batch_results(results):
+    """打印排名表, 最优节点绿色标出。"""
+    print()
+    hdr = "  %s %-38s %-9s %-9s %-7s %s" % (
+        "#", T("batch_col_node"), T("batch_col_avg"),
+        T("batch_col_jitter"), T("batch_col_loss"), T("batch_col_proto"))
+    print(_c(C.cyan, hdr))
+    best_marked = False
+    for i, r in enumerate(results, 1):
+        nd = r["node"]
+        label = nd["raw"][:38]
+        tcp = r["tcp"]
+        if tcp.get("ok"):
+            avg = "%.1fms" % tcp["avg_ms"]
+            jit = "%.1fms" % tcp["jitter_ms"]
+            loss = "%.0f%%" % tcp["loss_pct"]
+        else:
+            avg = jit = loss = "-"
+        if nd["proto"] == "socks5":
+            hs = "OK" if r.get("socks5", {}).get("ok") else "✗"
+        else:
+            hs = "-"
+        usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
+        line = "  %-2d %-38s %-9s %-9s %-7s %s" % (i, label, avg, jit, loss, hs)
+        if usable and not best_marked:
+            print(_c(C.green, line + "  ★ " + T("batch_best")))
+            best_marked = True
+        elif not usable:
+            print(_c(C.dim, line + "  " + T("batch_dead")))
+        else:
+            print(line)
+    print()
+
+
+def run_batch_nodes(json_mode=False):
+    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。"""
+    nodes = []
+    if not json_mode:
+        print(T("batch_hint"))
+    while True:
+        try:
+            ln = input()
+        except EOFError:
+            break
+        if ln.strip() == "":
+            break
+        if ln.strip().lower() == "b":
+            return None
+        nd = _parse_node_line(ln)
+        if nd:
+            nodes.append(nd)
+        elif not json_mode:
+            print(T("invalid_ip"))
+    if not nodes:
+        return None
+    results = batch_node_test(nodes)
+    if json_mode:
+        return results
+    _print_batch_results(results)
+    return results
+
+
+# ============================================================
+# 主界面横幅与菜单 (A-Box 风格: 像素字 Logo + 实时信息面板 + 双列菜单)
+# ============================================================
+_LOGO_LINES = [
+    " █████╗            ██████╗ ██╗  ██╗ ███████╗  ██████╗ ██╗  ██╗",
+    "██╔══██╗          ██╔════╝ ██║  ██║ ██╔════╝ ██╔════╝ ██║ ██╔╝",
+    "███████║          ██║      ███████║ █████╗   ██║      █████╔╝ ",
+    "██╔══██║  ██████╗ ██║      ██╔══██║ ██╔══╝   ██║      ██╔═██╗ ",
+    "██║  ██║  ╚═════╝ ╚██████╗ ██║  ██║ ███████╗ ╚██████╗ ██║  ██║",
+    "╚═╝  ╚═╝           ╚═════╝ ╚═╝  ╚═╝ ╚══════╝  ╚═════╝ ╚═╝  ╚═╝",
+]
+_LOGO_PALETTE = [26, 27, 33, 39, 45, 51]  # 深蓝 -> 青 渐变 (256 色)
+
+_banner_net_cache = None
+
+
+def _logo_render():
+    """给 Logo 上蓝->青对角渐变色 (256 色), 无色环境返回原文。"""
+    if not _use_color():
+        return list(_LOGO_LINES)
+    out = []
+    for r, line in enumerate(_LOGO_LINES):
+        buf = []
+        for ci, ch in enumerate(line):
+            if ch == " ":
+                buf.append(ch)
+            else:
+                idx = min((ci // 8 + r) * len(_LOGO_PALETTE) //
+                          (len(line) // 8 + 6), len(_LOGO_PALETTE) - 1)
+                buf.append("\033[38;5;%dm%s" % (_LOGO_PALETTE[idx], ch))
+        out.append("".join(buf) + "\033[0m")
+    return out
+
+
+def _banner_net_info():
+    """横幅网络信息 (进程内缓存, 只查一次): 出口 IPv4 地理/类型 + IPv6 连通性。"""
+    global _banner_net_cache
+    if _banner_net_cache is not None:
+        return _banner_net_cache
+    info = {"egress": None, "geo": "", "ipv6": False}
+    try:
+        egress = get_egress_ip()
+        info["egress"] = egress
+        if egress:
+            try:
+                req = urllib.request.Request(
+                    "https://ipwho.is/%s" % egress,
+                    headers={"User-Agent": UA_BROWSER})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    d = json.loads(r.read(8192).decode("utf-8", errors="replace"))
+                conn = d.get("connection") or {}
+                org = conn.get("org") or conn.get("isp") or ""
+                parts = [d.get("country") or "", d.get("city") or ""]
+                if is_datacenter_heuristic(org, org):
+                    parts.append(T("dc"))
+                elif is_residential_isp(org, org):
+                    parts.append(T("residential"))
+                if org:
+                    parts.append(org)
+                info["geo"] = " · ".join(p for p in parts if p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        s6.settimeout(1.5)
+        s6.connect(("2606:4700:4700::1111", 53))
+        info["ipv6"] = bool(s6.getsockname()[0])
+        s6.close()
+    except Exception:
+        info["ipv6"] = False
+    _banner_net_cache = info
+    return info
+
+
+def _violet(s):
+    """紫色标签 (参考图配色), 无色环境返回原文。"""
+    return "\033[38;5;141m%s\033[0m" % s if _use_color() else s
+
+
+def _teal(s):
+    """青色数值 (参考图配色), 无色环境返回原文。"""
+    return "\033[38;5;51m%s\033[0m" % s if _use_color() else s
+
+
+def print_banner():
+    """顶部横幅: 双线边框 + 渐变 Logo + 状态片 + 系统/硬件/网络/状态面板。"""
+    W = 78
+    border = _c(C.cyan, "═" * W)
+    print(border)
+    for line in _logo_render():
+        print("  " + line)
+    net = _banner_net_info()
+    si = get_system_info()
+    # 状态片行
+    def _chip(name, ok):
+        dot = _c(C.green, "●") if ok else _c(C.dim, "○")
+        return "[ %s %s ]" % (name, dot)
+    chips = "  ".join([
+        _chip(T("chip_egress"), bool(net["egress"])),
+        _chip(T("chip_ipv6"), bool(net["ipv6"])),
+        _chip(T("chip_dns"), True),
+    ])
+    ver = "v%s" % VERSION
+    pad_n = W - _disp_width(chips) - len(ver)
+    print(" " + chips + " " * max(1, pad_n) + _c(C.dim, ver))
+    # 系统行
+    os_name = si.get("os", "?")
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/etc/os-release", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    if ln.startswith("PRETTY_NAME="):
+                        os_name = ln.split("=", 1)[1].strip().strip('"')
+                        break
+        except Exception:
+            pass
+    cores = os.cpu_count() or 0
+    pyv = "%d.%d.%d" % sys.version_info[:3]
+    print(" %s:  %s" % (_violet(T("bn_system")),
+                         _teal("%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv))))
+    cpu = (si.get("cpu") or "?")[:36]
+    print(" %s:  %s" % (_violet(T("bn_hardware")),
+                         _teal("%s (%d%s) · %s %s · %s %s" % (
+                             cpu, cores, T("bn_cores"),
+                             T("sys_mem"), si.get("mem", "?"),
+                             T("sys_disk"), si.get("disk", "?")))))
+    # 网络行
+    if net["egress"]:
+        v4 = "%s %s %s" % (_c(C.green, "●"), net["egress"],
+                           (" " + net["geo"]) if net["geo"] else "")
+    else:
+        v4 = "%s %s" % (_c(C.dim, "○"), T("bn_none"))
+    print(" %s:  IPv4 %s" % (_violet(T("bn_network")), _teal(v4)))
+    v6 = _c(C.green, "●") if net["ipv6"] else _c(C.dim, "○")
+    v6t = "" if net["ipv6"] else " " + T("bn_none")
+    print("        IPv6 %s%s" % (v6, _teal(v6t) if v6t else ""))
+    # 状态行 (图例)
+    legend = "%s%s · %s%s · %s%s" % (
+        _c(C.green, "●"), T("bn_ok"), _c(C.dim, "○"), T("bn_untested"),
+        _c(C.red, "●"), T("bn_fault"))
+    src = "17 · DNSBL 29"
+    pad2 = W - _disp_width(legend) - _disp_width(src) - 8
+    print(" %s:  %s%s%s" % (_violet(T("bn_status")), legend,
+                            " " * max(2, pad2), _c(C.dim, src)))
+    print(border)
+
+
+def _menu_item(num, text):
+    return "%s %s" % (_c(C.cyan, "%d." % num), text)
+
+
+def print_menu():
+    """双列功能菜单 (参考 A-Box 布局)。"""
+    colw = 40
+    rows = [
+        (_c(C.cyan, T("grp_ip")), _c(C.cyan, T("grp_net"))),
+        (_menu_item(1, T("m_self")), _menu_item(6, T("m_proxy"))),
+        (_menu_item(2, T("m_query")), _menu_item(7, T("m_dnsleak"))),
+        (_menu_item(3, T("m_stream")), _menu_item(8, T("m_tcpping"))),
+        (_c(C.cyan, T("grp_sys")), _c(C.cyan, T("grp_tools"))),
+        (_menu_item(4, T("m_sysinfo")), _menu_item(9, T("m_explain"))),
+        (_menu_item(5, T("m_lang")), _menu_item(10, T("m_batch"))),
+    ]
+    for left, right in rows:
+        print("  " + _pad(left, colw) + right)
+    print("  " + _c(C.green, "0.") + " " + T("m_quit"))
+    print()
+
+
+def run_streaming_only():
+    """菜单独立入口: 仅流媒体解锁检测 (取出口 IP 后跑流媒体表)。"""
+    with _unlock_lock:
+        _unlock_cache.clear()
+    print(f"  {T('detecting_egress')}")
+    egress = get_egress_ip()
+    if not egress:
+        print(f"  {_c(C.red, T('egress_fail'))}")
+        return
+    print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+    _section(T("sec_stream"))
+    _run_streaming_table(egress)
+
+
+def run_dnsleak_only():
+    """菜单独立入口: DNS 泄漏检测 (系统解析器 vs 直连出口)。"""
+    leaked, dinfo = dns_leak_check()
+    if leaked is True:
+        print(f"  {_c(C.red, T('diag_dns_leaked'))}")
+        for r in dinfo.get("resolvers", []):
+            print("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
+                                         r.get("asn") or "?"))
+    elif leaked is False:
+        print(f"  {_c(C.green, T('diag_dns_clean'))}")
+    else:
+        print(f"  {_c(C.dim, T('diag_dns_unknown'))}")
+
+
+def run_tcpping_only():
+    """菜单独立入口: TCP 延迟/抖动/丢包测试。"""
+    while True:
+        tinp = input(T("prompt_tcp")).strip()
+        if tinp.lower() in ("b", "q", ""):
+            return
+        try:
+            if tinp.startswith("["):
+                hend = tinp.index("]")
+                th, tp_ = tinp[1:hend], int(tinp[hend + 2:])
+            else:
+                th, tp_ = tinp.rsplit(":", 1)
+                tp_ = int(tp_)
+        except Exception:
+            print(T("invalid_ip"))
+            continue
+        tp = tcp_ping_stats(th, tp_)
+        if tp["ok"]:
+            print("  " + T("diag_tcp_ok") % (tp["avg_ms"], tp["jitter_ms"],
+                                             tp["loss_pct"]))
+            print("    min %s ms / max %s ms" % (tp["min_ms"], tp["max_ms"]))
+        else:
+            print(f"  {_c(C.red, T('diag_tcp_fail'))}")
+
+
+# ============================================================
 # 主菜单与 CLI 入口
 # ============================================================
 class _CLIArgumentParser(argparse.ArgumentParser):
@@ -4873,6 +5447,8 @@ def main():
                         help="proxy diagnostics via SOCKS5 (e.g. --proxy 127.0.0.1:1080)")
     parser.add_argument("--proxy-user", default=None)
     parser.add_argument("--proxy-pass", default=None)
+    parser.add_argument("--batch", metavar="NODES", default=None,
+                        help="batch node test, comma-separated host:port or socks5:// URLs")
     parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
     parser.add_argument("--zh-tw", action="store_const", const="zh-TW", dest="lang")
     parser.add_argument("--en", action="store_const", const="en", dest="lang")
@@ -4927,6 +5503,23 @@ def main():
                        password=ns.proxy_pass, json_mode=ns.json)
         return
 
+    if ns.batch:
+        _nodes = []
+        for _spec in ns.batch.split(","):
+            _nd = _parse_node_line(_spec)
+            if _nd:
+                _nodes.append(_nd)
+        if not _nodes:
+            print(json.dumps({"error": "no valid nodes"}, ensure_ascii=False)
+                  if ns.json else T("invalid_ip"))
+            sys.exit(2)
+        _res = batch_node_test(_nodes)
+        if ns.json:
+            print(json.dumps({"batch": _res}, ensure_ascii=False))
+        else:
+            _print_batch_results(_res)
+        return
+
     if ns.json:
         ip = validate_ip(ns.ip) if ns.ip else None
         if not ip:
@@ -4966,20 +5559,13 @@ def main():
             run_active(json_mode=False)
             return
     try:
+        print_banner()
         while True:
-            print(f"\n{_c(C.bold, '=' * 50)}")
-            print(f"  {T('title')} v{VERSION}")
-            print(f"{_c(C.bold, '=' * 50)}")
-            print(f"  {T('mode_select')}")
-            print(f"  {T('mode1')}")
-            print(f"  {T('mode2')}")
-            print(f"  {T('mode3')}")
-            print(f"  {T('mode_lang')}")
-            print(f"  {T('quit_hint')}\n")
-            choice = input(T("prompt_choice")).strip().lower()
-            if choice == "q":
+            print_menu()
+            choice = input(T("prompt_choice2")).strip().lower()
+            if choice == "q" or choice == "0":
                 break
-            elif choice == "4":
+            elif choice == "5":
                 _langs = ["zh", "zh-TW", "en", "ja", "ru", "fa"]
                 _names = {
                     "zh": "简体中文",
@@ -5010,6 +5596,7 @@ def main():
                     if 0 <= idx < len(_langs):
                         LANG = _langs[idx]
                         print(f"  → {_names[LANG]}")
+                        print_banner()
                     else:
                         print(T("invalid_ip"))
                 except ValueError:
@@ -5018,6 +5605,22 @@ def main():
             elif choice == "1":
                 run_active(json_mode=False)
             elif choice == "3":
+                run_streaming_only()
+            elif choice == "4":
+                si = get_system_info()
+                io_res = disk_io_test()
+                print_system_info(si, io_res)
+            elif choice == "9":
+                print(SCORING_RULES.get(LANG, SCORING_RULES["en"]))
+            elif choice == "10":
+                print()
+                run_batch_nodes()
+            elif choice == "7":
+                print()
+                run_dnsleak_only()
+            elif choice == "8":
+                run_tcpping_only()
+            elif choice == "6":
                 # 代理诊断: 输入 host:port [+认证]
                 while True:
                     pinp = input(T("prompt_proxy")).strip()
