@@ -5,7 +5,7 @@
 <p align="center">IP 純淨度 · 代理診斷 · 批量節點優選 — 純 Python 單文件檢測工具</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.12.1-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/release-v4.12.2-1f883d" alt="release">
   <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
@@ -56,7 +56,7 @@ python3 acheck.py 8.8.8.8     # 查任意公網 IP
 python3 acheck.py --active    # 本機自檢
 ```
 
-macOS / Windows / Linux 安裝包在 [Releases](https://github.com/alariclin/A-Check/releases) 頁下載（`A-Check-v4.12.1-mac.zip` / `A-Check-v4.12.1-windows.zip` / `A-Check-v4.12.1-linux.zip`），解壓後運行 `run.command` / `run.bat` / `run.sh` 即可。
+macOS / Windows / Linux 安裝包在 [Releases](https://github.com/alariclin/A-Check/releases) 頁下載（`A-Check-v4.12.2-mac.zip` / `A-Check-v4.12.2-windows.zip` / `A-Check-v4.12.2-linux.zip`），解壓後運行 `run.command` / `run.bat` / `run.sh` 即可。
 
 ## 使用方法
 
