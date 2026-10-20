@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.6.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.6.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 import argparse
 import http.client
 
-VERSION = "4.6.0"
+VERSION = "4.6.1"
 
 
 def _init_console():
@@ -1924,7 +1924,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.6.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.6.1 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2255,7 +2255,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.6.0 免 Key 公开版):
+评分规则 (v4.6.1 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2277,7 +2277,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.6.0 免 Key 公開版):
+評分規則 (v4.6.1 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2299,7 +2299,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.6.0 Keyless Public Edition):
+Scoring rules (v4.6.1 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2321,7 +2321,7 @@ Scoring rules (v4.6.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.6.0 キー不要公開版):
+スコアリングルール (v4.6.1 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2343,7 +2343,7 @@ Scoring rules (v4.6.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.6.0 Публичная версия без ключей):
+Правила оценки (v4.6.1 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2365,7 +2365,7 @@ Scoring rules (v4.6.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.6.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.6.1):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3455,7 +3455,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.6.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.6.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5728,7 +5728,6 @@ def main():
         res = run_passive(ip)
         print_report(res)
         recommend_dns_for_ip(res["profile"].get("country", ""))
-        print_speed_section()
         return
 
     # 交互菜单 (兼容 curl | python3 - 管道运行)
@@ -5837,7 +5836,6 @@ def main():
                     run_proxy_diag(phost, pport, username=puser,
                                    password=ppass, json_mode=False)
             elif choice == "2":
-                _did_query = False
                 while True:
                     inp = input(T("prompt_ip")).strip().lower()
                     if inp == "q":
@@ -5862,9 +5860,6 @@ def main():
                     res = run_passive(ip)
                     print_report(res)
                     recommend_dns_for_ip(res["profile"].get("country", ""))
-                    _did_query = True
-                if _did_query:
-                    print_speed_section()
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
