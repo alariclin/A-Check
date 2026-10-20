@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.9.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.10.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.9.0"
+VERSION = "4.10.0"
 
 
 def _init_console():
@@ -1956,7 +1956,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.9.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.10.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2287,7 +2287,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.9.0 免 Key 公开版):
+评分规则 (v4.10.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2309,7 +2309,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.9.0 免 Key 公開版):
+評分規則 (v4.10.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2331,7 +2331,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.9.0 Keyless Public Edition):
+Scoring rules (v4.10.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2353,7 +2353,7 @@ Scoring rules (v4.9.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.9.0 キー不要公開版):
+スコアリングルール (v4.10.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2375,7 +2375,7 @@ Scoring rules (v4.9.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.9.0 Публичная версия без ключей):
+Правила оценки (v4.10.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2397,7 +2397,7 @@ Scoring rules (v4.9.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.9.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.10.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3155,15 +3155,18 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         _ind = " " * (_disp_width(_lbl) + 2)
         for _i, k in enumerate(_order):
             _loc, _names = _groups[k]
-            _who = ", ".join(_names)
             if _i == 0:
-                print(f"  {_lbl}: {_loc} ({_who})")
+                print(f"  {_lbl}: {_loc}")
             else:
-                print(f"  {_ind}{_loc} ({_who})")
+                print(f"  {_ind}{_loc}")
     else:
         print(f"  {T('no_loc_data')}")
     if pc.get("ok") and pc.get("range"):
         print(f"  {T('ip_range')}: {pc['range']}")
+
+    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
+    if sysinfo:
+        print_system_info(sysinfo[0], sysinfo[1])
 
     # [1.5] 类型属性 (严禁篡改第三方原始判断)
     _section(T("sec_type"))
@@ -3197,10 +3200,6 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         print("  " + _pad(T("usage_type"), 12) + "".join(cells))
     else:
         print(f"  {T('no_type_data')}")
-
-    # 系统信息 (主动模式: 并入 [1] 组尾, print_system_info 自带小标题)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
 
     # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
     _section(T("sec_matrix"))
@@ -3274,39 +3273,17 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             _hit(ia, bool(ia.get("proxy"))),
             _NA, _NA, _NA, _NA, _NA]),
     ]
+    # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
                 T("f_blacklist"), T("f_malicious")]
-    _name_w = max(_disp_width(n) for n, _ in _rows) + 2
-    _cw = max(_disp_width(T("yes")), _disp_width(T("no")),
-              _disp_width(T("none")), 1)
-    _col_ws = [max(_disp_width(h), _cw) + 2 for h in _factors]
-    print("  " + " " * _name_w + "".join(
-        _pad(h, w) for h, w in zip(_factors, _col_ws)))
-    for _n, _cells in _rows:
-        print("  " + _pad(_n, _name_w) + "".join(
-            _pad(_cell(c), w) for c, w in zip(_cells, _col_ws)))
-
-    # 细节脚注 (仅命中/有附加信息时出现, 干净 IP 不占行)
-    if sf.get("ok") and sf.get("frequency", 0) > 0:
-        print(f"  {_c(C.dim, 'StopForumSpam: %d hits' % sf['frequency'])}")
-    if us.get("ok") and us.get("total", 0) > 0:
-        print(f"  {_c(C.dim, 'urlscan.io: %d malicious records' % us['total'])}")
-    if sa.get("ok") and sa.get("attack_count"):
-        print(f"  {_c(C.dim, 'SANS ISC: %s attacks' % sa['attack_count'])}")
-    if sh.get("ok"):
-        if sh.get("vulns"):
-            print(f"  {_c(C.red, 'Shodan: %d vulns: %s' % (len(sh['vulns']), ','.join(sh['vulns'][:3])))}")
-        if sh.get("tags"):
-            print(f"  {_c(C.yellow, 'Shodan: tags %s' % ','.join(sh['tags'][:3]))}")
-        if sh.get("ports"):
-            print(f"  {_c(C.dim, 'Shodan ports: %s' % sh['ports'])}")
-    if gn.get("ok") and (gn.get("noise") or gn.get("classification")):
-        _bits = []
-        if gn.get("classification"):
-            _bits.append(gn["classification"])
-        if gn.get("noise"):
-            _bits.append("noise")
-        print(f"  {_c(C.dim, 'GreyNoise: %s' % ', '.join(_bits))}")
+    _lw = max(_disp_width(f) for f in _factors) + 2
+    for _ci, _fname in enumerate(_factors):
+        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+        if _decided:
+            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+        else:
+            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
 
     # [4] 欺诈与维度评分 (Scamalytics + 四维 + 综合)
     _section(T("sec_fraud"))
@@ -3390,7 +3367,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.9.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.10.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
