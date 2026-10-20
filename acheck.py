@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.12.4 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.12.5 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.12.4"
+VERSION = "4.12.5"
 
 
 def _init_console():
@@ -1968,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.12.4 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.12.5 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2300,7 +2300,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.12.4 免 Key 公开版):
+评分规则 (v4.12.5 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2322,7 +2322,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.12.4 免 Key 公開版):
+評分規則 (v4.12.5 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2344,7 +2344,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.12.4 Keyless Public Edition):
+Scoring rules (v4.12.5 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2366,7 +2366,7 @@ Scoring rules (v4.12.4 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.12.4 キー不要公開版):
+スコアリングルール (v4.12.5 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2388,7 +2388,7 @@ Scoring rules (v4.12.4 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.12.4 Публичная версия без ключей):
+Правила оценки (v4.12.5 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2410,7 +2410,7 @@ Scoring rules (v4.12.4 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.4):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.5):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3421,7 +3421,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.12.4 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.12.5 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5302,25 +5302,36 @@ def _logo_render():
 
 
 def _banner_net_info():
-    """横幅网络信息 (进程内缓存, 只查一次): 出口 IPv4 地理/类型 + IPv6 连通性。"""
+    """横幅网络信息 (进程内缓存, 只查一次): 出口地理(按界面语言本地化) + IPv6 出口地址。"""
     global _banner_net_cache
     if _banner_net_cache is not None:
         return _banner_net_cache
-    info = {"egress": None, "geo": "", "ipv6": False}
+    info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
+            "dns_ok": False}
+    try:
+        info["dns_ok"] = bool(socket.getaddrinfo("cloudflare.com", 53,
+                                                 socket.AF_UNSPEC,
+                                                 socket.SOCK_DGRAM))
+    except Exception:
+        info["dns_ok"] = False
     try:
         egress = get_egress_ip()
         info["egress"] = egress
         if egress:
+            _lang = {"zh": "zh-CN", "zh-TW": "zh-CN", "en": "en",
+                     "ja": "ja", "ru": "ru", "fa": "en"}.get(LANG, "en")
             try:
                 req = urllib.request.Request(
-                    "https://ipwho.is/%s" % egress,
+                    "http://ip-api.com/json/%s?lang=%s&fields=status,country,"
+                    "city,org,isp,hosting" % (egress, _lang),
                     headers={"User-Agent": UA_BROWSER})
                 with urllib.request.urlopen(req, timeout=5) as r:
                     d = json.loads(r.read(8192).decode("utf-8", errors="replace"))
-                conn = d.get("connection") or {}
-                org = conn.get("org") or conn.get("isp") or ""
+                if d.get("status") != "success":
+                    raise ValueError("ip-api fail")
+                org = d.get("org") or d.get("isp") or ""
                 parts = [d.get("country") or "", d.get("city") or ""]
-                if is_datacenter_heuristic(org, org):
+                if d.get("hosting") or is_datacenter_heuristic(org, org):
                     parts.append(T("dc"))
                 elif is_residential_isp(org, org):
                     parts.append(T("residential"))
@@ -5328,17 +5339,53 @@ def _banner_net_info():
                     parts.append(org)
                 info["geo"] = " · ".join(p for p in parts if p)
             except Exception:
-                pass
+                try:
+                    req = urllib.request.Request(
+                        "https://ipwho.is/%s" % egress,
+                        headers={"User-Agent": UA_BROWSER})
+                    with urllib.request.urlopen(req, timeout=5) as r:
+                        d = json.loads(r.read(8192).decode("utf-8",
+                                                         errors="replace"))
+                    conn = d.get("connection") or {}
+                    org = conn.get("org") or conn.get("isp") or ""
+                    parts = [d.get("country") or "", d.get("city") or ""]
+                    if is_datacenter_heuristic(org, org):
+                        parts.append(T("dc"))
+                    elif is_residential_isp(org, org):
+                        parts.append(T("residential"))
+                    if org:
+                        parts.append(org)
+                    info["geo"] = " · ".join(p for p in parts if p)
+                except Exception:
+                    pass
     except Exception:
         pass
-    try:
-        s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        s6.settimeout(1.5)
-        s6.connect(("2606:4700:4700::1111", 53))
-        info["ipv6"] = bool(s6.getsockname()[0])
-        s6.close()
-    except Exception:
-        info["ipv6"] = False
+    # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
+    _v6addr = None
+    for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
+        try:
+            req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
+            with urllib.request.urlopen(req, timeout=3) as r:
+                _cand = r.read(128).decode("utf-8", errors="replace").strip()
+            _ip6 = ipaddress.IPv6Address(_cand)
+            if _ip6.is_global:
+                _v6addr = str(_ip6)
+                break
+        except Exception:
+            continue
+    if _v6addr is None:
+        try:
+            s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            s6.settimeout(1.5)
+            s6.connect(("2606:4700:4700::1111", 53))
+            _local6 = s6.getsockname()[0]
+            s6.close()
+            if ipaddress.IPv6Address(_local6).is_global:
+                _v6addr = _local6
+        except Exception:
+            pass
+    info["ipv6_addr"] = _v6addr
+    info["ipv6"] = bool(_v6addr)
     _banner_net_cache = info
     return info
 
@@ -5358,8 +5405,11 @@ def print_banner():
     W = 78
     border = _c(C.cyan, "═" * W)
     print(border)
-    for line in _logo_render():
-        print("  " + line)
+    _logo_lines = _logo_render()
+    _logo_w = max((_disp_width(_l) for _l in _logo_lines), default=0)
+    _logo_pad = " " * max(0, (W - _logo_w) // 2)
+    for line in _logo_lines:
+        print(_logo_pad + line)
     print(border)
     net = _banner_net_info()
     si = get_system_info()
@@ -5367,14 +5417,20 @@ def print_banner():
     def _chip(name, ok):
         dot = _c(C.green, "●") if ok else _c(C.dim, "○")
         return "[ %s %s ]" % (name, dot)
-    chips = "  ".join([
+    _chip_list = [
         _chip(T("chip_egress"), bool(net["egress"])),
         _chip(T("chip_ipv6"), bool(net["ipv6"])),
-        _chip(T("chip_dns"), True),
-    ])
+        _chip(T("chip_dns"), bool(net.get("dns_ok"))),
+    ]
     ver = "v%s" % VERSION
-    pad_n = W - _disp_width(chips) - len(ver)
-    print(" " + chips + " " * max(1, pad_n) + _c(C.dim, ver))
+    _cw = sum(_disp_width(c) for c in _chip_list)
+    _free = W - 1 - _cw - len(ver) - 1
+    _g1 = max(2, _free // 2)
+    _g2 = max(2, _free - _g1)
+    _row = (" " + _chip_list[0] + " " * _g1 + _chip_list[1] + " " * _g2
+            + _chip_list[2])
+    _pad_n = W - _disp_width(_row) - len(ver)
+    print(_row + " " * max(1, _pad_n) + _c(C.dim, ver))
     # 系统行
     os_name = si.get("os", "?")
     if sys.platform.startswith("linux"):
@@ -5404,7 +5460,12 @@ def print_banner():
         v4 = "%s %s" % (_c(C.dim, "○"), T("bn_none"))
     print(" %s:  IPv4 %s" % (_violet(T("bn_network")), _teal(v4)))
     v6 = _c(C.green, "●") if net["ipv6"] else _c(C.dim, "○")
-    v6t = "" if net["ipv6"] else " " + T("bn_none")
+    if net.get("ipv6_addr"):
+        v6t = " " + net["ipv6_addr"]
+    elif net["ipv6"]:
+        v6t = ""
+    else:
+        v6t = " " + T("bn_none")
     print("        IPv6 %s%s" % (v6, _teal(v6t) if v6t else ""))
     # 状态行 (图例)
     legend = "%s%s · %s%s · %s%s" % (
