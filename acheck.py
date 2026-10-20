@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.7.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.8.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.7.1"
+VERSION = "4.8.0"
 
 
 def _init_console():
@@ -101,12 +101,11 @@ STR = {
         "sec_basic": "[1] 基础信息与 ASN/BGP",
         "sec_type": "IP类型属性",
         "sec_loc": "多源位置对比",
-        "sec_threat": "[2] 威胁情报",
-        "sec_fraud": "[4] 欺诈与维度评分",
-        "sec_matrix": "[3] 风险因子矩阵",
-        "sec_complete": "[5] 数据完整度与置信度",
-        "sec_stream": "[6] 流媒体及AI服务解锁检测 (主动)",
-        "sec_stream_passive": "[6] 流媒体可用性推测 (被动)",
+        "sec_fraud": "[3] 欺诈与维度评分",
+        "sec_matrix": "[2] 风险因子矩阵",
+        "sec_complete": "[4] 数据完整度与置信度",
+        "sec_stream": "[5] 流媒体及AI服务解锁检测 (主动)",
+        "sec_stream_passive": "[5] 流媒体可用性推测 (被动)",
         "sec_mail": "25端口发信及黑名单检测",
         "sec_sys": "系统信息",
         "sec_dns": "DNS 测试与推荐",
@@ -261,6 +260,8 @@ STR = {
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "服务器",
+        "f_blacklist": "黑名单",
+        "f_malicious": "恶意记录",
         "f_abuse": "滥用",
         "f_bot": "机器人",
         "yes": "是",
@@ -305,12 +306,11 @@ STR = {
         "sec_basic": "[1] Basic Info & ASN/BGP",
         "sec_type": "IP Type Attributes",
         "sec_loc": "Multi-source Location",
-        "sec_threat": "[2] Threat Intelligence",
-        "sec_fraud": "[4] Fraud & Dimension Scores",
-        "sec_matrix": "[3] Risk Factor Matrix",
-        "sec_complete": "[5] Data Completeness & Confidence",
-        "sec_stream": "[6] Streaming & AI Unlock Test (Active)",
-        "sec_stream_passive": "[6] Streaming Availability Inference (Passive)",
+        "sec_fraud": "[3] Fraud & Dimension Scores",
+        "sec_matrix": "[2] Risk Factor Matrix",
+        "sec_complete": "[4] Data Completeness & Confidence",
+        "sec_stream": "[5] Streaming & AI Unlock Test (Active)",
+        "sec_stream_passive": "[5] Streaming Availability Inference (Passive)",
         "sec_mail": "Port 25 Sending & Blacklist",
         "sec_sys": "System Info",
         "sec_dns": "DNS Test & Recommendations",
@@ -465,6 +465,8 @@ STR = {
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "Hosting",
+        "f_blacklist": "Blacklist",
+        "f_malicious": "Malicious",
         "f_abuse": "Abuse",
         "f_bot": "Bot",
         "yes": "Yes",
@@ -509,12 +511,11 @@ STR = {
         "sec_basic": "[1] 基礎資訊與 ASN/BGP",
         "sec_type": "IP類型屬性",
         "sec_loc": "多源位置對比",
-        "sec_threat": "[2] 威脅情報",
-        "sec_fraud": "[4] 欺詐與維度評分",
-        "sec_matrix": "[3] 風險因子矩陣",
-        "sec_complete": "[5] 數據完整度與置信度",
-        "sec_stream": "[6] 串流媒體及AI服務解鎖檢測 (主動)",
-        "sec_stream_passive": "[6] 串流媒體可用性推測 (被動)",
+        "sec_fraud": "[3] 欺詐與維度評分",
+        "sec_matrix": "[2] 風險因子矩陣",
+        "sec_complete": "[4] 數據完整度與置信度",
+        "sec_stream": "[5] 串流媒體及AI服務解鎖檢測 (主動)",
+        "sec_stream_passive": "[5] 串流媒體可用性推測 (被動)",
         "sec_mail": "25端口發信及黑名單檢測",
         "sec_sys": "系統資訊",
         "sec_dns": "DNS 測試與推薦",
@@ -669,6 +670,8 @@ STR = {
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "伺服器",
+        "f_blacklist": "黑名單",
+        "f_malicious": "惡意記錄",
         "f_abuse": "濫用",
         "f_bot": "機器人",
         "yes": "是",
@@ -713,12 +716,11 @@ STR = {
         "sec_basic": "[1] 基本情報と ASN/BGP",
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
-        "sec_threat": "[2] 脅威インテリジェンス",
-        "sec_fraud": "[4] 不正・次元スコア",
-        "sec_matrix": "[3] リスク因子マトリックス",
-        "sec_complete": "[5] データ完全性と信頼度",
-        "sec_stream": "[6] ストリーミング/AIサービス検出 (アクティブ)",
-        "sec_stream_passive": "[6] ストリーミング利用可否推測 (パッシブ)",
+        "sec_fraud": "[3] 不正・次元スコア",
+        "sec_matrix": "[2] リスク因子マトリックス",
+        "sec_complete": "[4] データ完全性と信頼度",
+        "sec_stream": "[5] ストリーミング/AIサービス検出 (アクティブ)",
+        "sec_stream_passive": "[5] ストリーミング利用可否推測 (パッシブ)",
         "sec_mail": "25番ポート送信とブラックリスト検出",
         "sec_sys": "システム情報",
         "sec_dns": "DNSテストと推奨",
@@ -873,6 +875,8 @@ STR = {
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "サーバー",
+        "f_blacklist": "ブラックリスト",
+        "f_malicious": "悪意記録",
         "f_abuse": "不正利用",
         "f_bot": "ボット",
         "yes": "はい",
@@ -917,12 +921,11 @@ STR = {
         "sec_basic": "[1] Основная информация и ASN/BGP",
         "sec_type": "Атрибуты типа IP",
         "sec_loc": "Сравнение местоположения",
-        "sec_threat": "[2] Данные об угрозах",
-        "sec_fraud": "[4] Мошенничество и измерения",
-        "sec_matrix": "[3] Матрица факторов риска",
-        "sec_complete": "[5] Полнота данных и достоверность",
-        "sec_stream": "[6] Проверка стриминга/AI (активная)",
-        "sec_stream_passive": "[6] Оценка доступности стриминга (пассивная)",
+        "sec_fraud": "[3] Мошенничество и измерения",
+        "sec_matrix": "[2] Матрица факторов риска",
+        "sec_complete": "[4] Полнота данных и достоверность",
+        "sec_stream": "[5] Проверка стриминга/AI (активная)",
+        "sec_stream_passive": "[5] Оценка доступности стриминга (пассивная)",
         "sec_mail": "Порт 25 и чёрные списки",
         "sec_sys": "Информация о системе",
         "sec_dns": "Тест и рекомендации DNS",
@@ -1077,6 +1080,8 @@ STR = {
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "Сервер",
+        "f_blacklist": "Блоклист",
+        "f_malicious": "Угрозы",
         "f_abuse": "Абьюз",
         "f_bot": "Бот",
         "yes": "Да",
@@ -1121,12 +1126,11 @@ STR = {
         "sec_basic": "[1] اطلاعات پایه و ASN/BGP",
         "sec_type": "ویژگی‌های نوع IP",
         "sec_loc": "مقایسه موقعیت چندمنبعی",
-        "sec_threat": "[2] اطلاعات تهدید",
-        "sec_fraud": "[4] امتیاز تقلب و ابعاد",
-        "sec_matrix": "[3] ماتریس عوامل خطر",
-        "sec_complete": "[5] کامل بودن داده و اطمینان",
-        "sec_stream": "[6] بررسی استریم/هوش مصنوعی (فعال)",
-        "sec_stream_passive": "[6] تخمین دسترسی استریم (غیرفعال)",
+        "sec_fraud": "[3] امتیاز تقلب و ابعاد",
+        "sec_matrix": "[2] ماتریس عوامل خطر",
+        "sec_complete": "[4] کامل بودن داده و اطمینان",
+        "sec_stream": "[5] بررسی استریم/هوش مصنوعی (فعال)",
+        "sec_stream_passive": "[5] تخمین دسترسی استریم (غیرفعال)",
         "sec_mail": "ارسال پورت 25 و لیست سیاه",
         "sec_sys": "اطلاعات سیستم",
         "sec_dns": "تست و پیشنهاد DNS",
@@ -1281,6 +1285,8 @@ STR = {
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "سرور",
+        "f_blacklist": "لیست سیاه",
+        "f_malicious": "سوابق مخرب",
         "f_abuse": "سوءاستفاده",
         "f_bot": "ربات",
         "yes": "بله",
@@ -1950,7 +1956,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.7.1 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.8.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2281,7 +2287,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.7.1 免 Key 公开版):
+评分规则 (v4.8.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2303,7 +2309,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.7.1 免 Key 公開版):
+評分規則 (v4.8.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2325,7 +2331,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.7.1 Keyless Public Edition):
+Scoring rules (v4.8.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2347,7 +2353,7 @@ Scoring rules (v4.7.1 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.7.1 キー不要公開版):
+スコアリングルール (v4.8.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2369,7 +2375,7 @@ Scoring rules (v4.7.1 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.7.1 Публичная версия без ключей):
+Правила оценки (v4.8.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2391,7 +2397,7 @@ Scoring rules (v4.7.1 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.7.1):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.8.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3090,9 +3096,33 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
         locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip(),
                      fp.get("country"), fp.get("city")))
     if locs:
+        _CC = {"united states": "us", "united states of america": "us",
+               "china": "cn", "australia": "au", "canada": "ca",
+               "germany": "de", "france": "fr", "japan": "jp",
+               "south korea": "kr", "korea": "kr", "singapore": "sg",
+               "india": "in", "brazil": "br", "russia": "ru",
+               "united kingdom": "uk", "netherlands": "nl",
+               "switzerland": "ch", "sweden": "se", "norway": "no",
+               "finland": "fi", "denmark": "dk", "austria": "at",
+               "belgium": "be", "ireland": "ie", "poland": "pl",
+               "turkey": "tr", "mexico": "mx", "argentina": "ar",
+               "chile": "cl", "colombia": "co", "peru": "pe",
+               "egypt": "eg", "nigeria": "ng", "kenya": "ke",
+               "morocco": "ma", "israel": "il",
+               "united arab emirates": "ae", "saudi arabia": "sa",
+               "qatar": "qa", "kuwait": "kw", "iran": "ir", "iraq": "iq",
+               "pakistan": "pk", "bangladesh": "bd", "thailand": "th",
+               "vietnam": "vn", "indonesia": "id", "malaysia": "my",
+               "philippines": "ph", "taiwan": "tw", "hong kong": "hk",
+               "new zealand": "nz", "south africa": "za", "greece": "gr",
+               "portugal": "pt", "czechia": "cz", "hungary": "hu",
+               "romania": "ro", "ukraine": "ua", "italy": "it",
+               "spain": "es"}
+
         def _norm(txt):
             txt = (txt or "").lower().strip()
-            txt = txt.replace("united states", "us").replace("china", "cn")
+            if txt in _CC:
+                return _CC[txt]
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
             return " ".join(txt.split())
 
@@ -3157,200 +3187,111 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
     if sysinfo:
         print_system_info(sysinfo[0], sysinfo[1])
 
-    # [2] 威胁情报
-    _section(T("sec_threat"))
-
-    def _err_reason(err):
-        e = (err or "").lower()
-        if "timeout" in e or "timed out" in e:
-            return "超时" if LANG in ("zh", "zh-TW") else "Timeout"
-        if "connection" in e or "connect" in e or "refused" in e or "reset" in e:
-            return "连接阻断" if LANG in ("zh", "zh-TW") else "Blocked"
-        if "download failed" in e or "failed" in e:
-            return "下载失败" if LANG in ("zh", "zh-TW") else "Download failed"
-        return ""
-
-    def _tri(ok_val, ok_msg, fail_msg="", err=""):
-        if ok_val is True:
-            print(f"  {_c(C.green, '✓')} {ok_msg}")
-        elif ok_val is False:
-            print(f"  {_c(C.red, '✗')} {fail_msg or ok_msg}")
-        else:
-            reason = _err_reason(err)
-            prefix = ok_msg.split(":")[0] if ":" in ok_msg else ok_msg
-            if reason:
-                print(f"  {_c(C.dim, '?')} {prefix}: {reason}")
-            else:
-                print(f"  {_c(C.dim, '?')} {prefix}: {T('unverifiable')}")
-
-    sf = s.get("stopforumspam", {})
-    _tri(
-        True if sf.get("ok") and sf.get("frequency", 0) == 0 else (False if sf.get("ok") else None),
-        f"StopForumSpam: {T('no_hit')}",
-        f"StopForumSpam: {sf.get('frequency')} hits",
-        sf.get("err", ""),
-    )
-    us = s.get("urlscan", {})
-    _tri(
-        True if us.get("ok") and us.get("total", 0) == 0 else (False if us.get("ok") else None),
-        f"urlscan.io: {T('no_record')}",
-        f"urlscan.io: {us.get('total')} malicious records",
-        us.get("err", ""),
-    )
-    si = s.get("sansisc", {})
-    _tri(
-        True if si.get("ok") and not si.get("attack_count") else (False if si.get("ok") else None),
-        f"SANS ISC: {T('no_attack')}",
-        f"SANS ISC: {si.get('attack_count')} attacks",
-        si.get("err", ""),
-    )
-
-    sh = s.get("shodan_idb", {})
-    if sh.get("ok"):
-        ports = sh.get("ports", [])
-        vulns = sh.get("vulns", [])
-        tags = sh.get("tags", [])
-        info = f"ports {ports}" if ports else T("no_record")
-        if vulns:
-            print(f"  {_c(C.red, '✗')} Shodan: {info}, {len(vulns)} vulns: {','.join(vulns[:3])}")
-        elif tags:
-            print(f"  {_c(C.yellow, '!')} Shodan: {info}, tags {','.join(tags[:3])}")
-        else:
-            print(f"  {_c(C.green, '✓')} Shodan: {info}")
-    else:
-        print(f"  {_c(C.dim, '?')} Shodan: {T('unverifiable')}")
-
-    gn = s.get("greynoise", {})
-    if gn.get("ok"):
-        _bits = []
-        if gn.get("noise"):
-            _bits.append(T("yes"))
-        if gn.get("classification"):
-            _bits.append(gn["classification"])
-        print(f"  {_c(C.dim, '·')} GreyNoise: {', '.join(_bits) if _bits else T('no_record')}")
-    else:
-        print(f"  {_c(C.dim, '?')} GreyNoise: {T('unverifiable')}")
-
-    fe = s.get("feodo", {})
-    if fe.get("ok"):
-        listed = fe.get("listed", False)
-        print(
-            f"  {_c(C.red if listed else C.green, '✗' if listed else '✓')} "
-            f"Feodo: {T('feodo_c2') if listed else T('no_record')}"
-        )
-    else:
-        print(f"  {_c(C.dim, '?')} Feodo: {T('unverifiable')}")
-
-    et = s.get("et_compromised", {})
-    if et.get("ok"):
-        listed = et.get("listed", False)
-        print(
-            f"  {_c(C.red if listed else C.green, '✗' if listed else '✓')} "
-            f"EmergingThreats: {'compromised' if listed else T('no_record')}"
-        )
-    else:
-        print(f"  {_c(C.dim, '?')} EmergingThreats: {T('unverifiable')}")
-
-    te = s.get("tor_exit", {})
-    if te.get("ok"):
-        is_exit = te.get("is_tor_exit", False)
-        print(
-            f"  {_c(C.yellow if is_exit else C.green, '!' if is_exit else '✓')} "
-            f"Tor Exit: {'YES' if is_exit else 'No'}"
-        )
-    else:
-        print(f"  {_c(C.dim, '?')} Tor Exit: {T('unverifiable')}")
-
-    if pc.get("ok"):
-        is_p = pc.get("proxy") or pc.get("vpn")
-        print(
-            f"  {_c(C.red if is_p else C.green, '✗' if is_p else '✓')} "
-            f"proxycheck.io: {T('is_proxy') if pc.get('proxy') else ''}"
-            f"{'/' + T('is_vpn') if pc.get('vpn') else ''}"
-            f"{T('not_proxy') if not is_p else ''}"
-        )
-    else:
-        print(f"  {_c(C.dim, '?')} proxycheck.io: {T('unverifiable')}")
-
-    if fp.get("ok"):
-        pv = fp.get("proxy")
-        if pv is None:
-            print(f"  {_c(C.dim, '?')} freeipapi: {T('unverifiable')}")
-        elif pv:
-            print(f"  {_c(C.red, '✗')} freeipapi: {T('is_proxy')}")
-        else:
-            print(f"  {_c(C.green, '✓')} freeipapi: {T('not_proxy')}")
-    else:
-        print(f"  {_c(C.dim, '?')} freeipapi: {T('unverifiable')}")
-
-    ia = s.get("ipapi", {})
-    if ia.get("ok"):
-        if ia.get("proxy"):
-            print(f"  {_c(C.red, '✗')} ip-api.com: {T('is_proxy')}")
-        else:
-            print(f"  {_c(C.green, '✓')} ip-api.com: {T('not_proxy')}")
-    else:
-        print(f"  {_c(C.dim, '?')} ip-api.com: {T('unverifiable')}")
-
-    # [3] 风险因子矩阵
-    sc = s.get("scamalytics", {})
+    # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
     _section(T("sec_matrix"))
 
-    def _m3(v):
+    def _cell(v):
         if v is True:
             return _c(C.red, T("yes"))
         if v is False:
             return _c(C.green, T("no"))
+        if v == "?":
+            return _c(C.dim, "?")
         return _c(C.dim, T("none"))
 
-    def _m3i(v):
-        if v is True:
-            return _c(C.red, T("yes"))
-        if v is False:
-            return _c(C.green, T("no"))
-        return _c(C.dim, "?")
+    _NA = None
+    _Q = "?"
 
-    def _mrow(cells):
-        return "  " + "".join(_pad(c, 13) for c in cells)
+    def _hit(d, cond):
+        if not d.get("ok"):
+            return _Q
+        return True if cond else False
 
-    headers = ["", "Scamalytics", "proxycheck", "ipwho.is", "freeipapi"]
-    print(_mrow([T("factor")] + headers[1:]))
-    print(
-        _mrow([
-            T("f_proxy"),
-            _c(C.dim, T("none")),
-            _m3(pc.get("proxy")) if pc.get("ok") else _c(C.dim, "?"),
-            _m3(wi.get("proxy")) if wi.get("ok") else _c(C.dim, "?"),
-            _m3(fp.get("proxy")) if fp.get("ok") else _c(C.dim, "?"),
-        ])
-    )
-    print(
-        _mrow([
-            T("f_vpn"),
-            _c(C.dim, T("none")),
-            _m3(pc.get("vpn")) if pc.get("ok") else _c(C.dim, "?"),
-            _m3(wi.get("vpn")) if wi.get("ok") else _c(C.dim, "?"),
-            _c(C.dim, T("none")),
-        ])
-    )
-    dc_w, _ = (
-        is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-        if wi.get("ok")
-        else (None, "")
-    )
+    sf = s.get("stopforumspam", {})
+    us = s.get("urlscan", {})
+    sa = s.get("sansisc", {})
+    sh = s.get("shodan_idb", {})
+    gn = s.get("greynoise", {})
+    fe = s.get("feodo", {})
+    et = s.get("et_compromised", {})
+    te = s.get("tor_exit", {})
+    ia = s.get("ipapi", {})
+
+    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                  if wi.get("ok") else (None, ""))
     if wi.get("ok") and wi.get("hosting"):
         dc_w = True
-    print(
-        _mrow([
-            T("f_server"),
-            _c(C.dim, T("none")),
-            _m3("hosting" in str(pc.get("type", "")).lower() or "business" in str(pc.get("type", "")).lower())
-            if pc.get("ok")
-            else _c(C.dim, "?"),
-            _m3i(dc_w) if wi.get("ok") else _c(C.dim, "?"),
-            _c(C.dim, T("none")),
-        ])
-    )
+    wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
+
+    _rows = [
+        ("StopForumSpam", [_NA, _NA, _NA, _NA,
+                           _hit(sf, sf.get("frequency", 0) > 0), _NA]),
+        ("urlscan.io", [_NA, _NA, _NA, _NA, _NA,
+                        _hit(us, us.get("total", 0) > 0)]),
+        ("SANS ISC", [_NA, _NA, _NA, _NA, _NA,
+                      _hit(sa, bool(sa.get("attack_count")))]),
+        ("Shodan", [_NA, _NA, _NA, _NA, _NA,
+                    _hit(sh, bool(sh.get("vulns")))]),
+        ("GreyNoise", [_NA, _NA, _NA, _NA, _NA,
+                       _hit(gn, gn.get("classification") == "malicious")]),
+        ("Feodo", [_NA, _NA, _NA, _NA,
+                   _hit(fe, bool(fe.get("listed"))), _NA]),
+        ("EmergingThreats", [_NA, _NA, _NA, _NA,
+                             _hit(et, bool(et.get("listed"))), _NA]),
+        ("Tor Exit", [_NA, _NA, _hit(te, bool(te.get("is_tor_exit"))),
+                      _NA, _NA, _NA]),
+        ("proxycheck", [
+            _hit(pc, bool(pc.get("proxy"))),
+            _hit(pc, bool(pc.get("vpn"))),
+            _hit(pc, "tor" in str(pc.get("type", "")).lower()),
+            _hit(pc, "hosting" in str(pc.get("type", "")).lower()
+                 or "business" in str(pc.get("type", "")).lower()),
+            _NA, _NA]),
+        ("ipwho.is", [
+            wi.get("proxy") if wi.get("ok") else _Q,
+            wi.get("vpn") if wi.get("ok") else _Q,
+            wi.get("tor") if wi.get("ok") else _Q,
+            wi_server, _NA, _NA]),
+        ("freeipapi", [
+            _hit(fp, bool(fp.get("proxy"))) if fp.get("proxy") is not None else _Q,
+            _NA, _NA, _NA, _NA, _NA]),
+        ("ip-api.com", [
+            _hit(ia, bool(ia.get("proxy"))),
+            _NA, _NA, _NA, _NA, _NA]),
+    ]
+    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                T("f_blacklist"), T("f_malicious")]
+    _name_w = max(_disp_width(n) for n, _ in _rows) + 2
+    _cw = max(_disp_width(T("yes")), _disp_width(T("no")),
+              _disp_width(T("none")), 1)
+    _col_ws = [max(_disp_width(h), _cw) + 2 for h in _factors]
+    print("  " + " " * _name_w + "".join(
+        _pad(h, w) for h, w in zip(_factors, _col_ws)))
+    for _n, _cells in _rows:
+        print("  " + _pad(_n, _name_w) + "".join(
+            _pad(_cell(c), w) for c, w in zip(_cells, _col_ws)))
+
+    # 细节脚注 (仅命中/有附加信息时出现, 干净 IP 不占行)
+    if sf.get("ok") and sf.get("frequency", 0) > 0:
+        print(f"  {_c(C.dim, 'StopForumSpam: %d hits' % sf['frequency'])}")
+    if us.get("ok") and us.get("total", 0) > 0:
+        print(f"  {_c(C.dim, 'urlscan.io: %d malicious records' % us['total'])}")
+    if sa.get("ok") and sa.get("attack_count"):
+        print(f"  {_c(C.dim, 'SANS ISC: %s attacks' % sa['attack_count'])}")
+    if sh.get("ok"):
+        if sh.get("vulns"):
+            print(f"  {_c(C.red, 'Shodan: %d vulns: %s' % (len(sh['vulns']), ','.join(sh['vulns'][:3])))}")
+        if sh.get("tags"):
+            print(f"  {_c(C.yellow, 'Shodan: tags %s' % ','.join(sh['tags'][:3]))}")
+        if sh.get("ports"):
+            print(f"  {_c(C.dim, 'Shodan ports: %s' % sh['ports'])}")
+    if gn.get("ok") and (gn.get("noise") or gn.get("classification")):
+        _bits = []
+        if gn.get("classification"):
+            _bits.append(gn["classification"])
+        if gn.get("noise"):
+            _bits.append("noise")
+        print(f"  {_c(C.dim, 'GreyNoise: %s' % ', '.join(_bits))}")
 
     # [4] 欺诈与维度评分 (Scamalytics + 四维 + 综合)
     _section(T("sec_fraud"))
@@ -3422,7 +3363,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
         _done_txt = "✓ " + T("done")
         print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
         if LANG in ("zh", "zh-TW"):
-            print(f"  {_c(C.yellow, '※ 本模式为被动查询，不含主动流媒体实测 / [7] 邮局测试')}")
+            print(f"  {_c(C.yellow, '※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试')}")
             print(f"  {_c(C.cyan, '  如需实测请用 [1] 本机自检')}")
         else:
             print(f"  {_c(C.yellow, '※ Passive mode: no active streaming/mail tests')}")
@@ -3442,7 +3383,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.7.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.8.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
