@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.6.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.7.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -48,7 +48,7 @@ from datetime import datetime, timezone
 import argparse
 import http.client
 
-VERSION = "4.6.1"
+VERSION = "4.7.0"
 
 
 def _init_console():
@@ -120,7 +120,6 @@ STR = {
         "usage_type": "使用类型:",
         "no_type_data": "[无法核实] 暂无类型数据",
         "no_loc_data": "[无法核实] 暂无位置数据",
-        "loc_inconsistent": "※ 各源位置不一致，可能为边界 IP 或数据库差异",
         "ip_range": "IP段",
         "dc": "数据中心",
         "hosting": "虚拟主机",
@@ -137,6 +136,10 @@ STR = {
         "done": "检测完成",
         "m_batch": "批量节点测速优选",
         "m_speed": "网络测速（多地区）",
+        "m_update": "检查更新",
+        "upd_latest": "已是最新版本 (v%s)",
+        "upd_available": "有新版本: v%s (当前 v%s), 请到 GitHub 下载",
+        "upd_failed": "检查更新失败 [无法核实]",
         "speed_col_region": "地区",
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
@@ -181,7 +184,7 @@ STR = {
         "chip_egress": "出口 IPv4",
         "chip_ipv6": "IPv6",
         "chip_dns": "系统 DNS",
-        "prompt_choice2": "请求下发执行代号 [0-11]: ",
+        "prompt_choice2": "请求下发执行代号 [0-12]: ",
         "diag_socks5_testing": "正在测试 SOCKS5 握手 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 握手成功，延迟 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 握手失败: %s",
@@ -321,7 +324,6 @@ STR = {
         "usage_type": "Usage:",
         "no_type_data": "[Unverifiable] No type data",
         "no_loc_data": "[Unverifiable] No location data",
-        "loc_inconsistent": "※ Sources disagree, may be border IP or DB variance",
         "ip_range": "Range",
         "dc": "Data Center",
         "hosting": "Web Hosting",
@@ -338,6 +340,10 @@ STR = {
         "done": "Check complete",
         "m_batch": "Batch node speed test & pick",
         "m_speed": "Speed test (regions)",
+        "m_update": "Check for Updates",
+        "upd_latest": "Already the latest version (v%s)",
+        "upd_available": "New version available: v%s (current v%s), please download from GitHub",
+        "upd_failed": "Update check failed [unverifiable]",
         "speed_col_region": "Region",
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
@@ -382,7 +388,7 @@ STR = {
         "chip_egress": "Egress IPv4",
         "chip_ipv6": "IPv6",
         "chip_dns": "System DNS",
-        "prompt_choice2": "Enter command code [0-11]: ",
+        "prompt_choice2": "Enter command code [0-12]: ",
         "diag_socks5_testing": "Testing SOCKS5 handshake %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 handshake OK, latency %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 handshake failed: %s",
@@ -522,7 +528,6 @@ STR = {
         "usage_type": "使用類型:",
         "no_type_data": "[無法核實] 暫無類型數據",
         "no_loc_data": "[無法核實] 暫無位置數據",
-        "loc_inconsistent": "※ 各源位置不一致，可能為邊界 IP 或數據庫差異",
         "ip_range": "IP段",
         "dc": "數據中心",
         "hosting": "虛擬主機",
@@ -539,6 +544,10 @@ STR = {
         "done": "檢測完成",
         "m_batch": "批量節點測速優選",
         "m_speed": "網路測速（多地區）",
+        "m_update": "檢查更新",
+        "upd_latest": "已是最新版本 (v%s)",
+        "upd_available": "有新版本: v%s (目前 v%s), 請到 GitHub 下載",
+        "upd_failed": "檢查更新失敗 [無法核實]",
         "speed_col_region": "地區",
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
@@ -583,7 +592,7 @@ STR = {
         "chip_egress": "出口 IPv4",
         "chip_ipv6": "IPv6",
         "chip_dns": "系統 DNS",
-        "prompt_choice2": "請求下發執行代號 [0-11]: ",
+        "prompt_choice2": "請求下發執行代號 [0-12]: ",
         "diag_socks5_testing": "正在測試 SOCKS5 握手 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 握手成功，延遲 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 握手失敗: %s",
@@ -723,7 +732,6 @@ STR = {
         "usage_type": "利用タイプ:",
         "no_type_data": "[確認不可] タイプデータなし",
         "no_loc_data": "[確認不可] 位置データなし",
-        "loc_inconsistent": "※ ソース間で位置が不一致，境界IPまたはDB差異の可能性",
         "ip_range": "IP範囲",
         "dc": "DC",
         "hosting": "ホスティング",
@@ -740,6 +748,10 @@ STR = {
         "done": "チェック完了",
         "m_batch": "ノード一括速度テスト",
         "m_speed": "速度テスト（地域別）",
+        "m_update": "アップデート確認",
+        "upd_latest": "最新バージョンです (v%s)",
+        "upd_available": "新しいバージョンがあります: v%s (現在 v%s), GitHub からダウンロードしてください",
+        "upd_failed": "アップデート確認に失敗しました",
         "speed_col_region": "地域",
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
@@ -784,7 +796,7 @@ STR = {
         "chip_egress": "出口 IPv4",
         "chip_ipv6": "IPv6",
         "chip_dns": "システム DNS",
-        "prompt_choice2": "実行コードを入力 [0-11]: ",
+        "prompt_choice2": "実行コードを入力 [0-12]: ",
         "diag_socks5_testing": "SOCKS5ハンドシェイクをテスト中 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5ハンドシェイク成功、遅延 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5ハンドシェイク失敗: %s",
@@ -924,7 +936,6 @@ STR = {
         "usage_type": "Тип:",
         "no_type_data": "[Не проверено] Нет данных о типе",
         "no_loc_data": "[Не проверено] Нет данных о местоположении",
-        "loc_inconsistent": "※ Местоположение различается, возможен пограничный IP",
         "ip_range": "Диапазон IP",
         "dc": "ДЦ",
         "hosting": "Хостинг",
@@ -941,6 +952,10 @@ STR = {
         "done": "Проверка завершена",
         "m_batch": "Пакетный тест узлов",
         "m_speed": "Тест скорости (регионы)",
+        "m_update": "Проверить обновления",
+        "upd_latest": "Установлена последняя версия (v%s)",
+        "upd_available": "Доступна новая версия: v%s (текущая v%s), скачайте с GitHub",
+        "upd_failed": "Не удалось проверить обновления",
         "speed_col_region": "Регион",
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
@@ -985,7 +1000,7 @@ STR = {
         "chip_egress": "Исходящий IPv4",
         "chip_ipv6": "IPv6",
         "chip_dns": "Системный DNS",
-        "prompt_choice2": "Введите код команды [0-11]: ",
+        "prompt_choice2": "Введите код команды [0-12]: ",
         "diag_socks5_testing": "Тестирование SOCKS5 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 рукопожатие успешно, задержка %.1f мс",
         "diag_socks5_fail": "✗ Ошибка SOCKS5: %s",
@@ -1125,7 +1140,6 @@ STR = {
         "usage_type": "نوع کاربرد:",
         "no_type_data": "[غیرقابل تأیید] داده نوع وجود ندارد",
         "no_loc_data": "[غیرقابل تأیید] داده موقعیت وجود ندارد",
-        "loc_inconsistent": "※ موقعیت در منابع مختلف ناسازگار است، احتمال IP مرزی",
         "ip_range": "بازه IP",
         "dc": "دیتاسنتر",
         "hosting": "میزبانی",
@@ -1142,6 +1156,10 @@ STR = {
         "done": "بررسی کامل شد",
         "m_batch": "تست دسته‌ای گره‌ها",
         "m_speed": "تست سرعت (مناطق)",
+        "m_update": "بررسی به‌روزرسانی",
+        "upd_latest": "آخرین نسخه نصب است (v%s)",
+        "upd_available": "نسخه جدید موجود است: v%s (فعلی v%s)، از GitHub دانلود کنید",
+        "upd_failed": "بررسی به‌روزرسانی ناموفق بود",
         "speed_col_region": "منطقه",
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
@@ -1186,7 +1204,7 @@ STR = {
         "chip_egress": "IPv4 خروجی",
         "chip_ipv6": "IPv6",
         "chip_dns": "DNS سیستم",
-        "prompt_choice2": "کد دستور را وارد کنید [0-11]: ",
+        "prompt_choice2": "کد دستور را وارد کنید [0-12]: ",
         "diag_socks5_testing": "در حال تست SOCKS5 %s:%s...",
         "diag_socks5_ok": "✓ اتصال SOCKS5 موفق، تأخیر %.1f میلی‌ثانیه",
         "diag_socks5_fail": "✗ خطای SOCKS5: %s",
@@ -1924,7 +1942,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.6.1 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.7.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2255,7 +2273,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.6.1 免 Key 公开版):
+评分规则 (v4.7.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2277,7 +2295,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.6.1 免 Key 公開版):
+評分規則 (v4.7.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2299,7 +2317,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.6.1 Keyless Public Edition):
+Scoring rules (v4.7.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2321,7 +2339,7 @@ Scoring rules (v4.6.1 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.6.1 キー不要公開版):
+スコアリングルール (v4.7.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2343,7 +2361,7 @@ Scoring rules (v4.6.1 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.6.1 Публичная версия без ключей):
+Правила оценки (v4.7.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2365,7 +2383,7 @@ Scoring rules (v4.6.1 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.6.1):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.7.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3021,7 +3039,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
             print(f"  {T('timezone')}: {prof['timezone']}")
     db = s.get("dbip", {})
     if db.get("ok"):
-        print(f"  {T('loc_verify')}: {db.get('country')} {db.get('state')} {db.get('city')}".strip())
+        print(f"  {T('loc_verify')}: {db.get('country')} {db.get('state')} {db.get('city')}")
     ii = s.get("ipinfo", {})
     if ii.get("ok") and ii.get("org"):
         print(f"  {T('asn_confirm')}: {ii.get('org')}")
@@ -3043,6 +3061,56 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
             print(f"  PTR: {T('ptr_none')}")
     else:
         print(f"  PTR: {T('unverifiable')}")
+
+    # [1.6] 多源位置
+    pc = s.get("proxycheck", {})
+    locs = []
+    if wi.get("ok"):
+        locs.append(("ipwho.is", f"{wi.get('country')} {wi.get('region')} {wi.get('city')}".strip(),
+                     wi.get("country"), wi.get("city")))
+    if ii.get("ok") and (ii.get("country") or ii.get("city")):
+        locs.append(("ipinfo.io", f"{ii.get('country')} {ii.get('region')} {ii.get('city')}".strip(),
+                     ii.get("country"), ii.get("city")))
+    if db.get("ok"):
+        locs.append(("DB-IP", f"{db.get('country')} {db.get('state')} {db.get('city')}".strip(),
+                     db.get("country"), db.get("city")))
+    if pc.get("ok") and (pc.get("country") or pc.get("city")):
+        locs.append(("proxycheck", f"{pc.get('country')} {pc.get('city')}".strip(),
+                     pc.get("country"), pc.get("city")))
+    fp = s.get("freeipapi", {})
+    if fp.get("ok") and (fp.get("country") or fp.get("city")):
+        locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip(),
+                     fp.get("country"), fp.get("city")))
+    if locs:
+        def _norm(txt):
+            txt = (txt or "").lower().strip()
+            txt = txt.replace("united states", "us").replace("china", "cn")
+            txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
+            return " ".join(txt.split())
+
+        # 求同存异: 相同 (国家, 城市) 合并为一行, 不同位置逐行对齐列出
+        _groups = {}
+        _order = []
+        for name, loc, co, ci in locs:
+            k = (_norm(co), _norm(ci))
+            if k not in _groups:
+                _groups[k] = (loc, [])
+                _order.append(k)
+            _groups[k][1].append(name)
+        _order.sort(key=lambda k: -len(_groups[k][1]))
+        _lbl = T("sec_loc")
+        _ind = " " * (_disp_width(_lbl) + 2)
+        for _i, k in enumerate(_order):
+            _loc, _names = _groups[k]
+            _who = ", ".join(_names)
+            if _i == 0:
+                print(f"  {_lbl}: {_loc} ({_who})")
+            else:
+                print(f"  {_ind}{_loc} ({_who})")
+    else:
+        print(f"  {T('no_loc_data')}")
+    if pc.get("ok") and pc.get("range"):
+        print(f"  {T('ip_range')}: {pc['range']}")
 
     # [1.5] 类型属性 (严禁篡改第三方原始判断)
     _section(T("sec_type"))
@@ -3076,66 +3144,6 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
         print("  " + _pad(T("usage_type"), 12) + "".join(cells))
     else:
         print(f"  {T('no_type_data')}")
-
-    # [1.6] 多源位置
-    _section(T("sec_loc"))
-    locs = []
-    if wi.get("ok"):
-        locs.append(("ipwho.is", f"{wi.get('country')} {wi.get('region')} {wi.get('city')}".strip(),
-                     wi.get("country"), wi.get("city")))
-    if ii.get("ok") and (ii.get("country") or ii.get("city")):
-        locs.append(("ipinfo.io", f"{ii.get('country')} {ii.get('region')} {ii.get('city')}".strip(),
-                     ii.get("country"), ii.get("city")))
-    if db.get("ok"):
-        locs.append(("DB-IP", f"{db.get('country')} {db.get('state')} {db.get('city')}".strip(),
-                     db.get("country"), db.get("city")))
-    if pc.get("ok") and (pc.get("country") or pc.get("city")):
-        locs.append(("proxycheck", f"{pc.get('country')} {pc.get('city')}".strip(),
-                     pc.get("country"), pc.get("city")))
-    fp = s.get("freeipapi", {})
-    if fp.get("ok") and (fp.get("country") or fp.get("city")):
-        locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip(),
-                     fp.get("country"), fp.get("city")))
-    if locs:
-        def _norm(txt):
-            txt = (txt or "").lower().strip()
-            txt = txt.replace("united states", "us").replace("china", "cn")
-            txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
-            return " ".join(txt.split())
-
-        # 方案 C 三级分档: 与共识一致 ✓ / 同国异城 ? / 异国 ✗ / 无城市无法判定 空白
-        votes = {}
-        for _, _, co, ci in locs:
-            if ci:
-                k = (_norm(co), _norm(ci))
-                votes[k] = votes.get(k, 0) + 1
-        consensus = max(votes.items(), key=lambda kv: kv[1])[0] if votes else None
-        any_diff = False
-        for name, loc, co, ci in locs:
-            if ci and consensus:
-                if (_norm(co), _norm(ci)) == consensus:
-                    mark = _c(C.green, "✓")
-                elif _norm(co) != consensus[0]:
-                    mark = _c(C.red, "✗")
-                    any_diff = True
-                else:
-                    mark = _c(C.yellow, "?")
-                    any_diff = True
-            elif consensus:
-                if _norm(co) == consensus[0]:
-                    mark = " "
-                else:
-                    mark = _c(C.red, "✗")
-                    any_diff = True
-            else:
-                mark = " "
-            print(f"  {mark} {name:<12} {loc}")
-        if any_diff:
-            print(f"  {_c(C.yellow, T('loc_inconsistent'))}")
-    else:
-        print(f"  {T('no_loc_data')}")
-    if pc.get("ok") and pc.get("range"):
-        print(f"  {T('ip_range')}: {pc['range']}")
 
     # 系统信息 (主动模式: 并入 [1] 组尾, print_system_info 自带小标题)
     if sysinfo:
@@ -3421,12 +3429,10 @@ def print_report(res, include_streaming_inference=True, sysinfo=None):
     _section(T("sec_complete"))
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    print(f"  [{_good_bar(c['pct'])}] {c['pct']}/100")
     if c["failed"]:
         print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
     print(f"  {_c(C.dim, T('fail_note'))}")
     print(f"  {T('confidence')}: {c['confidence']}/100")
-    print(f"  [{_good_bar(c['confidence'])}] {c['confidence']}/100")
 
     print(f"\n{_c(C.dim, T('disclaimer'))}")
 
@@ -3455,7 +3461,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.6.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.7.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -3825,23 +3831,23 @@ def check_mx_port25(domain, timeout=4):
 # 端点为 Vultr 各机房公共测速文件 (100MB), 2026-10-20 逐个实测可用
 # ============================================================
 SPEED_REGIONS = [
-    ("Tokyo, JP", "hnd-jp-ping.vultr.com"),
-    ("Osaka, JP", "osk-jp-ping.vultr.com"),
-    ("Seoul, KR", "sel-kor-ping.vultr.com"),
-    ("Singapore, SG", "sgp-ping.vultr.com"),
-    ("Mumbai, IN", "bom-in-ping.vultr.com"),
-    ("Sydney, AU", "syd-au-ping.vultr.com"),
-    ("London, UK", "lon-gb-ping.vultr.com"),
-    ("Paris, FR", "par-fr-ping.vultr.com"),
-    ("Frankfurt, DE", "fra-de-ping.vultr.com"),
-    ("Amsterdam, NL", "ams-nl-ping.vultr.com"),
-    ("Toronto, CA", "tor-ca-ping.vultr.com"),
-    ("New Jersey, US", "nj-us-ping.vultr.com"),
-    ("Chicago, US", "il-us-ping.vultr.com"),
-    ("Dallas, US", "tx-us-ping.vultr.com"),
-    ("Seattle, US", "wa-us-ping.vultr.com"),
-    ("Los Angeles, US", "lax-ca-us-ping.vultr.com"),
-    ("Johannesburg, ZA", "jnb-za-ping.vultr.com"),
+    ("JP Tokyo", "hnd-jp-ping.vultr.com"),
+    ("JP Osaka", "osk-jp-ping.vultr.com"),
+    ("KR Seoul", "sel-kor-ping.vultr.com"),
+    ("SG Singapore", "sgp-ping.vultr.com"),
+    ("IN Mumbai", "bom-in-ping.vultr.com"),
+    ("AU Sydney", "syd-au-ping.vultr.com"),
+    ("UK London", "lon-gb-ping.vultr.com"),
+    ("FR Paris", "par-fr-ping.vultr.com"),
+    ("DE Frankfurt", "fra-de-ping.vultr.com"),
+    ("NL Amsterdam", "ams-nl-ping.vultr.com"),
+    ("CA Toronto", "tor-ca-ping.vultr.com"),
+    ("US New Jersey", "nj-us-ping.vultr.com"),
+    ("US Chicago", "il-us-ping.vultr.com"),
+    ("US Dallas", "tx-us-ping.vultr.com"),
+    ("US Seattle", "wa-us-ping.vultr.com"),
+    ("US Los Angeles", "lax-ca-us-ping.vultr.com"),
+    ("ZA Johannesburg", "jnb-za-ping.vultr.com"),
 ]
 _SPEED_FILE = "/vultr.com.100MB.bin"
 
@@ -4910,8 +4916,8 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
 
 
 # 经代理测速的枢纽地区 (全量地区逐个走代理太慢/耗流量, 取 5 个代表点)
-PROXY_SPEED_HUBS = ["Singapore, SG", "Tokyo, JP", "Los Angeles, US",
-                    "Frankfurt, DE", "London, UK"]
+PROXY_SPEED_HUBS = ["SG Singapore", "JP Tokyo", "US Los Angeles",
+                    "DE Frankfurt", "UK London"]
 
 
 def proxy_speed_regions(ph, pp, username=None, password=None, duration=4,
@@ -5460,12 +5466,32 @@ def print_menu():
         (_menu_item(4, T("m_sysinfo")), _menu_item(9, T("m_explain"))),
         (_menu_item(5, T("m_lang")), _menu_item(10, T("m_batch"))),
         ("", _menu_item(11, T("m_speed"))),
+        ("", _menu_item(12, T("m_update"))),
     ]
     for left, right in rows:
         print("  " + _pad(left, colw) + right)
     print("  " + _c(C.green, "0.") + " " + T("m_quit"))
     print(_c(C.cyan, "═" * 78))
     print()
+
+
+def check_update():
+    """菜单 12: 对比 GitHub 最新 Release 与本地版本。"""
+    try:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/alariclin/A-Check/releases/latest",
+            headers={"User-Agent": "acheck/%s" % VERSION})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            tag = json.loads(r.read().decode("utf-8")).get("tag_name", "")
+    except Exception:
+        tag = ""
+    latest = tag.lstrip("v")
+    if not latest:
+        print(f"  {_c(C.dim, T('upd_failed'))}")
+    elif latest == VERSION:
+        print(f"  {_c(C.green, T('upd_latest') % VERSION)}")
+    else:
+        print(f"  {_c(C.yellow, T('upd_available') % (latest, VERSION))}")
 
 
 def run_speed_only(json_mode=False):
@@ -5739,7 +5765,11 @@ def main():
             return
     try:
         print_banner()
+        _menu_first = True
         while True:
+            if not _menu_first:
+                print(_c(C.cyan, "─" * 78))
+            _menu_first = False
             print_menu()
             choice = input(T("prompt_choice2")).strip().lower()
             if choice == "q" or choice == "0":
@@ -5797,6 +5827,9 @@ def main():
             elif choice == "11":
                 print()
                 run_speed_only()
+            elif choice == "12":
+                print()
+                check_update()
             elif choice == "7":
                 print()
                 run_dnsleak_only()
