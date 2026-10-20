@@ -2,8 +2,6 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-<h1 align="center">A-Check</h1>
-
 <p align="center">IP reputation · proxy diagnostics · batch node picking — a single-file Python checker</p>
 
 <p align="center">
@@ -35,7 +33,7 @@ Batch node speed test & picking:
 
 ## Features
 
-- **IP reputation**: 17 data sources aggregated concurrently (ipwho.is, ipinfo, proxycheck, Scamalytics, DB-IP, GreyNoise and more), every value attributed to its source, scoring rules fully public (see `--explain`)
+- **IP reputation**: Multiple data sources aggregated concurrently (ipwho.is, ipinfo, proxycheck, Scamalytics, DB-IP, GreyNoise and more), every value attributed to its source, scoring rules fully public (see `--explain`)
 - **Streaming unlock**: 18 checks across video / AI / social, distinguishing native unlock from DNS unlock
 - **Blacklist scan**: 29 DNSBL lists plus threat intel cross-checks (Feodo, Emerging Threats, Tor exit nodes)
 - **Proxy diagnostics**: SOCKS5 handshake & latency, egress IP via the proxy with reputation re-check, DNS leak check, TCP latency / jitter / loss stats
@@ -64,7 +62,7 @@ Double-click packages for macOS / Windows are on the [Releases](https://github.c
 | Mode | Command | Description |
 | --- | --- | --- |
 | Interactive menu | `python3 acheck.py` | Two-column menu with 10 tools |
-| Query any IP | `python3 acheck.py 1.2.3.4` | 17-source reputation + blacklists + full report |
+| Query any IP | `python3 acheck.py 1.2.3.4` | Multi-source reputation + blacklists + full report |
 | Self-check | `python3 acheck.py --active` | Egress check + streaming + system info |
 | Proxy diagnostics | `python3 acheck.py --proxy HOST:PORT` | Handshake / egress / DNS leak / latency (`--proxy-user`, `--proxy-pass` for auth) |
 | Batch picking | `python3 acheck.py --batch node,node…` | Concurrent speed test & ranking |

@@ -2,8 +2,6 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-<h1 align="center">A-Check</h1>
-
 <p align="center">IPレピュテーション · プロキシ診断 · ノード一括選別 — 単一ファイルのPythonチェッカー</p>
 
 <p align="center">
@@ -35,7 +33,7 @@
 
 ## 機能
 
-- **IPレピュテーション**：17のデータソースを並行集約（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise など）、値はすべて出典付き、スコアリングルールは完全公開（`--explain`）
+- **IPレピュテーション**：複数のデータソースを並行集約（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise など）、値はすべて出典付き、スコアリングルールは完全公開（`--explain`）
 - **ストリーミング解錠**：動画 / AI / ソーシャル計18項目、ネイティブ解錠とDNS解錠を区別
 - **ブラックリスト**：DNSBL 29リスト + 脅威インテリジェンス照合（Feodo、Emerging Threats、Tor出口ノード）
 - **プロキシ診断**：SOCKS5ハンドシェイクと遅延、プロキシ経由の出口IPとレピュテーション再確認、DNSリーク確認、TCP遅延 / ジッター / ロス統計
@@ -64,7 +62,7 @@ macOS / Windows 用ダブルクリックパッケージは [Releases](https://gi
 | モード | コマンド | 説明 |
 | --- | --- | --- |
 | 対話メニュー | `python3 acheck.py` | 10機能の2カラムメニュー |
-| 任意IP照会 | `python3 acheck.py 1.2.3.4` | 17ソースのレピュテーション + ブラックリスト + 全レポート |
+| 任意IP照会 | `python3 acheck.py 1.2.3.4` | 複数ソースのレピュテーション + ブラックリスト + 全レポート |
 | セルフチェック | `python3 acheck.py --active` | 出口確認 + ストリーミング + システム情報 |
 | プロキシ診断 | `python3 acheck.py --proxy HOST:PORT` | ハンドシェイク / 出口 / DNSリーク / 遅延（`--proxy-user`、`--proxy-pass` で認証） |
 | 一括選別 | `python3 acheck.py --batch ノード,ノード…` | 並行速度テストとランキング |

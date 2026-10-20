@@ -2,8 +2,6 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-<h1 align="center">A-Check</h1>
-
 <p align="center">IP 純淨度 · 代理診斷 · 批量節點優選 — 純 Python 單文件檢測工具</p>
 
 <p align="center">
@@ -35,7 +33,7 @@
 
 ## 功能特性
 
-- **IP 信譽檢測**：17 個資料源並發聚合（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise 等），逐源署名，評分規則完全公開（`--explain` 查看）
+- **IP 信譽檢測**：多源並發聚合（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise 等），逐源署名，評分規則完全公開（`--explain` 查看）
 - **流媒體解鎖**：影片 / AI / 社交共 18 項檢測，區分原生解鎖與 DNS 解鎖
 - **黑名單掃描**：29 個 DNSBL 庫 + Feodo / Emerging Threats / Tor 出口節點等威脅情報交叉驗證
 - **代理診斷**：SOCKS5 握手與延遲、經代理出口 IP 及信譽複檢、DNS 洩漏檢測、TCP 延遲 / 抖動 / 丟包統計
@@ -64,7 +62,7 @@ macOS / Windows 雙擊包在 [Releases](https://github.com/alariclin/A-Check/rel
 | 模式 | 命令 | 說明 |
 | --- | --- | --- |
 | 互動選單 | `python3 acheck.py` | 10 項功能雙列選單 |
-| 查任意 IP | `python3 acheck.py 1.2.3.4` | 17 源信譽 + 黑名單 + 完整報告 |
+| 查任意 IP | `python3 acheck.py 1.2.3.4` | 多源信譽 + 黑名單 + 完整報告 |
 | 本機自檢 | `python3 acheck.py --active` | 出口檢測 + 流媒體 + 系統資訊 |
 | 代理診斷 | `python3 acheck.py --proxy HOST:PORT` | 握手 / 出口 / DNS 洩漏 / 延遲（`--proxy-user`、`--proxy-pass` 認證） |
 | 批量優選 | `python3 acheck.py --batch 節點,節點…` | 並發測速排名選優 |

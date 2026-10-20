@@ -7,7 +7,7 @@ IP 信誉检测 v4.3.1 — 全量修复与并发优化公开版 (零 API Key 依
 主动模式: 检测当前实际出口 IP，包含系统信息、流媒体/AI 解锁、DNS、25 端口/DNSBL 与测速。
   注意: 主动测试只能反映"当前这条线路"，不能代表任意候选 IP。
 
-数据源 (全部免 Key 公开情报，共 17 个):
+数据源 (全部免 Key 公开情报，多源聚合):
   威胁情报: Scamalytics, StopForumSpam, urlscan.io, SANS ISC, proxycheck.io,
            Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise
   注册与实体: RIPEstat, PTR/FCrDNS, DB-IP
