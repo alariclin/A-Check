@@ -55,7 +55,7 @@ python3 acheck.py 8.8.8.8     # 任意のIPを照会
 python3 acheck.py --active    # セルフチェック
 ```
 
-macOS / Windows 用ダブルクリックパッケージは [Releases](https://github.com/alariclin/A-Check/releases) ページ（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`）から。解凍して `run.command` / `run.bat` を実行してください。
+macOS / Windows / Linux 用パッケージは [Releases](https://github.com/alariclin/A-Check/releases) ページ（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip` / `A-Check-v4.3.1-linux.zip`）から。解凍して `run.command` / `run.bat` / `run.sh` を実行してください。
 
 ## 使い方
 

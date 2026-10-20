@@ -55,7 +55,7 @@ python3 acheck.py 8.8.8.8     # query any public IP
 python3 acheck.py --active    # self-check
 ```
 
-Double-click packages for macOS / Windows are on the [Releases](https://github.com/alariclin/A-Check/releases) page (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`) — unzip and run `run.command` / `run.bat`.
+Packages for macOS / Windows / Linux are on the [Releases](https://github.com/alariclin/A-Check/releases) page (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip` / `A-Check-v4.3.1-linux.zip`) — unzip and run `run.command` / `run.bat` / `run.sh`.
 
 ## Usage
 

@@ -55,7 +55,7 @@ python3 acheck.py 8.8.8.8     # استعلام هر IP عمومی
 python3 acheck.py --active    # خودآزمایی
 ```
 
-بسته‌های دابل‌کلیک macOS / Windows در صفحه [Releases](https://github.com/alariclin/A-Check/releases) هستند (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`) — از حالت فشرده خارج کنید و `run.command` / `run.bat` را اجرا کنید.
+بسته‌های macOS / Windows / Linux در صفحه [Releases](https://github.com/alariclin/A-Check/releases) هستند (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip` / `A-Check-v4.3.1-linux.zip`) — از حالت فشرده خارج کنید و `run.command` / `run.bat` / `run.sh` را اجرا کنید.
 
 ## روش استفاده
 

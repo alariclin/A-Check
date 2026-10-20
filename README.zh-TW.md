@@ -55,7 +55,7 @@ python3 acheck.py 8.8.8.8     # 查任意公網 IP
 python3 acheck.py --active    # 本機自檢
 ```
 
-macOS / Windows 雙擊包在 [Releases](https://github.com/alariclin/A-Check/releases) 頁下載（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`），解壓後雙擊 `run.command` / `run.bat` 即可。
+macOS / Windows / Linux 安裝包在 [Releases](https://github.com/alariclin/A-Check/releases) 頁下載（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip` / `A-Check-v4.3.1-linux.zip`），解壓後運行 `run.command` / `run.bat` / `run.sh` 即可。
 
 ## 使用方法
 

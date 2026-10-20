@@ -55,7 +55,7 @@ python3 acheck.py 8.8.8.8     # запрос любого публичного I
 python3 acheck.py --active    # самопроверка
 ```
 
-Пакеты для macOS / Windows — на странице [Releases](https://github.com/alariclin/A-Check/releases) (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`): распаковать и запустить `run.command` / `run.bat`.
+Пакеты для macOS / Windows / Linux — на странице [Releases](https://github.com/alariclin/A-Check/releases) (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip` / `A-Check-v4.3.1-linux.zip`): распаковать и запустить `run.command` / `run.bat` / `run.sh`.
 
 ## Использование
 
