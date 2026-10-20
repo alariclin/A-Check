@@ -5,7 +5,7 @@
 <p align="center">IP reputation · proxy diagnostics · batch node picking — a single-file Python checker</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v4.8.0-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/release-v4.9.0-1f883d" alt="release">
   <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
   <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
@@ -56,7 +56,7 @@ python3 acheck.py 8.8.8.8     # query any public IP
 python3 acheck.py --active    # self-check
 ```
 
-Packages for macOS / Windows / Linux are on the [Releases](https://github.com/alariclin/A-Check/releases) page (`A-Check-v4.8.0-mac.zip` / `A-Check-v4.8.0-windows.zip` / `A-Check-v4.8.0-linux.zip`) — unzip and run `run.command` / `run.bat` / `run.sh`.
+Packages for macOS / Windows / Linux are on the [Releases](https://github.com/alariclin/A-Check/releases) page (`A-Check-v4.9.0-mac.zip` / `A-Check-v4.9.0-windows.zip` / `A-Check-v4.9.0-linux.zip`) — unzip and run `run.command` / `run.bat` / `run.sh`.
 
 ## Usage
 
