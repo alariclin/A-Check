@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.10.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.11.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.10.0"
+VERSION = "4.11.0"
 
 
 def _init_console():
@@ -1956,7 +1956,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.10.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.11.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2287,7 +2287,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.10.0 免 Key 公开版):
+评分规则 (v4.11.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2309,7 +2309,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.10.0 免 Key 公開版):
+評分規則 (v4.11.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2331,7 +2331,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.10.0 Keyless Public Edition):
+Scoring rules (v4.11.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2353,7 +2353,7 @@ Scoring rules (v4.10.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.10.0 キー不要公開版):
+スコアリングルール (v4.11.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2375,7 +2375,7 @@ Scoring rules (v4.10.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.10.0 Публичная версия без ключей):
+Правила оценки (v4.11.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2397,7 +2397,7 @@ Scoring rules (v4.10.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.10.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.11.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3285,56 +3285,40 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         else:
             print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
 
-    # [4] 欺诈与维度评分 (Scamalytics + 四维 + 综合)
+    # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
     _section(T("sec_fraud"))
     sc = s.get("scamalytics", {})
-    if not sc.get("ok"):
-        print(f"  Scamalytics: {_c(C.dim, T('unverifiable'))}")
+    _srows = [("Scamalytics",
+               sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
+    for _dn, _dv in ((T("dim_threat"), scs["threat"]),
+                     (T("dim_fraud"), scs["fraud"]),
+                     (T("dim_reputation"), scs["reputation"]),
+                     (T("dim_platform"), scs["platform"])):
+        _srows.append((_dn, _dv[0], ""))
+    _combined = scs["combined"]
+    _purity = 100 - _combined
+    if _purity >= 85:
+        _pl, _pc = T("purity_best"), C.green
+    elif _purity >= 70:
+        _pl, _pc = T("purity_good"), C.green
+    elif _purity >= 50:
+        _pl, _pc = T("purity_fair"), C.yellow
+    elif _purity >= 30:
+        _pl, _pc = T("purity_poor"), C.yellow
     else:
-        fs = sc.get("fraud_score", 0)
-        bar = _risk_bar(fs)[0]
-        lvl = sc.get("risk", "")
-        print(f"  Scamalytics: {fs}/100 {f'({lvl})' if lvl else ''}")
-        print(f"  [{bar}] {fs}/100")
-
-    dims = [
-        (T("dim_threat"), scs["threat"]),
-        (T("dim_fraud"), scs["fraud"]),
-        (T("dim_reputation"), scs["reputation"]),
-        (T("dim_platform"), scs["platform"]),
-    ]
-    for dname, (pts, ev) in dims:
-        bar = _risk_bar(pts)[0]
-        print(f"  {dname}: {pts}")
-        print(f"  [{bar}] {pts}/100")
-        if ev:
-            for e in ev[:4]:
-                print(f"    - {e}")
+        _pl, _pc = T("purity_bad"), C.red
+    _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
+    _srows.append((T("purity"), _purity, _pl))
+    _lw3 = max(_disp_width(n) for n, _, _ in _srows) + 2
+    for _n, _v, _extra in _srows:
+        if _v is None:
+            print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        elif _n == T("purity"):
+            print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
+        elif _extra:
+            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
         else:
-            print(f"    - {T('no_deduction')}")
-        print()
-    combined = scs["combined"]
-    print(
-        f"  {T('combined')}: {_c(C.bold, _c(_score_color(combined), str(combined)))}/100  {res['verdict']}"
-    )
-    bar, lvl = _risk_bar(combined)
-    print(f"  {T('risk_level')}: {lvl}")
-    print(f"  [{bar}] {combined}/100")
-
-    purity = 100 - combined
-    if purity >= 85:
-        pl, pc_ = T("purity_best"), C.green
-    elif purity >= 70:
-        pl, pc_ = T("purity_good"), C.green
-    elif purity >= 50:
-        pl, pc_ = T("purity_fair"), C.yellow
-    elif purity >= 30:
-        pl, pc_ = T("purity_poor"), C.yellow
-    else:
-        pl, pc_ = T("purity_bad"), C.red
-    pf = int(purity / 100 * 30)
-    print(f"  {T('purity')}: {_c(pc_, f'{purity}% {pl}')}")
-    print(f"  [{_c(pc_, '█' * pf + '░' * (30 - pf))}]")
+            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
     print(f"  {_c(C.dim, T('purity_note'))}")
     if scs["platform"][0] >= 30:
         print(f"  {_c(C.dim, T('platform_note'))}")
@@ -3367,7 +3351,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.10.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.11.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
