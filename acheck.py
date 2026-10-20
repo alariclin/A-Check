@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.11.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.12.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.11.1"
+VERSION = "4.12.0"
 
 
 def _init_console():
@@ -101,6 +101,8 @@ STR = {
         "sec_basic": "[1] 基础信息与 ASN/BGP",
         "sec_type": "IP类型属性",
         "sec_loc": "多源位置对比",
+        "geo_group": "地理位置",
+        "coord_country": "经纬度识别",
         "sec_fraud": "[3] 欺诈与维度评分",
         "sec_matrix": "[2] 风险因子矩阵",
         "sec_complete": "[5] 数据完整度与置信度",
@@ -306,6 +308,8 @@ STR = {
         "sec_basic": "[1] Basic Info & ASN/BGP",
         "sec_type": "IP Type Attributes",
         "sec_loc": "Multi-source Location",
+        "geo_group": "Geo Location",
+        "coord_country": "Country by Coords",
         "sec_fraud": "[3] Fraud & Dimension Scores",
         "sec_matrix": "[2] Risk Factor Matrix",
         "sec_complete": "[5] Data Completeness & Confidence",
@@ -511,6 +515,8 @@ STR = {
         "sec_basic": "[1] 基礎資訊與 ASN/BGP",
         "sec_type": "IP類型屬性",
         "sec_loc": "多源位置對比",
+        "geo_group": "地理位置",
+        "coord_country": "經緯度識別",
         "sec_fraud": "[3] 欺詐與維度評分",
         "sec_matrix": "[2] 風險因子矩陣",
         "sec_complete": "[5] 數據完整度與置信度",
@@ -716,6 +722,8 @@ STR = {
         "sec_basic": "[1] 基本情報と ASN/BGP",
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
+        "geo_group": "地理情報",
+        "coord_country": "座標による国",
         "sec_fraud": "[3] 不正・次元スコア",
         "sec_matrix": "[2] リスク因子マトリックス",
         "sec_complete": "[5] データ完全性と信頼度",
@@ -921,6 +929,8 @@ STR = {
         "sec_basic": "[1] Основная информация и ASN/BGP",
         "sec_type": "Атрибуты типа IP",
         "sec_loc": "Сравнение местоположения",
+        "geo_group": "Геолокация",
+        "coord_country": "Страна по координатам",
         "sec_fraud": "[3] Мошенничество и измерения",
         "sec_matrix": "[2] Матрица факторов риска",
         "sec_complete": "[5] Полнота данных и достоверность",
@@ -1126,6 +1136,8 @@ STR = {
         "sec_basic": "[1] اطلاعات پایه و ASN/BGP",
         "sec_type": "ویژگی‌های نوع IP",
         "sec_loc": "مقایسه موقعیت چندمنبعی",
+        "geo_group": "موقعیت جغرافیایی",
+        "coord_country": "کشور بر اساس مختصات",
         "sec_fraud": "[3] امتیاز تقلب و ابعاد",
         "sec_matrix": "[2] ماتریس عوامل خطر",
         "sec_complete": "[5] کامل بودن داده و اطمینان",
@@ -1956,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.11.1 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.12.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2277,6 +2289,7 @@ def _build_unified_profile(s):
         "org": org,
         "asn": _parse_asn(asn),
         "country": country,
+        "country_code": wi.get("country_code", ""),
         "region": region,
         "city": city,
         "latitude": wi.get("latitude"),
@@ -2287,7 +2300,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.11.1 免 Key 公开版):
+评分规则 (v4.12.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2309,7 +2322,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.11.1 免 Key 公開版):
+評分規則 (v4.12.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2331,7 +2344,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.11.1 Keyless Public Edition):
+Scoring rules (v4.12.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2353,7 +2366,7 @@ Scoring rules (v4.11.1 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.11.1 キー不要公開版):
+スコアリングルール (v4.12.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2375,7 +2388,7 @@ Scoring rules (v4.11.1 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.11.1 Публичная версия без ключей):
+Правила оценки (v4.12.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2397,7 +2410,7 @@ Scoring rules (v4.11.1 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.11.1):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -2612,6 +2625,16 @@ def _score_color(v):
     return C.red
 
 
+def _flag(cc):
+    """ISO 国家码 -> 国旗 emoji (区域指示符); 无效返回空串。"""
+    cc = (cc or "").strip().upper()
+    if cc == "UK":
+        cc = "GB"
+    if len(cc) == 2 and cc.isalpha():
+        return "".join(chr(0x1F1E6 + ord(ch) - 65) for ch in cc)
+    return ""
+
+
 def _bar_label_width():
     """[2]/[3] 进度条共用标签列宽 (两节同宽, 条左边缘才对齐)。"""
     labels = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
@@ -2704,9 +2727,26 @@ def run_passive(ip):
     else:
         verdict = T("verdict_high")
 
+    _prof = _build_unified_profile(sources)
+    if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
+        try:
+            _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
+                  "&format=json&zoom=3" % (_prof["latitude"], _prof["longitude"]))
+            _rq = urllib.request.Request(
+                _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
+            with urllib.request.urlopen(_rq, timeout=6) as _rp:
+                _addr = (json.loads(_rp.read().decode("utf-8", "replace"))
+                         .get("address") or {})
+            if _addr.get("country"):
+                sources["coordgeo"] = {
+                    "ok": True, "country": _addr.get("country"),
+                    "cc": (_addr.get("country_code") or "").upper()}
+        except Exception:
+            pass
+
     return {
         "ip": ip_s,
-        "profile": _build_unified_profile(sources),
+        "profile": _prof,
         "sources": sources,
         "scores": {
             "threat": (t_pts, t_ev),
@@ -3058,29 +3098,18 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     ip = res["ip"]
 
     print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-    print(f"  {ip}  |  {res['ts']}")
+    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
 
     # [1] 基础信息 (支持多源融合兜底)
     _section(T("sec_basic"))
     wi = s.get("ipwhois", {})
+    ii = s.get("ipinfo", {})
+    db = s.get("dbip", {})
     if prof.get("ok"):
         isp_str = prof.get("isp") or "?"
         org_str = prof.get("org") or ""
-        print(f"  {T('isp')}: {isp_str}" + (f" / {org_str}" if org_str and org_str != isp_str else ""))
-        loc = f"{prof.get('country', '')} {prof.get('region', '')} {prof.get('city', '')}".strip()
-        if loc:
-            print(f"  {T('location')}: {loc}")
-        if prof.get("latitude") is not None and prof.get("longitude") is not None:
-            print(f"  {T('coords')}: {prof['latitude']}, {prof['longitude']}")
-            print(f"  {T('map')}: https://www.google.com/maps?q={prof['latitude']},{prof['longitude']}")
-        if prof.get("timezone"):
-            print(f"  {T('timezone')}: {prof['timezone']}")
-    db = s.get("dbip", {})
-    if db.get("ok"):
-        print(f"  {T('loc_verify')}: {db.get('country')} {db.get('state')} {db.get('city')}")
-    ii = s.get("ipinfo", {})
-    if ii.get("ok") and ii.get("org"):
-        print(f"  {T('asn_confirm')}: {ii.get('org')}")
+        _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
+        print(f"  {T('isp')}: {isp_str}" + (f" / {org_str}" if org_str and org_str != isp_str else "") + _as_sfx)
     rs = s.get("ripestat", {})
     if rs.get("ok"):
         if rs.get("age_years") is not None:
@@ -3099,7 +3128,11 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             print(f"  PTR: {T('ptr_none')}")
     else:
         print(f"  PTR: {T('unverifiable')}")
+    pc = s.get("proxycheck", {})
+    if pc.get("ok") and pc.get("range"):
+        print(f"  {T('ip_range')}: {pc['range']}")
 
+    # 地理位置组: 国旗排头并列 (位置/多源对比/经纬度识别/时区), 坐标/地图随后
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
     locs = []
@@ -3160,18 +3193,48 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                 _order.append(k)
             _groups[k][1].append(name)
         _order.sort(key=lambda k: -len(_groups[k][1]))
-        _lbl = T("sec_loc")
-        _ind = " " * (_disp_width(_lbl) + 2)
-        for _i, k in enumerate(_order):
-            _loc, _names = _groups[k]
-            if _i == 0:
-                print(f"  {_lbl}: {_loc}")
-            else:
-                print(f"  {_ind}{_loc}")
-    else:
-        print(f"  {T('no_loc_data')}")
-    if pc.get("ok") and pc.get("range"):
-        print(f"  {T('ip_range')}: {pc['range']}")
+    _cg = s.get("coordgeo", {})
+    _pcc = prof.get("country_code") or ""
+    if not _pcc and locs and _order:
+        _k0 = _order[0][0]
+        if len(_k0) == 2 and _k0.isalpha():
+            _pcc = _k0.upper()
+    if not _pcc and _cg.get("ok"):
+        _pcc = _cg.get("cc") or ""
+
+    def _fl(cc):
+        _f = _flag(cc)
+        return (_f + " ") if _f else "   "
+
+    _loc_str = ""
+    if prof.get("ok"):
+        _loc_str = f"{prof.get('country', '')} {prof.get('region', '')} {prof.get('city', '')}".strip()
+    _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
+                    or prof.get("latitude") is not None)
+    if _has_geo:
+        print(f"  {_c(C.bold, _c(C.cyan, T('geo_group')))}")
+        if _loc_str:
+            print(f"  {_fl(_pcc)}{T('location')}: {_loc_str}")
+        if locs:
+            _lbl = T("sec_loc")
+            _ind = " " * (_disp_width(_lbl) + 2)
+            for _i, k in enumerate(_order):
+                _loc, _names = _groups[k]
+                _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() else "")
+                if _i == 0:
+                    print(f"  {_gf}{_lbl}: {_loc}")
+                else:
+                    print(f"  {_gf}{_ind}{_loc}")
+        else:
+            print(f"  {T('no_loc_data')}")
+        if _cg.get("ok"):
+            print(f"  {_fl(_cg.get('cc'))}{T('coord_country')}: {_cg.get('country')}")
+        if prof.get("timezone"):
+            print(f"  {_fl(_pcc)}{T('timezone')}: {prof['timezone']}")
+        if prof.get("latitude") is not None and prof.get("longitude") is not None:
+            _cf = _fl(_cg.get("cc") if _cg.get("ok") else _pcc)
+            print(f"  {_cf}{T('coords')}: {prof['latitude']}, {prof['longitude']}")
+            print(f"  {_cf}{T('map')}: https://www.google.com/maps?q={prof['latitude']},{prof['longitude']}")
 
     # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
     if sysinfo:
@@ -3360,7 +3423,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.11.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.12.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
