@@ -4553,7 +4553,7 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
 
 def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
     """经 SOCKS5 代理获取出口 IP (走代理查 api.ipify.org)。
-    返回 (ip, geo_dict) 或 (None, error)。"""
+    返回 (ip, None) 或 (None, error)。"""
     try:
         s, _ = socks5_connect(ph, pp, "api.ipify.org", 443,
                               username=username, password=password,
@@ -4615,22 +4615,33 @@ def get_resolver_ips(probes=3, timeout=8):
 
 
 def _ip_asn_org(ip, timeout=8):
-    """用 ipwho.is 查 ASN/归属 (A-Check 已有该源逻辑, 此处轻量复用)。"""
+    """用 ipwho.is 查 ASN/归属。注意: asn/org 嵌套在 connection 对象内,
+    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。"""
     try:
         req = urllib.request.Request(
-            "https://ipwho.is/%s?fields=asn,org,country" % ip,
+            "https://ipwho.is/%s?fields=connection,country" % ip,
             headers={"User-Agent": UA_BROWSER})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
-        return d.get("asn"), d.get("org"), d.get("country")
+        conn = d.get("connection") or {}
+        return conn.get("asn"), conn.get("org"), d.get("country")
     except Exception:
         return None, None, None
 
 
-def dns_leak_check(egress_ip=None, timeout=8):
+def dns_leak_check(egress_ip=None, timeout=8, require_egress=False):
     """DNS 泄漏检测: 对比系统解析器 IP 与出口 IP 的 ASN/归属。
-    返回 (leaked: bool|None, detail: dict)。"""
-    egress = egress_ip or get_egress_ip()
+    返回 (leaked: bool|None, detail: dict)。三态判定: 任一侧 ASN 查不到
+    时返回 None (未知), 不误报泄漏。
+    require_egress=True 时 egress_ip 为空直接判未知, 不回退直连出口
+    (代理诊断场景: 代理出口未知时拿直连出口做基准会误报无泄漏)。"""
+    if egress_ip:
+        egress = egress_ip
+    elif require_egress:
+        return None, {"error": "egress unknown", "egress": None,
+                      "resolvers": []}
+    else:
+        egress = get_egress_ip()
     resolvers = get_resolver_ips(timeout=timeout)
     if not egress or not resolvers:
         return None, {"error": "query failed", "egress": egress,
@@ -4638,13 +4649,22 @@ def dns_leak_check(egress_ip=None, timeout=8):
     e_asn, e_org, e_cc = _ip_asn_org(egress, timeout=timeout)
     results = []
     leaked = False
+    unknown = e_asn is None
     for rip in resolvers:
         r_asn, r_org, r_cc = _ip_asn_org(rip, timeout=timeout)
-        same = bool(r_asn and e_asn and r_asn == e_asn)
+        if r_asn is None or e_asn is None:
+            same = None  # 未知: 查询失败, 不下结论
+            unknown = True
+        else:
+            same = (r_asn == e_asn)
+            if not same:
+                leaked = True
         results.append({"resolver": rip, "asn": r_asn, "org": r_org,
                         "country": r_cc, "same_as_egress": same})
-        if not same:
-            leaked = True
+    if unknown and not leaked:
+        return None, {"egress": egress, "egress_asn": e_asn,
+                      "egress_org": e_org, "egress_country": e_cc,
+                      "resolvers": results}
     return leaked, {"egress": egress, "egress_asn": e_asn,
                     "egress_org": e_org, "egress_country": e_cc,
                     "resolvers": results}
@@ -4738,7 +4758,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
 
     # 4. DNS 泄漏 (用代理出口 IP 做对比基准)
     _note(T("diag_dns_testing"))
-    leaked, dinfo = dns_leak_check(egress_ip=eip)
+    leaked, dinfo = dns_leak_check(egress_ip=eip, require_egress=True)
     out["dns_leak"] = {"leaked": leaked, "detail": dinfo}
     if leaked is True:
         _note(_c(C.red, T("diag_dns_leaked")))
