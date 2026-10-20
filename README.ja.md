@@ -2,98 +2,83 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-[简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+<h1 align="center">A-Check</h1>
 
-A-Check はデュアルモード IP レピュテーションチェッカーです：自端末の出口 IP を自己診断 / 任意のパブリック IP を照会。Python 標準ライブラリのみ、依存関係ゼロ、すぐに使えます。
+<p align="center">IPレピュテーション · プロキシ診断 · ノード一括選別 — 単一ファイルのPythonチェッカー</p>
 
-## 特徴
+<p align="center">
+  <img src="https://img.shields.io/badge/release-v4.3.1-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
+  <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
+</p>
 
-- **17 の無料データソース**、API キー不要、オープンソースで無料
-- **デュアルモード**：
-  - `[1]` 自己診断 — 現在のデバイスの出口 IP を検査。ストリーミングのアクティブなアンロックテスト、DNS フルテスト、25 番ポート送信テスト、29 の DNSBL ブラックリスト、Cloudflare 速度測定を含む
-  - `[2]` IP 照会 — 任意のパブリック IP を入力し、公開インテリジェンスのパッシブ照会のみ実行。ストリーミング利用可否のシミュレーション推測と DNS 推奨付き
-  - `[3]` プロキシ診断 — SOCKS5ハンドシェイク+遅延、プロキシ出口IP、出口IPレピュテーション、DNSリーク確認、TCP遅延/ジッタ/損失
-- **6 言語 UI**：简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
-- **リスクスコア 0–100** + カラープログレスバー
-- **ストリーミングアンロック検出**：ネイティブアンロック / DNS アンロックを区別
-- **25 番ポート送信テスト** + 29 の DNSBL ブラックリスト（20 スレッド並行、数十秒で完了）
-- **システム情報**：CPU / メモリ / ディスク / 仮想化 + ディスク I/O ベンチマーク
-- **Cloudflare 速度測定**（参考用）
-- **DNS フルテスト**：従来 DNS（UDP 53）/ DoH / DoT
-- **クロスプラットフォーム**：macOS / Windows / Linux
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ru.md">Русский</a> · <a href="README.fa.md">فارسی</a>
+</p>
+
+---
+
+## スクリーンショット
+
+起動画面 — グラデーションロゴ + リアルタイム情報パネル + 2カラムメニュー：
+
+![メイン画面](docs/showcase-menu.png)
+
+レポート例：
+
+![レポート](docs/showcase-report.png)
+
+ノード一括速度テスト：
+
+![一括テスト](docs/showcase-batch.png)
+
+## 機能
+
+- **IPレピュテーション**：17のデータソースを並行集約（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise など）、値はすべて出典付き、スコアリングルールは完全公開（`--explain`）
+- **ストリーミング解錠**：動画 / AI / ソーシャル計18項目、ネイティブ解錠とDNS解錠を区別
+- **ブラックリスト**：DNSBL 29リスト + 脅威インテリジェンス照合（Feodo、Emerging Threats、Tor出口ノード）
+- **プロキシ診断**：SOCKS5ハンドシェイクと遅延、プロキシ経由の出口IPとレピュテーション再確認、DNSリーク確認、TCP遅延 / ジッター / ロス統計
+- **ノード一括選別**：複数のノード（`host:port` または `socks5://…`）を貼り付けて並行速度テスト、ランキング表示、最速ノードを自動マーク
+- **セルフチェック**：出口IP全検 + DNSテスト（平文 / DoH / DoT）+ ポート25送信テスト + システム情報とディスクIOベンチマーク
+- **依存ゼロ**：純粋なPython標準ライブラリの単一ファイル、公開版はAPIキー不要；UI 6言語；`--json` 出力でスクリプト連携可能
 
 ## クイックスタート
 
 ```bash
-# VPS / Linux / macOS ワンライナー（Python 3.8+ が必要）
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+# 単一ファイルをダウンロード
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py
 
-# Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
+# 対話メニュー（推奨）
+python3 acheck.py
+
+# コマンドライン
+python3 acheck.py 8.8.8.8     # 任意のIPを照会
+python3 acheck.py --active    # セルフチェック
 ```
 
-> **初回実行時の注意**：
-> - **macOS**：`run.command` が Gatekeeper にブロックされた場合（"検証できません"）、右クリック → 開く → 開く；または `xattr -d com.apple.quarantine run.command` を実行
-> - **Windows**：`run.bat` が SmartScreen にブロックされた場合、"詳細情報" → "実行" をクリック；または右クリック → プロパティ → "ブロックの解除" にチェック
-> - **Linux**：権限エラーが出た場合は先に `chmod +x run.sh` を実行
+macOS / Windows 用ダブルクリックパッケージは [Releases](https://github.com/alariclin/A-Check/releases) ページ（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`）から。解凍して `run.command` / `run.bat` を実行してください。
 
-サードパーティ依存関係なし — Python 標準ライブラリのみ使用。
+## 使い方
 
-## モード説明
+| モード | コマンド | 説明 |
+| --- | --- | --- |
+| 対話メニュー | `python3 acheck.py` | 10機能の2カラムメニュー |
+| 任意IP照会 | `python3 acheck.py 1.2.3.4` | 17ソースのレピュテーション + ブラックリスト + 全レポート |
+| セルフチェック | `python3 acheck.py --active` | 出口確認 + ストリーミング + システム情報 |
+| プロキシ診断 | `python3 acheck.py --proxy HOST:PORT` | ハンドシェイク / 出口 / DNSリーク / 遅延（`--proxy-user`、`--proxy-pass` で認証） |
+| 一括選別 | `python3 acheck.py --batch ノード,ノード…` | 並行速度テストとランキング |
+| JSON出力 | 各モードに `--json` を追加 | スクリプト / 通知 / 連携用 |
+| スコアリングルール | `python3 acheck.py --explain` | 3次元スコアリングルール全文 |
+| 言語 | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | メニュー内でも切替可能 |
 
-### [1] 自己診断
+## 注意事項
 
-現在のデバイスの出口 IP を検査します：
+- **プライバシー**：すべての確認はローカルで実行され、ユーザーデータを外部に送信しません；公開版にAPIキーは含まれません
+- **レート制限**：各データソースには無料枠があります。短時間に大量の照会を行うと制限される場合があり、欠けたソースはレポートに明記されます
+- **結果**：スコアは公開情報の集約です。ソース間で結論が異なる場合があり、レポートには項目ごとに出典を明記します。参考用です
+- **互換性**：Python 3.8+ が必要です；macOS / Windows / Linux / VPS で動作します
 
-1. パッシブ IP プロファイリング（ASN / BGP / 位置情報 / IP タイプ）
-2. 脅威インテリジェンス（17 ソースを集約）
-3. 不正スコアとリスク要因マトリックス
-4. システム情報（CPU / メモリ / ディスク / 仮想化 / ディスク I/O）
-5. ストリーミングのアクティブテスト（TikTok / Netflix / Disney+ / YouTube / ChatGPT など、ネイティブ / DNS アンロック区別）
-6. DNS フルテスト（従来 / DoH / DoT）
-7. 25 番ポート送信テスト + DNSBL ブラックリスト
-8. Cloudflare 速度測定
+---
 
-### [2] IP 照会
-
-任意のパブリック IP を入力し、公開インテリジェンスのパッシブ照会のみ実行：
-
-- マルチソース IP プロファイリングと位置比較
-- 脅威インテリジェンスとリスクスコア
-- ストリーミング利用可否の**シミュレーション推測**（⚠️ 実際の接続テストではありません、参考用）
-- IP の国/地域に基づく DNS 推奨と、利用不可と判明している項目の一覧
-
-
-### [3] プロキシ診断
-
-SOCKS5プロキシをエンドツーエンドでテスト:
-
-1. SOCKS5ハンドシェイク (RFC 1928) + 遅延測定
-2. プロキシ出口IP検出 (プロキシ経由)
-3. 出口IPレピュテーション確認 (17ソースの脅威インテルを再利用)
-4. DNSリーク確認 (システムリゾルバと出口IPのASNを比較)
-5. TCP遅延 / ジッタ / パケット損失統計
-## データソース（17 の無料ソース）
-
-| カテゴリ | ソース |
-|----------|--------|
-| IP プロファイリング | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| 脅威インテリジェンス | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
-| ネットワーク | RIPEstat（ASN/BGP）、PTR（逆引き）、Shodan InternetDB |
-| ブラックリスト | DNSBL（29 の公開ブラックリスト） |
-
-
-## スクリーンショット
-
-（プレースホルダー：モード1 / モード2 / リスクスコア / ストリーミングテスト）
-
-## ライセンス
-
-MIT License — [LICENSE](LICENSE) を参照。
-
-## 免責事項
-
-- 学習・研究目的でのみ使用してください。
-- すべてのデータは公開インテリジェンスソースの集約であり、パッシブ照会の結果はリアルタイムの正確性を保証しません。「証拠なし ≠ リスクなし」。
-- ストリーミングのシミュレーション推測は実際の接続テストではありません。参考用です。
-- 現地の法令および各データソースの利用規約を遵守し、攻撃・悪用・違法目的に使用しないでください。
+変更履歴は [Releases](https://github.com/alariclin/A-Check/releases) · MIT License · データソースはレポート内に項目ごとに明記

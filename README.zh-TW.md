@@ -2,97 +2,83 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-[简体中文](README.zh.md) | [English](README.en.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+<h1 align="center">A-Check</h1>
 
-A-Check 是一款三模式 IP 信譽與代理診斷檢測工具：可檢測本機出口 IP，也可查詢任意公網 IP。純 Python 標準庫，零依賴，開箱即用。
+<p align="center">IP 純淨度 · 代理診斷 · 批量節點優選 — 純 Python 單文件檢測工具</p>
 
-## 特性
+<p align="center">
+  <img src="https://img.shields.io/badge/release-v4.3.1-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
+  <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
+</p>
 
-- **17 個免費數據源**，無 API Key 依賴，開源免費
-- **雙模式**：
-  - `[1]` 本機自檢 — 檢測當前設備出口 IP，含主動串流解鎖實測、DNS 全品類檢測、25 端口發信檢測、29 個 DNSBL 黑名單、Cloudflare 測速
-  - `[2]` 查詢 IP — 輸入任意公網 IP，僅做公開情報被動查詢，附串流可用性模擬推測與 DNS 推薦
-  - `[3]` 代理診斷 — SOCKS5 握手+延遲、代理出口 IP、出口 IP 信譽、DNS 洩漏檢測、TCP 延遲/抖動/丟包
-- **六語言 UI**：简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
-- **風險評分 0-100** + 彩色進度條，直觀醒目
-- **串流解鎖檢測**：區分原生解鎖 / DNS 解鎖
-- **25 端口發信檢測** + 29 個 DNSBL 黑名單（20 線程並發，十幾秒完成）
-- **系統資訊**：CPU / 記憶體 / 磁碟 / 虛擬化類型 + 磁碟 I/O 測速
-- **Cloudflare 測速**（僅供參考）
-- **DNS 全品類檢測**：傳統 DNS（UDP 53）/ DoH / DoT
-- **三平台相容**：macOS / Windows / Linux
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.fa.md">فارسی</a>
+</p>
+
+---
+
+## 腳本展示
+
+啟動介面 — 漸變 Logo + 即時資訊面板 + 雙列選單：
+
+![主介面](docs/showcase-menu.png)
+
+檢測報告範例：
+
+![檢測報告](docs/showcase-report.png)
+
+批量節點測速優選：
+
+![批量測速](docs/showcase-batch.png)
+
+## 功能特性
+
+- **IP 信譽檢測**：17 個資料源並發聚合（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise 等），逐源署名，評分規則完全公開（`--explain` 查看）
+- **流媒體解鎖**：影片 / AI / 社交共 18 項檢測，區分原生解鎖與 DNS 解鎖
+- **黑名單掃描**：29 個 DNSBL 庫 + Feodo / Emerging Threats / Tor 出口節點等威脅情報交叉驗證
+- **代理診斷**：SOCKS5 握手與延遲、經代理出口 IP 及信譽複檢、DNS 洩漏檢測、TCP 延遲 / 抖動 / 丟包統計
+- **批量節點優選**：一次貼上多個節點（`host:port` 或 `socks5://…`）並發測速排名，最優節點自動標出
+- **本機自檢**：出口 IP 全檢 + DNS 全協議測試（明文 / DoH / DoT）+ 25 連接埠發信測試 + 系統資訊與磁碟 IO 基準
+- **零依賴**：純 Python 標準庫單文件，公開版零 API Key，下載即跑；6 語言介面；`--json` 輸出可對接腳本與自動化
 
 ## 快速開始
 
 ```bash
-# VPS / Linux / macOS 一鍵運行（需 Python 3.8+）
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+# 下載單文件
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py
 
-# Windows PowerShell one-liner (requires Python 3.8+)
-irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
+# 互動選單（推薦）
+python3 acheck.py
+
+# 命令行直查
+python3 acheck.py 8.8.8.8     # 查任意公網 IP
+python3 acheck.py --active    # 本機自檢
 ```
 
-## 下载
+macOS / Windows 雙擊包在 [Releases](https://github.com/alariclin/A-Check/releases) 頁下載（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`），解壓後雙擊 `run.command` / `run.bat` 即可。
 
-| 平台 | 格式 | 用法 |
-|------|------|------|
-| macOS | `A-Check-v4.3.1-mac.zip` | 解压后双击 `run.command` |
-| Windows | `A-Check-v4.3.1-windows.zip` | 解压后双击 `run.bat` |
+## 使用方法
 
-> **首次執行提醒**：
-> - **macOS**：連按兩下 `run.command` 若被 Gatekeeper 攔截（"無法驗證"），按右鍵 → 打開 → 仍要打開；或在終端機執行 `xattr -d com.apple.quarantine run.command`
-> - **Windows**：連按兩下 `run.bat` 若觸發 SmartScreen（"已保護你的電腦"），點選"更多資訊" → "仍要執行"；或按右鍵 → 內容 → 勾選"解除封鎖"
-> - **Linux**：若提示權限不足，先執行 `chmod +x run.sh`
+| 模式 | 命令 | 說明 |
+| --- | --- | --- |
+| 互動選單 | `python3 acheck.py` | 10 項功能雙列選單 |
+| 查任意 IP | `python3 acheck.py 1.2.3.4` | 17 源信譽 + 黑名單 + 完整報告 |
+| 本機自檢 | `python3 acheck.py --active` | 出口檢測 + 流媒體 + 系統資訊 |
+| 代理診斷 | `python3 acheck.py --proxy HOST:PORT` | 握手 / 出口 / DNS 洩漏 / 延遲（`--proxy-user`、`--proxy-pass` 認證） |
+| 批量優選 | `python3 acheck.py --batch 節點,節點…` | 並發測速排名選優 |
+| JSON 輸出 | 任意模式加 `--json` | 對接腳本 / 推送 / 二次開發 |
+| 評分規則 | `python3 acheck.py --explain` | 三維評分規則全文 |
+| 語言切換 | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | 也可在選單內切換 |
 
-| Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
+## 注意事項
 
-無需安裝任何第三方依賴，僅使用 Python 標準庫。
+- **隱私**：全部檢測在本機運行，不向第三方上傳使用者資料；公開版不含任何 API Key
+- **限流**：各資料源有免費額度限制，短時間高頻查詢可能被限流，報告會對缺失源標註
+- **結果**：評分基於公開情報聚合，不同資料源結論可能不一致，報告逐項標註來源，僅供參考
+- **相容**：需要 Python 3.8+；macOS / Windows / Linux / VPS 均可運行
 
-## 雙模式說明
+---
 
-### [1] 本機自檢
-
-檢測當前設備的出口 IP，流程：
-
-1. 被動 IP 畫像（ASN / BGP / 地理位置 / IP 類型）
-2. 威脅情報（17 數據源聚合）
-3. 欺詐評分與風險因子矩陣
-4. 系統資訊（CPU / 記憶體 / 磁碟 / 虛擬化 / 磁碟 I/O）
-5. 串流主動實測（TikTok / Netflix / Disney+ / YouTube / ChatGPT 等，區分原生 / DNS 解鎖）
-6. DNS 全品類實測（傳統 / DoH / DoT）
-7. 25 端口發信檢測 + DNSBL 黑名單
-8. Cloudflare 測速
-
-### [2] 查詢 IP
-
-輸入任意公網 IP，僅做公開情報被動查詢：
-
-- 多源 IP 畫像與位置對比
-- 威脅情報與風險評分
-- 串流可用性**模擬推測**（⚠️ 非實際連接測試，僅供參考）
-- 按 IP 所在國家/地區推薦可用 DNS，並列出已知不可用項
-
-## 數據源（17 個免費源）
-
-| 類別 | 數據源 |
-|------|--------|
-| IP 畫像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| 威脅情報 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
-| 網路 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
-| 黑名單 | DNSBL（29 個公開黑名單） |
-
-
-## 截圖
-
-（佔位：模式1 / 模式2 / 風險評分 / 串流實測）
-
-## License
-
-MIT License — 詳見 [LICENSE](LICENSE)。
-
-## 免責聲明
-
-- 本工具僅供學習與研究使用。
-- 所有數據均來自公開情報源聚合，被動查詢結果不保證即時準確，「無證據 ≠ 無風險」。
-- 串流模擬推測非實際連接測試，僅供參考。
-- 請遵守當地法律法規與各數據源服務條款，不得用於攻擊、濫用或非法用途。
+更新日誌見 [Releases](https://github.com/alariclin/A-Check/releases) · MIT License · 資料來源逐項署名於報告內

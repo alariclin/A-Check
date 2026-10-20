@@ -2,111 +2,83 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-[English](README.en.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+<h1 align="center">A-Check</h1>
 
-A-Check 是一款三模式 IP 信誉与代理诊断检测工具：可检测本机出口 IP，也可查询任意公网 IP。纯 Python 标准库，零依赖，开箱即用。
+<p align="center">IP 纯净度 · 代理诊断 · 批量节点优选 — 纯 Python 单文件检测工具</p>
 
-## 特性
+<p align="center">
+  <img src="https://img.shields.io/badge/release-v4.3.1-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
+  <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
+</p>
 
-- **17 个免费数据源**，无 API Key 依赖，开源免费
-- **双模式**：
-  - `[1]` 本机自检 — 检测当前设备出口 IP，含主动流媒体解锁实测、DNS 全品类检测、25 端口发信检测、29 个 DNSBL 黑名单、Cloudflare 测速
-  - `[2]` 查询 IP — 输入任意公网 IP，仅做公开情报被动查询，附流媒体可用性模拟推测与 DNS 推荐
-  - `[3]` 代理诊断 — SOCKS5 握手+延迟、代理出口 IP、出口 IP 信誉、DNS 泄漏检测、TCP 延迟/抖动/丢包
-- **六语言 UI**：简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
-- **风险评分 0-100** + 彩色进度条，直观醒目
-- **流媒体解锁检测**：区分原生解锁 / DNS 解锁
-- **25 端口发信检测** + 29 个 DNSBL 黑名单（20 线程并发，十几秒完成）
-- **系统信息**：CPU / 内存 / 磁盘 / 虚拟化类型 + 磁盘 I/O 测速
-- **Cloudflare 测速**（仅供参考）
-- **DNS 全品类检测**：传统 DNS（UDP 53）/ DoH / DoT
-- **三平台兼容**：macOS / Windows / Linux
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.fa.md">فارسی</a>
+</p>
+
+---
+
+## 脚本展示
+
+启动界面 — 渐变 Logo + 实时信息面板 + 双列菜单：
+
+![主界面](docs/showcase-menu.png)
+
+检测报告示例：
+
+![检测报告](docs/showcase-report.png)
+
+批量节点测速优选：
+
+![批量测速](docs/showcase-batch.png)
+
+## 功能特性
+
+- **IP 信誉检测**：17 个数据源并发聚合（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise 等），逐源署名，评分规则完全公开（`--explain` 查看）
+- **流媒体解锁**：视频 / AI / 社交共 18 项检测，区分原生解锁与 DNS 解锁
+- **黑名单扫描**：29 个 DNSBL 库 + Feodo / Emerging Threats / Tor 出口节点等威胁情报交叉验证
+- **代理诊断**：SOCKS5 握手与延迟、经代理出口 IP 及信誉复检、DNS 泄漏检测、TCP 延迟 / 抖动 / 丢包统计
+- **批量节点优选**：一次粘贴多个节点（`host:port` 或 `socks5://…`）并发测速排名，最优节点自动标出
+- **本机自检**：出口 IP 全检 + DNS 全协议测试（明文 / DoH / DoT）+ 25 端口发信测试 + 系统信息与磁盘 IO 基准
+- **零依赖**：纯 Python 标准库单文件，公开版零 API Key，下载即跑；6 语言界面；`--json` 输出可对接脚本与自动化
 
 ## 快速开始
 
-**VPS / Linux / macOS**（需 Python 3.8+）：
 ```bash
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+# 下载单文件
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py
+
+# 交互菜单（推荐）
+python3 acheck.py
+
+# 命令行直查
+python3 acheck.py 8.8.8.8     # 查任意公网 IP
+python3 acheck.py --active    # 本机自检
 ```
 
-**Windows PowerShell**（需 Python 3.8+）：
-```powershell
-irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
-```
+macOS / Windows 双击包在 [Releases](https://github.com/alariclin/A-Check/releases) 页下载（`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`），解压后双击 `run.command` / `run.bat` 即可。
 
-或下载下方 zip 包后双击 `run.bat`。
+## 使用方法
 
-## 下载
+| 模式 | 命令 | 说明 |
+| --- | --- | --- |
+| 交互菜单 | `python3 acheck.py` | 10 项功能双列菜单 |
+| 查任意 IP | `python3 acheck.py 1.2.3.4` | 17 源信誉 + 黑名单 + 完整报告 |
+| 本机自检 | `python3 acheck.py --active` | 出口检测 + 流媒体 + 系统信息 |
+| 代理诊断 | `python3 acheck.py --proxy HOST:PORT` | 握手 / 出口 / DNS 泄漏 / 延迟（`--proxy-user`、`--proxy-pass` 认证） |
+| 批量优选 | `python3 acheck.py --batch 节点,节点…` | 并发测速排名选优 |
+| JSON 输出 | 任意模式加 `--json` | 对接脚本 / 推送 / 二次开发 |
+| 评分规则 | `python3 acheck.py --explain` | 三维评分规则全文 |
+| 语言切换 | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | 也可在菜单内切换 |
 
-| 平台 | 格式 | 用法 |
-|------|------|------|
-| macOS | `A-Check-v4.3.1-mac.zip` | 解压后双击 `run.command` |
-| Windows | `A-Check-v4.3.1-windows.zip` | 解压后双击 `run.bat` |
+## 注意事项
 
-> **首次运行提醒**：
-> - **macOS**：双击 `run.command` 如被 Gatekeeper 拦截（"无法验证"），右键 → 打开 → 仍要打开；或终端运行 `xattr -d com.apple.quarantine run.command`
-> - **Windows**：双击 `run.bat` 如触发 SmartScreen（"已保护你的电脑"），点击"更多信息" → "仍要运行"；或右键 → 属性 → 勾选"解除锁定"
-> - **Linux**：如提示权限不足，先执行 `chmod +x run.sh`
+- **隐私**：全部检测在本机运行，不向第三方上传用户数据；公开版不含任何 API Key
+- **限流**：各数据源有免费额度限制，短时间高频查询可能被限流，报告会对缺失源标注
+- **结果**：评分基于公开情报聚合，不同数据源结论可能不一致，报告逐项标注来源，仅供参考
+- **兼容**：需要 Python 3.8+；macOS / Windows / Linux / VPS 均可运行
 
-| Linux / VPS | 一键命令（下方） | 复制粘贴到终端 |
+---
 
-无需安装任何第三方依赖，仅使用 Python 标准库。
-
-## 双模式说明
-
-### [1] 本机自检
-
-检测当前设备的出口 IP，流程：
-
-1. 被动 IP 画像（ASN / BGP / 地理位置 / IP 类型）
-2. 威胁情报（17 数据源聚合）
-3. 欺诈评分与风险因子矩阵
-4. 系统信息（CPU / 内存 / 磁盘 / 虚拟化 / 磁盘 I/O）
-5. 流媒体主动实测（TikTok / Netflix / Disney+ / YouTube / ChatGPT 等，区分原生 / DNS 解锁）
-6. DNS 全品类实测（传统 / DoH / DoT）
-7. 25 端口发信检测 + DNSBL 黑名单
-8. Cloudflare 测速
-
-### [2] 查询 IP
-
-输入任意公网 IP，仅做公开情报被动查询：
-
-- 多源 IP 画像与位置对比
-- 威胁情报与风险评分
-- 流媒体可用性**模拟推测**（⚠️ 非实际连接测试，仅供参考）
-- 按 IP 所在国家/地区推荐可用 DNS，并列出已知不可用项
-
-
-### [3] 代理诊断
-
-端到端测试你的 SOCKS5 代理:
-
-1. SOCKS5 握手 (RFC 1928) + 延迟测量
-2. 代理出口 IP 检测 (经代理)
-3. 出口 IP 信誉检测 (复用 17 源威胁情报)
-4. DNS 泄漏检测 (对比系统解析器与出口 IP 的 ASN)
-5. TCP 延迟 / 抖动 / 丢包统计
-## 数据源（17 个免费源）
-
-| 类别 | 数据源 |
-|------|--------|
-| IP 画像 | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI |
-| 威胁情报 | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes |
-| 网络 | RIPEstat（ASN/BGP）, PTR（反向解析）, Shodan InternetDB |
-| 黑名单 | DNSBL（29 个公开黑名单） |
-
-
-## 截图
-
-（占位：模式1 / 模式2 / 风险评分 / 流媒体实测）
-
-## License
-
-MIT License — 详见 [LICENSE](LICENSE)。
-
-## 免责声明
-
-- 本工具仅供学习与研究使用。
-- 所有数据均来自公开情报源聚合，被动查询结果不保证实时准确，「无证据 ≠ 无风险」。
-- 流媒体模拟推测非实际连接测试，仅供参考。
-- 请遵守当地法律法规与各数据源服务条款，不得用于攻击、滥用或非法用途。
+更新日志见 [Releases](https://github.com/alariclin/A-Check/releases) · MIT License · 数据来源逐项署名于报告内

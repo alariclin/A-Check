@@ -2,111 +2,83 @@
   <img width="300" src="icon.webp" alt="A-Check">
 </p>
 
-[简体中文](README.zh.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Русский](README.ru.md) | [فارسی](README.fa.md)
+<h1 align="center">A-Check</h1>
 
-A-Check is a tri-mode IP reputation & proxy diagnostics checker: self-check your egress IP or query any public IP. Pure Python standard library, zero dependencies, works out of the box.
+<p align="center">IP reputation · proxy diagnostics · batch node picking — a single-file Python checker</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/release-v4.3.1-1f883d" alt="release">
+  <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
+  <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
+</p>
+
+<p align="center">
+  <a href="README.zh.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.fa.md">فارسی</a>
+</p>
+
+---
+
+## Showcase
+
+Startup screen — gradient logo, live info panel, two-column menu:
+
+![Main menu](docs/showcase-menu.png)
+
+Sample report:
+
+![Report](docs/showcase-report.png)
+
+Batch node speed test & picking:
+
+![Batch test](docs/showcase-batch.png)
 
 ## Features
 
-- **17 free data sources**, no API keys required, free and open source
-- **Dual modes**:
-  - `[1]` Self-check — checks the current device's egress IP, including active streaming unlock tests, full DNS tests (plain/DoH/DoT), port 25 sending test, 29 DNSBL blacklists, Cloudflare speed test
-  - `[2]` Query IP — enter any public IP for passive public-intelligence lookup only, with simulated streaming availability inference and DNS recommendations
-  - `[3]` Proxy diagnostics — SOCKS5 handshake + latency, proxy egress IP, egress IP reputation, DNS leak check, TCP latency/jitter/loss
-- **6-language UI**: 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی
-- **Risk score 0–100** with a color progress bar
-- **Streaming unlock detection**: distinguishes native unlock vs DNS unlock
-- **Port 25 sending test** + 29 DNSBL blacklists (20-thread concurrent, finishes in seconds)
-- **System info**: CPU / memory / disk / virtualization + disk I/O benchmark
-- **Cloudflare speed test** (for reference only)
-- **Full DNS testing**: traditional DNS (UDP 53) / DoH / DoT
-- **Cross-platform**: macOS / Windows / Linux
+- **IP reputation**: 17 data sources aggregated concurrently (ipwho.is, ipinfo, proxycheck, Scamalytics, DB-IP, GreyNoise and more), every value attributed to its source, scoring rules fully public (see `--explain`)
+- **Streaming unlock**: 18 checks across video / AI / social, distinguishing native unlock from DNS unlock
+- **Blacklist scan**: 29 DNSBL lists plus threat intel cross-checks (Feodo, Emerging Threats, Tor exit nodes)
+- **Proxy diagnostics**: SOCKS5 handshake & latency, egress IP via the proxy with reputation re-check, DNS leak check, TCP latency / jitter / loss stats
+- **Batch node picking**: paste multiple nodes (`host:port` or `socks5://…`), concurrent speed test with ranking, best node highlighted automatically
+- **Self-check**: full egress check + DNS tests (plain / DoH / DoT) + port 25 sending test + system info & disk I/O benchmark
+- **Zero dependencies**: pure Python standard library in a single file, the public edition needs no API keys; 6 UI languages; `--json` output for scripting and automation
 
 ## Quick Start
 
-**VPS / Linux / macOS** (requires Python 3.8+):
 ```bash
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+# Download the single file
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py
+
+# Interactive menu (recommended)
+python3 acheck.py
+
+# Command line
+python3 acheck.py 8.8.8.8     # query any public IP
+python3 acheck.py --active    # self-check
 ```
 
-**Windows PowerShell** (requires Python 3.8+):
-```powershell
-irm https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -OutFile acheck.py; python acheck.py
-```
+Double-click packages for macOS / Windows are on the [Releases](https://github.com/alariclin/A-Check/releases) page (`A-Check-v4.3.1-mac.zip` / `A-Check-v4.3.1-windows.zip`) — unzip and run `run.command` / `run.bat`.
 
-Or download the zip below and double-click `run.bat`.
+## Usage
 
-No third-party dependencies — Python standard library only.
+| Mode | Command | Description |
+| --- | --- | --- |
+| Interactive menu | `python3 acheck.py` | Two-column menu with 10 tools |
+| Query any IP | `python3 acheck.py 1.2.3.4` | 17-source reputation + blacklists + full report |
+| Self-check | `python3 acheck.py --active` | Egress check + streaming + system info |
+| Proxy diagnostics | `python3 acheck.py --proxy HOST:PORT` | Handshake / egress / DNS leak / latency (`--proxy-user`, `--proxy-pass` for auth) |
+| Batch picking | `python3 acheck.py --batch node,node…` | Concurrent speed test & ranking |
+| JSON output | add `--json` to any mode | For scripts / notifications / integration |
+| Scoring rules | `python3 acheck.py --explain` | Full three-dimension scoring rules |
+| Language | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | Or switch inside the menu |
 
-## Download
+## Notes
 
-| Platform | Format | Usage |
-|----------|--------|-------|
-| macOS | `A-Check-v4.3.1-mac.zip` | Unzip, double-click `run.command` |
-| Windows | `A-Check-v4.3.1-windows.zip` | Unzip, double-click `run.bat` |
-| Linux / VPS | One-liner (above) | Copy-paste into terminal |
+- **Privacy**: all checks run locally; no user data is uploaded anywhere; the public edition contains no API keys
+- **Rate limits**: data sources have free quotas; heavy querying in a short time may be rate-limited, and missing sources are marked in the report
+- **Results**: scores aggregate public intelligence; sources may disagree — every value is attributed in the report; for reference only
+- **Compatibility**: Python 3.8+; runs on macOS / Windows / Linux / VPS
 
-> **First-run notes**:
-> - **macOS**: If Gatekeeper blocks `run.command` ("cannot be verified"), right-click → Open → Open anyway; or run `xattr -d com.apple.quarantine run.command` in Terminal
-> - **Windows**: If SmartScreen blocks `run.bat` ("protected your PC"), click "More info" → "Run anyway"; or right-click → Properties → check "Unblock"
-> - **Linux**: If permission denied, run `chmod +x run.sh` first
+---
 
-
-## Modes
-
-### [1] Self-check
-
-Checks the current device's egress IP:
-
-1. Passive IP profiling (ASN / BGP / geolocation / IP type)
-2. Threat intelligence (17 aggregated sources)
-3. Fraud score and risk-factor matrix
-4. System info (CPU / memory / disk / virtualization / disk I/O)
-5. Active streaming tests (TikTok / Netflix / Disney+ / YouTube / ChatGPT, etc., native vs DNS unlock)
-6. Full DNS tests (plain / DoH / DoT)
-7. Port 25 sending test + DNSBL blacklists
-8. Cloudflare speed test
-
-### [2] Query IP
-
-Enter any public IP for passive public-intelligence lookup only:
-
-- Multi-source IP profiling and location comparison
-- Threat intelligence and risk scoring
-- Simulated streaming availability inference (⚠️ NOT actual connection tests, reference only)
-- DNS recommendations based on the IP's country/region, plus known-blocked entries
-
-
-### [3] Proxy Diagnostics
-
-Test your SOCKS5 proxy end-to-end:
-
-1. SOCKS5 handshake (RFC 1928) + latency measurement
-2. Proxy egress IP detection (via proxy)
-3. Egress IP reputation check (reuses the 17-source threat intel)
-4. DNS leak check (compares system resolver vs egress IP ASN)
-5. TCP latency / jitter / packet loss stats
-## Data Sources (17 free sources)
-
-| Category | Sources |
-|----------|---------|
-| IP profiling | IPWho.is, IPInfo, DB-IP, ProxyCheck, FreeIPAPI, ip-api.com |
-| Threat intel | Scamalytics, SANS ISC, Urlscan.io, StopForumSpam, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise |
-| Network | RIPEstat (ASN/BGP), PTR (reverse DNS), Shodan InternetDB |
-| Blacklists | DNSBL (29 public blacklists) |
-
-
-## Screenshots
-
-(placeholder: mode 1 / mode 2 / risk score / streaming tests)
-
-## License
-
-MIT License — see [LICENSE](LICENSE).
-
-## Disclaimer
-
-- For learning and research purposes only.
-- All data is aggregated from public intelligence sources; passive lookups are not guaranteed real-time accurate. No evidence ≠ no risk.
-- Simulated streaming inference is not an actual connection test; reference only.
-- Comply with local laws and each data source's terms of service. Do not use for attacks, abuse, or illegal purposes.
+Changelog in [Releases](https://github.com/alariclin/A-Check/releases) · MIT License · Data sources attributed per item in the report
