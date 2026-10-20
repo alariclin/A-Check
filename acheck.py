@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.11.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.11.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.11.0"
+VERSION = "4.11.1"
 
 
 def _init_console():
@@ -1956,7 +1956,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.11.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.11.1 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2287,7 +2287,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.11.0 免 Key 公开版):
+评分规则 (v4.11.1 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2309,7 +2309,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.11.0 免 Key 公開版):
+評分規則 (v4.11.1 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2331,7 +2331,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.11.0 Keyless Public Edition):
+Scoring rules (v4.11.1 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2353,7 +2353,7 @@ Scoring rules (v4.11.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.11.0 キー不要公開版):
+スコアリングルール (v4.11.1 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2375,7 +2375,7 @@ Scoring rules (v4.11.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.11.0 Публичная версия без ключей):
+Правила оценки (v4.11.1 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2397,7 +2397,7 @@ Scoring rules (v4.11.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.11.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.11.1):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -2610,6 +2610,15 @@ def _score_color(v):
     if v < 75:
         return C.yellow
     return C.red
+
+
+def _bar_label_width():
+    """[2]/[3] 进度条共用标签列宽 (两节同宽, 条左边缘才对齐)。"""
+    labels = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+              T("f_blacklist"), T("f_malicious"), "Scamalytics",
+              T("dim_threat"), T("dim_fraud"), T("dim_reputation"),
+              T("dim_platform"), T("combined"), T("purity")]
+    return max(_disp_width(x) for x in labels) + 2
 
 
 def _risk_bar(v, width=30):
@@ -3276,7 +3285,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
                 T("f_blacklist"), T("f_malicious")]
-    _lw = max(_disp_width(f) for f in _factors) + 2
+    _lw = _bar_label_width()
     for _ci, _fname in enumerate(_factors):
         _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
         if _decided:
@@ -3309,7 +3318,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         _pl, _pc = T("purity_bad"), C.red
     _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
     _srows.append((T("purity"), _purity, _pl))
-    _lw3 = max(_disp_width(n) for n, _, _ in _srows) + 2
+    _lw3 = _bar_label_width()
     for _n, _v, _extra in _srows:
         if _v is None:
             print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
@@ -3351,7 +3360,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.11.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.11.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
