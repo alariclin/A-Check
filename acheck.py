@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.12.5 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.12.6 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.12.5"
+VERSION = "4.12.6"
 
 
 def _init_console():
@@ -1968,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.12.5 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.12.6 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2300,7 +2300,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.12.5 免 Key 公开版):
+评分规则 (v4.12.6 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2322,7 +2322,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.12.5 免 Key 公開版):
+評分規則 (v4.12.6 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2344,7 +2344,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.12.5 Keyless Public Edition):
+Scoring rules (v4.12.6 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2366,7 +2366,7 @@ Scoring rules (v4.12.5 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.12.5 キー不要公開版):
+スコアリングルール (v4.12.6 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2388,7 +2388,7 @@ Scoring rules (v4.12.5 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.12.5 Публичная версия без ключей):
+Правила оценки (v4.12.6 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2410,7 +2410,7 @@ Scoring rules (v4.12.5 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.5):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.6):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3421,7 +3421,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.12.5 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.12.6 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5283,12 +5283,53 @@ _LOGO_PALETTE = [26, 27, 33, 39, 45, 51]  # 深蓝 -> 青 渐变 (256 色)
 _banner_net_cache = None
 
 
+def _logo_spread(lines, target=76):
+    """把 Logo 的字间间隔列均匀注空格, 拉宽到 target 列 (字形本身不动)。"""
+    if not lines:
+        return list(lines)
+    w0 = max(len(l) for l in lines)
+    if w0 >= target:
+        return list(lines)
+    gaps = [c for c in range(1, w0 - 1)
+            if all(c >= len(l) or l[c] == " " for l in lines)]
+    if not gaps:
+        return list(lines)
+    groups = [[gaps[0]]]
+    for c in gaps[1:]:
+        if c == groups[-1][-1] + 1:
+            groups[-1].append(c)
+        else:
+            groups.append([c])
+    add = target - w0
+    total_gap = sum(len(g) for g in groups)
+    insert_at = {}
+    rem = add
+    for i, g in enumerate(groups):
+        if i == len(groups) - 1:
+            a = rem
+        else:
+            a = max(1, round(add * len(g) / total_gap))
+            a = min(a, rem - (len(groups) - 1 - i))
+        insert_at[g[-1]] = a
+        rem -= a
+    out = []
+    for l in lines:
+        buf = []
+        for c, ch in enumerate(l):
+            buf.append(ch)
+            if c in insert_at:
+                buf.append(" " * insert_at[c])
+        out.append("".join(buf))
+    return out
+
+
 def _logo_render():
     """给 Logo 上蓝->青对角渐变色 (256 色), 无色环境返回原文。"""
+    lines = _logo_spread(_LOGO_LINES)
     if not _use_color():
-        return list(_LOGO_LINES)
+        return lines
     out = []
-    for r, line in enumerate(_LOGO_LINES):
+    for r, line in enumerate(lines):
         buf = []
         for ci, ch in enumerate(line):
             if ch == " ":
@@ -5395,6 +5436,11 @@ def _violet(s):
     return "\033[38;5;141m%s\033[0m" % s if _use_color() else s
 
 
+def _white(s):
+    """亮白色 (横幅数值), 无色环境返回原文。"""
+    return "\033[97m%s\033[0m" % s if _use_color() else s
+
+
 def _teal(s):
     """青色数值 (参考图配色), 无色环境返回原文。"""
     return "\033[38;5;51m%s\033[0m" % s if _use_color() else s
@@ -5444,21 +5490,21 @@ def print_banner():
             pass
     cores = os.cpu_count() or 0
     pyv = "%d.%d.%d" % sys.version_info[:3]
-    print(" %s:  %s" % (_violet(T("bn_system")),
-                         _teal("%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv))))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_system")),
+                         _white("%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv))))
     cpu = (si.get("cpu") or "?")[:36]
-    print(" %s:  %s" % (_violet(T("bn_hardware")),
-                         _teal("%s (%d%s) · %s %s · %s %s" % (
+    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")),
+                         _white("%s (%d%s) · %s %s · %s %s" % (
                              cpu, cores, T("bn_cores"),
                              T("sys_mem"), si.get("mem", "?"),
                              T("sys_disk"), si.get("disk", "?")))))
     # 网络行
     if net["egress"]:
-        v4 = "%s %s %s" % (_c(C.green, "●"), net["egress"],
-                           (" " + net["geo"]) if net["geo"] else "")
+        v4 = "%s %s" % (_c(C.green, "●"),
+                        _white(net["egress"] + ((" " + net["geo"]) if net["geo"] else "")))
     else:
-        v4 = "%s %s" % (_c(C.dim, "○"), T("bn_none"))
-    print(" %s:  IPv4 %s" % (_violet(T("bn_network")), _teal(v4)))
+        v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
     v6 = _c(C.green, "●") if net["ipv6"] else _c(C.dim, "○")
     if net.get("ipv6_addr"):
         v6t = " " + net["ipv6_addr"]
@@ -5466,12 +5512,12 @@ def print_banner():
         v6t = ""
     else:
         v6t = " " + T("bn_none")
-    print("        IPv6 %s%s" % (v6, _teal(v6t) if v6t else ""))
+    print("        %s%s" % (_white("IPv6 "), v6 + (_white(v6t) if v6t else "")))
     # 状态行 (图例)
     legend = "%s%s · %s%s · %s%s" % (
-        _c(C.green, "●"), T("bn_ok"), _c(C.dim, "○"), T("bn_untested"),
-        _c(C.red, "●"), T("bn_fault"))
-    print(" %s:  %s" % (_violet(T("bn_status")), legend))
+        _c(C.green, "●"), _white(T("bn_ok")), _c(C.dim, "○"),
+        _white(T("bn_untested")), _c(C.red, "●"), _white(T("bn_fault")))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_status")), legend))
     print(border)
 
 
