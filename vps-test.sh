@@ -43,11 +43,27 @@ echo "(分级显示正常)"
 echo "=== [6/7] --active 提示 ==="
 timeout 10 python3 acheck.py --active 8.8.8.8 2>&1 | head -3 || true
 
-echo "=== [7/7] DNSBL 数量 ==="
-COUNT=$(python3 -c 'import ipcheck; print(len(ipcheck.DNSBL_LISTS))')
+echo "=== [7/8] DNSBL 数量 ==="
+COUNT=$(python3 -c 'import acheck; print(len(acheck.DNSBL_LISTS))')
 echo "DNSBL数量=$COUNT"
 [ "$COUNT" = "29" ] || { echo "FAIL: 期望29, 实际$COUNT"; exit 1; }
 echo "DNSBL=29 OK"
+
+echo "=== [8/8] 代理诊断模块 ==="
+python3 << 'PYEOF'
+import acheck
+# SOCKS5 握手函数存在且可调用 (对不存在的代理应优雅失败)
+r = acheck.socks5_probe("127.0.0.1", 19999, timeout=2)
+assert r["ok"] == False, "不存在的代理应返回失败"
+assert "error" in r, "失败时应有 error 字段"
+# TCP 延迟统计
+r = acheck.tcp_ping_stats("127.0.0.1", 22, count=2, timeout=2)
+assert "avg_ms" in r or "loss_pct" in r, "TCP 统计应返回字段"
+# DNS 解析器检测
+rips = acheck.get_resolver_ips(probes=1, timeout=5)
+assert isinstance(rips, list), "应返回列表"
+print("代理诊断模块 OK")
+PYEOF
 
 echo ""
 echo "=========================================="
