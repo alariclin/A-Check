@@ -170,6 +170,7 @@ STR = {
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
         "speed_note": "※ 多连接峰值口径: 与单连接实际下载速度有差异, 仅供参考",
+        "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 17 地区节点不同",
         "diag_speed_testing": "代理吞吐测速中 (多地区节点)…",
         "diag_speed_ok": "最快线路: %s · 下载 %.1f Mbps",
         "diag_speed_fail": "吞吐测速失败",
@@ -395,6 +396,7 @@ STR = {
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
         "speed_note": "※ Multi-connection peak throughput; differs from single-connection downloads, for reference only",
+        "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 17 IPv4 regions",
         "diag_speed_testing": "Testing proxy throughput (regional nodes)…",
         "diag_speed_ok": "Fastest: %s · Download %.1f Mbps",
         "diag_speed_fail": "Throughput test failed",
@@ -620,6 +622,7 @@ STR = {
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
         "speed_note": "※ 多連接峰值口徑: 與單連接實際下載速度有差異, 僅供參考",
+        "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 17 地區節點不同",
         "diag_speed_testing": "代理吞吐測速中 (多地區節點)…",
         "diag_speed_ok": "最快線路: %s · 下載 %.1f Mbps",
         "diag_speed_fail": "吞吐測速失敗",
@@ -845,6 +848,7 @@ STR = {
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
         "speed_note": "※ 複数接続のピーク値です。単一接続の実ダウンロードとは異なります（参考値）",
+        "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の17地域とは異なります)",
         "diag_speed_testing": "プロキシのスループットを測定中 (地域別ノード)…",
         "diag_speed_ok": "最速: %s · ダウンロード %.1f Mbps",
         "diag_speed_fail": "スループット測定に失敗",
@@ -1070,6 +1074,7 @@ STR = {
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
         "speed_note": "※ Пиковая пропускная способность в несколько потоков; отличается от одиночной загрузки, только для справки",
+        "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 17 регионам IPv4",
         "diag_speed_testing": "Измерение пропускной способности прокси (региональные узлы)…",
         "diag_speed_ok": "Быстрее всего: %s · Загрузка %.1f Mbps",
         "diag_speed_fail": "Тест пропускной способности не удался",
@@ -1295,6 +1300,7 @@ STR = {
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
         "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
+        "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۱۷ منطقهٔ IPv4",
         "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (گره‌های منطقه‌ای)…",
         "diag_speed_ok": "سریع‌ترین: %s · دانلود %.1f Mbps",
         "diag_speed_fail": "تست توان ناموفق بود",
@@ -4503,6 +4509,20 @@ SPEED_REGIONS = [
     ("ZA Johannesburg", "jnb-za-ping.vultr.com"),
 ]
 _SPEED_FILE = "/vultr.com.100MB.bin"
+# IPv6 测速端点: 上方 17 个 Vultr 节点无 AAAA 记录 (实测 0/17), v6 只测真双栈端点
+SPEED6_ENDPOINTS = [
+    ("Global Cloudflare", "speed.cloudflare.com",
+     "https://speed.cloudflare.com/__down?bytes=30000000"),
+    ("FR OVH", "proof.ovh.net", "https://proof.ovh.net/files/100Mb.dat"),
+    ("DE Falkenstein", "fsn1-speed.hetzner.com",
+     "https://fsn1-speed.hetzner.com/100MB.bin"),
+    ("DE Nuremberg", "nbg1-speed.hetzner.com",
+     "https://nbg1-speed.hetzner.com/100MB.bin"),
+    ("FI Helsinki", "hel1-speed.hetzner.com",
+     "https://hel1-speed.hetzner.com/100MB.bin"),
+    ("UK London", "download.thinkbroadband.com",
+     "https://download.thinkbroadband.com/100MB.zip"),
+]
 
 
 def _dl_direct_worker(url, stop, counter, lock, opener=None):
@@ -4543,10 +4563,15 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
 def regional_speed_test(duration=5, on_result=None, family=0):
     """逐地区测速: TCP 延迟 (443) + 多连接下载。on_result(row) 逐行回调。"""
     rows = []
-    for name, host in SPEED_REGIONS:
+    if family == 6:
+        _targets = [(n, h, u) for n, h, u in SPEED6_ENDPOINTS]
+    else:
+        _targets = [(n, h, "https://%s%s" % (h, _SPEED_FILE))
+                    for n, h in SPEED_REGIONS]
+    for name, host, _url in _targets:
         tp = tcp_ping_stats(host, 443, count=3, timeout=2, family=family)
         lat = tp["avg_ms"] if tp.get("ok") else None
-        mbps = measure_download_direct("https://%s%s" % (host, _SPEED_FILE),
+        mbps = measure_download_direct(_url,
                                        duration=duration, streams=3, family=family)
         row = {"region": name, "host": host,
                "latency_ms": lat, "down_mbps": mbps}
@@ -4844,6 +4869,8 @@ def print_speed_section(json_mode=False, family=0):
         line = "  %-22s %-10s %s" % (row["region"], lat, dl)
         print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
 
+    if family == 6:
+        print(f"  {_c(C.dim, T('speed6_note'))}")
     rows = regional_speed_test(on_result=_row, family=family)
     print(f"  {_c(C.yellow, T('speed_note'))}")
     return rows
