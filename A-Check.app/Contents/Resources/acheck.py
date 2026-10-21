@@ -1551,6 +1551,8 @@ UA_BROWSER = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+# 测速下载专用 UA: 部分测速站 (如 Hetzner) 按 UA 过滤, 浏览器 UA 会被直接断开
+UA_TOOL = "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"
 
 _cache = {}
 _cache_lock = threading.Lock()
@@ -4577,7 +4579,7 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
     fails = 0
     while time.time() < stop and fails < 3:
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
+            req = urllib.request.Request(url, headers={"User-Agent": UA_TOOL})
             with (opener.open(req, timeout=10) if opener else urllib.request.urlopen(req, timeout=10)) as r:
                 while time.time() < stop:
                     chunk = r.read(256 * 1024)
