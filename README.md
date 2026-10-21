@@ -93,6 +93,32 @@ Download the package for your system from [Releases](https://github.com/alaricli
 - **Windows**: double-click `run.bat`
 - **Linux / VPS**: `bash run.sh`
 
+**One-click run** (copy & paste — downloads the current release package and starts it):
+
+macOS (script):
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
+```
+
+macOS (app):
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+```
+
+Linux / VPS:
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+```
+
+Windows (PowerShell):
+```
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+```
+
+Any system (single file, Python 3.8+):
+```
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 Or run the script directly (Python 3.8+):
 
 ```

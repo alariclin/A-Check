@@ -93,6 +93,32 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 - **Windows**：`run.bat` をダブルクリック
 - **Linux / VPS**：`bash run.sh`
 
+**ワンクリック実行**（コピー＆ペーストで現在のリリースをダウンロードして起動）：
+
+macOS（スクリプト）：
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
+```
+
+macOS（アプリ）：
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+```
+
+Linux / VPS：
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+```
+
+Windows（PowerShell）：
+```
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+```
+
+任意のシステム（単一ファイル、Python 3.8+）：
+```
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 スクリプトを直接実行することもできます（Python 3.8+）：
 
 ```

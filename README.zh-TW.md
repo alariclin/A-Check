@@ -93,6 +93,32 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 - **Windows**：雙擊 `run.bat`
 - **Linux / VPS**：`bash run.sh`
 
+**一鍵運行**（複製貼上即可，自動下載目前發行包並啟動）：
+
+macOS（腳本包）：
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
+```
+
+macOS（App 包）：
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+```
+
+Linux / VPS：
+```
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+```
+
+Windows（PowerShell）：
+```
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+```
+
+任意系統（單一檔案，需 Python 3.8+）：
+```
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 也可以直接執行腳本本體（需 Python 3.8+）：
 
 ```
