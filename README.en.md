@@ -81,7 +81,7 @@ Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / 
 
 Download the package for your system from [Releases](https://github.com/alariclin/A-Check/releases), unzip, and run the launcher:
 
-- **macOS**: double-click `run.command` (or `bash run.command`)
+- **macOS**: double-click `run.command` (or `bash run.command`); alternatively download the mac-app package, unzip and double-click `A-Check.app`
 - **Windows**: double-click `run.bat`
 - **Linux / VPS**: `bash run.sh`
 

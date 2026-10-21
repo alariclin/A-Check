@@ -81,7 +81,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 بسته سیستم خود را از [Releases](https://github.com/alariclin/A-Check/releases) بگیرید، از حالت فشرده خارج کنید و اجراکننده را اجرا کنید:
 
-- **macOS**: روی `run.command` دوبار کلیک کنید (یا `bash run.command`)
+- **macOS**: روی `run.command` دوبار کلیک کنید (یا `bash run.command`)؛ یا بسته mac-app را بگیرید، از حالت فشرده خارج کنید و روی `A-Check.app` دوبار کلیک کنید
 - **Windows**: روی `run.bat` دوبار کلیک کنید
 - **Linux / VPS**: ‎`bash run.sh`
 

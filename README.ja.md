@@ -81,7 +81,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 [Releases](https://github.com/alariclin/A-Check/releases) からお使いのシステム向けパッケージをダウンロードし、解凍してランチャーを実行：
 
-- **macOS**：`run.command` をダブルクリック（または `bash run.command`）
+- **macOS**：`run.command` をダブルクリック（または `bash run.command`）。mac-app パッケージをダウンロードし、解凍して `A-Check.app` をダブルクリックしても起動できます
 - **Windows**：`run.bat` をダブルクリック
 - **Linux / VPS**：`bash run.sh`
 

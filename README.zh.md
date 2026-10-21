@@ -81,7 +81,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 从 [Releases](https://github.com/alariclin/A-Check/releases) 下载对应系统的压缩包，解压后运行启动器：
 
-- **macOS**：双击 `run.command`（或终端 `bash run.command`）
+- **macOS**：双击 `run.command`（或终端 `bash run.command`）；也可下载 mac-app 包，解压后双击 `A-Check.app`
 - **Windows**：双击 `run.bat`
 - **Linux / VPS**：`bash run.sh`
 

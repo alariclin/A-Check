@@ -81,7 +81,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 Скачайте пакет для вашей системы из [Releases](https://github.com/alariclin/A-Check/releases), распакуйте и запустите:
 
-- **macOS**: двойной щелчок по `run.command` (или `bash run.command`)
+- **macOS**: двойной щелчок по `run.command` (или `bash run.command`); либо скачайте пакет mac-app, распакуйте и дважды щёлкните `A-Check.app`
 - **Windows**: двойной щелчок по `run.bat`
 - **Linux / VPS**: `bash run.sh`
 
