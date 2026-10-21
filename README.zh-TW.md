@@ -1,84 +1,132 @@
-<p align="center">
-  <img width="300" src="icon.webp" alt="A-Check">
-</p>
-
-<p align="center">IP 純淨度 · 代理診斷 · 批量節點優選 — 純 Python 單文件檢測工具</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/release-v4.13.1-1f883d" alt="release">
-  <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
-  <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
-</p>
-
-<p align="center">
-  <a href="README.md">English</a> · <a href="README.zh.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.fa.md">فارسی</a>
-</p>
+<div align="center">
+  <img src="icon.webp" width="120" alt="A-Check">
+  <h1>A-Check</h1>
+  <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
+  <p>
+    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
+    <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
+    <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
+  </p>
+  <p>
+    <a href="README.md">简体中文</a> ·
+    <a href="README.zh-TW.md">繁體中文</a> ·
+    <a href="README.en.md">English</a> ·
+    <a href="README.ja.md">日本語</a> ·
+    <a href="README.ru.md">Русский</a> ·
+    <a href="README.fa.md">فارسی</a>
+  </p>
+</div>
 
 ---
 
-## 腳本展示
+## 介面預覽
 
-啟動介面 — 漸變 Logo + 即時資訊面板 + 雙列選單：
+主選單（橫幅即時顯示系統 / 硬體 / 網路狀態，12 項功能四組排布）：
 
-![主介面](docs/showcase-menu.png)
+![主選單](docs/showcase-menu.png)
 
-檢測報告範例：
+IP 檢測報告（以公共 DNS 8.8.8.8 為例）：
 
 ![檢測報告](docs/showcase-report.png)
 
-批量節點測速優選：
+批次節點測速優選：
 
-![批量測速](docs/showcase-batch.png)
+![批次測速](docs/showcase-batch.png)
 
-## 功能特性
+## 這是什麼
 
-- **IP 信譽檢測**：多源並發聚合（ipwho.is、ipinfo、proxycheck、Scamalytics、DB-IP、GreyNoise 等），逐源署名，評分規則完全公開（`--explain` 查看）
-- **流媒體解鎖**：影片 / AI / 社交共 18 項檢測，區分原生解鎖與 DNS 解鎖
-- **黑名單掃描**：29 個 DNSBL 庫 + Feodo / Emerging Threats / Tor 出口節點等威脅情報交叉驗證
-- **代理診斷**：SOCKS5 握手與延遲、經代理出口 IP 及信譽複檢、DNS 洩漏檢測、TCP 延遲 / 抖動 / 丟包統計
-- **批量節點優選**：一次貼上多個節點（`host:port` 或 `socks5://…`）並發測速排名，最優節點自動標出
-- **網路測速**：多地區節點下載測速（bench.sh 式節點表、多連接峰值口徑）；代理診斷與批量優選含經代理吞吐實測
-- **本機自檢**：出口 IP 全檢 + DNS 全協議測試（明文 / DoH / DoT）+ 25 連接埠發信測試 + 系統資訊與磁碟 IO 基準
-- **零依賴**：純 Python 標準庫單文件，公開版零 API Key，下載即跑；6 語言介面；`--json` 輸出可對接腳本與自動化
+A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外部依賴），用於評估一個 IP 位址的**信譽與純淨度**，並檢測本機網路的**出口品質**。它把 22 個公開資料來源的情報聚合到一份報告裡交叉核對——不靠單一來源下結論，每個評分都能追溯到參與判定的資料來源。
+
+## 雙模式
+
+| 模式 | 用途 | 行為 |
+|---|---|---|
+| **本機自檢（主動）** | 檢查你目前的出口 IP 與本機網路 | 檢測出口 IP 全量信譽、本機系統/硬體、串流實測解鎖、DNS 洩漏與推薦、25 連接埠連通、多地區測速 |
+| **查詢任意 IP（被動）** | 買 VPS / 租代理前先查對方 IP 乾不乾淨 | 只呼叫公開情報介面，**不向目標 IP 發送任何封包** |
+
+## 報告結構
+
+一份完整報告按編號章節輸出：
+
+- **[1] 基礎資訊** — 歸屬地、ISP / 組織、AS 號；**IP 類型屬性**（機房 / 住宅 / 行動 / 代理 / VPN / Tor 等多源標記）；**地理位置組**（國家碼徽章打頭：位置、多源位置對比、經緯度反查識別、時區、座標、地圖連結）；主動模式附本機系統資訊
+- **[2] 風險因子** — 代理 / VPN / Tor / 伺服器 / 黑名單 / 惡意紀錄 六個因子逐個給出「命中源占比」進度條，一眼看清哪些來源把該 IP 判為風險
+- **[3] 欺詐與維度評分** — 欺詐評分、威脅行為、歷史信譽、平台相容、綜合評分逐項成條，末行給出**純淨度**與風險等級（分數越低越乾淨）
+- **[4] 串流與平台可用性** — 本機自檢為**實測**解鎖結果；查任意 IP 時為基於信譽訊號的**推測**（明確標註信心度）
+- **[5] DNS 伺服器推薦** — 按 IP 歸屬地推薦就近 DNS（被動模式）
+- **[6] 資料完整度與信心度** — 本次實際拿到多少來源的資料、核心來源是否齊全，據此給出信心度，避免「資料不全卻裝作確定」
+
+主動模式另有無編號章節：DNS 洩漏與推薦、25 連接埠連通性、多地區測速表，報告共 8 個章節段落。
+
+## 主選單 12 項功能
+
+| # | 功能 | 說明 |
+|---|---|---|
+| 1 | 本機自檢 (出口 IP 全檢) | 主動模式全量檢測，結尾附多地區測速 |
+| 2 | 查詢任意 IP | 輸入公網 IPv4 出被動報告，查完自動返回主選單 |
+| 3 | 串流解鎖檢測 | 單獨實測 17 個平台的解鎖狀態 |
+| 4 | 系統資訊與 IO 測試 | 系統 / CPU / 記憶體 / 磁碟資訊與磁碟讀寫測速 |
+| 5 | 切換語言 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
+| 6 | 檢查更新 | 對比 GitHub 最新 Release 提示新版本 |
+| 7 | 代理診斷 (SOCKS5) | 六步：握手 → 代理出口 IP → 出口信譽 → DNS 洩漏 → TCP 延遲 → 經代理吞吐（5 個地區樞紐取最快） |
+| 8 | DNS 洩漏檢測 | 對比系統解析器與直連解析結果，判斷 DNS 是否走漏 |
+| 9 | TCP 延遲測試 | 對任意 host:port 測延遲 / 抖動 / 丟包（min / avg / max） |
+| 10 | 評分規則說明 | 評分維度、扣分項與等級劃分的完整說明 |
+| 11 | 批次節點測速優選 | 貼上多個 host:port 或 SOCKS5 代理，並發測延遲與可用性，排名輸出、最優標綠，並對最優代理實測下載吞吐 |
+| 12 | 網路測速（多地區） | 17 個地區節點下載測速表（多連接峰值口徑），附本機上下行 |
+
+串流實測覆蓋 17 個平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、影片（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / WhatsApp / Line / GitHub），區分原生解鎖與 DNS 解鎖。
 
 ## 快速開始
 
-```bash
-# 下載單文件
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py
+從 [Releases](https://github.com/alariclin/A-Check/releases) 下載對應系統的壓縮包，解壓後執行啟動器：
 
-# 互動選單（推薦）
-python3 acheck.py
+- **macOS**：雙擊 `run.command`（或終端 `bash run.command`）
+- **Windows**：雙擊 `run.bat`
+- **Linux / VPS**：`bash run.sh`
 
-# 命令行直查
-python3 acheck.py 8.8.8.8     # 查任意公網 IP
-python3 acheck.py --active    # 本機自檢
+也可以直接執行腳本本體（需 Python 3.8+）：
+
+```
+python3 acheck.py            # 進入互動選單
+python3 acheck.py 8.8.8.8    # 直接查一個 IP
 ```
 
-macOS / Windows / Linux 安裝包在 [Releases](https://github.com/alariclin/A-Check/releases) 頁下載（`A-Check-v4.13.1-mac.zip` / `A-Check-v4.13.1-windows.zip` / `A-Check-v4.13.1-linux.zip`），解壓後運行 `run.command` / `run.bat` / `run.sh` 即可。
+## 命令列用法
 
-## 使用方法
+```
+python3 acheck.py [IPv4] [選項]
+```
 
-| 模式 | 命令 | 說明 |
-| --- | --- | --- |
-| 互動選單 | `python3 acheck.py` | 11 項功能雙列選單 |
-| 查任意 IP | `python3 acheck.py 1.2.3.4` | 多源信譽 + 黑名單 + 完整報告 |
-| 本機自檢 | `python3 acheck.py --active` | 出口檢測 + 流媒體 + 系統資訊 |
-| 代理診斷 | `python3 acheck.py --proxy HOST:PORT` | 握手 / 出口 / DNS 洩漏 / 延遲（`--proxy-user`、`--proxy-pass` 認證） |
-| 批量優選 | `python3 acheck.py --batch 節點,節點…` | 並發測速排名選優 |
-| 網路測速 | `python3 acheck.py --speed` | 多地區節點下載測速 |
-| JSON 輸出 | 任意模式加 `--json` | 對接腳本 / 推送 / 二次開發 |
-| 評分規則 | `python3 acheck.py --explain` | 三維評分規則全文 |
-| 語言切換 | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | 也可在選單內切換 |
+| 選項 | 說明 |
+|---|---|
+| `IPv4` | 被動查詢指定公網 IP |
+| `--active` | 主動模式：本機出口全量自檢 |
+| `--proxy HOST:PORT` | 代理診斷（可配 `--proxy-user` / `--proxy-pass`） |
+| `--batch 列表` | 批次節點測速優選（逗號分隔 host:port 或 socks5:// 代理） |
+| `--speed` | 多地區測速表 |
+| `--explain` | 輸出評分規則說明 |
+| `--json` | 以 JSON 輸出（可與 IP / --active / --proxy 組合） |
+| `--zh / --zh-tw / --en / --ja / --ru / --fa` | 指定輸出語言 |
+
+## 資料來源
+
+多源聚合、逐源署名，主要包括：
+
+- **地理與歸屬**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、PTR/FCrDNS 反查
+- **信譽與欺詐**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io
+- **威脅與名單**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口節點名單
+
+每個因子與分數都由多源投票得出；單一來源的誤報不會直接決定結論。
 
 ## 注意事項
 
-- **隱私**：全部檢測在本機運行，不向第三方上傳使用者資料；公開版不含任何 API Key
-- **限流**：各資料源有免費額度限制，短時間高頻查詢可能被限流，報告會對缺失源標註
-- **結果**：評分基於公開情報聚合，不同資料源結論可能不一致，報告逐項標註來源，僅供參考
-- **相容**：需要 Python 3.8+；macOS / Windows / Linux / VPS 均可運行
+- 被動查詢只查 IPv4 公網位址；內網 / 保留位址會被拒絕並說明原因
+- 推測模式（查任意 IP 的串流可用性）基於信譽訊號推斷，與實測可能有出入，請以報告標註的信心度為準
+- 測速為多連接峰值口徑，反映鏈路峰值能力，不等同於單連接持續速度
+- 終端寬度建議 ≥ 60 列；純文字環境（管道 / 無顏色）會自動降級為無色輸出
+- 本工具僅用於自查與維運評估，請遵守各資料來源服務條款
 
----
+## 授權
 
-更新日誌見 [Releases](https://github.com/alariclin/A-Check/releases) · MIT License · 資料來源逐項署名於報告內
+MIT License

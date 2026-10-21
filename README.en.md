@@ -1,84 +1,132 @@
-<p align="center">
-  <img width="300" src="icon.webp" alt="A-Check">
-</p>
-
-<p align="center">IP reputation · proxy diagnostics · batch node picking — a single-file Python checker</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/release-v4.13.1-1f883d" alt="release">
-  <img src="https://img.shields.io/badge/python-3.8%2B-3776ab" alt="python">
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-8250df" alt="platform">
-  <img src="https://img.shields.io/badge/license-MIT-d7781e" alt="license">
-</p>
-
-<p align="center">
-  <a href="README.zh.md">简体中文</a> · <a href="README.zh-TW.md">繁體中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ru.md">Русский</a> · <a href="README.fa.md">فارسی</a>
-</p>
+<div align="center">
+  <img src="icon.webp" width="120" alt="A-Check">
+  <h1>A-Check</h1>
+  <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
+  <p>
+    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
+    <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
+    <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
+  </p>
+  <p>
+    <a href="README.md">简体中文</a> ·
+    <a href="README.zh-TW.md">繁體中文</a> ·
+    <a href="README.en.md">English</a> ·
+    <a href="README.ja.md">日本語</a> ·
+    <a href="README.ru.md">Русский</a> ·
+    <a href="README.fa.md">فارسی</a>
+  </p>
+</div>
 
 ---
 
-## Showcase
+## Screenshots
 
-Startup screen — gradient logo, live info panel, two-column menu:
+Main menu (the banner shows live system / hardware / network status; 12 features in four groups):
 
 ![Main menu](docs/showcase-menu.png)
 
-Sample report:
+IP report (using the public DNS 8.8.8.8 as an example):
 
 ![Report](docs/showcase-report.png)
 
-Batch node speed test & picking:
+Batch node speed test & ranking:
 
 ![Batch test](docs/showcase-batch.png)
 
-## Features
+## What it is
 
-- **IP reputation**: Multiple data sources aggregated concurrently (ipwho.is, ipinfo, proxycheck, Scamalytics, DB-IP, GreyNoise and more), every value attributed to its source, scoring rules fully public (see `--explain`)
-- **Streaming unlock**: 18 checks across video / AI / social, distinguishing native unlock from DNS unlock
-- **Blacklist scan**: 29 DNSBL lists plus threat intel cross-checks (Feodo, Emerging Threats, Tor exit nodes)
-- **Proxy diagnostics**: SOCKS5 handshake & latency, egress IP via the proxy with reputation re-check, DNS leak check, TCP latency / jitter / loss stats
-- **Batch node picking**: paste multiple nodes (`host:port` or `socks5://…`), concurrent speed test with ranking, best node highlighted automatically
-- **Speed test**: multi-region download nodes (bench.sh-style node table, multi-connection peak); proxy diagnostics and batch picking measure real throughput via the proxy
-- **Self-check**: full egress check + DNS tests (plain / DoH / DoT) + port 25 sending test + system info & disk I/O benchmark
-- **Zero dependencies**: pure Python standard library in a single file, the public edition needs no API keys; 6 UI languages; `--json` output for scripting and automation
+A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It aggregates intelligence from 22 public data sources into one cross-checked report — no conclusion rests on a single source, and every score can be traced back to the sources that voted on it.
 
-## Quick Start
+## Dual mode
 
-```bash
-# Download the single file
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py
+| Mode | Purpose | Behaviour |
+|---|---|---|
+| **Self-check (active)** | Inspect your current egress IP and local network | Full reputation check of the egress IP, local system/hardware info, measured streaming unlock tests, DNS leak check & recommendations, port 25 connectivity, multi-region speed test |
+| **Look up any IP (passive)** | Vet an IP before buying a VPS or renting a proxy | Queries public intelligence APIs only — **sends no packets to the target IP** |
 
-# Interactive menu (recommended)
-python3 acheck.py
+## Report structure
 
-# Command line
-python3 acheck.py 8.8.8.8     # query any public IP
-python3 acheck.py --active    # self-check
+A full report is printed in numbered sections:
+
+- **[1] Basics** — location, ISP / organisation, AS number; **IP type attributes** (datacentre / residential / mobile / proxy / VPN / Tor flags from multiple sources); a **geolocation group** (country-code badge first: location, multi-source location comparison, coordinate reverse lookup, timezone, coordinates, map link); active mode appends local system info
+- **[2] Risk factors** — proxy / VPN / Tor / server / blacklist / malicious-record: six factors, each with a bar showing the share of sources that flagged the IP
+- **[3] Fraud & dimension scores** — fraud score, threat behaviour, historical reputation, platform compatibility and the combined score, ending with **cleanliness** and a risk level (lower is cleaner)
+- **[4] Streaming & platform availability** — **measured** unlock results in self-check mode; **inferred** from reputation signals (with a stated confidence) when looking up an arbitrary IP
+- **[5] DNS recommendations** — nearby resolvers chosen by the IP's location (passive mode)
+- **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so a thin dataset never masquerades as certainty
+
+Active mode adds unnumbered sections — DNS leak & recommendations, port 25 connectivity, multi-region speed table — for 8 sections in total.
+
+## The 12 menu features
+
+| # | Feature | Description |
+|---|---|---|
+| 1 | Self-check (full egress check) | Full active-mode scan, ending with the multi-region speed table |
+| 2 | Look up any IP | Enter a public IPv4 for a passive report; returns to the main menu automatically |
+| 3 | Streaming unlock test | Measured unlock status for 17 platforms |
+| 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
+| 5 | Language / 切换语言 | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
+| 6 | Check for updates | Compares against the latest GitHub Release |
+| 7 | Proxy diagnostics (SOCKS5) | Six steps: handshake → proxy egress IP → egress reputation → DNS leak → TCP latency → throughput via the proxy (fastest of 5 regional hubs) |
+| 8 | DNS leak test | Compares system-resolver vs direct resolution to detect DNS leaking |
+| 9 | TCP latency test | Latency / jitter / packet loss to any host:port (min / avg / max) |
+| 10 | Scoring rules | Full explanation of score dimensions, deductions and levels |
+| 11 | Batch node speed ranking | Paste multiple host:port entries or SOCKS5 proxies; concurrent latency & availability checks, ranked output with the best node in green, plus a measured download throughput for the best proxy |
+| 12 | Network speed test (regions) | Download table for 17 regional nodes (multi-connection peak), plus local up/down speeds |
+
+Measured streaming coverage spans 17 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / WhatsApp / Line / GitHub), distinguishing native unlocks from DNS unlocks.
+
+## Quick start
+
+Download the package for your system from [Releases](https://github.com/alariclin/A-Check/releases), unzip, and run the launcher:
+
+- **macOS**: double-click `run.command` (or `bash run.command`)
+- **Windows**: double-click `run.bat`
+- **Linux / VPS**: `bash run.sh`
+
+Or run the script directly (Python 3.8+):
+
+```
+python3 acheck.py            # interactive menu
+python3 acheck.py 8.8.8.8    # look up one IP
 ```
 
-Packages for macOS / Windows / Linux are on the [Releases](https://github.com/alariclin/A-Check/releases) page (`A-Check-v4.13.1-mac.zip` / `A-Check-v4.13.1-windows.zip` / `A-Check-v4.13.1-linux.zip`) — unzip and run `run.command` / `run.bat` / `run.sh`.
+## Command line
 
-## Usage
+```
+python3 acheck.py [IPv4] [options]
+```
 
-| Mode | Command | Description |
-| --- | --- | --- |
-| Interactive menu | `python3 acheck.py` | Two-column menu with 11 tools |
-| Query any IP | `python3 acheck.py 1.2.3.4` | Multi-source reputation + blacklists + full report |
-| Self-check | `python3 acheck.py --active` | Egress check + streaming + system info |
-| Proxy diagnostics | `python3 acheck.py --proxy HOST:PORT` | Handshake / egress / DNS leak / latency (`--proxy-user`, `--proxy-pass` for auth) |
-| Batch picking | `python3 acheck.py --batch node,node…` | Concurrent speed test & ranking |
-| Speed test | `python3 acheck.py --speed` | Regional download node test |
-| JSON output | add `--json` to any mode | For scripts / notifications / integration |
-| Scoring rules | `python3 acheck.py --explain` | Full three-dimension scoring rules |
-| Language | `--zh` / `--zh-tw` / `--en` / `--ja` / `--ru` / `--fa` | Or switch inside the menu |
+| Option | Description |
+|---|---|
+| `IPv4` | Passive lookup of a public IP |
+| `--active` | Active mode: full self-check of your egress |
+| `--proxy HOST:PORT` | Proxy diagnostics (add `--proxy-user` / `--proxy-pass` if needed) |
+| `--batch LIST` | Batch node ranking (comma-separated host:port or socks5:// proxies) |
+| `--speed` | Multi-region speed table |
+| `--explain` | Print the scoring rules |
+| `--json` | JSON output (combinable with an IP / --active / --proxy) |
+| `--zh / --zh-tw / --en / --ja / --ru / --fa` | Output language |
+
+## Data sources
+
+Multi-source aggregation with per-source attribution, mainly:
+
+- **Geolocation & ownership**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, PTR/FCrDNS reverse lookup
+- **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io
+- **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list
+
+Every factor and score is a multi-source vote; a single source's false positive never decides the verdict alone.
 
 ## Notes
 
-- **Privacy**: all checks run locally; no user data is uploaded anywhere; the public edition contains no API keys
-- **Rate limits**: data sources have free quotas; heavy querying in a short time may be rate-limited, and missing sources are marked in the report
-- **Results**: scores aggregate public intelligence; sources may disagree — every value is attributed in the report; for reference only
-- **Compatibility**: Python 3.8+; runs on macOS / Windows / Linux / VPS
+- Passive lookup accepts public IPv4 only; private / reserved addresses are rejected with an explanation
+- Inferred mode (streaming availability for an arbitrary IP) is derived from reputation signals and may differ from measured results — go by the confidence stated in the report
+- Speed tests use multi-connection peak throughput, which reflects link peak capacity rather than sustained single-connection speed
+- A terminal width of ≥ 60 columns is recommended; plain-text environments (pipes / no colour) degrade gracefully to colourless output
+- For self-checks and operations assessment only; please respect each data source's terms of service
 
----
+## License
 
-Changelog in [Releases](https://github.com/alariclin/A-Check/releases) · MIT License · Data sources attributed per item in the report
+MIT License
