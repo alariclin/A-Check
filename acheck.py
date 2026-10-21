@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.12.8 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.12.9 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.12.8"
+VERSION = "4.12.9"
 
 
 def _init_console():
@@ -1342,7 +1342,7 @@ class C:
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
     BLUE = "\033[34m"
-    CYAN = "\033[36m"
+    CYAN = "\033[38;5;39m"  # 淡蓝 0;170;255 (原青色 36 已按用户指令替换)
     DIM = "\033[2m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
@@ -1968,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.12.8 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.12.9 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2300,7 +2300,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.12.8 免 Key 公开版):
+评分规则 (v4.12.9 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2322,7 +2322,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.12.8 免 Key 公開版):
+評分規則 (v4.12.9 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2344,7 +2344,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.12.8 Keyless Public Edition):
+Scoring rules (v4.12.9 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2366,7 +2366,7 @@ Scoring rules (v4.12.8 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.12.8 キー不要公開版):
+スコアリングルール (v4.12.9 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2388,7 +2388,7 @@ Scoring rules (v4.12.8 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.12.8 Публичная версия без ключей):
+Правила оценки (v4.12.9 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2410,7 +2410,7 @@ Scoring rules (v4.12.8 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.8):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.9):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3421,7 +3421,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.12.8 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.12.9 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5278,7 +5278,7 @@ _LOGO_LINES = [
     "██║  ██║  ╚═════╝ ╚██████╗ ██║  ██║ ███████╗ ╚██████╗ ██║  ██║",
     "╚═╝  ╚═╝           ╚═════╝ ╚═╝  ╚═╝ ╚══════╝  ╚═════╝ ╚═╝  ╚═╝",
 ]
-_LOGO_PALETTE = [26, 27, 33, 39, 45, 51]  # 深蓝 -> 青 渐变 (256 色)
+_LOGO_PALETTE = [26, 27, 33, 39, 68, 75, 111]  # 按字母: 深蓝 -> 淡蓝 (256 色)
 
 _banner_net_cache = None
 
@@ -5335,20 +5335,52 @@ def _logo_shift_a(lines, n=2):
 
 
 def _logo_render():
-    """给 Logo 上蓝->青对角渐变色 (256 色), 无色环境返回原文。"""
+    """Logo 按字母上色: 每个字形内部同色, 左->右 深蓝->淡蓝 (256 色)。
+
+    以第 4 行 (含全部字形) 分段定列区间: >=3 个空格为字形间隙,
+    字形内部的 1-2 空格不分段, 保证单个字形不被劈成两色。
+    """
     lines = _logo_shift_a(_logo_spread(_LOGO_LINES))
     if not _use_color():
         return lines
+    ref = lines[3]
+    segs = []
+    start = None
+    end = 0
+    gap = 0
+    for i, ch in enumerate(ref):
+        if ch != " ":
+            if start is None:
+                start = i
+            end = i
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap >= 3:
+                segs.append((start, end))
+                start = None
+                gap = 0
+    if start is not None:
+        segs.append((start, end))
+
+    _bounds = [(segs[i][1] + segs[i + 1][0]) / 2
+               for i in range(len(segs) - 1)]
+
+    def _glyph_color(ci):
+        gi = 0
+        for b in _bounds:
+            if ci > b:
+                gi += 1
+        return _LOGO_PALETTE[min(gi, len(_LOGO_PALETTE) - 1)]
+
     out = []
-    for r, line in enumerate(lines):
+    for line in lines:
         buf = []
         for ci, ch in enumerate(line):
             if ch == " ":
                 buf.append(ch)
             else:
-                idx = min((ci // 8 + r) * len(_LOGO_PALETTE) //
-                          (len(line) // 8 + 6), len(_LOGO_PALETTE) - 1)
-                buf.append("\033[38;5;%dm%s" % (_LOGO_PALETTE[idx], ch))
+                buf.append("\033[38;5;%dm%s" % (_glyph_color(ci), ch))
         out.append("".join(buf) + "\033[0m")
     return out
 
@@ -5453,8 +5485,8 @@ def _white(s):
 
 
 def _teal(s):
-    """青色数值 (参考图配色), 无色环境返回原文。"""
-    return "\033[38;5;51m%s\033[0m" % s if _use_color() else s
+    """淡蓝数值, 无色环境返回原文。"""
+    return "\033[38;5;39m%s\033[0m" % s if _use_color() else s
 
 
 def print_banner():
@@ -5534,7 +5566,7 @@ def print_menu():
     for left, right in rows:
         print("  " + _pad(left, colw) + right)
     print(_c(C.cyan, "═" * 78))
-    print("  " + _c(C.green, "0.") + " " + T("m_quit"))
+    print("  " + _c(C.cyan, "0.") + " " + T("m_quit"))
     print(_c(C.cyan, "═" * 78))
     print()
 
