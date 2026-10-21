@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.3-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.4-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">

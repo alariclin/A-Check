@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.13.3 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.13.4 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.13.3"
+VERSION = "4.13.4"
 
 
 def _init_console():
@@ -188,6 +188,7 @@ STR = {
         "m_tcpping": "TCP 延迟测试",
         "m_explain": "评分规则说明",
         "m_quit": "退出脚本",
+        "cancelled": "已取消",
         "prompt_tcp": "请输入目标 (host:port，b 返回): ",
         "chip_egress": "出口 IPv4",
         "chip_ipv6": "IPv6",
@@ -395,6 +396,7 @@ STR = {
         "m_tcpping": "TCP latency test",
         "m_explain": "Scoring rules",
         "m_quit": "Exit",
+        "cancelled": "Cancelled",
         "prompt_tcp": "Enter target (host:port, b back): ",
         "chip_egress": "Egress IPv4",
         "chip_ipv6": "IPv6",
@@ -602,6 +604,7 @@ STR = {
         "m_tcpping": "TCP 延遲測試",
         "m_explain": "評分規則說明",
         "m_quit": "退出腳本",
+        "cancelled": "已取消",
         "prompt_tcp": "請輸入目標 (host:port，b 返回): ",
         "chip_egress": "出口 IPv4",
         "chip_ipv6": "IPv6",
@@ -809,6 +812,7 @@ STR = {
         "m_tcpping": "TCP遅延テスト",
         "m_explain": "スコアリングルール",
         "m_quit": "終了",
+        "cancelled": "キャンセルしました",
         "prompt_tcp": "ターゲットを入力 (host:port、b 戻る): ",
         "chip_egress": "出口 IPv4",
         "chip_ipv6": "IPv6",
@@ -1016,6 +1020,7 @@ STR = {
         "m_tcpping": "Тест задержки TCP",
         "m_explain": "Правила оценки",
         "m_quit": "Выход",
+        "cancelled": "Отменено",
         "prompt_tcp": "Введите цель (host:port, b назад): ",
         "chip_egress": "Исходящий IPv4",
         "chip_ipv6": "IPv6",
@@ -1223,6 +1228,7 @@ STR = {
         "m_tcpping": "تست تأخیر TCP",
         "m_explain": "قوانین امتیازدهی",
         "m_quit": "خروج",
+        "cancelled": "لغو شد",
         "prompt_tcp": "هدف را وارد کنید (host:port، b بازگشت): ",
         "chip_egress": "IPv4 خروجی",
         "chip_ipv6": "IPv6",
@@ -1968,7 +1974,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.13.3 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.13.4 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2479,7 +2485,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.13.3 免 Key 公开版):
+评分规则 (v4.13.4 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2506,7 +2512,7 @@ SCORING_RULES = {
     未知: 本次检测未获得明确信号
 """,
     "zh-TW": """
-評分規則 (v4.13.3 免 Key 公開版):
+評分規則 (v4.13.4 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2533,7 +2539,7 @@ SCORING_RULES = {
     未知: 本次檢測未獲得明確信號
 """,
     "en": """
-Scoring rules (v4.13.3 Keyless Public Edition):
+Scoring rules (v4.13.4 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2560,7 +2566,7 @@ Scoring rules (v4.13.3 Keyless Public Edition):
     Unknown: no clear signal was obtained in this run
 """,
     "ja": """
-スコアリングルール (v4.13.3 キー不要公開版):
+スコアリングルール (v4.13.4 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2587,7 +2593,7 @@ Scoring rules (v4.13.3 Keyless Public Edition):
     不明: 今回の検出では明確な信号が得られなかった
 """,
     "ru": """
-Правила оценки (v4.13.3 Публичная версия без ключей):
+Правила оценки (v4.13.4 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2614,7 +2620,7 @@ Scoring rules (v4.13.3 Keyless Public Edition):
     Неизвестно: в этом запуске чёткий сигнал не получен
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.3):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.4):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3693,7 +3699,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.13.3 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.13.4 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -6270,4 +6276,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print(f"\n  {T('cancelled')}")
+        sys.exit(130)
+    except EOFError:
+        pass

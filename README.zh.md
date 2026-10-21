@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.3-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.4-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
