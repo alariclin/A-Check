@@ -30,6 +30,14 @@ IP report (using the public DNS 8.8.8.8 as an example):
 
 ![Report](docs/showcase-report.png)
 
+IPv6 report (prefix-level: geo / ASN / type / per-source reputation signals, no composite score):
+
+![IPv6 report](docs/showcase-ipv6.png)
+
+Self-check scope picker (auto dual-stack / IPv4 only / IPv6 only):
+
+![Self-check scope](docs/showcase-scope.png)
+
 Batch node speed test & ranking:
 
 ![Batch test](docs/showcase-batch.png)

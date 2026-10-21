@@ -30,6 +30,14 @@ IP チェックレポート（公開 DNS 8.8.8.8 の例）：
 
 ![レポート](docs/showcase-report.png)
 
+IPv6 レポート（プレフィックス粒度：地理 / ASN / 種別 / ソース別評価信号、総合スコアなし）：
+
+![IPv6 レポート](docs/showcase-ipv6.png)
+
+セルフチェック範囲の選択（自動デュアルスタック / IPv4 のみ / IPv6 のみ）：
+
+![範囲選択](docs/showcase-scope.png)
+
 ノード一括スピードテストとランキング：
 
 ![一括テスト](docs/showcase-batch.png)

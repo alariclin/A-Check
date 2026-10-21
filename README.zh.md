@@ -30,6 +30,14 @@ IP 检测报告（以公共 DNS 8.8.8.8 为例）：
 
 ![检测报告](docs/showcase-report.png)
 
+IPv6 报告（前缀粒度：地理 / ASN / 类型 / 逐源信誉信号，不合成总分）：
+
+![IPv6 报告](docs/showcase-ipv6.png)
+
+本机自检范围选择（自动双栈 / 仅 IPv4 / 仅 IPv6）：
+
+![自检范围选择](docs/showcase-scope.png)
+
 批量节点测速优选：
 
 ![批量测速](docs/showcase-batch.png)

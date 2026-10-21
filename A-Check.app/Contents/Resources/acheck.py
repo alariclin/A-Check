@@ -6510,6 +6510,7 @@ Options:
   --proxy-user USER / --proxy-pass PASS
                   Proxy authentication (optional)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
+  --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
   --zh / --zh-tw / --en / --ja / --ru / --fa
@@ -6524,7 +6525,139 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # Proxy diagnostics
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Proxy diagnostics JSON
 """
-    print(help_zh if LANG in ("zh", "zh-TW") else help_en)
+
+    help_zhtw = f"""用法: python3 acheck.py [選項] [IP 位址]
+
+{T('title')} v{VERSION} — 雙模式 IP 信譽與串流/網路品質檢測工具 (零外部依賴)
+
+位置參數:
+  IP 位址         執行被動模式查詢指定公網 IPv4 / IPv6 (不向目標 IP 發包)
+
+選項:
+  -h, --help      顯示此說明訊息並退出
+  --active        執行主動模式 (檢測本機當前出口 IP、系統硬體、串流解鎖、DNS、25 連接埠與測速)
+  --ipv4-only     配合 --active: 僅檢測 IPv4 (跳過 IPv6)
+  --ipv6-only     配合 --active: 僅檢測 IPv6
+  --proxy HOST:PORT
+                  代理診斷模式 (SOCKS5 握手、代理出口 IP、出口 IP 信譽、DNS 洩漏、TCP 延遲)
+  --proxy-user USER / --proxy-pass PASS
+                  代理驗證 (可選)
+  --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
+  --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
+  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
+  --explain       輸出評分維度與扣分規則說明
+  --zh / --zh-tw / --en / --ja / --ru / --fa
+                  設定輸出語言
+
+範例:
+  python3 acheck.py                        # 啟動互動式選單
+  python3 acheck.py 8.8.8.8                # 被動模式評估指定 IP
+  python3 acheck.py --active               # 主動模式全面檢測當前本機網路
+  python3 acheck.py --json 8.8.8.8         # 被動模式 JSON 輸出
+  python3 acheck.py --active --json        # 主動模式 JSON 輸出
+  python3 acheck.py --proxy 127.0.0.1:1080              # 代理診斷
+  python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理診斷 JSON 輸出
+"""
+    help_ja = f"""使い方: python3 acheck.py [オプション] [IPアドレス]
+
+{T('title')} v{VERSION} — デュアルモード IP 評価・ストリーミング/ネットワーク品質チェッカー (外部依存ゼロ)
+
+位置引数:
+  IPアドレス      公開 IPv4 / IPv6 をパッシブ照会 (対象 IP へは発信しません)
+
+オプション:
+  -h, --help      このヘルプを表示して終了
+  --active        アクティブモード (現在の出口 IP、システム情報、ストリーミング、DNS、25番ポート、速度を測定)
+  --ipv4-only     --active と併用: IPv4 のみ (IPv6 をスキップ)
+  --ipv6-only     --active と併用: IPv6 のみ
+  --proxy HOST:PORT
+                  プロキシ診断 (SOCKS5 ハンドシェイク、プロキシ出口 IP、出口 IP の評価、DNS リーク、TCP 遅延)
+  --proxy-user USER / --proxy-pass PASS
+                  プロキシ認証 (任意)
+  --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
+  --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
+  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
+  --explain       スコアリングのルールと重みを表示
+  --zh / --zh-tw / --en / --ja / --ru / --fa
+                  出力言語を設定
+
+例:
+  python3 acheck.py                        # 対話メニュー
+  python3 acheck.py 8.8.8.8                # 指定 IP のパッシブ照会
+  python3 acheck.py --active               # 現在の接続をアクティブ測定
+  python3 acheck.py --json 8.8.8.8         # パッシブ JSON 出力
+  python3 acheck.py --active --json        # アクティブ JSON 出力
+  python3 acheck.py --proxy 127.0.0.1:1080              # プロキシ診断
+  python3 acheck.py --proxy 127.0.0.1:1080 --json       # プロキシ診断 JSON
+"""
+    help_ru = f"""Использование: python3 acheck.py [ОПЦИИ] [IP_АДРЕС]
+
+{T('title')} v{VERSION} — двухрежимная проверка репутации IP, стриминга и качества сети (без внешних зависимостей)
+
+Позиционные аргументы:
+  IP_АДРЕС        Пассивный запрос публичного IPv4 / IPv6 (пакеты на целевой IP не отправляются)
+
+Опции:
+  -h, --help      Показать эту справку и выйти
+  --active        Активный режим (текущий выход IP, система, стриминг, DNS, порт 25, скорость)
+  --ipv4-only     С --active: только IPv4 (без IPv6)
+  --ipv6-only     С --active: только IPv6
+  --proxy HOST:PORT
+                  Диагностика прокси (рукопожатие SOCKS5, выходной IP прокси, репутация выхода, утечка DNS, задержка TCP)
+  --proxy-user USER / --proxy-pass PASS
+                  Аутентификация прокси (необязательно)
+  --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковый мультиконнект)
+  --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
+  --json          Вывод в JSON (с IP, --active или --proxy)
+  --explain       Правила и веса скоринга
+  --zh / --zh-tw / --en / --ja / --ru / --fa
+                  Язык вывода
+
+Примеры:
+  python3 acheck.py                        # Интерактивное меню
+  python3 acheck.py 8.8.8.8                # Пассивная проверка IP
+  python3 acheck.py --active               # Активная проверка текущего подключения
+  python3 acheck.py --json 8.8.8.8         # Пассивный вывод JSON
+  python3 acheck.py --active --json        # Активный вывод JSON
+  python3 acheck.py --proxy 127.0.0.1:1080              # Диагностика прокси
+  python3 acheck.py --proxy 127.0.0.1:1080 --json       # Диагностика прокси JSON
+"""
+    help_fa = f"""کاربرد: python3 acheck.py [گزینه‌ها] [نشانی IP]
+
+{T('title')} v{VERSION} — بررسی‌کنندهٔ دوحالتهٔ اعتبار IP، استریمینگ و کیفیت شبکه (بدون وابستگی خارجی)
+
+آرگومان موقعیتی:
+  نشانی IP        استعلام غیرفعال یک IPv4 / IPv6 عمومی (به IP هدف بسته‌ای ارسال نمی‌شود)
+
+گزینه‌ها:
+  -h, --help      نمایش این راهنما و خروج
+  --active        حالت فعال (IP خروجی فعلی، سیستم، استریمینگ، DNS، پورت 25 و سرعت)
+  --ipv4-only     همراه --active: فقط IPv4 (بدون IPv6)
+  --ipv6-only     همراه --active: فقط IPv6
+  --proxy HOST:PORT
+                  عیب‌یابی پروکسی (دست‌دهی SOCKS5، IP خروجی پروکسی، اعتبار خروجی، نشت DNS، تأخیر TCP)
+  --proxy-user USER / --proxy-pass PASS
+                  احراز هویت پروکسی (اختیاری)
+  --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج چنداتصالی)
+  --batch فهرست گره‌ها
+                  تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
+  --json          خروجی JSON (با IP، --active یا --proxy)
+  --explain       نمایش قوانین و وزن‌های امتیازدهی
+  --zh / --zh-tw / --en / --ja / --ru / --fa
+                  زبان خروجی
+
+مثال‌ها:
+  python3 acheck.py                        # منوی تعاملی
+  python3 acheck.py 8.8.8.8                # بررسی غیرفعال یک IP
+  python3 acheck.py --active               # بررسی فعال اتصال فعلی
+  python3 acheck.py --json 8.8.8.8         # خروجی JSON غیرفعال
+  python3 acheck.py --active --json        # خروجی JSON فعال
+  python3 acheck.py --proxy 127.0.0.1:1080              # عیب‌یابی پروکسی
+  python3 acheck.py --proxy 127.0.0.1:1080 --json       # عیب‌یابی پروکسی JSON
+"""
+    _helps = {"zh": help_zh, "zh-TW": help_zhtw, "en": help_en,
+              "ja": help_ja, "ru": help_ru, "fa": help_fa}
+    print(_helps.get(LANG, help_en))
 
 
 def main():

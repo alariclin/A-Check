@@ -30,6 +30,14 @@ IP 檢測報告（以公共 DNS 8.8.8.8 為例）：
 
 ![檢測報告](docs/showcase-report.png)
 
+IPv6 報告（前綴粒度：地理 / ASN / 類型 / 逐源信譽信號，不合成總分）：
+
+![IPv6 報告](docs/showcase-ipv6.png)
+
+本機自檢範圍選擇（自動雙棧 / 僅 IPv4 / 僅 IPv6）：
+
+![自檢範圍選擇](docs/showcase-scope.png)
+
 批次節點測速優選：
 
 ![批次測速](docs/showcase-batch.png)
