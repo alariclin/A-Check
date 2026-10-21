@@ -1,17 +1,17 @@
 <div align="center">
-  <img src="icon.webp" width="120" alt="A-Check">
+  <img src="icon.webp" width="300" alt="A-Check">
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.3-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
   </p>
   <p>
-    <a href="README.md">简体中文</a> ·
+    <a href="README.md">English</a> ·
+    <a href="README.zh.md">简体中文</a> ·
     <a href="README.zh-TW.md">繁體中文</a> ·
-    <a href="README.en.md">English</a> ·
     <a href="README.ja.md">日本語</a> ·
     <a href="README.ru.md">Русский</a> ·
     <a href="README.fa.md">فارسی</a>

@@ -1,17 +1,17 @@
 <div align="center">
-  <img src="icon.webp" width="120" alt="A-Check">
+  <img src="icon.webp" width="300" alt="A-Check">
   <h1>A-Check</h1>
-  <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
+  <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.3-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
   </p>
   <p>
-    <a href="README.md">简体中文</a> ·
+    <a href="README.md">English</a> ·
+    <a href="README.zh.md">简体中文</a> ·
     <a href="README.zh-TW.md">繁體中文</a> ·
-    <a href="README.en.md">English</a> ·
     <a href="README.ja.md">日本語</a> ·
     <a href="README.ru.md">Русский</a> ·
     <a href="README.fa.md">فارسی</a>
@@ -20,113 +20,113 @@
 
 ---
 
-## 界面预览
+## Screenshots
 
-主菜单（横幅实时显示系统 / 硬件 / 网络状态，12 项功能四组排布）：
+Main menu (the banner shows live system / hardware / network status; 12 features in four groups):
 
-![主菜单](docs/showcase-menu.png)
+![Main menu](docs/showcase-menu.png)
 
-IP 检测报告（以公共 DNS 8.8.8.8 为例）：
+IP report (using the public DNS 8.8.8.8 as an example):
 
-![检测报告](docs/showcase-report.png)
+![Report](docs/showcase-report.png)
 
-批量节点测速优选：
+Batch node speed test & ranking:
 
-![批量测速](docs/showcase-batch.png)
+![Batch test](docs/showcase-batch.png)
 
-## 这是什么
+## What it is
 
-A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它把 22 个公开数据源的情报聚合到一份报告里交叉核对——不靠单一来源下结论，每个评分都能追溯到参与判定的数据源。
+A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It aggregates intelligence from 22 public data sources into one cross-checked report — no conclusion rests on a single source, and every score can be traced back to the sources that voted on it.
 
-## 双模式
+## Dual mode
 
-| 模式 | 用途 | 行为 |
+| Mode | Purpose | Behaviour |
 |---|---|---|
-| **本机自检（主动）** | 检查你当前的出口 IP 与本机网络 | 检测出口 IP 全量信誉、本机系统/硬件、流媒体实测解锁、DNS 泄漏与推荐、25 端口连通、多地区测速 |
-| **查询任意 IP（被动）** | 买 VPS / 租代理前先查对方 IP 干不干净 | 只调用公开情报接口，**不向目标 IP 发送任何数据包** |
+| **Self-check (active)** | Inspect your current egress IP and local network | Full reputation check of the egress IP, local system/hardware info, measured streaming unlock tests, DNS leak check & recommendations, port 25 connectivity, multi-region speed test |
+| **Look up any IP (passive)** | Vet an IP before buying a VPS or renting a proxy | Queries public intelligence APIs only — **sends no packets to the target IP** |
 
-## 报告结构
+## Report structure
 
-一份完整报告按编号章节输出：
+A full report is printed in numbered sections:
 
-- **[1] 基础信息** — 归属地、ISP / 组织、AS 号；**IP 类型属性**（机房 / 住宅 / 移动 / 代理 / VPN / Tor 等多源标记）；**地理位置组**（国家码徽章打头：位置、多源位置对比、经纬度反查识别、时区、坐标、地图链接）；主动模式附本机系统信息
-- **[2] 风险因子** — 代理 / VPN / Tor / 服务器 / 黑名单 / 恶意记录 六个因子逐个给出「命中源占比」进度条，一眼看清哪些源把该 IP 判为风险
-- **[3] 欺诈与维度评分** — 欺诈评分、威胁行为、历史声誉、平台兼容、综合评分逐项成条，末行给出**纯净度**与风险等级（分数越低越干净）
-- **[4] 流媒体与平台可用性** — 本机自检为**实测**解锁结果；查任意 IP 时为基于信誉信号的**推测**（明确标注置信度）
-- **[5] DNS 服务器推荐** — 按 IP 归属地推荐就近 DNS（被动模式）
-- **[6] 数据完整度与置信度** — 本次实际拿到多少源的数据、核心源是否齐全，据此给出置信度，避免「数据不全却装作确定」
+- **[1] Basics** — location, ISP / organisation, AS number; **IP type attributes** (datacentre / residential / mobile / proxy / VPN / Tor flags from multiple sources); a **geolocation group** (country-code badge first: location, multi-source location comparison, coordinate reverse lookup, timezone, coordinates, map link); active mode appends local system info
+- **[2] Risk factors** — proxy / VPN / Tor / server / blacklist / malicious-record: six factors, each with a bar showing the share of sources that flagged the IP
+- **[3] Fraud & dimension scores** — fraud score, threat behaviour, historical reputation, platform compatibility and the combined score, ending with **cleanliness** and a risk level (lower is cleaner)
+- **[4] Streaming & platform availability** — **measured** unlock results in self-check mode; **inferred** from reputation signals (with a stated confidence) when looking up an arbitrary IP
+- **[5] DNS recommendations** — nearby resolvers chosen by the IP's location (passive mode)
+- **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so a thin dataset never masquerades as certainty
 
-主动模式另有无编号章节：DNS 泄漏与推荐、25 端口连通性、多地区测速表，报告共 8 个章节段落。
+Active mode adds unnumbered sections — DNS leak & recommendations, port 25 connectivity, multi-region speed table — for 8 sections in total.
 
-## 主菜单 12 项功能
+## The 12 menu features
 
-| # | 功能 | 说明 |
+| # | Feature | Description |
 |---|---|---|
-| 1 | 本机自检 (出口 IP 全检) | 主动模式全量检测，结尾附多地区测速 |
-| 2 | 查询任意 IP | 输入公网 IPv4 出被动报告，查完自动返回主菜单 |
-| 3 | 流媒体解锁检测 | 单独实测 18 个平台的解锁状态 |
-| 4 | 系统信息与 IO 测试 | 系统 / CPU / 内存 / 磁盘信息与磁盘读写测速 |
-| 5 | 切换语言 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
-| 6 | 检查更新 | 对比 GitHub 最新 Release 提示新版本 |
-| 7 | 代理诊断 (SOCKS5) | 六步：握手 → 代理出口 IP → 出口信誉 → DNS 泄漏 → TCP 延迟 → 经代理吞吐（5 个地区枢纽取最快） |
-| 8 | DNS 泄漏检测 | 对比系统解析器与直连解析结果，判断 DNS 是否走漏 |
-| 9 | TCP 延迟测试 | 对任意 host:port 测延迟 / 抖动 / 丢包（min / avg / max） |
-| 10 | 评分规则说明 | 评分维度、扣分项与等级划分的完整说明 |
-| 11 | 批量节点测速优选 | 粘贴多个 host:port 或 SOCKS5 代理，并发测延迟与可用性，排名输出、最优标绿，并对最优代理实测下载吞吐 |
-| 12 | 网络测速（多地区） | 17 个地区节点下载测速表（多连接峰值口径），附本机上下行 |
+| 1 | Self-check (full egress check) | Full active-mode scan, ending with the multi-region speed table |
+| 2 | Look up any IP | Enter a public IPv4 for a passive report; returns to the main menu automatically |
+| 3 | Streaming unlock test | Measured unlock status for 18 platforms |
+| 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
+| 5 | Language / 切换语言 | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
+| 6 | Check for updates | Compares against the latest GitHub Release |
+| 7 | Proxy diagnostics (SOCKS5) | Six steps: handshake → proxy egress IP → egress reputation → DNS leak → TCP latency → throughput via the proxy (fastest of 5 regional hubs) |
+| 8 | DNS leak test | Compares system-resolver vs direct resolution to detect DNS leaking |
+| 9 | TCP latency test | Latency / jitter / packet loss to any host:port (min / avg / max) |
+| 10 | Scoring rules | Full explanation of score dimensions, deductions and levels |
+| 11 | Batch node speed ranking | Paste multiple host:port entries or SOCKS5 proxies; concurrent latency & availability checks, ranked output with the best node in green, plus a measured download throughput for the best proxy |
+| 12 | Network speed test (regions) | Download table for 17 regional nodes (multi-connection peak), plus local up/down speeds |
 
-流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），区分原生解锁与解析解锁（Smart DNS）。
+Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), distinguishing native unlocks from Smart DNS unlocks.
 
-## 快速开始
+## Quick start
 
-从 [Releases](https://github.com/alariclin/A-Check/releases) 下载对应系统的压缩包，解压后运行启动器：
+Download the package for your system from [Releases](https://github.com/alariclin/A-Check/releases), unzip, and run the launcher:
 
-- **macOS**：双击 `run.command`（或终端 `bash run.command`）
-- **Windows**：双击 `run.bat`
-- **Linux / VPS**：`bash run.sh`
+- **macOS**: double-click `run.command` (or `bash run.command`)
+- **Windows**: double-click `run.bat`
+- **Linux / VPS**: `bash run.sh`
 
-也可以直接运行脚本本体（需 Python 3.8+）：
-
-```
-python3 acheck.py            # 进入交互菜单
-python3 acheck.py 8.8.8.8    # 直接查一个 IP
-```
-
-## 命令行用法
+Or run the script directly (Python 3.8+):
 
 ```
-python3 acheck.py [IPv4] [选项]
+python3 acheck.py            # interactive menu
+python3 acheck.py 8.8.8.8    # look up one IP
 ```
 
-| 选项 | 说明 |
+## Command line
+
+```
+python3 acheck.py [IPv4] [options]
+```
+
+| Option | Description |
 |---|---|
-| `IPv4` | 被动查询指定公网 IP |
-| `--active` | 主动模式：本机出口全量自检 |
-| `--proxy HOST:PORT` | 代理诊断（可配 `--proxy-user` / `--proxy-pass`） |
-| `--batch 列表` | 批量节点测速优选（逗号分隔 host:port 或 socks5:// 代理） |
-| `--speed` | 多地区测速表 |
-| `--explain` | 输出评分规则说明 |
-| `--json` | 以 JSON 输出（可与 IP / --active / --proxy 组合） |
-| `--zh / --zh-tw / --en / --ja / --ru / --fa` | 指定输出语言 |
+| `IPv4` | Passive lookup of a public IP |
+| `--active` | Active mode: full self-check of your egress |
+| `--proxy HOST:PORT` | Proxy diagnostics (add `--proxy-user` / `--proxy-pass` if needed) |
+| `--batch LIST` | Batch node ranking (comma-separated host:port or socks5:// proxies) |
+| `--speed` | Multi-region speed table |
+| `--explain` | Print the scoring rules |
+| `--json` | JSON output (combinable with an IP / --active / --proxy) |
+| `--zh / --zh-tw / --en / --ja / --ru / --fa` | Output language |
 
-## 数据来源
+## Data sources
 
-多源聚合、逐源署名，主要包括：
+Multi-source aggregation with per-source attribution, mainly:
 
-- **地理与归属**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、PTR/FCrDNS 反查
-- **信誉与欺诈**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io
-- **威胁与名单**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口节点名单
+- **Geolocation & ownership**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, PTR/FCrDNS reverse lookup
+- **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io
+- **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list
 
-每个因子与分数都由多源投票得出；单一来源的误报不会直接决定结论。
+Every factor and score is a multi-source vote; a single source's false positive never decides the verdict alone.
 
-## 注意事项
+## Notes
 
-- 被动查询只查 IPv4 公网地址；内网 / 保留地址会被拒绝并说明原因
-- 推测模式（查任意 IP 的流媒体可用性）基于信誉信号推断，与实测可能有出入，请以报告标注的置信度为准
-- 测速为多连接峰值口径，反映链路峰值能力，不等同于单连接持续速度
-- 终端宽度建议 ≥ 60 列；纯文本环境（管道 / 无颜色）会自动降级为无色输出
-- 本工具仅用于自查与运维评估，请遵守各数据源服务条款
+- Passive lookup accepts public IPv4 only; private / reserved addresses are rejected with an explanation
+- Inferred mode (streaming availability for an arbitrary IP) is derived from reputation signals and may differ from measured results — go by the confidence stated in the report
+- Speed tests use multi-connection peak throughput, which reflects link peak capacity rather than sustained single-connection speed
+- A terminal width of ≥ 60 columns is recommended; plain-text environments (pipes / no colour) degrade gracefully to colourless output
+- For self-checks and operations assessment only; please respect each data source's terms of service
 
-## 许可
+## License
 
 MIT License
