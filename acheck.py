@@ -271,7 +271,7 @@ STR = {
         "blocked": "屏蔽",
         "failed": "失败",
         "native": "原生",
-        "dns_unlock": "解析解锁",
+        "dns_unlock": "DNS",
         "port25": "本地25端口出站",
         "normal": "正常",
         "abnormal": "异常",
@@ -496,7 +496,7 @@ STR = {
         "blocked": "Blocked",
         "failed": "Failed",
         "native": "Native",
-        "dns_unlock": "DNS unlock",
+        "dns_unlock": "DNS",
         "port25": "Local port 25 outbound",
         "normal": "OK",
         "abnormal": "Fail",
@@ -721,7 +721,7 @@ STR = {
         "blocked": "屏蔽",
         "failed": "失敗",
         "native": "原生",
-        "dns_unlock": "解析解鎖",
+        "dns_unlock": "DNS",
         "port25": "本地25端口出站",
         "normal": "正常",
         "abnormal": "異常",
@@ -946,7 +946,7 @@ STR = {
         "blocked": "ブロック",
         "failed": "失敗",
         "native": "ネイティブ",
-        "dns_unlock": "DNS解錠",
+        "dns_unlock": "DNS",
         "port25": "ローカル25番ポート送信",
         "normal": "正常",
         "abnormal": "異常",
@@ -1171,7 +1171,7 @@ STR = {
         "blocked": "Блок",
         "failed": "Ошибка",
         "native": "Нативный",
-        "dns_unlock": "DNS-разбл.",
+        "dns_unlock": "DNS",
         "port25": "Исходящий порт 25",
         "normal": "Норма",
         "abnormal": "Аномалия",
@@ -1396,7 +1396,7 @@ STR = {
         "blocked": "مسدود",
         "failed": "ناموفق",
         "native": "بومی",
-        "dns_unlock": "DNS بازگشایی",
+        "dns_unlock": "DNS",
         "port25": "خروجی پورت 25 محلی",
         "normal": "عادی",
         "abnormal": "غیرعادی",
@@ -2626,7 +2626,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
   [流媒体解锁方式]
     原生: 平台直接认可出口 IP 的地区与信誉
-    解析解锁 (Smart DNS): 域名解析被导向解锁服务商节点, 经其 SNI 代理转发
+    DNS 解锁 (Smart DNS): 域名解析被导向解锁服务商节点, 经其 SNI 代理转发
     未知: 本次检测未获得明确信号
   [IPv6]
     被动查询仅做前缀/运营商粒度: 地理/ASN/类型/Spamhaus DROPv6 名单
@@ -2658,7 +2658,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
   [串流解鎖方式]
     原生: 平台直接認可出口 IP 的地區與信譽
-    解析解鎖 (Smart DNS): 網域解析被導向解鎖服務商節點, 經其 SNI 代理轉發
+    DNS 解鎖 (Smart DNS): 網域解析被導向解鎖服務商節點, 經其 SNI 代理轉發
     未知: 本次檢測未獲得明確信號
   [IPv6]
     被動查詢僅做前綴/營運商粒度: 地理/ASN/類型/Spamhaus DROPv6 名單
@@ -4187,7 +4187,7 @@ _unlock_lock = threading.Lock()
 
 
 def get_unlock_type(domain, local_ip=None):
-    """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，精准区分原生解锁与解析解锁。"""
+    """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，精准区分原生解锁与 DNS 解锁。"""
     sys_ns = _get_system_nameservers()[0]
     cache_key = (domain, local_ip or "", sys_ns)
     with _unlock_lock:

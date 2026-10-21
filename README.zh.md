@@ -83,7 +83,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 | 11 | 批量节点测速优选 | 粘贴多个 host:port 或 SOCKS5 代理，并发测延迟与可用性，排名输出、最优标绿，并对最优代理实测下载吞吐 |
 | 12 | 网络测速（多地区） | 17 个地区节点下载测速表（多连接峰值口径），附本机上下行 |
 
-流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），区分原生解锁与解析解锁（Smart DNS）。
+流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），区分原生解锁与 DNS 解锁（Smart DNS）。
 
 ## 快速开始
 
