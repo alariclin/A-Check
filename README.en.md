@@ -36,7 +36,7 @@ Batch node speed test & ranking:
 
 ## What it is
 
-A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It aggregates intelligence from 22 public data sources into one cross-checked report — no conclusion rests on a single source, and every score can be traced back to the sources that voted on it.
+A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 22 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
 
 ## Dual mode
 
@@ -54,7 +54,7 @@ A full report is printed in numbered sections:
 - **[3] Fraud & dimension scores** — fraud score, threat behaviour, historical reputation, platform compatibility and the combined score, ending with **cleanliness** and a risk level (lower is cleaner)
 - **[4] Streaming & platform availability** — **measured** unlock results in self-check mode; **inferred** from reputation signals (with a stated confidence) when looking up an arbitrary IP
 - **[5] DNS recommendations** — nearby resolvers chosen by the IP's location (passive mode)
-- **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so a thin dataset never masquerades as certainty
+- **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so the report makes it visible when data is thin
 
 Active mode adds unnumbered sections — DNS leak & recommendations, port 25 connectivity, multi-region speed table — for 8 sections in total.
 
