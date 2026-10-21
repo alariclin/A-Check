@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.0-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -63,7 +63,7 @@ Active mode adds unnumbered sections — DNS leak & recommendations, port 25 con
 | # | Feature | Description |
 |---|---|---|
 | 1 | Self-check (full egress check) | Full active-mode scan, ending with the multi-region speed table |
-| 2 | Look up any IP | Enter a public IPv4 for a passive report; returns to the main menu automatically |
+| 2 | Look up any IP | Enter a public IPv4 or IPv6 for a passive report; returns to the main menu automatically |
 | 3 | Streaming unlock test | Measured unlock status for 18 platforms |
 | 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
 | 5 | Language / 切换语言 | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
@@ -95,13 +95,15 @@ python3 acheck.py 8.8.8.8    # look up one IP
 ## Command line
 
 ```
-python3 acheck.py [IPv4] [options]
+python3 acheck.py [IP] [options]
 ```
 
 | Option | Description |
 |---|---|
 | `IPv4` | Passive lookup of a public IP |
 | `--active` | Active mode: full self-check of your egress |
+| `--ipv4-only` | With `--active`: IPv4 only (skip IPv6) |
+| `--ipv6-only` | With `--active`: IPv6 only |
 | `--proxy HOST:PORT` | Proxy diagnostics (add `--proxy-user` / `--proxy-pass` if needed) |
 | `--batch LIST` | Batch node ranking (comma-separated host:port or socks5:// proxies) |
 | `--speed` | Multi-region speed table |
@@ -121,7 +123,7 @@ Every factor and score is a multi-source vote; a single source's false positive 
 
 ## Notes
 
-- Passive lookup accepts public IPv4 only; private / reserved addresses are rejected with an explanation
+- Passive lookup accepts public IPv4 and IPv6; private / reserved addresses are rejected with an explanation. IPv6 reports are prefix/operator-level (geo / ASN / type / blocklist plus per-source reputation signals; no composite score). Self-check is dual-stack: when an IPv6 egress exists it is tested alongside IPv4, with a leak warning if the two egresses sit on different networks
 - Inferred mode (streaming availability for an arbitrary IP) is derived from reputation signals and may differ from measured results — go by the confidence stated in the report
 - Speed tests use multi-connection peak throughput, which reflects link peak capacity rather than sustained single-connection speed
 - A terminal width of ≥ 60 columns is recommended; plain-text environments (pipes / no colour) degrade gracefully to colourless output

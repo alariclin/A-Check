@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.0-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -63,7 +63,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 | # | 機能 | 説明 |
 |---|---|---|
 | 1 | セルフチェック (出口 IP 全検) | アクティブモード全量チェック、最後に地域別スピード表 |
-| 2 | 任意 IP 照会 | 公開 IPv4 を入力してパッシブレポート、終了後は自動でメインメニューへ戻る |
+| 2 | 任意 IP 照会 | 公開 IPv4 または IPv6 を入力してパッシブレポート、終了後は自動でメインメニューへ戻る |
 | 3 | ストリーミング解錠検出 | 18 プラットフォームのアンロック状態を単独で実測 |
 | 4 | システム情報と IO テスト | システム / CPU / メモリ / ディスク情報とディスク読み書き速度 |
 | 5 | 言語切替 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
@@ -95,13 +95,15 @@ python3 acheck.py 8.8.8.8    # 1 つの IP を照会
 ## コマンドライン
 
 ```
-python3 acheck.py [IPv4] [オプション]
+python3 acheck.py [IP] [オプション]
 ```
 
 | オプション | 説明 |
 |---|---|
 | `IPv4` | 指定した公開 IP をパッシブ照会 |
 | `--active` | アクティブモード：自機出口の全量セルフチェック |
+| `--ipv4-only` | `--active` と併用：IPv4 のみ測定（IPv6 をスキップ） |
+| `--ipv6-only` | `--active` と併用：IPv6 のみ測定 |
 | `--proxy HOST:PORT` | プロキシ診断（`--proxy-user` / `--proxy-pass` と併用可） |
 | `--batch リスト` | ノード一括優選（カンマ区切りの host:port または socks5:// プロキシ） |
 | `--speed` | 地域別スピード表 |
@@ -121,7 +123,7 @@ python3 acheck.py [IPv4] [オプション]
 
 ## 注意事項
 
-- パッシブ照会は公開 IPv4 のみ対象。プライベート / 予約アドレスは理由付きで拒否されます
+- パッシブ照会は公開 IPv4 と IPv6 に対応。プライベート / 予約アドレスは理由付きで拒否されます。IPv6 レポートはプレフィックス/事業者粒度です（地理/ASN/種別/ブロックリストとソース別の評価信号、総合スコアなし）。セルフチェックはデュアルスタックで、IPv6 出口がある場合は IPv4 と併せて測定し、両出口が異なるネットワークの場合はリーク警告を表示します
 - 推定モード（任意 IP のストリーミング可用性）はレピュテーション信号からの推論であり、実測と異なる場合があります。レポート記載の信頼度を目安にしてください
 - スピードテストは複数接続ピーク方式で、回線のピーク性能を示すものであり、単一接続の持続速度とは異なります
 - ターミナル幅は 60 列以上を推奨。プレーンテキスト環境（パイプ / 無色）では自動で無色出力に切り替わります

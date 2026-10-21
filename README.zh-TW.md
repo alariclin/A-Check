@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.0-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -63,7 +63,7 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 | # | 功能 | 說明 |
 |---|---|---|
 | 1 | 本機自檢 (出口 IP 全檢) | 主動模式全量檢測，結尾附多地區測速 |
-| 2 | 查詢任意 IP | 輸入公網 IPv4 出被動報告，查完自動返回主選單 |
+| 2 | 查詢任意 IP | 輸入公網 IPv4 或 IPv6 出被動報告，查完自動返回主選單 |
 | 3 | 串流解鎖檢測 | 單獨實測 18 個平台的解鎖狀態 |
 | 4 | 系統資訊與 IO 測試 | 系統 / CPU / 記憶體 / 磁碟資訊與磁碟讀寫測速 |
 | 5 | 切換語言 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
@@ -95,13 +95,15 @@ python3 acheck.py 8.8.8.8    # 直接查一個 IP
 ## 命令列用法
 
 ```
-python3 acheck.py [IPv4] [選項]
+python3 acheck.py [IP] [選項]
 ```
 
 | 選項 | 說明 |
 |---|---|
 | `IPv4` | 被動查詢指定公網 IP |
 | `--active` | 主動模式：本機出口全量自檢 |
+| `--ipv4-only` | 配合 `--active`：只測 IPv4（跳過 IPv6） |
+| `--ipv6-only` | 配合 `--active`：只測 IPv6 |
 | `--proxy HOST:PORT` | 代理診斷（可配 `--proxy-user` / `--proxy-pass`） |
 | `--batch 列表` | 批次節點測速優選（逗號分隔 host:port 或 socks5:// 代理） |
 | `--speed` | 多地區測速表 |
@@ -121,7 +123,7 @@ python3 acheck.py [IPv4] [選項]
 
 ## 注意事項
 
-- 被動查詢只查 IPv4 公網位址；內網 / 保留位址會被拒絕並說明原因
+- 被動查詢支援公網 IPv4 與 IPv6；內網 / 保留位址會被拒絕並說明原因。IPv6 為前綴/營運商粒度報告（地理/ASN/類型/名單與逐源信譽信號，不合成總分）。本機自檢為雙棧：偵測到 IPv6 出口時與 IPv4 一併檢測，兩出口不在同一網路時給出洩漏警告
 - 推測模式（查任意 IP 的串流可用性）基於信譽訊號推斷，與實測可能有出入，請以報告標註的信心度為準
 - 測速為多連接峰值口徑，反映鏈路峰值能力，不等同於單連接持續速度
 - 終端寬度建議 ≥ 60 列；純文字環境（管道 / 無顏色）會自動降級為無色輸出

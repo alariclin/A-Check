@@ -24,6 +24,7 @@ IP 信誉检测 v4.13.4 — 全量修复与并发优化公开版 (零 API Key �
 """
 import base64
 import glob
+import http.client
 import ipaddress
 import json
 import os
@@ -55,7 +56,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.13.4"
+VERSION = "4.14.0"
 
 
 def _init_console():
@@ -104,8 +105,25 @@ STR = {
         "geo_group": "地理位置",
         "coord_country": "经纬度识别",
         "sec_fraud": "欺诈与维度评分",
+        "sec_signals6": "信誉信号 (逐源)",
+        "current_egress6": "当前出口 IPv6",
+        "sec_ipv6": "IPv6 双栈检测",
+        "v6_leak_warn": "⚠ IPv6 泄漏风险：IPv4 出口为 AS{a4}，IPv6 出口为 AS{a6}，不在同一网络——IPv6 流量很可能未经过代理/VPN，正直连暴露",
+        "v6_same_exit": "IPv6 与 IPv4 为同一出口网络 (AS{a})",
+        "stack_title": "本机自检范围",
+        "stack_auto": "自动 (IPv4 + IPv6 全部检测；无 IPv6 时只测 IPv4)",
+        "stack_v4": "仅 IPv4",
+        "stack_v6": "仅 IPv6",
+        "stack_prompt": "请选择 [1-3] (回车=自动): ",
+        "egress6_fail": "未检测到 IPv6 出口 (本机可能只有 IPv4)",
+        "v6_prefix_note": "IPv6 为前缀/运营商粒度数据，无单个地址的信誉记录",
+        "v6_op_est": "运营商级估计",
+        "v6_listed": "已命中名单",
+        "v6_not_listed": "未命中名单",
+        "v6_stream_note": "流媒体解锁推测仅支持 IPv4；IPv6 可用主动模式分栈实测",
         "sec_matrix": "风险因子矩阵",
         "sec_complete": "数据完整度与置信度",
+        "sec_complete6": "数据完整度",
         "sec_stream": "流媒体及AI服务解锁检测 (主动)",
         "sec_stream_passive": "流媒体可用性推测 (被动)",
         "sec_mail": "25端口发信及黑名单检测",
@@ -311,8 +329,25 @@ STR = {
         "sec_loc": "Multi-source Location",
         "geo_group": "Geo Location",
         "coord_country": "Country by Coords",
+        "current_egress6": "Current IPv6 Egress",
+        "sec_ipv6": "IPv6 Dual-Stack",
+        "v6_leak_warn": "⚠ IPv6 leak risk: IPv4 egress is AS{a4} but IPv6 egress is AS{a6} — different networks; IPv6 traffic likely bypasses your proxy/VPN",
+        "v6_same_exit": "IPv6 and IPv4 share the same egress network (AS{a})",
+        "stack_title": "Self-check scope",
+        "stack_auto": "Auto (test both IPv4 + IPv6; IPv4 only when no IPv6)",
+        "stack_v4": "IPv4 only",
+        "stack_v6": "IPv6 only",
+        "stack_prompt": "Choose [1-3] (Enter=Auto): ",
+        "egress6_fail": "No IPv6 egress detected (this host may be IPv4-only)",
+        "sec_signals6": "Reputation Signals (per source)",
+        "v6_prefix_note": "IPv6 data is prefix/operator-level; no per-address reputation exists",
+        "v6_op_est": "operator-level estimate",
+        "v6_listed": "Listed",
+        "v6_not_listed": "Not listed",
+        "v6_stream_note": "Streaming inference is IPv4-only; use Active mode for per-stack IPv6 tests",
         "sec_fraud": "Fraud & Dimension Scores",
         "sec_matrix": "Risk Factor Matrix",
+        "sec_complete6": "Data Completeness",
         "sec_complete": "Data Completeness & Confidence",
         "sec_stream": "Streaming & AI Unlock Test (Active)",
         "sec_stream_passive": "Streaming Availability Inference (Passive)",
@@ -517,9 +552,26 @@ STR = {
         "sec_basic": "基礎資訊與 ASN/BGP",
         "sec_type": "IP類型屬性",
         "sec_loc": "多源位置對比",
+        "current_egress6": "目前出口 IPv6",
+        "sec_ipv6": "IPv6 雙棧檢測",
+        "v6_leak_warn": "⚠ IPv6 洩漏風險：IPv4 出口為 AS{a4}，IPv6 出口為 AS{a6}，不在同一網路——IPv6 流量很可能未經過代理/VPN，正直連暴露",
+        "v6_same_exit": "IPv6 與 IPv4 為同一出口網路 (AS{a})",
+        "stack_title": "本機自檢範圍",
+        "stack_auto": "自動 (IPv4 + IPv6 全部檢測；無 IPv6 時只測 IPv4)",
+        "stack_v4": "僅 IPv4",
+        "stack_v6": "僅 IPv6",
+        "stack_prompt": "請選擇 [1-3] (Enter=自動): ",
+        "egress6_fail": "未偵測到 IPv6 出口 (本機可能只有 IPv4)",
         "geo_group": "地理位置",
+        "sec_signals6": "信譽信號 (逐源)",
+        "v6_prefix_note": "IPv6 為前綴/營運商粒度資料，無單位址的信譽紀錄",
+        "v6_op_est": "營運商級估計",
+        "v6_listed": "已命中名單",
+        "v6_not_listed": "未命中名單",
+        "v6_stream_note": "串流解鎖推測僅支援 IPv4；IPv6 可用主動模式分棧實測",
         "coord_country": "經緯度識別",
         "sec_fraud": "欺詐與維度評分",
+        "sec_complete6": "資料完整度",
         "sec_matrix": "風險因子矩陣",
         "sec_complete": "數據完整度與置信度",
         "sec_stream": "串流媒體及AI服務解鎖檢測 (主動)",
@@ -723,10 +775,27 @@ STR = {
         "back": "戻る",
         "checking": "検査中",
         "sec_basic": "基本情報と ASN/BGP",
+        "current_egress6": "現在の出口 IPv6",
+        "sec_ipv6": "IPv6 デュアルスタック",
+        "v6_leak_warn": "⚠ IPv6リークの恐れ：IPv4出口はAS{a4}、IPv6出口はAS{a6}と異なるネットワークです。IPv6通信がプロキシ/VPNを経由していない可能性があります",
+        "v6_same_exit": "IPv6とIPv4は同一の出口ネットワークです (AS{a})",
+        "stack_title": "セルフチェック範囲",
+        "stack_auto": "自動 (IPv4 + IPv6 の両方を測定；IPv6 が無い場合は IPv4 のみ)",
+        "stack_v4": "IPv4 のみ",
+        "stack_v6": "IPv6 のみ",
+        "stack_prompt": "選択 [1-3] (Enter=自動): ",
+        "egress6_fail": "IPv6 出口が検出されませんでした (このホストは IPv4 のみの可能性があります)",
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
+        "sec_signals6": "レピュテーション信号（ソース別）",
+        "v6_prefix_note": "IPv6データはプレフィックス/事業者粒度で、アドレス単位の評価記録はありません",
+        "v6_op_est": "事業者レベルの推定",
+        "v6_listed": "リスト掲載あり",
+        "v6_not_listed": "リスト掲載なし",
+        "v6_stream_note": "ストリーミング推測はIPv4のみ；IPv6はアクティブモードでスタック別に実測できます",
         "geo_group": "地理情報",
         "coord_country": "座標による国",
+        "sec_complete6": "データ完全性",
         "sec_fraud": "不正・次元スコア",
         "sec_matrix": "リスク因子マトリックス",
         "sec_complete": "データ完全性と信頼度",
@@ -929,11 +998,28 @@ STR = {
         "active_mode": "[Активный режим]",
         "passive_mode": "[Пассивный режим]",
         "back": "Назад",
+        "current_egress6": "Текущий выход IPv6",
+        "sec_ipv6": "IPv6 (двойной стек)",
+        "v6_leak_warn": "⚠ Риск утечки IPv6: выход IPv4 — AS{a4}, выход IPv6 — AS{a6}; сети разные, и IPv6-трафик, вероятно, идёт мимо прокси/VPN",
+        "v6_same_exit": "IPv6 и IPv4 — одна сеть выхода (AS{a})",
+        "stack_title": "Объём самопроверки",
+        "stack_auto": "Авто (IPv4 + IPv6; если IPv6 нет — только IPv4)",
+        "stack_v4": "Только IPv4",
+        "stack_v6": "Только IPv6",
+        "stack_prompt": "Выбор [1-3] (Enter=Авто): ",
+        "egress6_fail": "Выход IPv6 не обнаружен (возможно, у хоста только IPv4)",
         "checking": "Проверка",
         "sec_basic": "Основная информация и ASN/BGP",
         "sec_type": "Атрибуты типа IP",
+        "sec_signals6": "Сигналы репутации (по источникам)",
+        "v6_prefix_note": "Данные IPv6 — на уровне префикса/оператора; репутации отдельных адресов не существует",
+        "v6_op_est": "оценка на уровне оператора",
+        "v6_listed": "В списке",
+        "v6_not_listed": "Не в списке",
+        "v6_stream_note": "Вывод по стримингу — только для IPv4; IPv6 проверяйте активным режимом по стекам",
         "sec_loc": "Сравнение местоположения",
         "geo_group": "Геолокация",
+        "sec_complete6": "Полнота данных",
         "coord_country": "Страна по координатам",
         "sec_fraud": "Мошенничество и измерения",
         "sec_matrix": "Матрица факторов риска",
@@ -1135,12 +1221,29 @@ STR = {
         "egress_note": "※ تست‌های فعال فقط همین مسیر فعلی را نشان می‌دهند",
         "current_egress": "خروجی فعلی",
         "active_mode": "[حالت فعال]",
+        "current_egress6": "خروجی فعلی IPv6",
+        "sec_ipv6": "IPv6 دوپشته",
+        "v6_leak_warn": "⚠ خطر نشت IPv6: خروجی IPv4 ‏AS{a4} و خروجی IPv6 ‏AS{a6} است؛ شبکه‌ها متفاوت‌اند و ترافیک IPv6 احتمالاً از پروکسی/VPN عبور نمی‌کند",
+        "v6_same_exit": "IPv6 و IPv4 در یک شبکه خروجی هستند (AS{a})",
+        "stack_title": "دامنهٔ خودآزمایی",
+        "stack_auto": "خودکار (آزمایش هر دو IPv4 + IPv6؛ بدون IPv6 فقط IPv4)",
+        "stack_v4": "فقط IPv4",
+        "stack_v6": "فقط IPv6",
+        "stack_prompt": "انتخاب [1-3] (Enter=خودکار): ",
+        "egress6_fail": "خروجی IPv6 شناسایی نشد (ممکن است این میزبان فقط IPv4 داشته باشد)",
         "passive_mode": "[حالت غیرفعال]",
         "back": "بازگشت",
         "checking": "در حال بررسی",
         "sec_basic": "اطلاعات پایه و ASN/BGP",
+        "sec_signals6": "سیگنال‌های اعتبار (به تفکیک منبع)",
+        "v6_prefix_note": "داده‌های IPv6 در سطح پیشوند/اپراتور است؛ سابقه اعتبار برای تک‌آدرس وجود ندارد",
+        "v6_op_est": "برآورد سطح اپراتور",
+        "v6_listed": "در فهرست هست",
+        "v6_not_listed": "در فهرست نیست",
+        "v6_stream_note": "استنتاج استریمینگ فقط برای IPv4 است؛ IPv6 را در حالت فعال به تفکیک پشته آزمایش کنید",
         "sec_type": "ویژگی‌های نوع IP",
         "sec_loc": "مقایسه موقعیت چندمنبعی",
+        "sec_complete6": "کامل بودن داده‌ها",
         "geo_group": "موقعیت جغرافیایی",
         "coord_country": "کشور بر اساس مختصات",
         "sec_fraud": "امتیاز تقلب و ابعاد",
@@ -1522,6 +1625,21 @@ def validate_ip(s):
     except Exception:
         return None
 
+
+def parse_any_ip(s):
+    """解析任意公网 IP: 返回 (ip对象, 4|6); 失败返回 (None, 错误i18n键)。"""
+    try:
+        ip = ipaddress.ip_address(str(s).strip())
+    except Exception:
+        return None, "invalid_ip"
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.is_global and not ip.is_multicast:
+            return ip, 6
+        return None, "private_ip"
+    if (not ip.is_global or ip.is_multicast or ip.is_reserved
+            or ip in ipaddress.ip_network("198.18.0.0/15")):
+        return None, "private_ip"
+    return ip, 4
 
 def _parse_asn(val):
     if val is None:
@@ -1974,7 +2092,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.13.4 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2485,7 +2603,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.13.4 免 Key 公开版):
+评分规则 (v4.14.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2510,9 +2628,14 @@ SCORING_RULES = {
     原生: 平台直接认可出口 IP 的地区与信誉
     解析解锁 (Smart DNS): 域名解析被导向解锁服务商节点, 经其 SNI 代理转发
     未知: 本次检测未获得明确信号
+  [IPv6]
+    被动查询仅做前缀/运营商粒度: 地理/ASN/类型/Spamhaus DROPv6 名单
+    信誉信号逐源透传 (Scamalytics 为运营商级估计), 不合成总分
+    无地址级信誉数据, 未命中名单不等于干净
+    主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.13.4 免 Key 公開版):
+評分規則 (v4.14.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2537,9 +2660,14 @@ SCORING_RULES = {
     原生: 平台直接認可出口 IP 的地區與信譽
     解析解鎖 (Smart DNS): 網域解析被導向解鎖服務商節點, 經其 SNI 代理轉發
     未知: 本次檢測未獲得明確信號
+  [IPv6]
+    被動查詢僅做前綴/營運商粒度: 地理/ASN/類型/Spamhaus DROPv6 名單
+    信譽信號逐源透傳 (Scamalytics 為營運商級估計), 不合成總分
+    無位址級信譽資料, 未命中名單不等於乾淨
+    主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.13.4 Keyless Public Edition):
+Scoring rules (v4.14.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2564,9 +2692,15 @@ Scoring rules (v4.13.4 Keyless Public Edition):
     Native: the platform accepts the egress IP's region and reputation directly
     DNS unlock (Smart DNS): resolution is steered to an unblocking provider's node and relayed via an SNI proxy
     Unknown: no clear signal was obtained in this run
+  [IPv6]
+    Passive lookups are prefix/operator-level only: geo/ASN/type/Spamhaus DROPv6
+    Reputation signals pass through per source (Scamalytics is an operator-level
+    estimate); no composite score is computed
+    No per-address reputation data exists; not listed does not mean clean
+    Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.13.4 キー不要公開版):
+スコアリングルール (v4.14.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2591,9 +2725,14 @@ Scoring rules (v4.13.4 Keyless Public Edition):
     ネイティブ: プラットフォームが出口 IP の地域と評価を直接認める
     DNS 解錠 (Smart DNS): 名前解決が解錠プロバイダのノードへ誘導され、SNI プロキシ経由で中継される
     不明: 今回の検出では明確な信号が得られなかった
+  [IPv6]
+    受動検索はプレフィックス/事業者粒度のみ: 地理/ASN/種別/Spamhaus DROPv6
+    評価信号はソースごとにそのまま表示 (Scamalytics は事業者レベルの推定)、総合スコアは算出しない
+    アドレス単位の評価データは存在せず、リスト未掲載は「クリーン」を意味しない
+    アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.13.4 Публичная версия без ключей):
+Правила оценки (v4.14.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2618,6 +2757,11 @@ Scoring rules (v4.13.4 Keyless Public Edition):
     Нативная: платформа напрямую принимает регион и репутацию исходящего IP
     DNS-разблокировка (Smart DNS): разрешение имени направляется на узел провайдера разблокировки и ретранслируется через SNI-прокси
     Неизвестно: в этом запуске чёткий сигнал не получен
+  [IPv6]
+    Пассивные запросы — только на уровне префикса/оператора: гео/ASN/тип/Spamhaus DROPv6
+    Сигналы репутации передаются по источникам (Scamalytics — оценка уровня оператора); общий балл не вычисляется
+    Данных репутации по отдельным адресам нет; отсутствие в списках не означает «чистый»
+    Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
 قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.4):
@@ -2645,6 +2789,11 @@ Scoring rules (v4.13.4 Keyless Public Edition):
     بومی: پلتفرم مستقیماً منطقه و اعتبار IP خروجی را می‌پذیرد
     رفع مسدودیت DNS ‏(Smart DNS): حل نام به گره ارائه‌دهنده رفع مسدودیت هدایت و از طریق پروکسی SNI بازپخش می‌شود
     نامشخص: در این اجرا سیگنال روشنی به دست نیامد
+  [IPv6]
+    جست‌وجوی غیرفعال فقط در سطح پیشوند/اپراتور است: جغرافیا/ASN/نوع/Spamhaus DROPv6
+    سیگنال‌های اعتبار به تفکیک منبع نمایش داده می‌شوند (Scamalytics برآورد سطح اپراتور است)؛ امتیاز ترکیبی محاسبه نمی‌شود
+    داده اعتبار در سطح تک‌آدرس وجود ندارد؛ نبودن در فهرست به معنای پاک بودن نیست
+    حالت فعال دوپشته است: خروجی IPv6/تشخیص نشت/استریمینگ و سرعت به تفکیک پشته
 """,
 }
 
@@ -3336,18 +3485,7 @@ def _print_completeness(res):
 
 
 
-def print_report(res, include_streaming_inference=True, sysinfo=None,
-                 tail_completeness=True, dns_rec=False):
-    _sec_begin()
-    s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s)
-    scs = res["scores"]
-    ip = res["ip"]
-
-    print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
-
-    # [1] 基础信息 (支持多源融合兜底)
+def _print_basic_block(s, prof):
     _section(T("sec_basic"))
     wi = s.get("ipwhois", {})
     ii = s.get("ipinfo", {})
@@ -3506,6 +3644,24 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             print(f"  {_cf}{T('map')}: https://www.google.com/maps?q={prof['latitude']},{prof['longitude']}")
     elif not locs:
         print(f"  {T('no_loc_data')}")
+
+
+
+def print_report(res, include_streaming_inference=True, sysinfo=None,
+                 tail_completeness=True, dns_rec=False):
+    _sec_begin()
+    s = res["sources"]
+    prof = res.get("profile") or _build_unified_profile(s)
+    scs = res["scores"]
+    ip = res["ip"]
+
+    print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+
+    # [1] 基础信息 (支持多源融合兜底)
+    _print_basic_block(s, prof)
+    wi = s.get("ipwhois", {})
+    fp = s.get("freeipapi", {})
 
     # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
     if sysinfo:
@@ -3689,6 +3845,186 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 # ============================================================
 # 主动检测 (流媒体/邮局/DNSBL/测速)
 # ============================================================
+# ============================================================
+# IPv6 被动查询 (v4.14.0): 前缀/运营商粒度, 不合成总分
+# 纳入源经实测验证 (2026-10-21 逐源探针); 排除:
+#   greynoise 官方 API 仅接受 IPv4; sansisc 对 v6 返回与地址无关的常量;
+#   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
+#   urlscan 查询语法与 v6 不兼容且信号近乎恒空
+# ============================================================
+V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapi", "ipapiis", "ipinfo",
+                    "freeipapi", "dbip", "geojs", "ipguide", "ripestat",
+                    "scamalytics", "proxycheck", "spamhaus", "shodan_idb",
+                    "ptr")
+
+
+def run_passive6(ip):
+    ip_s = str(ip)
+    sources = {}
+    avail = [p for p in PROVIDERS if p.key in V6_PROVIDER_KEYS and p.available()]
+    total_p = len(avail)
+    done_cnt = [0]
+
+    def _query_one(p):
+        try:
+            res = p.check(ip_s)
+        except Exception as e:
+            res = {"ok": False, "err": str(e)[:80]}
+        try:
+            with _progress_lock:
+                done_cnt[0] += 1
+                _render_progress_locked(done_cnt[0], total_p, p.name)
+        except Exception:
+            pass
+        return p.key, res
+
+    with ThreadPoolExecutor(max_workers=10) as ex:
+        for k, v in ex.map(_query_one, avail):
+            sources[k] = v
+
+    if "--json" not in sys.argv:
+        print("\r" + " " * max(40, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+
+    total = len(avail)
+    ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
+    failed = [p.name for p in avail if not sources.get(p.key, {}).get("ok")]
+    completeness = int(ok_count / total * 100) if total else 0
+
+    _prof = _build_unified_profile(sources)
+    if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
+        try:
+            _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
+                  "&format=json&zoom=3" % (_prof["latitude"], _prof["longitude"]))
+            _rq = urllib.request.Request(
+                _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
+            with urllib.request.urlopen(_rq, timeout=4) as _rp:
+                _addr = (json.loads(_rp.read().decode("utf-8", "replace"))
+                         .get("address") or {})
+            if _addr.get("country"):
+                sources["coordgeo"] = {
+                    "ok": True, "country": _addr.get("country"),
+                    "cc": (_addr.get("country_code") or "").upper()}
+        except Exception:
+            pass
+
+    return {
+        "ip": ip_s,
+        "ipv6": True,
+        "profile": _prof,
+        "sources": sources,
+        "completeness": {
+            "pct": completeness,
+            "ok": ok_count,
+            "total": total,
+            "failed": failed,
+        },
+        "ts": now_iso(),
+    }
+
+
+def print_report6(res, embedded=False):
+    if not embedded:
+        _sec_begin()
+    s = res["sources"]
+    prof = res.get("profile") or _build_unified_profile(s)
+    ip = res["ip"]
+
+    if not embedded:
+        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+
+    _print_basic_block(s, prof)
+
+    # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
+    _section(T("sec_matrix"))
+    print(f"  {_c(C.dim, T('v6_prefix_note'))}")
+
+    def _hit(d, cond):
+        if not d.get("ok"):
+            return "?"
+        return True if cond else False
+
+    _NA = None
+    pc = s.get("proxycheck", {})
+    wi = s.get("ipwhois", {})
+    fp = s.get("freeipapi", {})
+    ia = s.get("ipapi", {})
+    sp = s.get("spamhaus", {})
+    sh = s.get("shodan_idb", {})
+    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                  if wi.get("ok") else (None, ""))
+    if wi.get("ok") and wi.get("hosting"):
+        dc_w = True
+    wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
+    _rows = [
+        ("proxycheck", [
+            _hit(pc, bool(pc.get("proxy"))),
+            _hit(pc, bool(pc.get("vpn"))),
+            _hit(pc, "tor" in str(pc.get("type", "")).lower()),
+            _hit(pc, "hosting" in str(pc.get("type", "")).lower()
+                 or "business" in str(pc.get("type", "")).lower()),
+            _NA, _NA]),
+        ("ipwho.is", [
+            wi.get("proxy") if wi.get("ok") else "?",
+            wi.get("vpn") if wi.get("ok") else "?",
+            wi.get("tor") if wi.get("ok") else "?",
+            wi_server, _NA, _NA]),
+        ("freeipapi", [
+            _hit(fp, bool(fp.get("proxy"))) if fp.get("proxy") is not None else "?",
+            _NA, _NA, _NA, _NA, _NA]),
+        ("ip-api.com", [
+            _hit(ia, bool(ia.get("proxy"))),
+            _NA, _NA,
+            _hit(ia, bool(ia.get("hosting"))),
+            _NA, _NA]),
+        ("Spamhaus DROP", [_NA, _NA, _NA, _NA,
+                           _hit(sp, bool(sp.get("listed"))), _NA]),
+        ("Shodan", [_NA, _NA, _NA, _NA, _NA,
+                    _hit(sh, bool(sh.get("vulns")))]),
+    ]
+    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                T("f_blacklist"), T("f_malicious")]
+    _lw = _bar_label_width()
+    for _ci, _fname in enumerate(_factors):
+        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+        if _decided:
+            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+        else:
+            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+    # [3] 信誉信号 (逐源透传, 不合成总分)
+    _section(T("sec_signals6"))
+    sc = s.get("scamalytics", {})
+    if sc.get("ok"):
+        _v = sc.get("fraud_score", 0)
+        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
+    else:
+        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+    if pc.get("ok") and pc.get("risk") is not None:
+        _v = pc.get("risk")
+        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
+    else:
+        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+    if sp.get("ok"):
+        _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
+                else _c(C.green, T("v6_not_listed")))
+        print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
+    if sh.get("ok"):
+        _ports = sh.get("ports") or []
+        _ptxt = ", ".join(str(p) for p in _ports[:12]) if _ports else T("none")
+        print(f"  {_pad('Shodan', _lw)}{_ptxt}")
+
+    # [4] 完整度 (无置信度合成: v6 数据粒度不足以支撑)
+    _section(T("sec_complete6"))
+    c = res["completeness"]
+    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
+    if c["failed"]:
+        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+    print(f"  {_c(C.dim, T('v6_stream_note'))}")
+    print(f"\n{_c(C.dim, T('disclaimer'))}")
+
+
 def get_egress_ip():
     sources = [
         "https://api4.ipify.org?format=json",
@@ -3699,7 +4035,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.13.4 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -3710,6 +4046,31 @@ def get_egress_ip():
                     ip = raw.splitlines()[0].strip() if raw else ""
                 if ip and validate_ip(ip):
                     return str(ip)
+        except Exception:
+            continue
+    return None
+
+
+def get_egress_ip6():
+    sources = [
+        "https://api6.ipify.org?format=json",
+        "https://ipv6.icanhazip.com",
+        "https://6.ipw.cn/api/ip/myip?json",
+    ]
+    for url in sources:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                raw = r.read(512).decode("utf-8", errors="replace").strip()
+                if raw.startswith("{"):
+                    d = json.loads(raw)
+                    ip = d.get("ip") or d.get("IP") or d.get("ip_address")
+                else:
+                    ip = raw.splitlines()[0].strip() if raw else ""
+                if ip:
+                    _p = ipaddress.ip_address(str(ip).strip())
+                    if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
+                        return str(_p)
         except Exception:
             continue
     return None
@@ -3737,6 +4098,57 @@ def _is_challenge(code, body):
     return False
 
 
+_FORCE_FAMILY = 0  # 主动分栈测试期间置 4/6, _active_get 据此钉住地址族
+_FORCE_STACK = None  # 自检范围覆盖: None=自动/询问, "4"/"6"=仅测该栈 (CLI 标志)
+
+
+def _pinned_connect(conn, family):
+    infos = socket.getaddrinfo(conn.host, conn.port, family, socket.SOCK_STREAM)
+    last = None
+    for af, _st, _proto, _nm, sa in infos:
+        try:
+            _s = socket.socket(af, socket.SOCK_STREAM)
+            _s.settimeout(conn.timeout)
+            _s.connect(sa)
+            conn.sock = _s
+            break
+        except OSError as e:
+            last = e
+            conn.sock = None
+    if conn.sock is None:
+        raise last if last is not None else OSError("no usable address")
+    if conn._tunnel_host:
+        conn._tunnel()
+
+
+def _pinned_opener(family, follow_redirects=True):
+    """构建把连接钉死在单一地址族的 opener (SNI/Host 保持原域名)。"""
+    fam = socket.AF_INET6 if family == 6 else socket.AF_INET
+
+    class _HC(http.client.HTTPConnection):
+        def connect(self):
+            _pinned_connect(self, fam)
+
+    class _HSC(http.client.HTTPSConnection):
+        def connect(self):
+            _pinned_connect(self, fam)
+            self.sock = self._context.wrap_socket(
+                self.sock, server_hostname=self.host)
+
+    class _HH(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(_HC, req)
+
+    class _HSH(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(_HSC, req, context=self._context)
+
+    handlers = [_HH(), _HSH()]
+    if not follow_redirects:
+        handlers.append(_NoRedirect())
+    return urllib.request.build_opener(*handlers)
+
+
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location)。"""
     h = {
@@ -3750,7 +4162,10 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     }
     if headers:
         h.update(headers)
-    opener = _opener_follow if follow_redirects else _opener_noredir
+    if _FORCE_FAMILY:
+        opener = _pinned_opener(_FORCE_FAMILY, follow_redirects)
+    else:
+        opener = _opener_follow if follow_redirects else _opener_noredir
     try:
         req = urllib.request.Request(url, headers=h)
         with opener.open(req, timeout=timeout) as r:
@@ -4090,14 +4505,14 @@ SPEED_REGIONS = [
 _SPEED_FILE = "/vultr.com.100MB.bin"
 
 
-def _dl_direct_worker(url, stop, counter, lock):
+def _dl_direct_worker(url, stop, counter, lock, opener=None):
     """直连下载计数 worker: 在 stop 前循环拉流累计字节 (urllib)。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
     while time.time() < stop and fails < 3:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with (opener.open(req, timeout=10) if opener else urllib.request.urlopen(req, timeout=10)) as r:
                 while time.time() < stop:
                     chunk = r.read(256 * 1024)
                     if not chunk:
@@ -4110,13 +4525,14 @@ def _dl_direct_worker(url, stop, counter, lock):
             time.sleep(0.2)
 
 
-def measure_download_direct(url, duration=5, streams=3):
+def measure_download_direct(url, duration=5, streams=3, family=0):
     """多连接并发下载测速 (直连), 返回 Mbps 或 None。"""
     counter, lock = [0], threading.Lock()
     t0 = time.time()
     stop = t0 + duration
     with ThreadPoolExecutor(max_workers=streams) as ex:
-        list(ex.map(lambda _: _dl_direct_worker(url, stop, counter, lock),
+        _op = _pinned_opener(family) if family else None
+        list(ex.map(lambda _: _dl_direct_worker(url, stop, counter, lock, opener=_op),
                     range(streams)))
     elapsed = max(0.1, time.time() - t0)
     if counter[0] == 0:
@@ -4124,14 +4540,14 @@ def measure_download_direct(url, duration=5, streams=3):
     return round((counter[0] * 8 / 1e6) / elapsed, 2)
 
 
-def regional_speed_test(duration=5, on_result=None):
+def regional_speed_test(duration=5, on_result=None, family=0):
     """逐地区测速: TCP 延迟 (443) + 多连接下载。on_result(row) 逐行回调。"""
     rows = []
     for name, host in SPEED_REGIONS:
-        tp = tcp_ping_stats(host, 443, count=3, timeout=2)
+        tp = tcp_ping_stats(host, 443, count=3, timeout=2, family=family)
         lat = tp["avg_ms"] if tp.get("ok") else None
         mbps = measure_download_direct("https://%s%s" % (host, _SPEED_FILE),
-                                       duration=duration, streams=3)
+                                       duration=duration, streams=3, family=family)
         row = {"region": name, "host": host,
                "latency_ms": lat, "down_mbps": mbps}
         rows.append(row)
@@ -4405,11 +4821,11 @@ def recommend_dns_for_ip(country):
     print()
 
 
-def print_speed_section(json_mode=False):
+def print_speed_section(json_mode=False, family=0):
     """网速测试章节: 多地区节点下载测速表 (bench.sh 式, 多连接峰值口径)。
     返回 rows [{region, latency_ms, down_mbps}]。"""
     if json_mode:
-        return regional_speed_test()
+        return regional_speed_test(family=family)
     _section(T("sec_speed"))
     warn_txt = (
         "※ 仅供参考：实际速度受服务器/路由影响，非运营商承诺最大带宽"
@@ -4428,7 +4844,7 @@ def print_speed_section(json_mode=False):
         line = "  %-22s %-10s %s" % (row["region"], lat, dl)
         print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
 
-    rows = regional_speed_test(on_result=_row)
+    rows = regional_speed_test(on_result=_row, family=family)
     print(f"  {_c(C.yellow, T('speed_note'))}")
     return rows
 
@@ -4744,7 +5160,17 @@ def check_dnsbl(ip, max_lists=29):
     return total, max(0, total - marked), marked, sorted(bl)
 
 
-def _run_streaming_table(egress, json_mode=False):
+def _run_streaming_table(egress, json_mode=False, family=0):
+    global _FORCE_FAMILY
+    prev = _FORCE_FAMILY
+    _FORCE_FAMILY = family
+    try:
+        return _run_streaming_table_impl(egress, json_mode=json_mode)
+    finally:
+        _FORCE_FAMILY = prev
+
+
+def _run_streaming_table_impl(egress, json_mode=False):
     """流媒体解锁表 (run_active 与菜单独立入口共用), 返回 streaming_json。"""
     categories = [
         (
@@ -4837,12 +5263,43 @@ def _run_streaming_table(egress, json_mode=False):
     return streaming_json
 
 
-def run_active(json_mode=False):
+
+def _run_active6(json_mode, egress6):
+    """仅 IPv6 自检: v6 报告 + v6 流媒体 + v6 测速"""
+    res6 = run_passive6(egress6)
+    if not json_mode:
+        print_report6(res6)
+        _section(T("sec_stream") + " (IPv6)")
+    streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
+    speed6 = print_speed_section(json_mode=json_mode, family=6)
+    out = {"ip": egress6, "ipv6": True,
+           "active": {"egress_ipv6": egress6, "ipv6_report": res6,
+                      "streaming_ipv6": streaming6, "speed_ipv6": speed6}}
+    if json_mode:
+        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+    return out
+
+
+def run_active(json_mode=False, stack=None):
     # 每次运行主动测试前清空会话级缓存，确保切换网络/VPN 后立即生效
     with _unlock_lock:
         _unlock_cache.clear()
     with _cache_lock:
         _cache.clear()
+
+    if stack is None:
+        stack = _FORCE_STACK or "auto"
+    if stack == "auto" and not json_mode:
+        try:
+            if sys.stdin.isatty():
+                print(f"\n  {T('stack_title')}:")
+                print(f"    1) {T('stack_auto')}")
+                print(f"    2) {T('stack_v4')}")
+                print(f"    3) {T('stack_v6')}")
+                _sel = input(f"  {T('stack_prompt')}").strip()
+                stack = {"1": "auto", "2": "4", "3": "6"}.get(_sel, "auto")
+        except Exception:
+            stack = "auto"
 
     if not json_mode:
         print(f"\n{_c(C.bold, '=' * 60)}")
@@ -4850,17 +5307,36 @@ def run_active(json_mode=False):
         print(f"{_c(C.bold, '=' * 60)}")
         print(f"  {T('detecting_egress')}")
 
-    egress = get_egress_ip()
-    if not egress:
-        if json_mode:
-            print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
-        else:
-            print(f"  {_c(C.red, T('egress_fail'))}")
-        return None
+    egress = None
+    if stack != "6":
+        egress = get_egress_ip()
+        if not egress:
+            if json_mode:
+                print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
+            else:
+                print(f"  {_c(C.red, T('egress_fail'))}")
+            return None
+
+    egress6 = None
+    if stack != "4":
+        egress6 = get_egress_ip6()
+        if stack == "6" and not egress6:
+            if json_mode:
+                print(json.dumps({"error": T("egress6_fail")}, ensure_ascii=False))
+            else:
+                print(f"  {_c(C.red, T('egress6_fail'))}")
+            return None
 
     if not json_mode:
-        print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
-        print(f"  {_c(C.dim, T('egress_note'))}\n")
+        if egress:
+            print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+        if egress6:
+            print(f"  {T('current_egress6')}: {_c(C.cyan, egress6)}")
+        if egress:
+            print(f"  {_c(C.dim, T('egress_note'))}\n")
+
+    if stack == "6":
+        return _run_active6(json_mode, egress6)
 
     res = run_passive(egress)
     si = get_system_info()
@@ -4921,6 +5397,25 @@ def run_active(json_mode=False):
                 print(f"    {_c(C.red, '- ' + b)}")
 
 
+
+    res6 = None
+    streaming6_json = None
+    speed6_res = None
+    if egress6:
+        res6 = run_passive6(egress6)
+        if not json_mode:
+            _section(T("sec_ipv6"))
+            _a4 = (res.get("profile") or {}).get("asn")
+            _a6 = (res6.get("profile") or {}).get("asn")
+            if _a4 and _a6 and _a4 != _a6:
+                print(f"  {_c(C.red, T('v6_leak_warn').format(a4=_a4, a6=_a6))}")
+            elif _a4 and _a6:
+                print(f"  {_c(C.green, T('v6_same_exit').format(a=_a4))}")
+            print_report6(res6, embedded=True)
+            _section(T("sec_stream") + " (IPv6)")
+        streaming6_json = _run_streaming_table(egress6, json_mode=json_mode, family=6)
+        speed6_res = print_speed_section(json_mode=json_mode, family=6)
+
     if not json_mode:
         _print_completeness(res)
 
@@ -4941,6 +5436,11 @@ def run_active(json_mode=False):
         },
         "speed": st_res,
     }
+    if egress6:
+        res["active"]["egress_ipv6"] = egress6
+        res["active"]["ipv6_report"] = res6
+        res["active"]["streaming_ipv6"] = streaming6_json
+        res["active"]["speed_ipv6"] = speed6_res
 
     if json_mode:
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
@@ -5259,18 +5759,34 @@ def dns_leak_check(egress_ip=None, timeout=8, require_egress=False):
                     "resolvers": results}
 
 
-def tcp_ping_stats(host, port, count=10, timeout=3):
+def tcp_ping_stats(host, port, count=10, timeout=3, family=0):
     """TCP connect 延迟统计: 返回
     {ok, sent, ok_count, loss_pct, min_ms, avg_ms, max_ms, jitter_ms, samples}。
     零 root, 跨平台。"""
     import statistics
     samples = []
+    addrs = None
+    if family:
+        try:
+            _infos = socket.getaddrinfo(host, port, socket.AF_INET6 if family == 6 else socket.AF_INET, socket.SOCK_STREAM)
+            addrs = [(af, sa) for af, _t, _p, _n, sa in _infos]
+        except Exception:
+            addrs = []
     t_all0 = time.perf_counter()
     for _ in range(count):
         t0 = time.perf_counter()
         try:
-            s = socket.create_connection((host, port), timeout=timeout)
-            s.close()
+            if addrs is not None:
+                if not addrs:
+                    continue
+                _af, _sa = addrs[len(samples) % len(addrs)]
+                s = socket.socket(_af, socket.SOCK_STREAM)
+                s.settimeout(timeout)
+                s.connect(_sa)
+                s.close()
+            else:
+                s = socket.create_connection((host, port), timeout=timeout)
+                s.close()
             samples.append((time.perf_counter() - t0) * 1000)
         except Exception:
             pass
@@ -5939,16 +6455,18 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 def _print_cli_help():
-    help_zh = f"""用法: python3 acheck.py [选项] [IPv4地址]
+    help_zh = f"""用法: python3 acheck.py [选项] [IP 地址]
 
 {T('title')} v{VERSION} — 双模式 IP 信誉与流媒体/网络质量检测工具 (零外部依赖)
 
 位置参数:
-  IPv4地址        执行被动模式查询指定公网 IPv4 (不向目标 IP 发包)
+  IP 地址         执行被动模式查询指定公网 IPv4 / IPv6 (不向目标 IP 发包)
 
 选项:
   -h, --help      显示此帮助信息并退出
   --active        执行主动模式 (检测本机当前出口 IP、系统硬件、流媒体解锁、DNS、25端口与测速)
+  --ipv4-only     配合 --active: 仅检测 IPv4 (跳过 IPv6)
+  --ipv6-only     配合 --active: 仅检测 IPv6
   --proxy HOST:PORT
                   代理诊断模式 (SOCKS5 握手、代理出口 IP、出口 IP 信誉、DNS 泄漏、TCP 延迟)
   --proxy-user USER / --proxy-pass PASS
@@ -5974,16 +6492,18 @@ def _print_cli_help():
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理诊断 JSON 输出
   python3 acheck.py --speed                             # 多地区测速
 """
-    help_en = f"""Usage: python3 acheck.py [OPTIONS] [IPv4_ADDRESS]
+    help_en = f"""Usage: python3 acheck.py [OPTIONS] [IP_ADDRESS]
 
 {T('title')} v{VERSION} — Two-mode IP reputation, streaming unlock & network quality checker
 
 Positional arguments:
-  IPv4_ADDRESS    Run passive OSINT check on a public IPv4 address
+  IP_ADDRESS      Run passive OSINT check on a public IPv4 / IPv6 address
 
 Options:
   -h, --help      Show this help message and exit
   --active        Run active self-check on current egress IP (streaming, DNS, port 25, speed)
+  --ipv4-only     With --active: IPv4 only (skip IPv6)
+  --ipv6-only     With --active: IPv6 only
   --proxy HOST:PORT
                   Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP
                   reputation, DNS leak check, TCP latency)
@@ -6008,12 +6528,14 @@ Examples:
 
 
 def main():
-    global LANG
+    global LANG, _FORCE_STACK
     _init_console()
 
     parser = _CLIArgumentParser(prog="acheck.py", add_help=False)
     parser.add_argument("-h", "--help", action="store_true", dest="help")
     parser.add_argument("--active", action="store_true")
+    parser.add_argument("--ipv4-only", action="store_true", dest="ipv4_only")
+    parser.add_argument("--ipv6-only", action="store_true", dest="ipv6_only")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--explain", action="store_true")
     parser.add_argument("--proxy", metavar="HOST:PORT",
@@ -6044,6 +6566,14 @@ def main():
 
     if ns.lang:
         LANG = ns.lang
+
+    if ns.ipv4_only and ns.ipv6_only:
+        if "--json" in sys.argv:
+            print(json.dumps({"error": "--ipv4-only and --ipv6-only conflict"}, ensure_ascii=False))
+        else:
+            print("[Error] --ipv4-only and --ipv6-only cannot be used together", file=sys.stderr)
+        sys.exit(2)
+    _FORCE_STACK = "4" if ns.ipv4_only else ("6" if ns.ipv6_only else None)
 
     if ns.help:
         _print_cli_help()
@@ -6101,33 +6631,26 @@ def main():
         return
 
     if ns.json:
-        ip = validate_ip(ns.ip) if ns.ip else None
-        if not ip:
-            print(json.dumps({"error": "invalid or non-public IPv4 address"}, ensure_ascii=False))
+        ip, ver = parse_any_ip(ns.ip) if ns.ip else (None, None)
+        if ip is None:
+            print(json.dumps({"error": "invalid or non-public IP address"}, ensure_ascii=False))
             sys.exit(1)
-        res = run_passive(ip)
+        res = run_passive6(ip) if ver == 6 else run_passive(ip)
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
         return
 
     if ns.ip is not None:
         raw_ip = ns.ip.strip()
-        try:
-            parsed = ipaddress.ip_address(raw_ip)
-            if isinstance(parsed, ipaddress.IPv6Address):
-                print(T("ipv6_unsupported"))
-                sys.exit(1)
-            if not parsed.is_global or parsed.is_multicast or parsed.is_reserved or parsed in ipaddress.ip_network("198.18.0.0/15"):
-                print(T("private_ip"))
-                sys.exit(1)
-        except ValueError:
-            print(T("invalid_ip"))
+        ip, ver = parse_any_ip(raw_ip)
+        if ip is None:
+            print(T(ver))
             sys.exit(1)
-        ip = validate_ip(raw_ip)
-        if not ip:
-            print(T("invalid_ip"))
-            sys.exit(1)
-        res = run_passive(ip)
-        print_report(res, dns_rec=True)
+        if ver == 6:
+            res = run_passive6(ip)
+            print_report6(res)
+        else:
+            res = run_passive(ip)
+            print_report(res, dns_rec=True)
         return
 
     # 交互菜单 (兼容 curl | python3 - 管道运行)
@@ -6250,24 +6773,18 @@ def main():
                     return
                 if inp == "b" or inp == "":
                     continue
-                _ip_ok = False
-                try:
-                    _chk = ipaddress.ip_address(inp)
-                    if isinstance(_chk, ipaddress.IPv6Address):
-                        print(f"  {_c(C.dim, T('ipv6_unsupported'))}")
-                    elif not _chk.is_global or _chk.is_multicast or _chk.is_reserved or _chk in ipaddress.ip_network("198.18.0.0/15"):
-                        print(f"  {_c(C.dim, T('private_ip'))}")
-                    else:
-                        _ip_ok = True
-                except ValueError:
-                    print(T("invalid_ip"))
-                if _ip_ok:
-                    ip = validate_ip(inp)
-                    if not ip:
+                ip, ver = parse_any_ip(inp)
+                if ip is None:
+                    if ver == "invalid_ip":
                         print(T("invalid_ip"))
                     else:
-                        res = run_passive(ip)
-                        print_report(res, dns_rec=True)
+                        print(f"  {_c(C.dim, T(ver))}")
+                elif ver == 6:
+                    res = run_passive6(ip)
+                    print_report6(res)
+                else:
+                    res = run_passive(ip)
+                    print_report(res, dns_rec=True)
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
