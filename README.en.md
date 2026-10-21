@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ Active mode adds unnumbered sections — DNS leak & recommendations, port 25 con
 |---|---|---|
 | 1 | Self-check (full egress check) | Full active-mode scan, ending with the multi-region speed table |
 | 2 | Look up any IP | Enter a public IPv4 for a passive report; returns to the main menu automatically |
-| 3 | Streaming unlock test | Measured unlock status for 17 platforms |
+| 3 | Streaming unlock test | Measured unlock status for 18 platforms |
 | 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
 | 5 | Language / 切换语言 | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | Check for updates | Compares against the latest GitHub Release |
@@ -75,7 +75,7 @@ Active mode adds unnumbered sections — DNS leak & recommendations, port 25 con
 | 11 | Batch node speed ranking | Paste multiple host:port entries or SOCKS5 proxies; concurrent latency & availability checks, ranked output with the best node in green, plus a measured download throughput for the best proxy |
 | 12 | Network speed test (regions) | Download table for 17 regional nodes (multi-connection peak), plus local up/down speeds |
 
-Measured streaming coverage spans 17 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / WhatsApp / Line / GitHub), distinguishing native unlocks from DNS unlocks.
+Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), distinguishing native unlocks from Smart DNS unlocks.
 
 ## Quick start
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.13.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.13.2 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.13.1"
+VERSION = "4.13.2"
 
 
 def _init_console():
@@ -252,7 +252,7 @@ STR = {
         "blocked": "屏蔽",
         "failed": "失败",
         "native": "原生",
-        "dns_unlock": "DNS解锁",
+        "dns_unlock": "解析解锁",
         "port25": "本地25端口出站",
         "normal": "正常",
         "abnormal": "异常",
@@ -666,7 +666,7 @@ STR = {
         "blocked": "屏蔽",
         "failed": "失敗",
         "native": "原生",
-        "dns_unlock": "DNS解鎖",
+        "dns_unlock": "解析解鎖",
         "port25": "本地25端口出站",
         "normal": "正常",
         "abnormal": "異常",
@@ -1968,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.13.1 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.13.2 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2479,7 +2479,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.13.1 免 Key 公开版):
+评分规则 (v4.13.2 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2500,9 +2500,13 @@ SCORING_RULES = {
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
+  [流媒体解锁方式]
+    原生: 平台直接认可出口 IP 的地区与信誉
+    解析解锁 (Smart DNS): 域名解析被导向解锁服务商节点, 经其 SNI 代理转发
+    未知: 本次检测未获得明确信号
 """,
     "zh-TW": """
-評分規則 (v4.13.1 免 Key 公開版):
+評分規則 (v4.13.2 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2523,9 +2527,13 @@ SCORING_RULES = {
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
+  [串流解鎖方式]
+    原生: 平台直接認可出口 IP 的地區與信譽
+    解析解鎖 (Smart DNS): 網域解析被導向解鎖服務商節點, 經其 SNI 代理轉發
+    未知: 本次檢測未獲得明確信號
 """,
     "en": """
-Scoring rules (v4.13.1 Keyless Public Edition):
+Scoring rules (v4.13.2 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2546,9 +2554,13 @@ Scoring rules (v4.13.1 Keyless Public Edition):
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
+  [Streaming unlock methods]
+    Native: the platform accepts the egress IP's region and reputation directly
+    DNS unlock (Smart DNS): resolution is steered to an unblocking provider's node and relayed via an SNI proxy
+    Unknown: no clear signal was obtained in this run
 """,
     "ja": """
-スコアリングルール (v4.13.1 キー不要公開版):
+スコアリングルール (v4.13.2 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2569,9 +2581,13 @@ Scoring rules (v4.13.1 Keyless Public Edition):
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算)
+  [ストリーミング解錠方式]
+    ネイティブ: プラットフォームが出口 IP の地域と評価を直接認める
+    DNS 解錠 (Smart DNS): 名前解決が解錠プロバイダのノードへ誘導され、SNI プロキシ経由で中継される
+    不明: 今回の検出では明確な信号が得られなかった
 """,
     "ru": """
-Правила оценки (v4.13.1 Публичная версия без ключей):
+Правила оценки (v4.13.2 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2592,9 +2608,13 @@ Scoring rules (v4.13.1 Keyless Public Edition):
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого
+  [Способы разблокировки стриминга]
+    Нативная: платформа напрямую принимает регион и репутацию исходящего IP
+    DNS-разблокировка (Smart DNS): разрешение имени направляется на узел провайдера разблокировки и ретранслируется через SNI-прокси
+    Неизвестно: в этом запуске чёткий сигнал не получен
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.1):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.2):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -2615,6 +2635,10 @@ Scoring rules (v4.13.1 Keyless Public Edition):
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی
+  [روش‌های رفع مسدودیت استریم]
+    بومی: پلتفرم مستقیماً منطقه و اعتبار IP خروجی را می‌پذیرد
+    رفع مسدودیت DNS ‏(Smart DNS): حل نام به گره ارائه‌دهنده رفع مسدودیت هدایت و از طریق پروکسی SNI بازپخش می‌شود
+    نامشخص: در این اجرا سیگنال روشنی به دست نیامد
 """,
 }
 
@@ -3669,7 +3693,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.13.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.13.2 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -3742,7 +3766,7 @@ _unlock_lock = threading.Lock()
 
 
 def get_unlock_type(domain, local_ip=None):
-    """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，精准区分原生解锁与 DNS 解锁。"""
+    """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，精准区分原生解锁与解析解锁。"""
     sys_ns = _get_system_nameservers()[0]
     cache_key = (domain, local_ip or "", sys_ns)
     with _unlock_lock:

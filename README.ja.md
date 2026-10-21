@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 |---|---|---|
 | 1 | セルフチェック (出口 IP 全検) | アクティブモード全量チェック、最後に地域別スピード表 |
 | 2 | 任意 IP 照会 | 公開 IPv4 を入力してパッシブレポート、終了後は自動でメインメニューへ戻る |
-| 3 | ストリーミング解錠検出 | 17 プラットフォームのアンロック状態を単独で実測 |
+| 3 | ストリーミング解錠検出 | 18 プラットフォームのアンロック状態を単独で実測 |
 | 4 | システム情報と IO テスト | システム / CPU / メモリ / ディスク情報とディスク読み書き速度 |
 | 5 | 言語切替 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | アップデート確認 | GitHub の最新 Release と比較して新バージョンを通知 |
@@ -75,7 +75,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 | 11 | ノード一括スピード優選 | 複数の host:port や SOCKS5 プロキシを貼り付け、遅延と可用性を並行測定。ランキング表示、最良ノードを緑色表示し、そのプロキシの実測ダウンロード速度も表示 |
 | 12 | ネットワーク速度（地域別） | 17 地域ノードのダウンロード表（複数接続ピーク方式）、自機の上下速度付き |
 
-ストリーミング実測は 17 プラットフォームに対応：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、動画（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、SNS その他（Facebook / Instagram / Reddit / WhatsApp / Line / GitHub）。ネイティブ解錠と DNS 解錠を区別します。
+ストリーミング実測は 18 プラットフォームに対応：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、動画（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、SNS その他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub）。ネイティブ解錠と DNS 解錠（Smart DNS）を区別します。
 
 ## クイックスタート
 

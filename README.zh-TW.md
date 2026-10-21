@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 |---|---|---|
 | 1 | 本機自檢 (出口 IP 全檢) | 主動模式全量檢測，結尾附多地區測速 |
 | 2 | 查詢任意 IP | 輸入公網 IPv4 出被動報告，查完自動返回主選單 |
-| 3 | 串流解鎖檢測 | 單獨實測 17 個平台的解鎖狀態 |
+| 3 | 串流解鎖檢測 | 單獨實測 18 個平台的解鎖狀態 |
 | 4 | 系統資訊與 IO 測試 | 系統 / CPU / 記憶體 / 磁碟資訊與磁碟讀寫測速 |
 | 5 | 切換語言 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | 檢查更新 | 對比 GitHub 最新 Release 提示新版本 |
@@ -75,7 +75,7 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 | 11 | 批次節點測速優選 | 貼上多個 host:port 或 SOCKS5 代理，並發測延遲與可用性，排名輸出、最優標綠，並對最優代理實測下載吞吐 |
 | 12 | 網路測速（多地區） | 17 個地區節點下載測速表（多連接峰值口徑），附本機上下行 |
 
-串流實測覆蓋 17 個平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、影片（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / WhatsApp / Line / GitHub），區分原生解鎖與 DNS 解鎖。
+串流實測覆蓋 18 個平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、影片（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），區分原生解鎖與解析解鎖（Smart DNS）。
 
 ## 快速開始
 

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 |---|---|---|
 | 1 | خودآزمایی (بررسی کامل خروجی) | اسکن کامل حالت فعال، با جدول سرعت چندمنطقه‌ای در پایان |
 | 2 | استعلام هر IP | یک IPv4 عمومی وارد کنید تا گزارش غیرفعال بگیرید؛ پس از پایان، بازگشت خودکار به منوی اصلی |
-| 3 | تست رفع مسدودیت استریم | تست واقعی جداگانه برای ۱۷ پلتفرم |
+| 3 | تست رفع مسدودیت استریم | تست واقعی جداگانه برای ۱۸ پلتفرم |
 | 4 | اطلاعات سیستم و تست IO | سیستم / پردازنده / حافظه / دیسک و سرعت خواندن-نوشتن دیسک |
 | 5 | تغییر زبان / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | بررسی به‌روزرسانی | مقایسه با تازه‌ترین Release در GitHub |
@@ -75,7 +75,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 | 11 | تست سرعت دسته‌ای گره‌ها | چند host:port یا پروکسی SOCKS5 بچسبانید؛ سنجش هم‌زمان تأخیر و دسترس‌پذیری، خروجی رتبه‌بندی‌شده با بهترین گره به رنگ سبز، به‌همراه سرعت دانلود واقعی بهترین پروکسی |
 | 12 | تست سرعت شبکه (مناطق) | جدول دانلود ۱۷ گره منطقه‌ای (اوج چنداتصاله) به‌همراه سرعت ارسال/دریافت محلی |
 
-تست واقعی استریم ۱۷ پلتفرم را پوشش می‌دهد: هوش مصنوعی (ChatGPT / Gemini / Claude / Grok / DeepSeek)، ویدیو (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+)، اجتماعی و دیگر (Facebook / Instagram / Reddit / WhatsApp / Line / GitHub)، با تمایز میان رفع مسدودیت بومی و رفع مسدودیت DNS.
+تست واقعی استریم ۱۸ پلتفرم را پوشش می‌دهد: هوش مصنوعی (ChatGPT / Gemini / Claude / Grok / DeepSeek)، ویدیو (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+)، اجتماعی و دیگر (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub)، با تمایز میان رفع مسدودیت بومی و رفع مسدودیت DNS ‏(Smart DNS).
 
 ## شروع سریع
 

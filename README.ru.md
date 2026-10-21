@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.13.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.13.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 |---|---|---|
 | 1 | Самопроверка (полная проверка) | Полное сканирование в активном режиме, в конце — таблица скорости по регионам |
 | 2 | Запрос любого IP | Введите публичный IPv4 для пассивного отчёта; после завершения — автоматический возврат в главное меню |
-| 3 | Проверка стриминга | Отдельный фактический тест разблокировки 17 платформ |
+| 3 | Проверка стриминга | Отдельный фактический тест разблокировки 18 платформ |
 | 4 | Система и тест IO | Система / CPU / память / диск и скорость чтения-записи диска |
 | 5 | Язык / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | Проверить обновления | Сравнение с последним Release на GitHub |
@@ -75,7 +75,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 | 11 | Пакетный тест узлов | Вставьте несколько host:port или SOCKS5-прокси; параллельная проверка задержки и доступности, рейтинг с лучшим узлом зелёным, плюс фактическая скорость загрузки лучшего прокси |
 | 12 | Тест скорости (регионы) | Таблица загрузки для 17 региональных узлов (пик по нескольким соединениям) и скорости вашего канала |
 
-Фактические тесты стриминга охватывают 17 платформ: ИИ (ChatGPT / Gemini / Claude / Grok / DeepSeek), видео (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), соцсети и прочее (Facebook / Instagram / Reddit / WhatsApp / Line / GitHub), с различением нативной разблокировки и разблокировки через DNS.
+Фактические тесты стриминга охватывают 18 платформ: ИИ (ChatGPT / Gemini / Claude / Grok / DeepSeek), видео (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), соцсети и прочее (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), с различением нативной разблокировки и разблокировки через DNS (Smart DNS).
 
 ## Быстрый старт
 
