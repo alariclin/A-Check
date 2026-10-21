@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.13.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.13.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.13.0"
+VERSION = "4.13.1"
 
 
 def _init_console():
@@ -1968,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.13.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.13.1 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2479,7 +2479,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.13.0 免 Key 公开版):
+评分规则 (v4.13.1 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2502,7 +2502,7 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.13.0 免 Key 公開版):
+評分規則 (v4.13.1 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2525,7 +2525,7 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.13.0 Keyless Public Edition):
+Scoring rules (v4.13.1 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2548,7 +2548,7 @@ Scoring rules (v4.13.0 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.13.0 キー不要公開版):
+スコアリングルール (v4.13.1 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2571,7 +2571,7 @@ Scoring rules (v4.13.0 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.13.0 Публичная версия без ключей):
+Правила оценки (v4.13.1 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2594,7 +2594,7 @@ Scoring rules (v4.13.0 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.1):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3017,12 +3017,24 @@ def _print_streaming_inference(res):
     if wi.get("ok") and wi.get("hosting"):
         is_dc = True
 
-    is_proxy = (
-        (bool(pc.get("proxy")) if pc.get("ok") else False)
-        or (bool(wi.get("proxy")) if wi.get("ok") else False)
-        or (bool(fp.get("proxy")) if fp.get("ok") else False)
+    ia = s.get("ipapi", {})
+
+    def _consensus(*vals):
+        """多源共识: True 票多于 False 票才成立 (与 [2] 因子聚合口径一致),
+        防止单一源误标独裁判定 (如 proxycheck 把云厂商 IP 标为 VPN)。"""
+        return (sum(1 for v in vals if v is True)
+                > sum(1 for v in vals if v is False))
+
+    is_proxy = _consensus(
+        pc.get("proxy") if pc.get("ok") else None,
+        wi.get("proxy") if wi.get("ok") else None,
+        fp.get("proxy") if fp.get("ok") else None,
+        ia.get("proxy") if ia.get("ok") else None,
     )
-    is_vpn = (bool(pc.get("vpn")) if pc.get("ok") else False) or (bool(wi.get("vpn")) if wi.get("ok") else False)
+    is_vpn = _consensus(
+        pc.get("vpn") if pc.get("ok") else None,
+        wi.get("vpn") if wi.get("ok") else None,
+    )
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
         or (bool(wi.get("tor")) if wi.get("ok") else False)
@@ -3030,8 +3042,10 @@ def _print_streaming_inference(res):
 
     sc = s.get("scamalytics", {})
     sc_score = sc.get("fraud_score", 0) if sc.get("ok") else 0
-    pc_risk = pc.get("risk", 0) if pc.get("ok") else 0
-    high_fraud = (sc_score >= 50) or (pc_risk >= 65)
+    # 欺诈闸门只认 Scamalytics 本尊: proxycheck 的 risk 是代理风险分,
+    # 对云厂商 IP 系统性偏高 (实测 AWS 悉尼 IP risk=66 而 Scamalytics=3),
+    # 拿它当欺诈证据会让代理误标二次生效, 故不纳入。
+    high_fraud = sc_score >= 50
 
     sf = s.get("stopforumspam", {})
     has_abuse = (sf.get("ok") and sf.get("frequency", 0) > 0)
@@ -3168,7 +3182,12 @@ def _print_streaming_inference(res):
         if is_tor or is_tor_exit or is_proxy or is_vpn:
             return T("infer_block"), "low"
         if is_dc:
-            return T("infer_block"), "mid"
+            # 机房不等于屏蔽: 主流云 IP 地区解锁多数可用 (用户真机实测
+            # AWS 悉尼 IP 连 Disney+ 亦为原生解锁), 判可能可用/中置信;
+            # Reddit 例外 (专门封机房段, 实测亦为屏蔽)
+            if svc_name == "Reddit":
+                return T("infer_block"), "mid"
+            return T("infer_avail"), "mid"
         if is_res:
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
@@ -3180,8 +3199,10 @@ def _print_streaming_inference(res):
             return T("infer_limit"), "high"
         if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
             return T("infer_block"), "mid"
-        if is_proxy or is_vpn or is_dc:
+        if is_proxy or is_vpn:
             return T("infer_limit"), "mid"
+        if is_dc:
+            return T("infer_avail"), "mid"
         if is_res:
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
@@ -3193,8 +3214,10 @@ def _print_streaming_inference(res):
             return T("infer_limit"), "high"
         if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
             return T("infer_block"), "mid"
-        if is_proxy or is_vpn or is_dc:
+        if is_proxy or is_vpn:
             return T("infer_limit"), "mid"
+        if is_dc:
+            return T("infer_avail"), "mid"
         if is_res:
             return T("infer_avail"), "high"
         return T("unknown"), "mid"
@@ -3646,7 +3669,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.13.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.13.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -6190,29 +6213,31 @@ def main():
                     run_proxy_diag(phost, pport, username=puser,
                                    password=ppass, json_mode=False)
             elif choice == "2":
-                while True:
-                    inp = input(T("prompt_ip")).strip().lower()
-                    if inp == "q":
-                        return
-                    if inp == "b" or inp == "":
-                        break
-                    try:
-                        _chk = ipaddress.ip_address(inp)
-                        if isinstance(_chk, ipaddress.IPv6Address):
-                            print(f"  {_c(C.dim, T('ipv6_unsupported'))}")
-                            continue
-                        if not _chk.is_global or _chk.is_multicast or _chk.is_reserved or _chk in ipaddress.ip_network("198.18.0.0/15"):
-                            print(f"  {_c(C.dim, T('private_ip'))}")
-                            continue
-                    except ValueError:
-                        print(T("invalid_ip"))
-                        continue
+                # 单次查询后回主菜单 (与功能1等其他功能的返回节奏一致);
+                # 提示符处 q=退出程序, b/空=直接返回
+                inp = input(T("prompt_ip")).strip().lower()
+                if inp == "q":
+                    return
+                if inp == "b" or inp == "":
+                    continue
+                _ip_ok = False
+                try:
+                    _chk = ipaddress.ip_address(inp)
+                    if isinstance(_chk, ipaddress.IPv6Address):
+                        print(f"  {_c(C.dim, T('ipv6_unsupported'))}")
+                    elif not _chk.is_global or _chk.is_multicast or _chk.is_reserved or _chk in ipaddress.ip_network("198.18.0.0/15"):
+                        print(f"  {_c(C.dim, T('private_ip'))}")
+                    else:
+                        _ip_ok = True
+                except ValueError:
+                    print(T("invalid_ip"))
+                if _ip_ok:
                     ip = validate_ip(inp)
                     if not ip:
                         print(T("invalid_ip"))
-                        continue
-                    res = run_passive(ip)
-                    print_report(res, dns_rec=True)
+                    else:
+                        res = run_passive(ip)
+                        print_report(res, dns_rec=True)
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
