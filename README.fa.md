@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon.webp" width="300" alt="A-Check">
+  <img src="icon.webp" width="230" alt="A-Check">
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>

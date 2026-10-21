@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="icon.webp" width="300" alt="A-Check">
+  <img src="icon.webp" width="230" alt="A-Check">
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
