@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.12.9 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.13.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -55,7 +55,7 @@ for _s in (sys.stdout, sys.stderr, sys.stdin):
     except Exception:
         pass
 
-VERSION = "4.12.9"
+VERSION = "4.13.0"
 
 
 def _init_console():
@@ -98,16 +98,16 @@ STR = {
         "passive_mode": "[被动模式]",
         "back": "返回上级",
         "checking": "检测中",
-        "sec_basic": "[1] 基础信息与 ASN/BGP",
+        "sec_basic": "基础信息与 ASN/BGP",
         "sec_type": "IP类型属性",
         "sec_loc": "多源位置对比",
         "geo_group": "地理位置",
         "coord_country": "经纬度识别",
-        "sec_fraud": "[3] 欺诈与维度评分",
-        "sec_matrix": "[2] 风险因子矩阵",
-        "sec_complete": "[5] 数据完整度与置信度",
-        "sec_stream": "[4] 流媒体及AI服务解锁检测 (主动)",
-        "sec_stream_passive": "[4] 流媒体可用性推测 (被动)",
+        "sec_fraud": "欺诈与维度评分",
+        "sec_matrix": "风险因子矩阵",
+        "sec_complete": "数据完整度与置信度",
+        "sec_stream": "流媒体及AI服务解锁检测 (主动)",
+        "sec_stream_passive": "流媒体可用性推测 (被动)",
         "sec_mail": "25端口发信及黑名单检测",
         "sec_sys": "系统信息",
         "sec_dns": "DNS 测试与推荐",
@@ -305,16 +305,16 @@ STR = {
         "passive_mode": "[Passive Mode]",
         "back": "Back",
         "checking": "Checking",
-        "sec_basic": "[1] Basic Info & ASN/BGP",
+        "sec_basic": "Basic Info & ASN/BGP",
         "sec_type": "IP Type Attributes",
         "sec_loc": "Multi-source Location",
         "geo_group": "Geo Location",
         "coord_country": "Country by Coords",
-        "sec_fraud": "[3] Fraud & Dimension Scores",
-        "sec_matrix": "[2] Risk Factor Matrix",
-        "sec_complete": "[5] Data Completeness & Confidence",
-        "sec_stream": "[4] Streaming & AI Unlock Test (Active)",
-        "sec_stream_passive": "[4] Streaming Availability Inference (Passive)",
+        "sec_fraud": "Fraud & Dimension Scores",
+        "sec_matrix": "Risk Factor Matrix",
+        "sec_complete": "Data Completeness & Confidence",
+        "sec_stream": "Streaming & AI Unlock Test (Active)",
+        "sec_stream_passive": "Streaming Availability Inference (Passive)",
         "sec_mail": "Port 25 Sending & Blacklist",
         "sec_sys": "System Info",
         "sec_dns": "DNS Test & Recommendations",
@@ -512,16 +512,16 @@ STR = {
         "passive_mode": "[被動模式]",
         "back": "返回上級",
         "checking": "檢測中",
-        "sec_basic": "[1] 基礎資訊與 ASN/BGP",
+        "sec_basic": "基礎資訊與 ASN/BGP",
         "sec_type": "IP類型屬性",
         "sec_loc": "多源位置對比",
         "geo_group": "地理位置",
         "coord_country": "經緯度識別",
-        "sec_fraud": "[3] 欺詐與維度評分",
-        "sec_matrix": "[2] 風險因子矩陣",
-        "sec_complete": "[5] 數據完整度與置信度",
-        "sec_stream": "[4] 串流媒體及AI服務解鎖檢測 (主動)",
-        "sec_stream_passive": "[4] 串流媒體可用性推測 (被動)",
+        "sec_fraud": "欺詐與維度評分",
+        "sec_matrix": "風險因子矩陣",
+        "sec_complete": "數據完整度與置信度",
+        "sec_stream": "串流媒體及AI服務解鎖檢測 (主動)",
+        "sec_stream_passive": "串流媒體可用性推測 (被動)",
         "sec_mail": "25端口發信及黑名單檢測",
         "sec_sys": "系統資訊",
         "sec_dns": "DNS 測試與推薦",
@@ -719,16 +719,16 @@ STR = {
         "passive_mode": "[パッシブモード]",
         "back": "戻る",
         "checking": "検査中",
-        "sec_basic": "[1] 基本情報と ASN/BGP",
+        "sec_basic": "基本情報と ASN/BGP",
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
         "geo_group": "地理情報",
         "coord_country": "座標による国",
-        "sec_fraud": "[3] 不正・次元スコア",
-        "sec_matrix": "[2] リスク因子マトリックス",
-        "sec_complete": "[5] データ完全性と信頼度",
-        "sec_stream": "[4] ストリーミング/AIサービス検出 (アクティブ)",
-        "sec_stream_passive": "[4] ストリーミング利用可否推測 (パッシブ)",
+        "sec_fraud": "不正・次元スコア",
+        "sec_matrix": "リスク因子マトリックス",
+        "sec_complete": "データ完全性と信頼度",
+        "sec_stream": "ストリーミング/AIサービス検出 (アクティブ)",
+        "sec_stream_passive": "ストリーミング利用可否推測 (パッシブ)",
         "sec_mail": "25番ポート送信とブラックリスト検出",
         "sec_sys": "システム情報",
         "sec_dns": "DNSテストと推奨",
@@ -926,16 +926,16 @@ STR = {
         "passive_mode": "[Пассивный режим]",
         "back": "Назад",
         "checking": "Проверка",
-        "sec_basic": "[1] Основная информация и ASN/BGP",
+        "sec_basic": "Основная информация и ASN/BGP",
         "sec_type": "Атрибуты типа IP",
         "sec_loc": "Сравнение местоположения",
         "geo_group": "Геолокация",
         "coord_country": "Страна по координатам",
-        "sec_fraud": "[3] Мошенничество и измерения",
-        "sec_matrix": "[2] Матрица факторов риска",
-        "sec_complete": "[5] Полнота данных и достоверность",
-        "sec_stream": "[4] Проверка стриминга/AI (активная)",
-        "sec_stream_passive": "[4] Оценка доступности стриминга (пассивная)",
+        "sec_fraud": "Мошенничество и измерения",
+        "sec_matrix": "Матрица факторов риска",
+        "sec_complete": "Полнота данных и достоверность",
+        "sec_stream": "Проверка стриминга/AI (активная)",
+        "sec_stream_passive": "Оценка доступности стриминга (пассивная)",
         "sec_mail": "Порт 25 и чёрные списки",
         "sec_sys": "Информация о системе",
         "sec_dns": "Тест и рекомендации DNS",
@@ -1133,16 +1133,16 @@ STR = {
         "passive_mode": "[حالت غیرفعال]",
         "back": "بازگشت",
         "checking": "در حال بررسی",
-        "sec_basic": "[1] اطلاعات پایه و ASN/BGP",
+        "sec_basic": "اطلاعات پایه و ASN/BGP",
         "sec_type": "ویژگی‌های نوع IP",
         "sec_loc": "مقایسه موقعیت چندمنبعی",
         "geo_group": "موقعیت جغرافیایی",
         "coord_country": "کشور بر اساس مختصات",
-        "sec_fraud": "[3] امتیاز تقلب و ابعاد",
-        "sec_matrix": "[2] ماتریس عوامل خطر",
-        "sec_complete": "[5] کامل بودن داده و اطمینان",
-        "sec_stream": "[4] بررسی استریم/هوش مصنوعی (فعال)",
-        "sec_stream_passive": "[4] تخمین دسترسی استریم (غیرفعال)",
+        "sec_fraud": "امتیاز تقلب و ابعاد",
+        "sec_matrix": "ماتریس عوامل خطر",
+        "sec_complete": "کامل بودن داده و اطمینان",
+        "sec_stream": "بررسی استریم/هوش مصنوعی (فعال)",
+        "sec_stream_passive": "تخمین دسترسی استریم (غیرفعال)",
         "sec_mail": "ارسال پورت 25 و لیست سیاه",
         "sec_sys": "اطلاعات سیستم",
         "sec_dns": "تست و پیشنهاد DNS",
@@ -1968,7 +1968,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.12.9 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.13.0 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2259,6 +2259,181 @@ class TorExitNodes(Provider):
             return {"ok": False, "err": "list download failed"}
         return {"ok": True, "is_tor_exit": str(ip) in lst, "ts": now_iso()}
 
+@register
+class IPWhoisApp(Provider):
+    """ipwhois.app: 免费地理/ASN 源 (多源位置投票)。"""
+    key = "ipwhoisapp"
+    name = "ipwhois.app"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://ipwhois.app/json/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if not d.get("success"):
+                return {"ok": False, "err": "query unsuccessful"}
+            return {
+                "ok": True,
+                "isp": d.get("isp", ""),
+                "org": d.get("org", ""),
+                "asn": _parse_asn(d.get("asn")),
+                "country": d.get("country", ""),
+                "country_code": d.get("country_code", ""),
+                "region": d.get("region", ""),
+                "city": d.get("city", ""),
+                "latitude": d.get("latitude"),
+                "longitude": d.get("longitude"),
+                "timezone": d.get("timezone", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IPApiIs(Provider):
+    """ipapi.is 免费档: 地理 + 公司/ASN (旗标在付费档, 此处只取画像)。"""
+    key = "ipapiis"
+    name = "ipapi.is"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.ipapi.is/?ip={ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if d.get("error"):
+                return {"ok": False, "err": str(d.get("error"))[:80]}
+            asn_raw = str(d.get("asn") or "")
+            company = d.get("company") or ""
+            return {
+                "ok": True,
+                "isp": company,
+                "org": company or asn_raw.split(" ", 1)[-1],
+                "asn": _parse_asn(asn_raw.split()[0]) if asn_raw else None,
+                "country": d.get("country", ""),
+                "country_code": "",
+                "region": d.get("region", ""),
+                "city": d.get("city", ""),
+                "latitude": d.get("lat"),
+                "longitude": d.get("lon"),
+                "timezone": d.get("timezone", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IPGuide(Provider):
+    """ip.guide: 免费网段/AS/RIR + 地理源。"""
+    key = "ipguide"
+    name = "ip.guide"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://ip.guide/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            net = d.get("network") or {}
+            asys = net.get("autonomous_system") or {}
+            loc = d.get("location") or {}
+            return {
+                "ok": True,
+                "isp": asys.get("organization") or asys.get("name") or "",
+                "org": asys.get("organization") or asys.get("name") or "",
+                "asn": _parse_asn(asys.get("asn")),
+                "country": loc.get("country", ""),
+                "country_code": "",
+                "region": "",
+                "city": loc.get("city") or "",
+                "latitude": loc.get("latitude"),
+                "longitude": loc.get("longitude"),
+                "timezone": loc.get("timezone", ""),
+                "range": net.get("cidr", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class GeoJS(Provider):
+    """GeoJS: 免费地理 + ASN 源。"""
+    key = "geojs"
+    name = "GeoJS"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://get.geojs.io/v1/ip/geo/{ip}.json",
+                           use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if d.get("error"):
+                return {"ok": False, "err": str(d.get("error"))[:80]}
+
+            def _f(v):
+                try:
+                    return float(v)
+                except (TypeError, ValueError):
+                    return None
+
+            return {
+                "ok": True,
+                "isp": d.get("organization_name") or "",
+                "org": d.get("organization_name") or d.get("organization", ""),
+                "asn": _parse_asn(d.get("asn")),
+                "country": d.get("country", ""),
+                "country_code": d.get("country_code", ""),
+                "region": d.get("region") or "",
+                "city": d.get("city") or "",
+                "latitude": _f(d.get("latitude")),
+                "longitude": _f(d.get("longitude")),
+                "timezone": d.get("timezone", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class SpamhausDROP(Provider):
+    """Spamhaus DROP: 劫持/犯罪网段权威名单 (CIDR 匹配, v4/v6 分开拉取)。"""
+    key = "spamhaus"
+    name = "Spamhaus DROP"
+
+    def check(self, ip):
+        try:
+            addr = ipaddress.ip_address(str(ip))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        url = ("https://www.spamhaus.org/drop/drop.txt" if addr.version == 4
+               else "https://www.spamhaus.org/drop/dropv6.txt")
+
+        def _parse(raw):
+            nets = set()
+            for line in raw.splitlines():
+                tok = line.split(";")[0].strip()
+                if "/" in tok:
+                    nets.add(tok)
+            return nets
+
+        lst = _get_threat_list(f"spamhaus{addr.version}", url, _parse)
+        if lst is None:
+            return {"ok": False, "err": "list download failed"}
+        listed = False
+        for cidr in lst:
+            try:
+                if addr in ipaddress.ip_network(cidr, strict=False):
+                    listed = True
+                    break
+            except ValueError:
+                continue
+        return {"ok": True, "listed": listed, "ts": now_iso()}
+
 
 # ============================================================
 # 多源画像融合与评分体系 (6 语言完整规则说明，零 Key 残留)
@@ -2271,17 +2446,21 @@ def _build_unified_profile(s):
     db = s.get("dbip", {}) if s.get("dbip", {}).get("ok") else {}
     fp = s.get("freeipapi", {}) if s.get("freeipapi", {}).get("ok") else {}
     rs = s.get("ripestat", {}) if s.get("ripestat", {}).get("ok") else {}
+    wa = s.get("ipwhoisapp", {}) if s.get("ipwhoisapp", {}).get("ok") else {}
+    ai = s.get("ipapiis", {}) if s.get("ipapiis", {}).get("ok") else {}
+    gu = s.get("ipguide", {}) if s.get("ipguide", {}).get("ok") else {}
+    gj = s.get("geojs", {}) if s.get("geojs", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ""
-    org = wi.get("org") or ii.get("org") or pc.get("provider") or ""
-    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or ""
+    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or ""
+    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or ""
+    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
     except (ValueError, TypeError):
         asn = None
-    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or ""
-    region = wi.get("region") or ii.get("region") or db.get("state") or ""
-    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or ""
+    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or wa.get("country") or ai.get("country") or gu.get("country") or gj.get("country") or ""
+    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or ""
+    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or ""
 
     return {
         "ok": bool(isp or org or country or asn),
@@ -2289,24 +2468,25 @@ def _build_unified_profile(s):
         "org": org,
         "asn": _parse_asn(asn),
         "country": country,
-        "country_code": wi.get("country_code", ""),
+        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or "",
         "region": region,
         "city": city,
-        "latitude": wi.get("latitude"),
-        "longitude": wi.get("longitude"),
-        "timezone": wi.get("timezone", ""),
+        "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude"),
+        "longitude": wi.get("longitude") or wa.get("longitude") or ai.get("longitude") or gu.get("longitude") or gj.get("longitude"),
+        "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or "",
     }
 
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.12.9 免 Key 公开版):
+评分规则 (v4.13.0 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
     Shodan 已知高危漏洞 (每漏洞+5, 上限20) 或高危标签 (+15)
     Feodo C2 僵尸网络黑名单命中       +30
     EmergingThreats 被控主机命中      +25
+    Spamhaus DROP 权威滥用名单命中    +25
     Tor 出口节点命中                  +15
   [欺诈评分 0-100]
     取 Scamalytics 欺诈分与 proxycheck.io 风险分较高者
@@ -2322,13 +2502,14 @@ SCORING_RULES = {
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
 """,
     "zh-TW": """
-評分規則 (v4.12.9 免 Key 公開版):
+評分規則 (v4.13.0 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
     Shodan 已知高危漏洞 (每漏洞+5, 上限20) 或高危標籤 (+15)
     Feodo C2 殭屍網路黑名單命中       +30
     EmergingThreats 被控主機命中      +25
+    Spamhaus DROP 權威濫用名單命中    +25
     Tor 出口節點命中                  +15
   [欺詐評分 0-100]
     取 Scamalytics 欺詐分與 proxycheck.io 風險分較高者
@@ -2344,13 +2525,14 @@ SCORING_RULES = {
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
 """,
     "en": """
-Scoring rules (v4.12.9 Keyless Public Edition):
+Scoring rules (v4.13.0 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
     Shodan vulnerabilities (+5 each, max 20) or threat tags (+15)
     Feodo C2 botnet listed            +30
     EmergingThreats compromised IP    +25
+    Spamhaus DROP listed              +25
     Tor exit node                     +15
   [Fraud 0-100]
     Max of Scamalytics fraud score and proxycheck.io risk score
@@ -2366,13 +2548,14 @@ Scoring rules (v4.12.9 Keyless Public Edition):
   [Purity] = 100 - Combined (own conversion, not third-party)
 """,
     "ja": """
-スコアリングルール (v4.12.9 キー不要公開版):
+スコアリングルール (v4.13.0 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
     Shodan 脆弱性 (+5/件, 最大20) または危険タグ (+15)
     Feodo C2 ボットネット登録         +30
     EmergingThreats 侵害IP登録        +25
+    Spamhaus DROP 登録                +25
     Tor 出口ノード                    +15
   [不正スコア 0-100]
     Scamalytics と proxycheck.io の高い方のスコアを採用
@@ -2388,13 +2571,14 @@ Scoring rules (v4.12.9 Keyless Public Edition):
   [純度] = 100 - 総合 (独自換算)
 """,
     "ru": """
-Правила оценки (v4.12.9 Публичная версия без ключей):
+Правила оценки (v4.13.0 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
     Shodan уязвимости (+5 за каждую, макс. 20) или опасные теги (+15)
     Feodo C2 ботнет                   +30
     EmergingThreats скомпрометирован  +25
+    Spamhaus DROP регистрация         +25
     Выходной узел Tor                 +15
   [Мошенничество 0-100]
     Максимум из оценки Scamalytics и риска proxycheck.io
@@ -2410,13 +2594,14 @@ Scoring rules (v4.12.9 Keyless Public Edition):
   [Чистота] = 100 - Итого
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.12.9):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
     Shodan آسیب‌پذیری‌ها (+5 هر مورد، حداکثر 20) یا تگ خطرناک (+15)
     Feodo C2 لیست سیاه بات‌نت          +30
     EmergingThreats آی‌پی آلوده        +25
+    Spamhaus DROP ثبت‌شده             +25
     گره خروجی Tor                     +15
   [امتیاز تقلب 0-100]
     بیشترین مقدار بین Scamalytics و ریسک proxycheck.io
@@ -2467,6 +2652,10 @@ def score_threat(s):
     if et.get("ok") and et.get("listed"):
         pts += 25
         ev.append("EmergingThreats listed +25")
+    sp = s.get("spamhaus", {})
+    if sp.get("ok") and sp.get("listed"):
+        pts += 25
+        ev.append("Spamhaus DROP listed +25")
     te = s.get("tor_exit", {})
     if te.get("ok") and te.get("is_tor_exit"):
         pts += 15
@@ -2760,7 +2949,19 @@ def run_passive(ip):
 # ============================================================
 # 报告输出
 # ============================================================
-def _section(title):
+_SEC = {"on": False, "n": 0}
+
+
+def _sec_begin():
+    """报告开始时启用章节自动编号 (甲案: 一级章节全顺延, 顺序即编号)。"""
+    _SEC["on"] = True
+    _SEC["n"] = 0
+
+
+def _section(title, sub=False):
+    if _SEC["on"] and not sub:
+        _SEC["n"] += 1
+        title = f"[{_SEC['n']}] {title}"
     print(f"\n{_c(C.cyan, _c(C.bold, title))}")
 
 
@@ -2882,11 +3083,13 @@ def _print_streaming_inference(res):
 
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
+    sp = s.get("spamhaus", {})
     te = s.get("tor_exit", {})
     sh = s.get("shodan_idb", {})
     is_threat = (
         (fe.get("ok") and fe.get("listed"))
         or (et.get("ok") and et.get("listed"))
+        or (sp.get("ok") and sp.get("listed"))
         or (sh.get("ok") and len(sh.get("vulns", [])) > 0)
     )
     is_tor_exit = te.get("ok") and te.get("is_tor_exit")
@@ -3067,7 +3270,7 @@ def _print_streaming_inference(res):
 
 
 def _print_completeness(res):
-    """[5] 数据完整度与置信度 (报告尾部, 两模式共用)。"""
+    """数据完整度与置信度 (报告尾部, 两模式共用)。"""
     _section(T("sec_complete"))
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
@@ -3081,7 +3284,8 @@ def _print_completeness(res):
 
 
 def print_report(res, include_streaming_inference=True, sysinfo=None,
-                 tail_completeness=True):
+                 tail_completeness=True, dns_rec=False):
+    _sec_begin()
     s = res["sources"]
     prof = res.get("profile") or _build_unified_profile(s)
     scs = res["scores"]
@@ -3142,6 +3346,22 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     if fp.get("ok") and (fp.get("country") or fp.get("city")):
         locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip(),
                      fp.get("country"), fp.get("city")))
+    wap = s.get("ipwhoisapp", {})
+    if wap.get("ok") and (wap.get("country") or wap.get("city")):
+        locs.append(("ipwhois.app", f"{wap.get('country')} {wap.get('region')} {wap.get('city')}".strip(),
+                     wap.get("country"), wap.get("city")))
+    ais = s.get("ipapiis", {})
+    if ais.get("ok") and (ais.get("country") or ais.get("city")):
+        locs.append(("ipapi.is", f"{ais.get('country')} {ais.get('region')} {ais.get('city')}".strip(),
+                     ais.get("country"), ais.get("city")))
+    igd = s.get("ipguide", {})
+    if igd.get("ok") and (igd.get("country") or igd.get("city")):
+        locs.append(("ip.guide", f"{igd.get('country')} {igd.get('city')}".strip(),
+                     igd.get("country"), igd.get("city")))
+    gjs = s.get("geojs", {})
+    if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
+        locs.append(("GeoJS", f"{gjs.get('country')} {gjs.get('region')} {gjs.get('city')}".strip(),
+                     gjs.get("country"), gjs.get("city")))
     if locs:
         _CC = {"united states": "us", "united states of america": "us",
                "china": "cn", "australia": "au", "canada": "ca",
@@ -3239,7 +3459,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         print_system_info(sysinfo[0], sysinfo[1])
 
     # [1.5] 类型属性 (严禁篡改第三方原始判断)
-    _section(T("sec_type"))
+    _section(T("sec_type"), sub=True)
     type_sources = []
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("type"):
@@ -3298,6 +3518,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     gn = s.get("greynoise", {})
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
+    sp = s.get("spamhaus", {})
     te = s.get("tor_exit", {})
     ia = s.get("ipapi", {})
 
@@ -3322,6 +3543,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                    _hit(fe, bool(fe.get("listed"))), _NA]),
         ("EmergingThreats", [_NA, _NA, _NA, _NA,
                              _hit(et, bool(et.get("listed"))), _NA]),
+        ("Spamhaus DROP", [_NA, _NA, _NA, _NA,
+                           _hit(sp, bool(sp.get("listed"))), _NA]),
         ("Tor Exit", [_NA, _NA, _hit(te, bool(te.get("is_tor_exit"))),
                       _NA, _NA, _NA]),
         ("proxycheck", [
@@ -3395,6 +3618,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 
     if include_streaming_inference:
         _print_streaming_inference(res)
+    if dns_rec:
+        recommend_dns_for_ip(prof.get("country", ""))
     if tail_completeness:
         _print_completeness(res)
     if include_streaming_inference:
@@ -3421,7 +3646,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.12.9 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.13.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4386,7 +4611,7 @@ def disk_io_test(size_mb=64):
 
 
 def print_system_info(si=None, io_res=None):
-    _section(T("sec_sys"))
+    _section(T("sec_sys"), sub=True)
     if si is None:
         si = get_system_info()
     print(f"  {_pad('CPU', 10)}: {si['cpu'][:60]}")
@@ -5278,7 +5503,7 @@ _LOGO_LINES = [
     "██║  ██║  ╚═════╝ ╚██████╗ ██║  ██║ ███████╗ ╚██████╗ ██║  ██║",
     "╚═╝  ╚═╝           ╚═════╝ ╚═╝  ╚═╝ ╚══════╝  ╚═════╝ ╚═╝  ╚═╝",
 ]
-_LOGO_PALETTE = [26, 27, 33, 39, 68, 75, 111]  # 按字母: 深蓝 -> 淡蓝 (256 色)
+_LOGO_PALETTE = [26, 27, 32, 33, 39, 39, 39]  # 按字母: 纯蓝阶 (R=0, 同 A-BOX 标题配色)
 
 _banner_net_cache = None
 
@@ -5849,8 +6074,7 @@ def main():
             print(T("invalid_ip"))
             sys.exit(1)
         res = run_passive(ip)
-        print_report(res)
-        recommend_dns_for_ip(res["profile"].get("country", ""))
+        print_report(res, dns_rec=True)
         return
 
     # 交互菜单 (兼容 curl | python3 - 管道运行)
@@ -5988,8 +6212,7 @@ def main():
                         print(T("invalid_ip"))
                         continue
                     res = run_passive(ip)
-                    print_report(res)
-                    recommend_dns_for_ip(res["profile"].get("country", ""))
+                    print_report(res, dns_rec=True)
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
