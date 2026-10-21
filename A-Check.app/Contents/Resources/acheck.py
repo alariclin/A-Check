@@ -3941,6 +3941,52 @@ def print_report6(res, embedded=False):
 
     _print_basic_block(s, prof)
 
+    # [1.5] 类型属性 (与 v4 同构: 逐源原始判断, 不篡改)
+    _section(T("sec_type"), sub=True)
+    _ts6 = []
+    _pc6 = s.get("proxycheck", {})
+    if _pc6.get("ok") and _pc6.get("type"):
+        _ts6.append(("proxycheck", _pc6["type"]))
+    _ia6 = s.get("ipapi", {})
+    if _ia6.get("ok"):
+        if _ia6.get("hosting"):
+            _ts6.append(("ip-api", T("dc")))
+        else:
+            _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if _dc6:
+                _ts6.append(("ip-api", T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                _ts6.append(("ip-api", T("residential")))
+            else:
+                _ts6.append(("ip-api", T("unknown")))
+    _wi6 = s.get("ipwhois", {})
+    if _wi6.get("ok"):
+        if _wi6.get("hosting"):
+            _ts6.append(("ipwho.is", T("dc")))
+        else:
+            _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
+            if _dc6:
+                _ts6.append(("ipwho.is", T("dc")))
+            elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+                _ts6.append(("ipwho.is", T("residential")))
+            else:
+                _ts6.append(("ipwho.is", T("unknown")))
+    elif prof.get("ok"):
+        _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+        if _dc6:
+            _ts6.append(("Heuristic", T("dc")))
+        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+            _ts6.append(("Heuristic", T("residential")))
+    if _ts6:
+        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in _ts6))
+        _cells6 = []
+        for _, _t in _ts6:
+            _colored6, _ = _type_block(_t)
+            _cells6.append(_pad(_colored6, 16))
+        print("  " + _pad(T("usage_type"), 12) + "".join(_cells6))
+    else:
+        print(f"  {T('no_type_data')}")
+
     # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
     _section(T("sec_matrix"))
     print(f"  {_c(C.dim, T('v6_prefix_note'))}")
