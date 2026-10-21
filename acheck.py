@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.13.4 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -1469,8 +1469,6 @@ class C:
     @staticmethod
     def yellow(s): return f"{C.YELLOW}{s}{C.RESET}"
     @staticmethod
-    def blue(s): return f"{C.BLUE}{s}{C.RESET}"
-    @staticmethod
     def cyan(s): return f"{C.CYAN}{s}{C.RESET}"
     @staticmethod
     def dim(s): return f"{C.DIM}{s}{C.RESET}"
@@ -1641,9 +1639,13 @@ def parse_any_ip(s):
     except Exception:
         return None, "invalid_ip"
     if isinstance(ip, ipaddress.IPv6Address):
-        if ip.is_global and not ip.is_multicast:
+        _mapped = ip.ipv4_mapped
+        if _mapped is not None:
+            ip = _mapped  # ::ffff:a.b.c.d 按内嵌 IPv4 处理, 走 v4 校验与数据源
+        elif ip.is_global and not ip.is_multicast:
             return ip, 6
-        return None, "private_ip"
+        else:
+            return None, "private_ip"
     if (not ip.is_global or ip.is_multicast or ip.is_reserved
             or ip in ipaddress.ip_network("198.18.0.0/15")):
         return None, "private_ip"
@@ -2772,7 +2774,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.13.4):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.0):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -2993,14 +2995,6 @@ def score_platform(s):
 # ============================================================
 # 进度条与着色条
 # ============================================================
-def _score_color(v):
-    if v < 25:
-        return C.green
-    if v < 75:
-        return C.yellow
-    return C.red
-
-
 def _bar_label_width():
     """[2]/[3] 进度条共用标签列宽 (两节同宽, 条左边缘才对齐)。"""
     labels = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
@@ -6343,19 +6337,9 @@ def _banner_net_info():
     return info
 
 
-def _violet(s):
-    """紫色标签 (参考图配色), 无色环境返回原文。"""
-    return "\033[38;5;141m%s\033[0m" % s if _use_color() else s
-
-
 def _white(s):
     """亮白色 (横幅数值), 无色环境返回原文。"""
     return "\033[97m%s\033[0m" % s if _use_color() else s
-
-
-def _teal(s):
-    """淡蓝数值, 无色环境返回原文。"""
-    return "\033[38;5;39m%s\033[0m" % s if _use_color() else s
 
 
 def print_banner():
