@@ -127,6 +127,11 @@ Every factor and score is a multi-source vote; a single source's false positive 
 - A terminal width of ≥ 60 columns is recommended; plain-text environments (pipes / no colour) degrade gracefully to colourless output
 - For self-checks and operations assessment only; please respect each data source's terms of service
 
+## If the system blocks the first launch
+
+- **macOS**: A-Check.app is not signed with an Apple Developer certificate, so the first launch may be blocked ("unidentified developer"). Right-click `A-Check.app` (or `run.command`) → Open → confirm with Open again. Needed once only; you can also allow it under System Settings → Privacy & Security
+- **Windows**: the first run of `run.bat` may trigger a SmartScreen prompt — click "More info" → "Run anyway"
+
 ## License
 
 MIT License
