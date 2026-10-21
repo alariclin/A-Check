@@ -119,6 +119,16 @@ Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.0
 ```
 curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 ```
+
+**CDN ミラー：GitHub へ直接つながりにくい地域（中国本土など）向け。単一ファイル版、機能は同一です：**
+jsDelivr：
+```
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+```
+statically（予備）：
+```
+curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 スクリプトを直接実行することもできます（Python 3.8+）：
 
 ```

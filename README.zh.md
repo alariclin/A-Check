@@ -119,6 +119,16 @@ Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.0
 ```
 curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 ```
+
+**CDN 镜像——GitHub 直连困难的地区（如中国大陆）可用。单文件版，功能完整：**
+jsDelivr：
+```
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+```
+statically（备用）：
+```
+curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 也可以直接运行脚本本体（需 Python 3.8+）：
 
 ```

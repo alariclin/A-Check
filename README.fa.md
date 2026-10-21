@@ -119,6 +119,16 @@ Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.0
 ```
 curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 ```
+
+**آینهٔ CDN — برای مناطقی که دسترسی مستقیم به GitHub دشوار است (مانند چین). نسخهٔ تک‌فایل، با امکانات کامل:**
+jsDelivr:
+```
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+```
+statically (پشتیبان):
+```
+curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 یا اسکریپت را مستقیم اجرا کنید (Python 3.8+ لازم است):
 
 ```

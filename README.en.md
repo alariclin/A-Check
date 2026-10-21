@@ -119,6 +119,16 @@ Any system (single file, Python 3.8+):
 ```
 curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
 ```
+
+**CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
+jsDelivr:
+```
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+```
+statically (backup):
+```
+curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 Or run the script directly (Python 3.8+):
 
 ```
