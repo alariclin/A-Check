@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.11-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.12-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -24,23 +24,23 @@
 
 Главное меню (баннер в реальном времени показывает систему / железо / сеть; 12 функций в четырёх группах):
 
-![Главное меню](docs/showcase-menu.png)
+![Главное меню](docs/showcase-menu-ru.png)
 
-Отчёт по IP (на примере выходного IP AWS):
+Отчёт по IP (пример вывода — данные вымышлены):
 
-![Отчёт](docs/showcase-report.png)
+![Отчёт](docs/showcase-report-ru.png)
 
 Отчёт IPv6 (уровень префикса: гео / ASN / тип / сигналы репутации по источникам + балл по той же формуле (оценка уровня префикса)):
 
-![Отчёт IPv6](docs/showcase-ipv6.png)
+![Отчёт IPv6](docs/showcase-ipv6-ru.png)
 
 Выбор объёма самопроверки (авто — двойной стек / только IPv4 / только IPv6):
 
-![Объём самопроверки](docs/showcase-scope.png)
+![Объём самопроверки](docs/showcase-scope-ru.png)
 
 Пакетный тест узлов и рейтинг:
 
-![Пакетный тест](docs/showcase-batch.png)
+![Пакетный тест](docs/showcase-batch-ru.png)
 
 ## Что это
 
@@ -97,17 +97,17 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):

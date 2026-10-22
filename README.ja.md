@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.11-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.12-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -24,23 +24,23 @@
 
 メインメニュー（バナーにシステム / ハードウェア / ネットワーク状態をリアルタイム表示、12 機能を 4 グループに配置）：
 
-![メインメニュー](docs/showcase-menu.png)
+![メインメニュー](docs/showcase-menu-ja.png)
 
-IP チェックレポート（AWS 出口 IP の例）：
+IP チェックレポート（サンプル出力、データは架空）：
 
-![レポート](docs/showcase-report.png)
+![レポート](docs/showcase-report-ja.png)
 
 IPv6 レポート（プレフィックス粒度：地理 / ASN / 種別 / ソース別評価信号＋同式スコア（プレフィックスレベルの推定））：
 
-![IPv6 レポート](docs/showcase-ipv6.png)
+![IPv6 レポート](docs/showcase-ipv6-ja.png)
 
 セルフチェック範囲の選択（自動デュアルスタック / IPv4 のみ / IPv6 のみ）：
 
-![範囲選択](docs/showcase-scope.png)
+![範囲選択](docs/showcase-scope-ja.png)
 
 ノード一括スピードテストとランキング：
 
-![一括テスト](docs/showcase-batch.png)
+![一括テスト](docs/showcase-batch-ja.png)
 
 ## 概要
 
@@ -97,17 +97,17 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：

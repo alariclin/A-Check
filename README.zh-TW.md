@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.11-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.12-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -24,23 +24,23 @@
 
 主選單（橫幅即時顯示系統 / 硬體 / 網路狀態，12 項功能四組排布）：
 
-![主選單](docs/showcase-menu.png)
+![主選單](docs/showcase-menu-zh-TW.png)
 
-IP 檢測報告（示例：AWS 出口 IP）：
+IP 檢測報告（示例輸出，資料為虛構）：
 
-![檢測報告](docs/showcase-report.png)
+![檢測報告](docs/showcase-report-zh-TW.png)
 
 IPv6 報告（前綴粒度：地理 / ASN / 類型 / 逐源信譽信號 + 同公式評分（前綴級估計））：
 
-![IPv6 報告](docs/showcase-ipv6.png)
+![IPv6 報告](docs/showcase-ipv6-zh-TW.png)
 
 本機自檢範圍選擇（自動雙棧 / 僅 IPv4 / 僅 IPv6）：
 
-![自檢範圍選擇](docs/showcase-scope.png)
+![自檢範圍選擇](docs/showcase-scope-zh-TW.png)
 
 批次節點測速優選：
 
-![批次測速](docs/showcase-batch.png)
+![批次測速](docs/showcase-batch-zh-TW.png)
 
 ## 這是什麼
 
@@ -97,17 +97,17 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系統（單一檔案，需 Python 3.8+）：

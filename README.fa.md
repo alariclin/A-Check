@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.11-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.12-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -24,23 +24,23 @@
 
 منوی اصلی (بنر، وضعیت سیستم / سخت‌افزار / شبکه را زنده نشان می‌دهد؛ ۱۲ قابلیت در چهار گروه):
 
-![منوی اصلی](docs/showcase-menu.png)
+![منوی اصلی](docs/showcase-menu-fa.png)
 
-گزارش بررسی IP (نمونه: IP خروجی AWS):
+گزارش بررسی IP (خروجی نمونه — داده‌ها ساختگی):
 
-![گزارش](docs/showcase-report.png)
+![گزارش](docs/showcase-report-fa.png)
 
 گزارش IPv6 (در سطح پیشوند: جغرافیا / ASN / نوع / سیگنال‌های اعتبار به تفکیک منبع + امتیاز با همان فرمول (برآورد سطح پیشوند)):
 
-![گزارش IPv6](docs/showcase-ipv6.png)
+![گزارش IPv6](docs/showcase-ipv6-fa.png)
 
 انتخاب دامنهٔ خودآزمایی (خودکار دوپشته / فقط IPv4 / فقط IPv6):
 
-![دامنهٔ خودآزمایی](docs/showcase-scope.png)
+![دامنهٔ خودآزمایی](docs/showcase-scope-fa.png)
 
 تست سرعت دسته‌ای گره‌ها و رتبه‌بندی:
 
-![تست دسته‌ای](docs/showcase-batch.png)
+![تست دسته‌ای](docs/showcase-batch-fa.png)
 
 ## این ابزار چیست
 
@@ -97,17 +97,17 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.12/A-Check-v4.14.12-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
