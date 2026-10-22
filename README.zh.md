@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.5-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -30,7 +30,7 @@ IP 检测报告（以公共 DNS 8.8.8.8 为例）：
 
 ![检测报告](docs/showcase-report.png)
 
-IPv6 报告（前缀粒度：地理 / ASN / 类型 / 逐源信誉信号，不合成总分）：
+IPv6 报告（前缀粒度：地理 / ASN / 类型 / 逐源信誉信号 + 同公式评分（前缀级估计））：
 
 ![IPv6 报告](docs/showcase-ipv6.png)
 
@@ -97,17 +97,17 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系统（单文件，需 Python 3.8+）：
@@ -162,7 +162,7 @@ python3 acheck.py [IP] [选项]
 
 ## 注意事项
 
-- 被动查询支持公网 IPv4 与 IPv6；内网 / 保留地址会被拒绝并说明原因。IPv6 为前缀/运营商粒度报告（地理/ASN/类型/名单与逐源信誉信号，不合成总分）。本机自检为双栈：检测到 IPv6 出口时与 IPv4 一并检测，两出口不在同一网络时给出泄漏警告
+- 被动查询支持公网 IPv4 与 IPv6；内网 / 保留地址会被拒绝并说明原因。IPv6 为前缀/运营商粒度报告（地理/ASN/类型/名单、逐源信誉信号与同公式评分（前缀级估计））。本机自检为双栈：检测到 IPv6 出口时与 IPv4 一并检测，两出口不在同一网络时给出泄漏警告
 - 推测模式（查任意 IP 的流媒体可用性）基于信誉信号推断，与实测可能有出入，请以报告标注的置信度为准
 - 测速为多连接峰值口径，反映链路峰值能力，不等同于单连接持续速度
 - 终端宽度建议 ≥ 60 列；纯文本环境（管道 / 无颜色）会自动降级为无色输出

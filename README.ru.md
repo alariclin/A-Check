@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.5-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -30,7 +30,7 @@
 
 ![Отчёт](docs/showcase-report.png)
 
-Отчёт IPv6 (уровень префикса: гео / ASN / тип / сигналы репутации по источникам, без общего балла):
+Отчёт IPv6 (уровень префикса: гео / ASN / тип / сигналы репутации по источникам + балл по той же формуле (оценка уровня префикса)):
 
 ![Отчёт IPv6](docs/showcase-ipv6.png)
 
@@ -97,17 +97,17 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
@@ -162,7 +162,7 @@ python3 acheck.py [IP] [опции]
 
 ## Примечания
 
-- Пассивный запрос принимает публичные IPv4 и IPv6; частные и зарезервированные адреса отклоняются с объяснением. Отчёт по IPv6 — на уровне префикса/оператора (гео/ASN/тип/блок-листы и сигналы репутации по источникам, без общего балла). Самопроверка — двойной стек: при наличии выхода IPv6 он тестируется вместе с IPv4, с предупреждением об утечке, если выходы в разных сетях
+- Пассивный запрос принимает публичные IPv4 и IPv6; частные и зарезервированные адреса отклоняются с объяснением. Отчёт по IPv6 — на уровне префикса/оператора (гео/ASN/тип/блок-листы, сигналы репутации по источникам и балл по той же формуле — оценка уровня префикса). Самопроверка — двойной стек: при наличии выхода IPv6 он тестируется вместе с IPv4, с предупреждением об утечке, если выходы в разных сетях
 - Режим прогноза (доступность стриминга для чужого IP) выводится из сигналов репутации и может отличаться от фактических тестов — ориентируйтесь на достоверность, указанную в отчёте
 - Тесты скорости используют пиковую пропускную способность по нескольким соединениям — это пиковая способность канала, а не устойчивая скорость одного соединения
 - Рекомендуется ширина терминала ≥ 60 колонок; в текстовой среде (пайпы / без цвета) вывод автоматически становится бесцветным

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.5-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -30,7 +30,7 @@ IP チェックレポート（公開 DNS 8.8.8.8 の例）：
 
 ![レポート](docs/showcase-report.png)
 
-IPv6 レポート（プレフィックス粒度：地理 / ASN / 種別 / ソース別評価信号、総合スコアなし）：
+IPv6 レポート（プレフィックス粒度：地理 / ASN / 種別 / ソース別評価信号＋同式スコア（プレフィックスレベルの推定））：
 
 ![IPv6 レポート](docs/showcase-ipv6.png)
 
@@ -97,17 +97,17 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
@@ -162,7 +162,7 @@ python3 acheck.py [IP] [オプション]
 
 ## 注意事項
 
-- パッシブ照会は公開 IPv4 と IPv6 に対応。プライベート / 予約アドレスは理由付きで拒否されます。IPv6 レポートはプレフィックス/事業者粒度です（地理/ASN/種別/ブロックリストとソース別の評価信号、総合スコアなし）。セルフチェックはデュアルスタックで、IPv6 出口がある場合は IPv4 と併せて測定し、両出口が異なるネットワークの場合はリーク警告を表示します
+- パッシブ照会は公開 IPv4 と IPv6 に対応。プライベート / 予約アドレスは理由付きで拒否されます。IPv6 レポートはプレフィックス/事業者粒度です（地理/ASN/種別/ブロックリスト、ソース別の評価信号と同式スコア（プレフィックスレベルの推定））。セルフチェックはデュアルスタックで、IPv6 出口がある場合は IPv4 と併せて測定し、両出口が異なるネットワークの場合はリーク警告を表示します
 - 推定モード（任意 IP のストリーミング可用性）はレピュテーション信号からの推論であり、実測と異なる場合があります。レポート記載の信頼度を目安にしてください
 - スピードテストは複数接続ピーク方式で、回線のピーク性能を示すものであり、単一接続の持続速度とは異なります
 - ターミナル幅は 60 列以上を推奨。プレーンテキスト環境（パイプ / 無色）では自動で無色出力に切り替わります

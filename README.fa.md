@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.5-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -30,7 +30,7 @@
 
 ![گزارش](docs/showcase-report.png)
 
-گزارش IPv6 (در سطح پیشوند: جغرافیا / ASN / نوع / سیگنال‌های اعتبار به تفکیک منبع، بدون امتیاز ترکیبی):
+گزارش IPv6 (در سطح پیشوند: جغرافیا / ASN / نوع / سیگنال‌های اعتبار به تفکیک منبع + امتیاز با همان فرمول (برآورد سطح پیشوند)):
 
 ![گزارش IPv6](docs/showcase-ipv6.png)
 
@@ -97,17 +97,17 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
@@ -162,7 +162,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 ## نکات
 
-- استعلام غیرفعال IPv4 و IPv6 عمومی را می‌پذیرد؛ نشانی‌های خصوصی / رزروشده با توضیح رد می‌شوند. گزارش IPv6 در سطح پیشوند/اپراتور است (جغرافیا/ASN/نوع/فهرست مسدودی و سیگنال‌های اعتبار به تفکیک منبع، بدون امتیاز ترکیبی). خودآزمایی دوپشته است: اگر خروجی IPv6 وجود داشته باشد در کنار IPv4 آزمایش می‌شود و اگر دو خروجی در شبکه‌های متفاوت باشند هشدار نشت داده می‌شود
+- استعلام غیرفعال IPv4 و IPv6 عمومی را می‌پذیرد؛ نشانی‌های خصوصی / رزروشده با توضیح رد می‌شوند. گزارش IPv6 در سطح پیشوند/اپراتور است (جغرافیا/ASN/نوع/فهرست مسدودی، سیگنال‌های اعتبار به تفکیک منبع و امتیاز با همان فرمول (برآورد سطح پیشوند)). خودآزمایی دوپشته است: اگر خروجی IPv6 وجود داشته باشد در کنار IPv4 آزمایش می‌شود و اگر دو خروجی در شبکه‌های متفاوت باشند هشدار نشت داده می‌شود
 - حالت پیش‌بینی (دسترسی استریم برای یک IP دلخواه) از سیگنال‌های اعتبار استنتاج می‌شود و ممکن است با تست واقعی تفاوت داشته باشد — به اطمینان درج‌شده در گزارش تکیه کنید
 - تست‌های سرعت بر مبنای اوج چنداتصاله‌اند و ظرفیت اوج پیوند را نشان می‌دهند، نه سرعت پایدار تک‌اتصال
 - پهنای ترمینال ≥ ۶۰ ستون پیشنهاد می‌شود؛ در محیط متنی ساده (لوله / بدون رنگ) خروجی به‌صورت خودکار بدون رنگ می‌شود

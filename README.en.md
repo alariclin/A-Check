@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.5-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -30,7 +30,7 @@ IP report (using the public DNS 8.8.8.8 as an example):
 
 ![Report](docs/showcase-report.png)
 
-IPv6 report (prefix-level: geo / ASN / type / per-source reputation signals, no composite score):
+IPv6 report (prefix-level: geo / ASN / type / per-source reputation signals + same-formula scores (prefix-level estimates)):
 
 ![IPv6 report](docs/showcase-ipv6.png)
 
@@ -97,17 +97,17 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
@@ -162,7 +162,7 @@ Every factor and score is a multi-source vote; a single source's false positive 
 
 ## Notes
 
-- Passive lookup accepts public IPv4 and IPv6; private / reserved addresses are rejected with an explanation. IPv6 reports are prefix/operator-level (geo / ASN / type / blocklist plus per-source reputation signals; no composite score). Self-check is dual-stack: when an IPv6 egress exists it is tested alongside IPv4, with a leak warning if the two egresses sit on different networks
+- Passive lookup accepts public IPv4 and IPv6; private / reserved addresses are rejected with an explanation. IPv6 reports are prefix/operator-level (geo / ASN / type / blocklist, per-source reputation signals and same-formula scores as prefix-level estimates). Self-check is dual-stack: when an IPv6 egress exists it is tested alongside IPv4, with a leak warning if the two egresses sit on different networks
 - Inferred mode (streaming availability for an arbitrary IP) is derived from reputation signals and may differ from measured results — go by the confidence stated in the report
 - Speed tests use multi-connection peak throughput, which reflects link peak capacity rather than sustained single-connection speed
 - A terminal width of ≥ 60 columns is recommended; plain-text environments (pipes / no colour) degrade gracefully to colourless output

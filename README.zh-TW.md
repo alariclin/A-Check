@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.4-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.5-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -30,7 +30,7 @@ IP 檢測報告（以公共 DNS 8.8.8.8 為例）：
 
 ![檢測報告](docs/showcase-report.png)
 
-IPv6 報告（前綴粒度：地理 / ASN / 類型 / 逐源信譽信號，不合成總分）：
+IPv6 報告（前綴粒度：地理 / ASN / 類型 / 逐源信譽信號 + 同公式評分（前綴級估計））：
 
 ![IPv6 報告](docs/showcase-ipv6.png)
 
@@ -97,17 +97,17 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.4/A-Check-v4.14.4-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.5/A-Check-v4.14.5-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系統（單一檔案，需 Python 3.8+）：
@@ -162,7 +162,7 @@ python3 acheck.py [IP] [選項]
 
 ## 注意事項
 
-- 被動查詢支援公網 IPv4 與 IPv6；內網 / 保留位址會被拒絕並說明原因。IPv6 為前綴/營運商粒度報告（地理/ASN/類型/名單與逐源信譽信號，不合成總分）。本機自檢為雙棧：偵測到 IPv6 出口時與 IPv4 一併檢測，兩出口不在同一網路時給出洩漏警告
+- 被動查詢支援公網 IPv4 與 IPv6；內網 / 保留位址會被拒絕並說明原因。IPv6 為前綴/營運商粒度報告（地理/ASN/類型/名單、逐源信譽信號與同公式評分（前綴級估計））。本機自檢為雙棧：偵測到 IPv6 出口時與 IPv4 一併檢測，兩出口不在同一網路時給出洩漏警告
 - 推測模式（查任意 IP 的串流可用性）基於信譽訊號推斷，與實測可能有出入，請以報告標註的信心度為準
 - 測速為多連接峰值口徑，反映鏈路峰值能力，不等同於單連接持續速度
 - 終端寬度建議 ≥ 60 列；純文字環境（管道 / 無顏色）會自動降級為無色輸出

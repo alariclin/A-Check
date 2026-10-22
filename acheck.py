@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.4 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.5 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.4"
+VERSION = "4.14.5"
 
 
 def _init_console():
@@ -2137,7 +2137,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.4 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.5 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3001,7 +3001,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.4 免 Key 公开版):
+评分规则 (v4.14.5 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3033,7 +3033,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.4 免 Key 公開版):
+評分規則 (v4.14.5 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3065,7 +3065,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.4 Keyless Public Edition):
+Scoring rules (v4.14.5 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3098,7 +3098,7 @@ Scoring rules (v4.14.4 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.4 キー不要公開版):
+スコアリングルール (v4.14.5 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3130,7 +3130,7 @@ Scoring rules (v4.14.4 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.4 Публичная версия без ключей):
+Правила оценки (v4.14.5 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3162,7 +3162,7 @@ Scoring rules (v4.14.4 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.4):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.5):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -4089,6 +4089,18 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("type"):
         type_sources.append(("proxycheck", pc["type"]))
+    ia = s.get("ipapi", {})
+    if ia.get("ok"):
+        if ia.get("hosting"):
+            type_sources.append(("ip-api", T("dc")))
+        else:
+            _dc0, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if _dc0:
+                type_sources.append(("ip-api", T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                type_sources.append(("ip-api", T("residential")))
+            else:
+                type_sources.append(("ip-api", T("unknown")))
     if wi.get("ok"):
         if wi.get("hosting"):
             type_sources.append(("ipwho.is", T("dc")))
@@ -4319,7 +4331,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 # 主动检测 (流媒体/邮局/DNSBL/测速)
 # ============================================================
 # ============================================================
-# IPv6 被动查询 (v4.14.4): 前缀/运营商粒度, 不合成总分
+# IPv6 被动查询: 前缀/运营商粒度, 评分与 v4 同公式 (前缀级估计)
 # 纳入源经实测验证 (2026-10-21 逐源探针); 排除:
 #   greynoise 官方 API 仅接受 IPv4; sansisc 对 v6 返回与地址无关的常量;
 #   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
@@ -4631,7 +4643,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.4 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.5 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5390,9 +5402,9 @@ def print_dns_test(results=None):
         )
         results = test_dns_servers()
     titles = {
-        "plain": "传统 DNS (UDP 53)" if LANG in ("zh", "zh-TW") else "Plain DNS (UDP 53)",
-        "doh": "DNS over HTTPS",
-        "dot": "DNS over TLS (853)",
+        "plain": "IPv4 DNS (UDP 53)",
+        "doh": "IPv4 DNS over HTTPS",
+        "dot": "IPv4 DNS over TLS (853)",
     }
     all_ok = []
     for key in ("plain", "doh", "dot"):
@@ -5401,7 +5413,7 @@ def print_dns_test(results=None):
         fail_list = [r for r in lst if not r["ok"]]
         all_ok.extend(ok_list)
         print(f"\n  {_c(C.bold, titles[key])} ({len(ok_list)}/{len(lst)})")
-        for r in ok_list[:8]:
+        for r in ok_list:
             ip_disp = r["ip"][:28]
             print(f"    {_c(C.green, '✓')} {r['name']:18} {ip_disp:30} {r['rtt_ms']:6.1f}ms")
         for r in fail_list:
@@ -5526,8 +5538,7 @@ def test_dns_servers6(timeout=3):
 def print_dns6_test(results):
     """渲染 IPv6 通道 DNS 结果 (挂在 [5] 段内, 不另起章节头)。"""
     titles = {
-        "plain6": "IPv6 通道 DNS (UDP 53)" if LANG in ("zh", "zh-TW")
-                  else "IPv6 DNS (UDP 53)",
+        "plain6": "IPv6 DNS (UDP 53)",
         "dot6": "IPv6 DNS over TLS (853)",
     }
     for key in ("plain6", "dot6"):
