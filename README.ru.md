@@ -124,10 +124,6 @@ jsDelivr:
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
 ```
-statically (резерв):
-```
-curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
-```
 Или запустите скрипт напрямую (нужен Python 3.8+):
 
 ```

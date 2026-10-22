@@ -124,10 +124,6 @@ jsDelivr：
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
 ```
-statically（備用）：
-```
-curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
-```
 也可以直接執行腳本本體（需 Python 3.8+）：
 
 ```

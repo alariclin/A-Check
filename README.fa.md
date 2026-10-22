@@ -124,10 +124,6 @@ jsDelivr:
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
 ```
-statically (پشتیبان):
-```
-curl -sL https://cdn.statically.io/gh/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
-```
 یا اسکریپت را مستقیم اجرا کنید (Python 3.8+ لازم است):
 
 ```
