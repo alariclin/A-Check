@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.6-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.7-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,17 +97,17 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.6/A-Check-v4.14.6-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.7/A-Check-v4.14.7-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.6/A-Check-v4.14.6-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.7/A-Check-v4.14.7-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.6/A-Check-v4.14.6-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.7/A-Check-v4.14.7-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
