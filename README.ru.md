@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@
 
 ## Что это
 
-A-Check — однофайловый Python-скрипт (`acheck.py`, только стандартная библиотека, ноль внешних зависимостей) для оценки **репутации и чистоты** IP-адреса и проверки **качества исходящего соединения** вашей сети. Он объединяет данные 22 публичных источников в один перекрёстно проверенный отчёт: все оценки являются агрегатом нескольких источников, и ни один источник не определяет результат в одиночку.
+A-Check — однофайловый Python-скрипт (`acheck.py`, только стандартная библиотека, ноль внешних зависимостей) для оценки **репутации и чистоты** IP-адреса и проверки **качества исходящего соединения** вашей сети. Он объединяет данные 33 публичных источников в один перекрёстно проверенный отчёт: все оценки являются агрегатом нескольких источников, и ни один источник не определяет результат в одиночку.
 
 ## Два режима
 
@@ -81,7 +81,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 | 9 | Тест задержки TCP | Задержка / джиттер / потери пакетов до любого host:port (min / avg / max) |
 | 10 | Правила оценки | Полное объяснение измерений оценки, вычетов и уровней |
 | 11 | Пакетный тест узлов | Вставьте несколько host:port или SOCKS5-прокси; параллельная проверка задержки и доступности, рейтинг с лучшим узлом зелёным, плюс фактическая скорость загрузки лучшего прокси |
-| 12 | Тест скорости (регионы) | Таблица загрузки для 17 региональных узлов (пик по нескольким соединениям) и скорости вашего канала |
+| 12 | Тест скорости (регионы) | Таблица загрузки для 28 региональных узлов (пик по нескольким соединениям) и скорости вашего канала |
 
 Фактические тесты стриминга охватывают 18 платформ: ИИ (ChatGPT / Gemini / Claude / Grok / DeepSeek), видео (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), соцсети и прочее (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), с различением нативной разблокировки и разблокировки через DNS (Smart DNS).
 
@@ -97,17 +97,17 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
@@ -154,9 +154,9 @@ python3 acheck.py [IP] [опции]
 
 Агрегация многих источников с указанием каждого:
 
-- **Геолокация и принадлежность**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, обратный PTR/FCrDNS
-- **Репутация и мошенничество**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io
-- **Угрозы и списки**: Spamhaus DROP, Feodo Tracker, Emerging Threats, список выходных узлов Tor
+- **Геолокация и принадлежность**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, обратный PTR/FCrDNS
+- **Репутация и мошенничество**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
+- **Угрозы и списки**: Spamhaus DROP, Feodo Tracker, Emerging Threats, список выходных узлов Tor, IPsum, X4BNet VPN ranges
 
 Каждый фактор и оценка — результат голосования нескольких источников; ложное срабатывание одного источника не решает исход в одиночку.
 

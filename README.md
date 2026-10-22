@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@ Batch node speed test & ranking:
 
 ## What it is
 
-A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 22 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
+A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 33 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
 
 ## Dual mode
 
@@ -81,7 +81,7 @@ Active mode adds unnumbered sections — DNS leak & recommendations, port 25 con
 | 9 | TCP latency test | Latency / jitter / packet loss to any host:port (min / avg / max) |
 | 10 | Scoring rules | Full explanation of score dimensions, deductions and levels |
 | 11 | Batch node speed ranking | Paste multiple host:port entries or SOCKS5 proxies; concurrent latency & availability checks, ranked output with the best node in green, plus a measured download throughput for the best proxy |
-| 12 | Network speed test (regions) | Download table for 17 regional nodes (multi-connection peak), plus local up/down speeds |
+| 12 | Network speed test (regions) | Download table for 28 regional nodes (multi-connection peak), plus local up/down speeds |
 
 Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), distinguishing native unlocks from Smart DNS unlocks.
 
@@ -97,17 +97,17 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
@@ -154,9 +154,9 @@ python3 acheck.py [IP] [options]
 
 Multi-source aggregation with per-source attribution, mainly:
 
-- **Geolocation & ownership**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, PTR/FCrDNS reverse lookup
-- **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io
-- **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list
+- **Geolocation & ownership**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, PTR/FCrDNS reverse lookup
+- **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
+- **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list, IPsum, X4BNet VPN ranges
 
 Every factor and score is a multi-source vote; a single source's false positive never decides the verdict alone.
 

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@
 
 ## این ابزار چیست
 
-A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، فقط کتابخانه استاندارد، بدون هیچ وابستگی خارجی) که **اعتبار و پاکی** یک آدرس IP را ارزیابی می‌کند و **کیفیت خروجی** شبکه خودتان را می‌سنجد. اطلاعات ۲۲ منبع داده عمومی را در یک گزارش با راستی‌آزمایی متقابل گرد می‌آورد — همه امتیازها تجمیع چند منبع‌اند و هیچ منبعی به‌تنهایی نتیجه را تعیین نمی‌کند.
+A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، فقط کتابخانه استاندارد، بدون هیچ وابستگی خارجی) که **اعتبار و پاکی** یک آدرس IP را ارزیابی می‌کند و **کیفیت خروجی** شبکه خودتان را می‌سنجد. اطلاعات ۳۳ منبع داده عمومی را در یک گزارش با راستی‌آزمایی متقابل گرد می‌آورد — همه امتیازها تجمیع چند منبع‌اند و هیچ منبعی به‌تنهایی نتیجه را تعیین نمی‌کند.
 
 ## دو حالت
 
@@ -81,7 +81,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 | 9 | تست تأخیر TCP | تأخیر / لرزش / از دست رفتن بسته تا هر host:port ‏(min / avg / max) |
 | 10 | توضیح قواعد امتیازدهی | شرح کامل ابعاد امتیاز، کسرها و سطوح |
 | 11 | تست سرعت دسته‌ای گره‌ها | چند host:port یا پروکسی SOCKS5 بچسبانید؛ سنجش هم‌زمان تأخیر و دسترس‌پذیری، خروجی رتبه‌بندی‌شده با بهترین گره به رنگ سبز، به‌همراه سرعت دانلود واقعی بهترین پروکسی |
-| 12 | تست سرعت شبکه (مناطق) | جدول دانلود ۱۷ گره منطقه‌ای (اوج چنداتصاله) به‌همراه سرعت ارسال/دریافت محلی |
+| 12 | تست سرعت شبکه (مناطق) | جدول دانلود ۲۸ گره منطقه‌ای (اوج چنداتصاله) به‌همراه سرعت ارسال/دریافت محلی |
 
 تست واقعی استریم ۱۸ پلتفرم را پوشش می‌دهد: هوش مصنوعی (ChatGPT / Gemini / Claude / Grok / DeepSeek)، ویدیو (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+)، اجتماعی و دیگر (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub)، با تمایز میان رفع مسدودیت بومی و رفع مسدودیت DNS ‏(Smart DNS).
 
@@ -97,17 +97,17 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
@@ -154,9 +154,9 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 تجمیع چندمنبعی با ذکر هر منبع، از جمله:
 
-- **جغرافیا و مالکیت**: ip-api.com، ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، جستجوی معکوس PTR/FCrDNS
-- **اعتبار و کلاهبرداری**: Scamalytics، proxycheck.io، Shodan InternetDB، GreyNoise، SANS ISC، StopForumSpam، urlscan.io
-- **تهدیدها و فهرست‌ها**: Spamhaus DROP، Feodo Tracker، Emerging Threats، فهرست گره‌های خروجی Tor
+- **جغرافیا و مالکیت**: ip-api.com، ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، iplocate.io، ipquery.io، ipapi.co، 2ip.io، HackerTarget، country.is، RDAP، جستجوی معکوس PTR/FCrDNS
+- **اعتبار و کلاهبرداری**: Scamalytics، proxycheck.io، Shodan InternetDB، GreyNoise، SANS ISC، StopForumSpam، urlscan.io، AlienVault OTX، blocklist.de
+- **تهدیدها و فهرست‌ها**: Spamhaus DROP، Feodo Tracker، Emerging Threats، فهرست گره‌های خروجی Tor، IPsum، X4BNet VPN ranges
 
 هر عامل و امتیاز حاصل رأی چند منبع است؛ مثبت کاذب یک منبع به‌تنهایی نتیجه را تعیین نمی‌کند.
 

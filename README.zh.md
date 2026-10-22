@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@ IPv6 报告（前缀粒度：地理 / ASN / 类型 / 逐源信誉信号，不合
 
 ## 这是什么
 
-A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它向 22 个公开数据源查询并交叉核对，汇总为一份报告。所有评分均为多源聚合，单一来源不决定结论。
+A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它向 33 个公开数据源查询并交叉核对，汇总为一份报告。所有评分均为多源聚合，单一来源不决定结论。
 
 ## 双模式
 
@@ -81,7 +81,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 | 9 | TCP 延迟测试 | 对任意 host:port 测延迟 / 抖动 / 丢包（min / avg / max） |
 | 10 | 评分规则说明 | 评分维度、扣分项与等级划分的完整说明 |
 | 11 | 批量节点测速优选 | 粘贴多个 host:port 或 SOCKS5 代理，并发测延迟与可用性，排名输出、最优标绿，并对最优代理实测下载吞吐 |
-| 12 | 网络测速（多地区） | 17 个地区节点下载测速表（多连接峰值口径），附本机上下行 |
+| 12 | 网络测速（多地区） | 28 个地区节点下载测速表（多连接峰值口径），附本机上下行 |
 
 流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），区分原生解锁与 DNS 解锁（Smart DNS）。
 
@@ -97,17 +97,17 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系统（单文件，需 Python 3.8+）：
@@ -154,9 +154,9 @@ python3 acheck.py [IP] [选项]
 
 多源聚合、逐源署名，主要包括：
 
-- **地理与归属**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、PTR/FCrDNS 反查
-- **信誉与欺诈**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io
-- **威胁与名单**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口节点名单
+- **地理与归属**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 反查
+- **信誉与欺诈**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
+- **威胁与名单**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口节点名单、IPsum、X4BNet VPN ranges
 
 每个因子与分数都由多源投票得出；单一来源的误报不会直接决定结论。
 

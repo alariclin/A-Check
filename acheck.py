@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.2 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -9,9 +9,11 @@ IP 信誉检测 v4.14.1 — 全量修复与并发优化公开版 (零 API Key �
 
 数据源 (全部免 Key 公开情报，多源聚合):
   威胁情报: Scamalytics, StopForumSpam, urlscan.io, SANS ISC, proxycheck.io,
-           Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise
-  注册与实体: RIPEstat, PTR/FCrDNS, DB-IP
-  归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com
+           Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise,
+           AlienVault OTX, blocklist.de, IPsum
+  注册与实体: RIPEstat, RDAP (RIR), PTR/FCrDNS, DB-IP
+  归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com, iplocate.io, ipquery.io,
+           ipapi.co, 2ip.io, ipapi.is, ip.guide, GeoJS, HackerTarget, country.is, X4BNet
 
 用法:
     python3 acheck.py                        # 交互菜单 (默认中文，可切换 6 种语言)
@@ -51,11 +53,18 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.1"
+VERSION = "4.14.2"
 
 
 def _init_console():
     """仅在作为主程序运行时初始化控制台编码与颜色，避免被 import 时产生副作用。"""
+    if sys.platform != "win32":
+        try:
+            # 引入 readline 行编辑: 同时接受 ^H 与 DEL 两种退格,
+            # 避免某些终端退格被回显为 ^H 且不删字 (tty erase 不匹配)
+            import readline  # noqa: F401
+        except Exception:
+            pass
     if sys.platform == "win32":
         try:
             os.system("")
@@ -165,10 +174,10 @@ STR = {
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
         "speed_note": "※ 多连接峰值口径: 与单连接实际下载速度有差异, 仅供参考",
-        "speed_ask": "网速测试会产生下载流量 (单节点上限 200 MB), 是否进行? [y/N] ",
+        "speed_ask": "网速测试会产生下载流量 (单节点上限 200 MB), 是否进行? [y/n] (回车=跳过): ",
         "speed_skipped": "已跳过网速测试",
         "speed_traffic": "本段测速共下载约 {mb} MB",
-        "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 17 地区节点不同",
+        "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 28 地区节点不同",
         "diag_speed_testing": "代理吞吐测速中 (多地区节点)…",
         "diag_speed_ok": "最快线路: %s · 下载 %.1f Mbps",
         "diag_speed_fail": "吞吐测速失败",
@@ -394,10 +403,10 @@ STR = {
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
         "speed_note": "※ Multi-connection peak throughput; differs from single-connection downloads, for reference only",
-        "speed_ask": "The speed test downloads data (capped at 200 MB per node). Run it? [y/N] ",
+        "speed_ask": "The speed test downloads data (capped at 200 MB per node). Run it? [y/n] (Enter = skip): ",
         "speed_skipped": "Speed test skipped",
         "speed_traffic": "Total downloaded in this section: about {mb} MB",
-        "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 17 IPv4 regions",
+        "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 28 IPv4 regions",
         "diag_speed_testing": "Testing proxy throughput (regional nodes)…",
         "diag_speed_ok": "Fastest: %s · Download %.1f Mbps",
         "diag_speed_fail": "Throughput test failed",
@@ -623,10 +632,10 @@ STR = {
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
         "speed_note": "※ 多連接峰值口徑: 與單連接實際下載速度有差異, 僅供參考",
-        "speed_ask": "網速測試會產生下載流量 (單節點上限 200 MB), 是否進行? [y/N] ",
+        "speed_ask": "網速測試會產生下載流量 (單節點上限 200 MB), 是否進行? [y/n] (回車=跳過): ",
         "speed_skipped": "已跳過網速測試",
         "speed_traffic": "本段測速共下載約 {mb} MB",
-        "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 17 地區節點不同",
+        "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 28 地區節點不同",
         "diag_speed_testing": "代理吞吐測速中 (多地區節點)…",
         "diag_speed_ok": "最快線路: %s · 下載 %.1f Mbps",
         "diag_speed_fail": "吞吐測速失敗",
@@ -852,10 +861,10 @@ STR = {
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
         "speed_note": "※ 複数接続のピーク値です。単一接続の実ダウンロードとは異なります（参考値）",
-        "speed_ask": "速度テストはダウンロード流量が発生します (1ノード上限 200 MB)。実行しますか? [y/N] ",
+        "speed_ask": "速度テストはダウンロード流量が発生します (1ノード上限 200 MB)。実行しますか? [y/n] (Enter=スキップ): ",
         "speed_skipped": "速度テストをスキップしました",
         "speed_traffic": "このセクションのダウンロード合計: 約 {mb} MB",
-        "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の17地域とは異なります)",
+        "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の28地域とは異なります)",
         "diag_speed_testing": "プロキシのスループットを測定中 (地域別ノード)…",
         "diag_speed_ok": "最速: %s · ダウンロード %.1f Mbps",
         "diag_speed_fail": "スループット測定に失敗",
@@ -1081,10 +1090,10 @@ STR = {
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
         "speed_note": "※ Пиковая пропускная способность в несколько потоков; отличается от одиночной загрузки, только для справки",
-        "speed_ask": "Тест скорости скачивает данные (лимит 200 МБ на узел). Выполнить? [y/N] ",
+        "speed_ask": "Тест скорости скачивает данные (лимит 200 МБ на узел). Выполнить? [y/n] (Enter — пропуск): ",
         "speed_skipped": "Тест скорости пропущен",
         "speed_traffic": "Всего скачано в этом разделе: около {mb} МБ",
-        "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 17 регионам IPv4",
+        "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 28 регионам IPv4",
         "diag_speed_testing": "Измерение пропускной способности прокси (региональные узлы)…",
         "diag_speed_ok": "Быстрее всего: %s · Загрузка %.1f Mbps",
         "diag_speed_fail": "Тест пропускной способности не удался",
@@ -1310,10 +1319,10 @@ STR = {
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
         "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
-        "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره). اجرا شود؟ [y/N] ",
+        "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره). اجرا شود؟ [y/n] (Enter = رد کردن): ",
         "speed_skipped": "تست سرعت رد شد",
         "speed_traffic": "مجموع دانلود این بخش: حدود {mb} مگابایت",
-        "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۱۷ منطقهٔ IPv4",
+        "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۲۸ منطقهٔ IPv4",
         "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (گره‌های منطقه‌ای)…",
         "diag_speed_ok": "سریع‌ترین: %s · دانلود %.1f Mbps",
         "diag_speed_fail": "تست توان ناموفق بود",
@@ -2116,7 +2125,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.1 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.2 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2586,6 +2595,352 @@ class SpamhausDROP(Provider):
 # ============================================================
 # 多源画像融合与评分体系 (6 语言完整规则说明，零 Key 残留)
 # ============================================================
+@register
+class IPLocate(Provider):
+    key = "iplocate"
+    name = "iplocate.io"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://iplocate.io/api/lookup/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if not d.get("country"):
+                return {"ok": False, "err": "empty response"}
+            asn = d.get("asn") or {}
+            pv = d.get("privacy") or {}
+            ho = d.get("hosting") or {}
+            return {
+                "ok": True,
+                "country": d.get("country", ""), "country_code": d.get("country_code", ""),
+                "region": d.get("subdivision", ""), "city": d.get("city", ""),
+                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
+                "timezone": d.get("time_zone", ""),
+                "asn": asn.get("asn", ""), "asn_type": asn.get("type", ""),
+                "isp": asn.get("name", ""), "org": asn.get("name", ""),
+                "proxy": pv.get("is_proxy"), "vpn": pv.get("is_vpn"),
+                "tor": pv.get("is_tor"), "hosting": pv.get("is_hosting"),
+                "is_abuser": pv.get("is_abuser"),
+                "is_anycast": d.get("is_anycast"), "is_satellite": d.get("is_satellite"),
+                "is_icloud_relay": pv.get("is_icloud_relay"),
+                "cloud_provider": ho.get("provider", ""),
+                "network": ho.get("network") or asn.get("route", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IPQuery(Provider):
+    key = "ipquery"
+    name = "ipquery.io"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.ipquery.io/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            loc = d.get("location") or {}
+            isp = d.get("isp") or {}
+            risk = d.get("risk") or {}
+            if not loc.get("country"):
+                return {"ok": False, "err": "empty response"}
+            return {
+                "ok": True,
+                "country": loc.get("country", ""), "country_code": loc.get("country_code", ""),
+                "region": loc.get("state", ""), "city": loc.get("city", ""),
+                "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
+                "timezone": loc.get("timezone", ""),
+                "asn": isp.get("asn", ""), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
+                "proxy": risk.get("is_proxy"), "vpn": risk.get("is_vpn"),
+                "tor": risk.get("is_tor"), "datacenter": risk.get("is_datacenter"),
+                "mobile": risk.get("is_mobile"), "risk_score": risk.get("risk_score"),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IpapiCo(Provider):
+    key = "ipapico"
+    name = "ipapi.co"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://ipapi.co/{ip}/json/", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if d.get("error") or not d.get("country_name"):
+                return {"ok": False, "err": str(d.get("reason", "error"))[:60]}
+            return {
+                "ok": True,
+                "country": d.get("country_name", ""), "country_code": d.get("country_code", ""),
+                "region": d.get("region", ""), "city": d.get("city", ""),
+                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
+                "timezone": d.get("timezone", ""),
+                "asn": d.get("asn", ""), "org": d.get("org", ""), "isp": d.get("org", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class TwoIp(Provider):
+    key = "twoip"
+    name = "2ip.io"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.2ip.io/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            asn = d.get("asn") or {}
+            if not d.get("country"):
+                return {"ok": False, "err": "empty response"}
+            return {
+                "ok": True,
+                "country": d.get("country", ""), "country_code": d.get("code", ""),
+                "region": d.get("region", ""), "city": d.get("city", ""),
+                "latitude": d.get("lat"), "longitude": d.get("lon"),
+                "timezone": d.get("timezone", ""),
+                "asn": asn.get("id"), "isp": asn.get("name", ""),
+                "hosting": asn.get("hosting"),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class OTX(Provider):
+    key = "otx"
+    name = "AlienVault OTX"
+
+    def check(self, ip):
+        try:
+            ver = ipaddress.ip_address(ip).version
+        except Exception:
+            ver = 4
+        ok, raw = http_get(
+            f"https://otx.alienvault.com/api/v1/indicators/IPv{ver}/{ip}/general",
+            use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if "reputation" not in d and "pulse_info" not in d:
+                return {"ok": False, "err": "unexpected response"}
+            cloud = ""
+            for v in d.get("validation") or []:
+                msg = str(v.get("message", ""))
+                if "provider=" in msg:
+                    cloud = msg.split("provider=")[-1].strip()
+            return {
+                "ok": True,
+                "reputation": d.get("reputation", 0),
+                "pulses": (d.get("pulse_info") or {}).get("count", 0),
+                "cloud_provider": cloud,
+                "country": d.get("country_name", ""), "city": d.get("city", ""),
+                "asn": d.get("asn", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class BlocklistDE(Provider):
+    key = "blocklistde"
+    name = "blocklist.de"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.blocklist.de/api.php?ip={ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            ma = re.search(r"attacks:\s*(\d+)", raw)
+            mr = re.search(r"reports:\s*(\d+)", raw)
+            if not ma and not mr:
+                return {"ok": False, "err": "unexpected response"}
+            return {
+                "ok": True,
+                "attacks": int(ma.group(1)) if ma else 0,
+                "reports": int(mr.group(1)) if mr else 0,
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class RDAP(Provider):
+    key = "rdap"
+    name = "RDAP (RIR)"
+
+    def check(self, ip):
+        d = None
+        for base in ("https://rdap.arin.net/registry/ip/",
+                     "https://rdap.db.ripe.net/ip/"):
+            ok, raw = http_get(base + ip, use_cache=False)
+            if not ok:
+                continue
+            try:
+                cand = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(cand, dict) and cand.get("name"):
+                d = cand
+                break
+        if d is None:
+            return {"ok": False, "err": "no rdap record"}
+        cidr = ""
+        for c in d.get("cidr0_cidrs") or []:
+            pfx = c.get("v4prefix") or c.get("v6prefix")
+            if pfx:
+                cidr = f"{pfx}/{c.get('length')}"
+                break
+        org = ""
+        for e in d.get("entities") or []:
+            if "registrant" in (e.get("roles") or []) or e.get("handle"):
+                org = e.get("handle", "")
+                if org:
+                    break
+        return {
+            "ok": True,
+            "netname": d.get("name", ""), "org": org,
+            "country": d.get("country", ""), "cidr": cidr,
+            "ts": now_iso(),
+        }
+
+
+@register
+class IPsum(Provider):
+    key = "ipsum"
+    name = "IPsum"
+
+    def check(self, ip):
+        def _parse(raw):
+            out = {}
+            for line in raw.splitlines():
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        out[parts[0]] = int(parts[1])
+                    except ValueError:
+                        pass
+            return out
+
+        lst = _get_threat_list(
+            "ipsum",
+            "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt",
+            _parse)
+        if lst is None:
+            return {"ok": False, "err": "list download failed"}
+        level = lst.get(str(ip), 0)
+        return {"ok": True, "listed": level > 0, "level": level, "ts": now_iso()}
+
+
+@register
+class X4BNetVPN(Provider):
+    key = "x4bvpn"
+    name = "X4BNet VPN Ranges"
+
+    def check(self, ip):
+        def _parse(raw):
+            nets = []
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    nets.append(ipaddress.ip_network(line, strict=False))
+                except ValueError:
+                    pass
+            return nets
+
+        try:
+            addr = ipaddress.ip_address(ip)
+        except Exception:
+            return {"ok": False, "err": "bad ip"}
+        nets = _get_threat_list(
+            f"x4bvpn{addr.version}",
+            f"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv{addr.version}.txt",
+            _parse)
+        if nets is None:
+            return {"ok": False, "err": "list download failed"}
+        listed = any(addr in n for n in nets if n.version == addr.version)
+        return {"ok": True, "listed": listed, "ts": now_iso()}
+
+
+@register
+class HackerTarget(Provider):
+    key = "hackertarget"
+    name = "HackerTarget"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.hackertarget.com/geoip/?q={ip}", use_cache=False)
+        if not ok or "Country:" not in raw:
+            return {"ok": False, "err": raw if not ok else "unexpected response"}
+        try:
+            kv = {}
+            for line in raw.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    kv[k.strip().lower()] = v.strip()
+            asn = prefix = netname = ""
+            ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={ip}",
+                                 use_cache=False)
+            if ok2:
+                parts = [p.strip() for p in raw2.strip().strip('"').split('","')]
+                if len(parts) >= 4:
+                    asn, prefix, netname = parts[1], parts[2], parts[3]
+            def _f(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return None
+
+            def _s(x):
+                return "" if x in (None, "None", "N/A") else x
+            return {
+                "ok": True,
+                "country": _s(kv.get("country", "")), "region": _s(kv.get("state", "")),
+                "city": _s(kv.get("city", "")),
+                "latitude": _f(kv.get("latitude")), "longitude": _f(kv.get("longitude")),
+                "asn": asn, "prefix": prefix, "netname": netname,
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class CountryIs(Provider):
+    key = "countryis"
+    name = "country.is"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.country.is/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if not d.get("country"):
+                return {"ok": False, "err": "empty response"}
+            return {"ok": True, "country_code": d.get("country", ""), "ts": now_iso()}
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
 def _build_unified_profile(s):
     """多源融合兜底：消除 ipwho.is 单点故障，自动从 ipinfo/proxycheck/dbip/freeipapi/ripestat 补齐。"""
     wi = s.get("ipwhois", {}) if s.get("ipwhois", {}).get("ok") else {}
@@ -2598,17 +2953,24 @@ def _build_unified_profile(s):
     ai = s.get("ipapiis", {}) if s.get("ipapiis", {}).get("ok") else {}
     gu = s.get("ipguide", {}) if s.get("ipguide", {}).get("ok") else {}
     gj = s.get("geojs", {}) if s.get("geojs", {}).get("ok") else {}
+    il = s.get("iplocate", {}) if s.get("iplocate", {}).get("ok") else {}
+    iq = s.get("ipquery", {}) if s.get("ipquery", {}).get("ok") else {}
+    co = s.get("ipapico", {}) if s.get("ipapico", {}).get("ok") else {}
+    ti = s.get("twoip", {}) if s.get("twoip", {}).get("ok") else {}
+    ox = s.get("otx", {}) if s.get("otx", {}).get("ok") else {}
+    ht = s.get("hackertarget", {}) if s.get("hackertarget", {}).get("ok") else {}
+    ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or ""
-    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or ""
-    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or ""
+    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ""
+    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or ""
+    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
     except (ValueError, TypeError):
         asn = None
-    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or wa.get("country") or ai.get("country") or gu.get("country") or gj.get("country") or ""
-    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or ""
-    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or ""
+    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or wa.get("country") or ai.get("country") or gu.get("country") or gj.get("country") or il.get("country") or iq.get("country") or co.get("country") or ti.get("country") or ht.get("country") or ox.get("country") or ""
+    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or ""
+    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ""
 
     return {
         "ok": bool(isp or org or country or asn),
@@ -2616,18 +2978,18 @@ def _build_unified_profile(s):
         "org": org,
         "asn": _parse_asn(asn),
         "country": country,
-        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or "",
+        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or "",
         "region": region,
         "city": city,
-        "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude"),
-        "longitude": wi.get("longitude") or wa.get("longitude") or ai.get("longitude") or gu.get("longitude") or gj.get("longitude"),
-        "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or "",
+        "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude") or il.get("latitude") or iq.get("latitude") or co.get("latitude") or ti.get("latitude") or ht.get("latitude"),
+        "longitude": wi.get("longitude") or wa.get("longitude") or ai.get("longitude") or gu.get("longitude") or gj.get("longitude") or il.get("longitude") or iq.get("longitude") or co.get("longitude") or ti.get("longitude") or ht.get("longitude"),
+        "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or il.get("timezone") or iq.get("timezone") or co.get("timezone") or ti.get("timezone") or "",
     }
 
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.1 免 Key 公开版):
+评分规则 (v4.14.2 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2659,7 +3021,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.1 免 Key 公開版):
+評分規則 (v4.14.2 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2691,7 +3053,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.1 Keyless Public Edition):
+Scoring rules (v4.14.2 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2724,7 +3086,7 @@ Scoring rules (v4.14.1 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.1 キー不要公開版):
+スコアリングルール (v4.14.2 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2756,7 +3118,7 @@ Scoring rules (v4.14.1 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.1 Публичная версия без ключей):
+Правила оценки (v4.14.2 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2788,7 +3150,7 @@ Scoring rules (v4.14.1 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.1):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.2):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3070,7 +3432,7 @@ def run_passive(ip):
             pass
         return p.key, res
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
+    with ThreadPoolExecutor(max_workers=14) as ex:
         for k, v in ex.map(_query_one, avail_providers):
             sources[k] = v
 
@@ -3573,6 +3935,22 @@ def _print_basic_block(s, prof):
     if igd.get("ok") and (igd.get("country") or igd.get("city")):
         locs.append(("ip.guide", f"{igd.get('country')} {igd.get('city')}".strip(),
                      igd.get("country"), igd.get("city")))
+    ilc = s.get("iplocate", {})
+    if ilc.get("ok") and (ilc.get("country") or ilc.get("city")):
+        locs.append(("iplocate.io", f"{ilc.get('country')} {ilc.get('region')} {ilc.get('city')}".strip(),
+                     ilc.get("country"), ilc.get("city")))
+    iqc = s.get("ipquery", {})
+    if iqc.get("ok") and (iqc.get("country") or iqc.get("city")):
+        locs.append(("ipquery.io", f"{iqc.get('country')} {iqc.get('region')} {iqc.get('city')}".strip(),
+                     iqc.get("country"), iqc.get("city")))
+    coc = s.get("ipapico", {})
+    if coc.get("ok") and (coc.get("country") or coc.get("city")):
+        locs.append(("ipapi.co", f"{coc.get('country')} {coc.get('region')} {coc.get('city')}".strip(),
+                     coc.get("country"), coc.get("city")))
+    tic = s.get("twoip", {})
+    if tic.get("ok") and (tic.get("country") or tic.get("city")):
+        locs.append(("2ip.io", f"{tic.get('country')} {tic.get('region')} {tic.get('city')}".strip(),
+                     tic.get("country"), tic.get("city")))
     gjs = s.get("geojs", {})
     if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
         locs.append(("GeoJS", f"{gjs.get('country')} {gjs.get('region')} {gjs.get('city')}".strip(),
@@ -3754,6 +4132,13 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     sp = s.get("spamhaus", {})
     te = s.get("tor_exit", {})
     ia = s.get("ipapi", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    ti = s.get("twoip", {})
+    xv = s.get("x4bvpn", {})
+    isum = s.get("ipsum", {})
+    bd = s.get("blocklistde", {})
+    ox = s.get("otx", {})
 
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
@@ -3798,6 +4183,38 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         ("ip-api.com", [
             _hit(ia, bool(ia.get("proxy"))),
             _NA, _NA, _NA, _NA, _NA]),
+        ("iplocate.io", [
+            _hit(il, bool(il.get("proxy"))),
+            _hit(il, bool(il.get("vpn"))),
+            _hit(il, bool(il.get("tor"))),
+            _hit(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting"),
+            _NA,
+            _hit(il, bool(il.get("is_abuser")))]),
+        ("ipquery.io", [
+            _hit(iq, bool(iq.get("proxy"))),
+            _hit(iq, bool(iq.get("vpn"))),
+            _hit(iq, bool(iq.get("tor"))),
+            _hit(iq, bool(iq.get("datacenter"))),
+            _NA, _NA]),
+        ("2ip.io", [
+            _NA, _NA, _NA,
+            _hit(ti, bool(ti.get("hosting"))),
+            _NA, _NA]),
+        ("X4BNet VPN", [
+            _NA,
+            _hit(xv, bool(xv.get("listed"))),
+            _NA, _NA, _NA, _NA]),
+        ("IPsum", [
+            _NA, _NA, _NA, _NA,
+            _hit(isum, (isum.get("level") or 0) >= 2),
+            _NA]),
+        ("blocklist.de", [
+            _NA, _NA, _NA, _NA,
+            _hit(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
+            _NA]),
+        ("OTX", [
+            _NA, _NA, _NA, _NA, _NA,
+            _hit(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
     ]
     # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
@@ -3870,7 +4287,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 # 主动检测 (流媒体/邮局/DNSBL/测速)
 # ============================================================
 # ============================================================
-# IPv6 被动查询 (v4.14.1): 前缀/运营商粒度, 不合成总分
+# IPv6 被动查询 (v4.14.2): 前缀/运营商粒度, 不合成总分
 # 纳入源经实测验证 (2026-10-21 逐源探针); 排除:
 #   greynoise 官方 API 仅接受 IPv4; sansisc 对 v6 返回与地址无关的常量;
 #   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
@@ -3879,7 +4296,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapi", "ipapiis", "ipinfo",
                     "freeipapi", "dbip", "geojs", "ipguide", "ripestat",
                     "scamalytics", "proxycheck", "spamhaus", "shodan_idb",
-                    "ptr")
+                    "ptr", "iplocate", "ipquery", "ipapico", "twoip", "otx",
+                    "rdap", "hackertarget", "x4bvpn", "countryis")
 
 
 def run_passive6(ip):
@@ -3989,7 +4407,25 @@ def print_report6(res, embedded=False):
                 _ts6.append(("ipwho.is", T("residential")))
             else:
                 _ts6.append(("ipwho.is", T("unknown")))
-    elif prof.get("ok"):
+    _il6 = s.get("iplocate", {})
+    if _il6.get("ok"):
+        if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
+            _ts6.append(("iplocate.io", T("dc")))
+        elif _il6.get("asn_type") == "isp":
+            _ts6.append(("iplocate.io", T("residential")))
+        else:
+            _ts6.append(("iplocate.io", T("unknown")))
+    _iq6 = s.get("ipquery", {})
+    if _iq6.get("ok"):
+        if _iq6.get("datacenter"):
+            _ts6.append(("ipquery.io", T("dc")))
+        elif _iq6.get("mobile"):
+            _ts6.append(("ipquery.io", T("unknown")))
+        else:
+            _ts6.append(("ipquery.io", T("residential")
+                         if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
+                         else T("unknown")))
+    if not _wi6.get("ok") and prof.get("ok"):
         _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if _dc6:
             _ts6.append(("Heuristic", T("dc")))
@@ -4076,6 +4512,10 @@ def print_report6(res, embedded=False):
         print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
     else:
         print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+    _iq6s = s.get("ipquery", {})
+    if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
+        _v = _iq6s["risk_score"]
+        print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
     if sp.get("ok"):
         _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
                 else _c(C.green, T("v6_not_listed")))
@@ -4105,7 +4545,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.2 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4580,24 +5020,39 @@ SPEED_REGIONS = [
     ("KR Seoul", "sel-kor-ping.vultr.com"),
     ("SG Singapore", "sgp-ping.vultr.com"),
     ("IN Mumbai", "bom-in-ping.vultr.com"),
+    ("IN Bangalore", "blr-in-ping.vultr.com"),
+    ("IN Delhi", "del-in-ping.vultr.com"),
     ("AU Sydney", "syd-au-ping.vultr.com"),
+    ("AU Melbourne", "mel-au-ping.vultr.com"),
     ("UK London", "lon-gb-ping.vultr.com"),
     ("FR Paris", "par-fr-ping.vultr.com"),
+    ("ES Madrid", "mad-es-ping.vultr.com"),
     ("DE Frankfurt", "fra-de-ping.vultr.com"),
     ("NL Amsterdam", "ams-nl-ping.vultr.com"),
+    ("PL Warsaw", "waw-pl-ping.vultr.com"),
+    ("SE Stockholm", "sto-se-ping.vultr.com"),
     ("CA Toronto", "tor-ca-ping.vultr.com"),
     ("US New Jersey", "nj-us-ping.vultr.com"),
+    ("US Miami", "fl-us-ping.vultr.com"),
+    ("US Atlanta", "ga-us-ping.vultr.com"),
     ("US Chicago", "il-us-ping.vultr.com"),
     ("US Dallas", "tx-us-ping.vultr.com"),
     ("US Seattle", "wa-us-ping.vultr.com"),
+    ("US Silicon Valley", "sjo-ca-us-ping.vultr.com"),
     ("US Los Angeles", "lax-ca-us-ping.vultr.com"),
+    ("BR São Paulo", "sao-br-ping.vultr.com"),
+    ("MX Mexico City", "mex-mx-ping.vultr.com"),
     ("ZA Johannesburg", "jnb-za-ping.vultr.com"),
 ]
 _SPEED_FILE = "/vultr.com.100MB.bin"
-# IPv6 测速端点: 上方 17 个 Vultr 节点无 AAAA 记录 (实测 0/17), v6 只测真双栈端点
+# IPv6 测速端点: 上方 Vultr 节点基本无 AAAA (仅 Warsaw 有记录但 v6 下载未验通), v6 只测真双栈端点
 SPEED6_ENDPOINTS = [
     ("Global Cloudflare", "speed.cloudflare.com",
      "https://speed.cloudflare.com/__down?bytes=30000000"),
+    ("AU Sydney", "syd1-sy2.speedtest.network.ovh.net",
+     "https://syd1-sy2.speedtest.network.ovh.net/files/100Mb.dat"),
+    ("SG Singapore", "sin-speed.hetzner.com",
+     "https://sin-speed.hetzner.com/100MB.bin"),
     ("FR OVH", "proof.ovh.net", "https://proof.ovh.net/files/100Mb.dat"),
     ("DE Falkenstein", "fsn1-speed.hetzner.com",
      "https://fsn1-speed.hetzner.com/100MB.bin"),
@@ -4607,6 +5062,12 @@ SPEED6_ENDPOINTS = [
      "https://hel1-speed.hetzner.com/100MB.bin"),
     ("UK London", "download.thinkbroadband.com",
      "https://download.thinkbroadband.com/100MB.zip"),
+    ("NL Serverius", "speedtest1.serverius.net",
+     "https://speedtest1.serverius.net/files/100mb.bin"),
+    ("US Ashburn", "ash-speed.hetzner.com",
+     "https://ash-speed.hetzner.com/100MB.bin"),
+    ("US Hillsboro", "hil-speed.hetzner.com",
+     "https://hil-speed.hetzner.com/100MB.bin"),
 ]
 
 
@@ -4688,6 +5149,18 @@ DNS_SERVERS_PLAIN = [
     ("Level3", ["4.2.2.1", "4.2.2.2"]),
     ("Verisign", ["64.6.64.6", "64.6.65.6"]),
     ("Shecan", ["178.22.122.100", "185.51.200.2"]),
+    ("CleanBrowsing", ["185.228.168.9", "185.228.169.9"]),
+    ("CZ.NIC", ["185.43.135.1", "217.31.204.1"]),
+    ("DNS.SB", ["185.222.222.222", "45.11.45.11"]),
+    ("Hurricane", ["74.82.42.42"]),
+    ("HiNet", ["168.95.1.1", "168.95.192.1"]),
+    ("SafeDNS", ["195.46.39.39", "195.46.39.40"]),
+    ("Cloudflare Sec", ["1.1.1.2", "1.0.0.2"]),
+    ("Cloudflare Fam", ["1.1.1.3", "1.0.0.3"]),
+    ("Quad9 ECS", ["9.9.9.11", "149.112.112.11"]),
+    ("NextDNS", ["45.90.28.0", "45.90.30.0"]),
+    ("ControlD", ["76.76.2.0", "76.76.10.0"]),
+    ("Mullvad", ["194.242.2.2", "194.242.2.3"]),
 ]
 
 DNS_SERVERS_DOH = [
@@ -4698,6 +5171,15 @@ DNS_SERVERS_DOH = [
     ("AliDNS-DoH", "https://dns.alidns.com/dns-query"),
     ("DNSPod-DoH", "https://doh.pub/dns-query"),
     ("AdGuard-DoH", "https://dns.adguard-dns.com/dns-query"),
+    ("Wikimedia-DoH", "https://wikimedia-dns.org/dns-query"),
+    ("ControlD-DoH", "https://freedns.controld.com/p0"),
+    ("CleanBrowsing-DoH", "https://doh.cleanbrowsing.org/doh/family-filter/"),
+    ("LibreDNS-DoH", "https://doh.libredns.gr/dns-query"),
+    ("OpenDNS-DoH", "https://doh.opendns.com/dns-query"),
+    ("DNS.SB-DoH", "https://doh.dns.sb/dns-query"),
+    ("NextDNS-DoH", "https://dns.nextdns.io/dns-query"),
+    ("Cloudflare Sec-DoH", "https://security.cloudflare-dns.com/dns-query"),
+    ("Cloudflare Fam-DoH", "https://family.cloudflare-dns.com/dns-query"),
 ]
 
 DNS_SERVERS_DOT = [
@@ -4706,6 +5188,13 @@ DNS_SERVERS_DOT = [
     ("Quad9-DoT", "9.9.9.9", "dns.quad9.net"),
     ("AliDNS-DoT", "223.5.5.5", "dns.alidns.com"),
     ("AdGuard-DoT", "94.140.14.14", "dns.adguard-dns.com"),
+    ("Mullvad-DoT", "194.242.2.2", "dns.mullvad.net"),
+    ("NextDNS-DoT", "45.90.28.0", "dns.nextdns.io"),
+    ("Quad9 ECS-DoT", "9.9.9.11", "dns11.quad9.net"),
+    ("Cloudflare Sec-DoT", "1.1.1.2", "security.cloudflare-dns.com"),
+    ("Cloudflare Fam-DoT", "1.1.1.3", "family.cloudflare-dns.com"),
+    ("CleanBrowsing-DoT", "185.228.168.9", "doh.cleanbrowsing.org"),
+    ("CZ.NIC-DoT", "185.43.135.1", "odvr.nic.cz"),
 ]
 
 
@@ -4793,7 +5282,7 @@ def test_dns_servers(timeout=3):
         return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
 
     res = {"plain": [], "doh": [], "dot": []}
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    with ThreadPoolExecutor(max_workers=24) as ex:
         plain_futs = [ex.submit(_tp, n, ips[0]) for n, ips in DNS_SERVERS_PLAIN]
         doh_futs = [ex.submit(_th, n, u) for n, u in DNS_SERVERS_DOH]
         dot_futs = [ex.submit(_tt, n, ip, sni) for n, ip, sni in DNS_SERVERS_DOT]
@@ -4841,6 +5330,131 @@ def print_dns_test(results=None):
         )
     print()
     return results
+
+
+# 公共解析器的 IPv6 地址 (名称, IPv6 地址, DoT SNI)
+DNS_SERVERS_V6 = [
+    ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com"),
+    ("Google", "2001:4860:4860::8888", "dns.google"),
+    ("Quad9", "2620:fe::fe", "dns.quad9.net"),
+    ("AdGuard", "2a10:50c0::ad1:ff", "dns.adguard-dns.com"),
+    ("OpenDNS", "2620:0:ccc::2", "dns.opendns.com"),
+    ("AliDNS", "2400:3200::1", "dns.alidns.com"),
+    ("DNSPod", "2402:4e00::", "dot.pub"),
+    ("Mullvad", "2a07:e340::2", "dns.mullvad.net"),
+    ("NextDNS", "2a07:a8c1::", "dns.nextdns.io"),
+    ("CZ.NIC", "2001:148f:ffff::1", "odvr.nic.cz"),
+    ("ControlD", "2606:1a40::22", "dns.controld.com"),
+    ("DNS.SB", "2a09::", "doh.dns.sb"),
+    ("Quad9 ECS", "2620:fe::11", "dns11.quad9.net"),
+]
+
+
+def test_dns_servers6(timeout=3):
+    """IPv6 通道 DNS 测试: 对公共解析器的 IPv6 地址钉栈测 UDP53 与 DoT853,
+    报文与判定与 test_dns_servers 相同, 仅传输走 IPv6。"""
+    def _bq():
+        tid = random.randint(1, 65534)
+        hdr = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
+        qn = _encode_dns_name("google.com")
+        return tid, hdr + qn + struct.pack(">HH", 1, 1)
+
+    def _ok(d, tid):
+        return len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid \
+            and (d[3] & 0x0F) == 0
+
+    def _tp6(name, ip):
+        sk = None
+        try:
+            tid, pkt = _bq()
+            sk = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            sk.settimeout(timeout)
+            t0 = time.time()
+            sk.sendto(pkt, (ip, 53))
+            d, _ = sk.recvfrom(512)
+            rtt = round((time.time() - t0) * 1000, 1)
+            if _ok(d, tid):
+                return {"name": name, "ip": ip, "proto": "UDP53",
+                        "ok": True, "rtt_ms": rtt}
+        except Exception:
+            pass
+        finally:
+            if sk is not None:
+                try:
+                    sk.close()
+                except Exception:
+                    pass
+        return {"name": name, "ip": ip, "proto": "UDP53",
+                "ok": False, "rtt_ms": None}
+
+    def _tt6(name, ip, sni):
+        sk = None
+        ss = None
+        try:
+            tid, pkt = _bq()
+            fr = struct.pack(">H", len(pkt)) + pkt
+            ctx = ssl.create_default_context()
+            sk = socket.create_connection((ip, 853), timeout=timeout)
+            ss = ctx.wrap_socket(sk, server_hostname=sni)
+            t0 = time.time()
+            ss.sendall(fr)
+            len_bytes = ss.recv(2)
+            if len(len_bytes) < 2:
+                return {"name": name, "ip": ip, "proto": "DoT853",
+                        "ok": False, "rtt_ms": None}
+            rl = struct.unpack(">H", len_bytes)[0]
+            d = b""
+            while len(d) < rl:
+                chunk = ss.recv(rl - len(d))
+                if not chunk:
+                    break
+                d += chunk
+            rtt = round((time.time() - t0) * 1000, 1)
+            if _ok(d, tid):
+                return {"name": name, "ip": ip, "proto": "DoT853",
+                        "ok": True, "rtt_ms": rtt}
+        except Exception:
+            pass
+        finally:
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
+        return {"name": name, "ip": ip, "proto": "DoT853",
+                "ok": False, "rtt_ms": None}
+
+    res = {"plain6": [], "dot6": []}
+    with ThreadPoolExecutor(max_workers=14) as ex:
+        plain_futs = [ex.submit(_tp6, n, ip) for n, ip, _ in DNS_SERVERS_V6]
+        dot_futs = [ex.submit(_tt6, n, ip, sni) for n, ip, sni in DNS_SERVERS_V6]
+        for f in plain_futs:
+            res["plain6"].append(f.result())
+        for f in dot_futs:
+            res["dot6"].append(f.result())
+    for k in res:
+        res[k].sort(key=lambda x: (not x["ok"], x["rtt_ms"] or 9999))
+    return res
+
+
+def print_dns6_test(results):
+    """渲染 IPv6 通道 DNS 结果 (挂在 [5] 段内, 不另起章节头)。"""
+    titles = {
+        "plain6": "IPv6 通道 DNS (UDP 53)" if LANG in ("zh", "zh-TW")
+                  else "IPv6 DNS (UDP 53)",
+        "dot6": "IPv6 DNS over TLS (853)",
+    }
+    for key in ("plain6", "dot6"):
+        lst = results[key]
+        ok_list = [r for r in lst if r["ok"]]
+        fail_list = [r for r in lst if not r["ok"]]
+        print(f"\n  {_c(C.bold, titles[key])} ({len(ok_list)}/{len(lst)})")
+        for r in ok_list:
+            print(f"    {_c(C.green, '✓')} {r['name']:12} {r['ip']:40} {r['rtt_ms']:6.1f}ms")
+        for r in fail_list:
+            print(f"    {_c(C.red, '✗')} {r['name']:12} {r['ip']:40}")
+    print()
 
 
 DNS_COUNTRY_DB = {
@@ -4994,7 +5608,7 @@ def print_speed_section(json_mode=False, family=0, gated=False):
     print(f"  {_c(C.yellow, T('speed_note'))}")
     _total_mb = sum(r.get("dl_bytes", 0) for r in rows) / 1e6
     if _total_mb >= 0.5:
-        print(f"  {_c(C.dim, T('speed_traffic').format(mb=int(round(_total_mb))))}")
+        print(f"  {_c(C.yellow, T('speed_traffic').format(mb=int(round(_total_mb))))}")
     return rows
 
 
@@ -5420,10 +6034,15 @@ def _run_active6(json_mode, egress6):
         print_report6(res6)
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
+    dns6_res = test_dns_servers6()
+    if not json_mode:
+        _section(T("sec_dns"))
+        print_dns6_test(dns6_res)
     speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
     out = {"ip": egress6, "ipv6": True,
            "active": {"egress_ipv6": egress6, "ipv6_report": res6,
-                      "streaming_ipv6": streaming6, "speed_ipv6": speed6}}
+                      "streaming_ipv6": streaming6, "speed_ipv6": speed6,
+                      "dns_ipv6": dns6_res}}
     if json_mode:
         print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
     return out
@@ -5502,6 +6121,11 @@ def run_active(json_mode=False, stack=None):
         dns_res = print_dns_test(None)
     else:
         dns_res = test_dns_servers()
+    dns6_res = None
+    if egress6:
+        dns6_res = test_dns_servers6()
+        if not json_mode:
+            print_dns6_test(dns6_res)
 
     mx_domains = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
     with ThreadPoolExecutor(max_workers=4) as ex:
@@ -5592,6 +6216,7 @@ def run_active(json_mode=False, stack=None):
         res["active"]["ipv6_report"] = res6
         res["active"]["streaming_ipv6"] = streaming6_json
         res["active"]["speed_ipv6"] = speed6_res
+        res["active"]["dns_ipv6"] = dns6_res
 
     if json_mode:
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))

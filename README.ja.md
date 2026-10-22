@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.1-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.2-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@ IPv6 レポート（プレフィックス粒度：地理 / ASN / 種別 / ソー
 
 ## 概要
 
-A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準ライブラリのみ・外部依存ゼロ）で、IP アドレスの**レピュテーションとクリーン度**を評価し、自機ネットワークの**出口品質**をチェックします。22 の公開データソースへ照会し、相互に検証して 1 つのレポートにまとめます。スコアはすべて複数ソースの集約であり、単一ソースで結論は決まりません。
+A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準ライブラリのみ・外部依存ゼロ）で、IP アドレスの**レピュテーションとクリーン度**を評価し、自機ネットワークの**出口品質**をチェックします。33 の公開データソースへ照会し、相互に検証して 1 つのレポートにまとめます。スコアはすべて複数ソースの集約であり、単一ソースで結論は決まりません。
 
 ## デュアルモード
 
@@ -81,7 +81,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 | 9 | TCP レイテンシテスト | 任意の host:port への遅延 / ジッタ / パケットロス（min / avg / max） |
 | 10 | スコアリングルール | スコア次元、減点項目、レベル区分の完全な説明 |
 | 11 | ノード一括スピード優選 | 複数の host:port や SOCKS5 プロキシを貼り付け、遅延と可用性を並行測定。ランキング表示、最良ノードを緑色表示し、そのプロキシの実測ダウンロード速度も表示 |
-| 12 | ネットワーク速度（地域別） | 17 地域ノードのダウンロード表（複数接続ピーク方式）、自機の上下速度付き |
+| 12 | ネットワーク速度（地域別） | 28 地域ノードのダウンロード表（複数接続ピーク方式）、自機の上下速度付き |
 
 ストリーミング実測は 18 プラットフォームに対応：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、動画（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、SNS その他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub）。ネイティブ解錠と DNS 解錠（Smart DNS）を区別します。
 
@@ -97,17 +97,17 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.1/A-Check-v4.14.1-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.2/A-Check-v4.14.2-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
@@ -154,9 +154,9 @@ python3 acheck.py [IP] [オプション]
 
 マルチソース集約・ソース明記。主なもの：
 
-- **地理と帰属**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、PTR/FCrDNS 逆引き
-- **レピュテーションと詐欺**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io
-- **脅威とリスト**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口ノードリスト
+- **地理と帰属**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 逆引き
+- **レピュテーションと詐欺**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
+- **脅威とリスト**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口ノードリスト、IPsum、X4BNet VPN ranges
 
 すべての因子とスコアは複数ソースの投票で決まります。単一ソースの誤検知だけで結論は決まりません。
 
