@@ -116,6 +116,10 @@ curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o a
 ```
 
 **CDN ミラー：GitHub へ直接つながりにくい地域（中国本土など）向け。単一ファイル版、機能は同一です：**
+gh-proxy（中国本土から直接）：
+```
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 jsDelivr：
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py

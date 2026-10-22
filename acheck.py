@@ -2618,7 +2618,7 @@ SCORING_RULES = {
     Spamhaus DROP 权威滥用名单命中    +25
     Tor 出口节点命中                  +15
   [欺诈评分 0-100]
-    取 Scamalytics 欺诈分与 proxycheck.io 风险分较高者
+    Scamalytics 为主分; proxycheck 风险分 Tor 全额、其余半额计入, 取较高者
   [历史声誉 0-100] 负面历史/关联
     urlscan.io 恶意扫描记录 (上限15)  +N×5
     BGP 前缀存活不足 1.0 年           +10
@@ -2650,7 +2650,7 @@ SCORING_RULES = {
     Spamhaus DROP 權威濫用名單命中    +25
     Tor 出口節點命中                  +15
   [欺詐評分 0-100]
-    取 Scamalytics 欺詐分與 proxycheck.io 風險分較高者
+    Scamalytics 為主分; proxycheck 風險分 Tor 全額、其餘半額計入, 取較高者
   [歷史聲譽 0-100] 負面歷史/關聯
     urlscan.io 惡意掃描記錄 (上限15)  +N×5
     BGP 前綴存活不足 1.0 年           +10
@@ -2682,7 +2682,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Spamhaus DROP listed              +25
     Tor exit node                     +15
   [Fraud 0-100]
-    Max of Scamalytics fraud score and proxycheck.io risk score
+    Scamalytics primary; proxycheck risk counts full for Tor, half otherwise; take the higher
   [Reputation 0-100] Negative history
     urlscan.io malicious records (max 15) +N×5
     BGP prefix < 1.0 year             +10
@@ -2715,7 +2715,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Spamhaus DROP 登録                +25
     Tor 出口ノード                    +15
   [不正スコア 0-100]
-    Scamalytics と proxycheck.io の高い方のスコアを採用
+    Scamalytics を主スコアとし、proxycheck のリスクは Tor の場合に全額、それ以外は半額で計入し、高い方を採用
   [履歴レピュテーション 0-100]
     urlscan.io 悪意ある記録 (最大15)  +N×5
     BGP プレフィックス 1.0年未満      +10
@@ -2747,7 +2747,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Spamhaus DROP регистрация         +25
     Выходной узел Tor                 +15
   [Мошенничество 0-100]
-    Максимум из оценки Scamalytics и риска proxycheck.io
+    Основной — Scamalytics; риск proxycheck: для Tor полностью, иначе вполовину; берётся большее
   [Репутация 0-100] Негативная история
     urlscan.io вредоносные записи (макс. 15) +N×5
     Префикс BGP младше 1.0 года       +10
@@ -2779,7 +2779,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Spamhaus DROP ثبت‌شده             +25
     گره خروجی Tor                     +15
   [امتیاز تقلب 0-100]
-    بیشترین مقدار بین Scamalytics و ریسک proxycheck.io
+    امتیاز اصلی Scamalytics است؛ ریسک proxycheck برای Tor کامل و در غیر این صورت نصف محاسبه می‌شود؛ مقدار بیشتر گرفته می‌شود
   [اعتبار تاریخی 0-100]
     urlscan.io رکوردهای مخرب (حداکثر 15) +N×5
     عمر پیشوند BGP کمتر از 1.0 سال    +10
@@ -2848,6 +2848,9 @@ def score_threat(s):
 
 
 def score_fraud(s):
+    """欺诈分融合口径 (2026-10-22 八样本实测后定): Scamalytics 为主 (行为导向);
+    proxycheck 的 risk 对机房段是类型先验 (普通主机恒 66), 故仅 Tor (名单事实)
+    全额计入, 其余半额计入, 再与主分取较高者。"""
     pts, ev = 0, []
     sc = s.get("scamalytics", {})
     if sc.get("ok"):
@@ -2856,9 +2859,14 @@ def score_fraud(s):
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("risk", 0) > 0:
         r_score = pc["risk"]
-        if r_score > pts:
-            pts = r_score
-        ev.append(f"proxycheck risk {r_score}/100")
+        if pc.get("tor") or (pc.get("type") or "").upper() == "TOR":
+            eff = r_score
+            ev.append(f"proxycheck risk {r_score}/100 (Tor)")
+        else:
+            eff = (r_score + 1) // 2
+            ev.append(f"proxycheck risk {r_score}/100 (halved {eff})")
+        if eff > pts:
+            pts = eff
     return min(pts, 100), ev
 
 

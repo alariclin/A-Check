@@ -116,6 +116,10 @@ curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o a
 ```
 
 **CDN 镜像——GitHub 直连困难的地区（如中国大陆）可用。单文件版，功能完整：**
+gh-proxy（大陆直连）：
+```
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 jsDelivr：
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py

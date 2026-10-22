@@ -116,6 +116,10 @@ curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o a
 ```
 
 **آینهٔ CDN — برای مناطقی که دسترسی مستقیم به GitHub دشوار است (مانند چین). نسخهٔ تک‌فایل، با امکانات کامل:**
+gh-proxy (دسترسی مستقیم از چین):
+```
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 jsDelivr:
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py

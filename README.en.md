@@ -116,6 +116,10 @@ curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o a
 ```
 
 **CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
+gh-proxy (mainland China direct):
+```
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+```
 jsDelivr:
 ```
 curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
