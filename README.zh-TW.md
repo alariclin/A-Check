@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.8-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.10-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -26,7 +26,7 @@
 
 ![主選單](docs/showcase-menu.png)
 
-IP 檢測報告（以公共 DNS 8.8.8.8 為例）：
+IP 檢測報告（示例：AWS 出口 IP）：
 
 ![檢測報告](docs/showcase-report.png)
 
@@ -55,22 +55,22 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 
 ## 報告結構
 
-一份完整報告按編號章節輸出：
+被動報告按編號章節輸出：
 
-- **[1] 基礎資訊** — 歸屬地、ISP / 組織、AS 號；**IP 類型屬性**（機房 / 住宅 / 行動 / 代理 / VPN / Tor 等多源標記）；**地理位置組**（國家碼徽章打頭：位置、多源位置對比、經緯度反查識別、時區、座標、地圖連結）；主動模式附本機系統資訊
+- **[1] 基礎資訊** — 歸屬地、ISP / 組織、AS 號；**IP 類型屬性**（機房 / 住宅 / 行動 / 代理 / VPN / Tor 等多源標記）；**地理位置組**（國家碼徽章打頭：位置、時區、座標、地圖連結、經緯度反查識別、多源位置對比——每個不同結論單獨一行且都帶標題）；主動模式附本機系統資訊
 - **[2] 風險因子** — 代理 / VPN / Tor / 伺服器 / 黑名單 / 惡意紀錄 六個因子逐個給出「命中源占比」進度條，一眼看清哪些來源把該 IP 判為風險
 - **[3] 欺詐與維度評分** — 欺詐評分、威脅行為、歷史信譽、平台相容、綜合評分逐項成條，末行給出**純淨度**與風險等級（分數越低越乾淨）
 - **[4] 串流與平台可用性** — 本機自檢為**實測**解鎖結果；查任意 IP 時為基於信譽訊號的**推測**（明確標註信心度）
 - **[5] DNS 伺服器推薦** — 按 IP 歸屬地推薦就近 DNS（被動模式）
 - **[6] 資料完整度與信心度** — 本次實際拿到多少來源的資料、核心來源是否齊全，據此給出信心度，資料不足時會在報告中如實標註
 
-主動模式另有無編號章節：DNS 洩漏與推薦、25 連接埠連通性、多地區測速表，報告共 8 個章節段落。
+自檢模式同樣按編號輸出：IPv4 為 **[1]–[8]**（串流實測 [4]、完整 DNS 測試（26 個傳統 / 15 個 DoH / 12 個 DoT，帶延遲排名與最快推薦）與推薦 [5]、測速 [6]、25 連接埠與黑名單檢測 [7]、完整度 [8]）；偵測到 IPv6 出口時，其後是雙棧判定與完整的 IPv6 章節 **[9]–[17]**（含逐源信譽訊號的 IPv6 報告、IPv6 DNS 測試（傳統 / DoH / DoT，帶最快推薦）、IPv6 串流與 IPv6 測速），並對比雙出口給出洩漏判定。
 
 ## 主選單 12 項功能
 
 | # | 功能 | 說明 |
 |---|---|---|
-| 1 | 本機自檢 (出口 IP 全檢) | 主動模式全量檢測，結尾附多地區測速 |
+| 1 | 本機自檢 (出口 IP 全檢) | 主動模式全量檢測；有 IPv6 出口時雙棧檢測 |
 | 2 | 查詢任意 IP | 輸入公網 IPv4 或 IPv6 出被動報告，查完自動返回主選單 |
 | 3 | 串流解鎖檢測 | 單獨實測 18 個平台的解鎖狀態 |
 | 4 | 系統資訊與 IO 測試 | 系統 / CPU / 記憶體 / 磁碟資訊與磁碟讀寫測速 |
@@ -97,17 +97,17 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系統（單一檔案，需 Python 3.8+）：
@@ -146,6 +146,7 @@ python3 acheck.py [IP] [選項]
 | `--proxy HOST:PORT` | 代理診斷（可配 `--proxy-user` / `--proxy-pass`） |
 | `--batch 列表` | 批次節點測速優選（逗號分隔 host:port 或 socks5:// 代理） |
 | `--speed` | 多地區測速表 |
+| `--no-speed` | 配合 `--active`：跳過網速測試（互動自檢預設先詢問） |
 | `--explain` | 輸出評分規則說明 |
 | `--json` | 以 JSON 輸出（可與 IP / --active / --proxy 組合） |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | 指定輸出語言 |
@@ -165,6 +166,7 @@ python3 acheck.py [IP] [選項]
 - 被動查詢支援公網 IPv4 與 IPv6；內網 / 保留位址會被拒絕並說明原因。IPv6 為前綴/營運商粒度報告（地理/ASN/類型/名單、逐源信譽信號與同公式評分（前綴級估計））。本機自檢為雙棧：偵測到 IPv6 出口時與 IPv4 一併檢測，兩出口不在同一網路時給出洩漏警告
 - 推測模式（查任意 IP 的串流可用性）基於信譽訊號推斷，與實測可能有出入，請以報告標註的信心度為準
 - 測速為多連接峰值口徑，反映鏈路峰值能力，不等同於單連接持續速度
+- 測速會產生真實下載流量：互動自檢會先詢問確認，單節點上限 200 MB，每段結束印出實際流量，`--no-speed` 可完全跳過
 - 終端寬度建議 ≥ 60 列；純文字環境（管道 / 無顏色）會自動降級為無色輸出
 - 本工具僅用於自查與維運評估，請遵守各資料來源服務條款
 

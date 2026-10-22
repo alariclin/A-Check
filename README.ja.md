@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.8-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.10-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -26,7 +26,7 @@
 
 ![メインメニュー](docs/showcase-menu.png)
 
-IP チェックレポート（公開 DNS 8.8.8.8 の例）：
+IP チェックレポート（AWS 出口 IP の例）：
 
 ![レポート](docs/showcase-report.png)
 
@@ -55,22 +55,22 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 ## レポート構成
 
-完全なレポートは番号付きセクションで出力されます：
+パッシブレポートは番号付きセクションで出力されます：
 
-- **[1] 基本情報** — 所在地、ISP / 組織、AS 番号。**IP タイプ属性**（データセンター / 住宅 / モバイル / プロキシ / VPN / Tor など複数ソースのフラグ）。**地理位置グループ**（国コードバッジを先頭に：位置、複数ソースの位置比較、緯度経度からの逆引き、タイムゾーン、座標、地図リンク）。アクティブ時は自機のシステム情報も追加
+- **[1] 基本情報** — 所在地、ISP / 組織、AS 番号。**IP タイプ属性**（データセンター / 住宅 / モバイル / プロキシ / VPN / Tor など複数ソースのフラグ）。**地理位置グループ**（国コードバッジを先頭に：位置、タイムゾーン、座標、地図リンク、緯度経度からの逆引き、複数ソースの位置比較——異なる結論は各行にラベル付きで表示）。アクティブ時は自機のシステム情報も追加
 - **[2] リスク因子** — プロキシ / VPN / Tor / サーバー / ブラックリスト / 悪性記録の 6 因子について、その IP をリスクと判定したソースの割合をバーで表示
 - **[3] 詐欺・次元スコア** — 詐欺スコア、脅威行為、履歴評価、プラットフォーム互換性、総合スコアを並べ、最後に**クリーン度**とリスクレベルを表示（低いほどクリーン）
 - **[4] ストリーミング＆プラットフォーム可用性** — セルフチェックでは**実測**のアンロック結果。任意 IP 照会ではレピュテーション信号からの**推定**（信頼度を明記）
 - **[5] DNS サーバー推奨** — IP の所在地に応じた近傍 DNS（パッシブモード）
 - **[6] データ完全性と信頼度** — 実際に回答したソース数とコアソースの有無から信頼度を算出。「データ不足なのに断定」を避けるための指標
 
-アクティブモードでは番号なしセクション（DNS リークと推奨、25 番ポート疎通、地域別スピード表）が加わり、全 8 セクションになります。
+セルフチェックも番号付きです。IPv4 は **[1]–[8]**（ストリーミング実測 [4]、DNS 完全テスト（従来 26 / DoH 15 / DoT 12、遅延ランキングと最速表示付き）と推奨 [5]、速度テスト [6]、25 番ポートと DNSBL [7]、完全性 [8]）。IPv6 出口がある場合はデュアルスタック判定と IPv6 の完全なスタック **[9]–[17]**（ソース別レピュテーション信号付き IPv6 レポート、IPv6 DNS テスト（従来 / DoH / DoT、最速表示付き）、IPv6 ストリーミング、IPv6 速度）が続き、両出口のリーク判定も行います。
 
 ## メインメニュー 12 機能
 
 | # | 機能 | 説明 |
 |---|---|---|
-| 1 | セルフチェック (出口 IP 全検) | アクティブモード全量チェック、最後に地域別スピード表 |
+| 1 | セルフチェック (出口 IP 全検) | アクティブモード全量チェック。IPv6 出口があればデュアルスタック |
 | 2 | 任意 IP 照会 | 公開 IPv4 または IPv6 を入力してパッシブレポート、終了後は自動でメインメニューへ戻る |
 | 3 | ストリーミング解錠検出 | 18 プラットフォームのアンロック状態を単独で実測 |
 | 4 | システム情報と IO テスト | システム / CPU / メモリ / ディスク情報とディスク読み書き速度 |
@@ -97,17 +97,17 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
@@ -146,6 +146,7 @@ python3 acheck.py [IP] [オプション]
 | `--proxy HOST:PORT` | プロキシ診断（`--proxy-user` / `--proxy-pass` と併用可） |
 | `--batch リスト` | ノード一括優選（カンマ区切りの host:port または socks5:// プロキシ） |
 | `--speed` | 地域別スピード表 |
+| `--no-speed` | `--active` と併用：速度テストを省略（対話型セルフチェックでは既定で先に確認） |
 | `--explain` | スコアリングルールを出力 |
 | `--json` | JSON 出力（IP / --active / --proxy と組合せ可） |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | 出力言語を指定 |
@@ -165,6 +166,7 @@ python3 acheck.py [IP] [オプション]
 - パッシブ照会は公開 IPv4 と IPv6 に対応。プライベート / 予約アドレスは理由付きで拒否されます。IPv6 レポートはプレフィックス/事業者粒度です（地理/ASN/種別/ブロックリスト、ソース別の評価信号と同式スコア（プレフィックスレベルの推定））。セルフチェックはデュアルスタックで、IPv6 出口がある場合は IPv4 と併せて測定し、両出口が異なるネットワークの場合はリーク警告を表示します
 - 推定モード（任意 IP のストリーミング可用性）はレピュテーション信号からの推論であり、実測と異なる場合があります。レポート記載の信頼度を目安にしてください
 - スピードテストは複数接続ピーク方式で、回線のピーク性能を示すものであり、単一接続の持続速度とは異なります
+- スピードテストは実際のダウンロードトラフィックを発生させます：対話型セルフチェックでは先に確認し、各ノード上限 200 MB、実トラフィックをスタックごとに表示、`--no-speed` で完全省略できます
 - ターミナル幅は 60 列以上を推奨。プレーンテキスト環境（パイプ / 無色）では自動で無色出力に切り替わります
 - 本ツールは自己確認と運用評価のためのものです。各データソースの利用規約を守ってください
 

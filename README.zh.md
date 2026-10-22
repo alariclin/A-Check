@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.8-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.10-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -26,7 +26,7 @@
 
 ![主菜单](docs/showcase-menu.png)
 
-IP 检测报告（以公共 DNS 8.8.8.8 为例）：
+IP 检测报告（示例：AWS 出口 IP）：
 
 ![检测报告](docs/showcase-report.png)
 
@@ -55,22 +55,22 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 ## 报告结构
 
-一份完整报告按编号章节输出：
+被动报告按编号章节输出：
 
-- **[1] 基础信息** — 归属地、ISP / 组织、AS 号；**IP 类型属性**（机房 / 住宅 / 移动 / 代理 / VPN / Tor 等多源标记）；**地理位置组**（国家码徽章打头：位置、多源位置对比、经纬度反查识别、时区、坐标、地图链接）；主动模式附本机系统信息
+- **[1] 基础信息** — 归属地、ISP / 组织、AS 号；**IP 类型属性**（机房 / 住宅 / 移动 / 代理 / VPN / Tor 等多源标记）；**地理位置组**（国家码徽章打头：位置、时区、坐标、地图链接、经纬度反查识别、多源位置对比——每个不同结论单独一行且都带标题）；主动模式附本机系统信息
 - **[2] 风险因子** — 代理 / VPN / Tor / 服务器 / 黑名单 / 恶意记录 六个因子逐个给出「命中源占比」进度条，一眼看清哪些源把该 IP 判为风险
 - **[3] 欺诈与维度评分** — 欺诈评分、威胁行为、历史声誉、平台兼容、综合评分逐项成条，末行给出**纯净度**与风险等级（分数越低越干净）
 - **[4] 流媒体与平台可用性** — 本机自检为**实测**解锁结果；查任意 IP 时为基于信誉信号的**推测**（明确标注置信度）
 - **[5] DNS 服务器推荐** — 按 IP 归属地推荐就近 DNS（被动模式）
 - **[6] 数据完整度与置信度** — 本次实际拿到多少源的数据、核心源是否齐全，据此给出置信度，数据不足时会在报告中如实标注
 
-主动模式另有无编号章节：DNS 泄漏与推荐、25 端口连通性、多地区测速表，报告共 8 个章节段落。
+自检模式同样按编号输出：IPv4 为 **[1]–[8]**（流媒体实测 [4]、完整 DNS 测试（26 个传统 / 15 个 DoH / 12 个 DoT，带延迟排名与最快推荐）与推荐 [5]、测速 [6]、25 端口与黑名单检测 [7]、完整度 [8]）；检测到 IPv6 出口时，其后是双栈判定与完整的 IPv6 章节 **[9]–[17]**（含逐源信誉信号的 IPv6 报告、IPv6 DNS 测试（传统 / DoH / DoT，带最快推荐）、IPv6 流媒体与 IPv6 测速），并对比双出口给出泄漏判定。
 
 ## 主菜单 12 项功能
 
 | # | 功能 | 说明 |
 |---|---|---|
-| 1 | 本机自检 (出口 IP 全检) | 主动模式全量检测，结尾附多地区测速 |
+| 1 | 本机自检 (出口 IP 全检) | 主动模式全量检测；有 IPv6 出口时双栈检测 |
 | 2 | 查询任意 IP | 输入公网 IPv4 或 IPv6 出被动报告，查完自动返回主菜单 |
 | 3 | 流媒体解锁检测 | 单独实测 18 个平台的解锁状态 |
 | 4 | 系统信息与 IO 测试 | 系统 / CPU / 内存 / 磁盘信息与磁盘读写测速 |
@@ -97,17 +97,17 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系统（单文件，需 Python 3.8+）：
@@ -146,6 +146,7 @@ python3 acheck.py [IP] [选项]
 | `--proxy HOST:PORT` | 代理诊断（可配 `--proxy-user` / `--proxy-pass`） |
 | `--batch 列表` | 批量节点测速优选（逗号分隔 host:port 或 socks5:// 代理） |
 | `--speed` | 多地区测速表 |
+| `--no-speed` | 配合 `--active`：跳过网速测试（交互自检默认先询问） |
 | `--explain` | 输出评分规则说明 |
 | `--json` | 以 JSON 输出（可与 IP / --active / --proxy 组合） |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | 指定输出语言 |
@@ -165,6 +166,7 @@ python3 acheck.py [IP] [选项]
 - 被动查询支持公网 IPv4 与 IPv6；内网 / 保留地址会被拒绝并说明原因。IPv6 为前缀/运营商粒度报告（地理/ASN/类型/名单、逐源信誉信号与同公式评分（前缀级估计））。本机自检为双栈：检测到 IPv6 出口时与 IPv4 一并检测，两出口不在同一网络时给出泄漏警告
 - 推测模式（查任意 IP 的流媒体可用性）基于信誉信号推断，与实测可能有出入，请以报告标注的置信度为准
 - 测速为多连接峰值口径，反映链路峰值能力，不等同于单连接持续速度
+- 测速会产生真实下载流量：交互自检会先询问确认，单节点上限 200 MB，每段结束打印实际流量，`--no-speed` 可完全跳过
 - 终端宽度建议 ≥ 60 列；纯文本环境（管道 / 无颜色）会自动降级为无色输出
 - 本工具仅用于自查与运维评估，请遵守各数据源服务条款
 

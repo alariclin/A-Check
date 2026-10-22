@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.8-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.10-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -26,7 +26,7 @@ Main menu (the banner shows live system / hardware / network status; 12 features
 
 ![Main menu](docs/showcase-menu.png)
 
-IP report (using the public DNS 8.8.8.8 as an example):
+IP report (example: an AWS egress IP):
 
 ![Report](docs/showcase-report.png)
 
@@ -55,22 +55,22 @@ A-Check is a single-file Python script (`acheck.py`, standard library only, zero
 
 ## Report structure
 
-A full report is printed in numbered sections:
+A passive report is printed in numbered sections:
 
-- **[1] Basics** — location, ISP / organisation, AS number; **IP type attributes** (datacentre / residential / mobile / proxy / VPN / Tor flags from multiple sources); a **geolocation group** (country-code badge first: location, multi-source location comparison, coordinate reverse lookup, timezone, coordinates, map link); active mode appends local system info
+- **[1] Basics** — location, ISP / organisation, AS number; **IP type attributes** (datacentre / residential / mobile / proxy / VPN / Tor flags from multiple sources); a **geolocation group** (country-code badge first: location, timezone, coordinates, map link, coordinate reverse lookup, multi-source location comparison — every distinct verdict on its own labelled row); active mode appends local system info
 - **[2] Risk factors** — proxy / VPN / Tor / server / blacklist / malicious-record: six factors, each with a bar showing the share of sources that flagged the IP
 - **[3] Fraud & dimension scores** — fraud score, threat behaviour, historical reputation, platform compatibility and the combined score, ending with **cleanliness** and a risk level (lower is cleaner)
 - **[4] Streaming & platform availability** — **measured** unlock results in self-check mode; **inferred** from reputation signals (with a stated confidence) when looking up an arbitrary IP
 - **[5] DNS recommendations** — nearby resolvers chosen by the IP's location (passive mode)
 - **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so the report makes it visible when data is thin
 
-Active mode adds unnumbered sections — DNS leak & recommendations, port 25 connectivity, multi-region speed table — for 8 sections in total.
+Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured streaming [4], a full DNS test (26 UDP / 15 DoH / 12 DoT resolvers, latency-ranked with a fastest pick) plus recommendations [5], the speed test [6], port 25 & DNSBL checks [7] and completeness [8]. When an IPv6 egress exists, a dual-stack verdict and a complete IPv6 stack follow as **[9]–[17]** — the IPv6 report with per-source reputation signals, an IPv6 DNS test (UDP / DoH / DoT, fastest pick included), IPv6 streaming and IPv6 speed — and the two egresses are compared for leak risk.
 
 ## The 12 menu features
 
 | # | Feature | Description |
 |---|---|---|
-| 1 | Self-check (full egress check) | Full active-mode scan, ending with the multi-region speed table |
+| 1 | Self-check (full egress check) | Full active-mode scan; dual-stack (IPv4 + IPv6) when an IPv6 egress exists |
 | 2 | Look up any IP | Enter a public IPv4 or IPv6 for a passive report; returns to the main menu automatically |
 | 3 | Streaming unlock test | Measured unlock status for 18 platforms |
 | 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
@@ -97,17 +97,17 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.8/A-Check-v4.14.8-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
@@ -146,6 +146,7 @@ python3 acheck.py [IP] [options]
 | `--proxy HOST:PORT` | Proxy diagnostics (add `--proxy-user` / `--proxy-pass` if needed) |
 | `--batch LIST` | Batch node ranking (comma-separated host:port or socks5:// proxies) |
 | `--speed` | Multi-region speed table |
+| `--no-speed` | With `--active`: skip the speed test (interactive self-checks ask first by default) |
 | `--explain` | Print the scoring rules |
 | `--json` | JSON output (combinable with an IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | Output language |
@@ -165,6 +166,7 @@ Every factor and score is a multi-source vote; a single source's false positive 
 - Passive lookup accepts public IPv4 and IPv6; private / reserved addresses are rejected with an explanation. IPv6 reports are prefix/operator-level (geo / ASN / type / blocklist, per-source reputation signals and same-formula scores as prefix-level estimates). Self-check is dual-stack: when an IPv6 egress exists it is tested alongside IPv4, with a leak warning if the two egresses sit on different networks
 - Inferred mode (streaming availability for an arbitrary IP) is derived from reputation signals and may differ from measured results — go by the confidence stated in the report
 - Speed tests use multi-connection peak throughput, which reflects link peak capacity rather than sustained single-connection speed
+- Speed tests generate real download traffic: interactive self-checks ask for confirmation first, every node is capped at 200 MB, actual traffic is printed per stack, and `--no-speed` skips the test entirely
 - A terminal width of ≥ 60 columns is recommended; plain-text environments (pipes / no colour) degrade gracefully to colourless output
 - For self-checks and operations assessment only; please respect each data source's terms of service
 
