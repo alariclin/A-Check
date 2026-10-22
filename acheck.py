@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.1 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -51,7 +51,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.0"
+VERSION = "4.14.1"
 
 
 def _init_console():
@@ -165,6 +165,9 @@ STR = {
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
         "speed_note": "※ 多连接峰值口径: 与单连接实际下载速度有差异, 仅供参考",
+        "speed_ask": "网速测试会产生下载流量 (单节点上限 200 MB), 是否进行? [y/N] ",
+        "speed_skipped": "已跳过网速测试",
+        "speed_traffic": "本段测速共下载约 {mb} MB",
         "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 17 地区节点不同",
         "diag_speed_testing": "代理吞吐测速中 (多地区节点)…",
         "diag_speed_ok": "最快线路: %s · 下载 %.1f Mbps",
@@ -391,6 +394,9 @@ STR = {
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
         "speed_note": "※ Multi-connection peak throughput; differs from single-connection downloads, for reference only",
+        "speed_ask": "The speed test downloads data (capped at 200 MB per node). Run it? [y/N] ",
+        "speed_skipped": "Speed test skipped",
+        "speed_traffic": "Total downloaded in this section: about {mb} MB",
         "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 17 IPv4 regions",
         "diag_speed_testing": "Testing proxy throughput (regional nodes)…",
         "diag_speed_ok": "Fastest: %s · Download %.1f Mbps",
@@ -617,6 +623,9 @@ STR = {
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
         "speed_note": "※ 多連接峰值口徑: 與單連接實際下載速度有差異, 僅供參考",
+        "speed_ask": "網速測試會產生下載流量 (單節點上限 200 MB), 是否進行? [y/N] ",
+        "speed_skipped": "已跳過網速測試",
+        "speed_traffic": "本段測速共下載約 {mb} MB",
         "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 17 地區節點不同",
         "diag_speed_testing": "代理吞吐測速中 (多地區節點)…",
         "diag_speed_ok": "最快線路: %s · 下載 %.1f Mbps",
@@ -843,6 +852,9 @@ STR = {
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
         "speed_note": "※ 複数接続のピーク値です。単一接続の実ダウンロードとは異なります（参考値）",
+        "speed_ask": "速度テストはダウンロード流量が発生します (1ノード上限 200 MB)。実行しますか? [y/N] ",
+        "speed_skipped": "速度テストをスキップしました",
+        "speed_traffic": "このセクションのダウンロード合計: 約 {mb} MB",
         "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の17地域とは異なります)",
         "diag_speed_testing": "プロキシのスループットを測定中 (地域別ノード)…",
         "diag_speed_ok": "最速: %s · ダウンロード %.1f Mbps",
@@ -1069,6 +1081,9 @@ STR = {
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
         "speed_note": "※ Пиковая пропускная способность в несколько потоков; отличается от одиночной загрузки, только для справки",
+        "speed_ask": "Тест скорости скачивает данные (лимит 200 МБ на узел). Выполнить? [y/N] ",
+        "speed_skipped": "Тест скорости пропущен",
+        "speed_traffic": "Всего скачано в этом разделе: около {mb} МБ",
         "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 17 регионам IPv4",
         "diag_speed_testing": "Измерение пропускной способности прокси (региональные узлы)…",
         "diag_speed_ok": "Быстрее всего: %s · Загрузка %.1f Mbps",
@@ -1295,6 +1310,9 @@ STR = {
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
         "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
+        "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره). اجرا شود؟ [y/N] ",
+        "speed_skipped": "تست سرعت رد شد",
+        "speed_traffic": "مجموع دانلود این بخش: حدود {mb} مگابایت",
         "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۱۷ منطقهٔ IPv4",
         "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (گره‌های منطقه‌ای)…",
         "diag_speed_ok": "سریع‌ترین: %s · دانلود %.1f Mbps",
@@ -1546,6 +1564,7 @@ UA_BROWSER = (
 )
 # 测速下载专用 UA: 部分测速站 (如 Hetzner) 按 UA 过滤, 浏览器 UA 会被直接断开
 UA_TOOL = "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"
+DL_CAP_BYTES = 200 * 1024 * 1024  # 测速单节点下载上限 (达量即停, 防高带宽节点烧流量)
 
 _cache = {}
 _cache_lock = threading.Lock()
@@ -2097,7 +2116,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.1 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2608,7 +2627,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.0 免 Key 公开版):
+评分规则 (v4.14.1 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2640,7 +2659,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.0 免 Key 公開版):
+評分規則 (v4.14.1 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2672,7 +2691,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.0 Keyless Public Edition):
+Scoring rules (v4.14.1 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2705,7 +2724,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.0 キー不要公開版):
+スコアリングルール (v4.14.1 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2737,7 +2756,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.0 Публичная версия без ключей):
+Правила оценки (v4.14.1 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2769,7 +2788,7 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.1):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3851,7 +3870,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 # 主动检测 (流媒体/邮局/DNSBL/测速)
 # ============================================================
 # ============================================================
-# IPv6 被动查询 (v4.14.0): 前缀/运营商粒度, 不合成总分
+# IPv6 被动查询 (v4.14.1): 前缀/运营商粒度, 不合成总分
 # 纳入源经实测验证 (2026-10-21 逐源探针); 排除:
 #   greynoise 官方 API 仅接受 IPv4; sansisc 对 v6 返回与地址无关的常量;
 #   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
@@ -4086,7 +4105,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.1 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4605,6 +4624,8 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
                         break
                     with lock:
                         counter[0] += len(chunk)
+                    if counter[0] >= DL_CAP_BYTES:
+                        return
             fails = 0
         except Exception:
             fails += 1
@@ -4612,7 +4633,8 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
 
 
 def measure_download_direct(url, duration=5, streams=3, family=0):
-    """多连接并发下载测速 (直连), 返回 Mbps 或 None。"""
+    """多连接并发下载测速 (直连), 返回 (Mbps 或 None, 下载字节数)。
+    单节点下载量受 DL_CAP_BYTES 上限约束。"""
     counter, lock = [0], threading.Lock()
     t0 = time.time()
     stop = t0 + duration
@@ -4622,8 +4644,8 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
                     range(streams)))
     elapsed = max(0.1, time.time() - t0)
     if counter[0] == 0:
-        return None
-    return round((counter[0] * 8 / 1e6) / elapsed, 2)
+        return None, 0
+    return round((counter[0] * 8 / 1e6) / elapsed, 2), counter[0]
 
 
 def regional_speed_test(duration=5, on_result=None, family=0):
@@ -4637,10 +4659,11 @@ def regional_speed_test(duration=5, on_result=None, family=0):
     for name, host, _url in _targets:
         tp = tcp_ping_stats(host, 443, count=3, timeout=2, family=family)
         lat = tp["avg_ms"] if tp.get("ok") else None
-        mbps = measure_download_direct(_url,
-                                       duration=duration, streams=3, family=family)
+        mbps, nbytes = measure_download_direct(_url,
+                                               duration=duration, streams=3,
+                                               family=family)
         row = {"region": name, "host": host,
-               "latency_ms": lat, "down_mbps": mbps}
+               "latency_ms": lat, "down_mbps": mbps, "dl_bytes": nbytes}
         rows.append(row)
         if on_result:
             on_result(row)
@@ -4912,9 +4935,39 @@ def recommend_dns_for_ip(country):
     print()
 
 
-def print_speed_section(json_mode=False, family=0):
+_NO_SPEED = False        # --no-speed: 自检时跳过测速
+_SPEED_DECISION = None   # 本次运行的测速确认结果缓存 (None=未决定)
+
+
+def _speed_allowed(json_mode):
+    """自检内测速开关: --no-speed 恒关; JSON/非交互终端恒开 (脚本兼容);
+    交互终端在测速段前询问一次 (默认否, 防下载流量消耗), 结果缓存。"""
+    global _SPEED_DECISION
+    if _SPEED_DECISION is not None:
+        return _SPEED_DECISION
+    if _NO_SPEED:
+        _SPEED_DECISION = False
+    elif json_mode or not sys.stdin.isatty():
+        _SPEED_DECISION = True
+    else:
+        try:
+            ans = input("\n  " + T("speed_ask")).strip().lower()
+        except EOFError:
+            ans = ""
+        _SPEED_DECISION = ans in ("y", "yes")
+    return _SPEED_DECISION
+
+
+def print_speed_section(json_mode=False, family=0, gated=False):
     """网速测试章节: 多地区节点下载测速表 (bench.sh 式, 多连接峰值口径)。
-    返回 rows [{region, latency_ms, down_mbps}]。"""
+    返回 rows [{region, latency_ms, down_mbps, dl_bytes}]。
+    gated=True (自检流程) 时先过 _speed_allowed 确认门。"""
+    if gated and not _speed_allowed(json_mode):
+        if json_mode:
+            return []
+        _section(T("sec_speed"))
+        print(f"  {_c(C.dim, T('speed_skipped'))}")
+        return []
     if json_mode:
         return regional_speed_test(family=family)
     _section(T("sec_speed"))
@@ -4939,6 +4992,9 @@ def print_speed_section(json_mode=False, family=0):
         print(f"  {_c(C.dim, T('speed6_note'))}")
     rows = regional_speed_test(on_result=_row, family=family)
     print(f"  {_c(C.yellow, T('speed_note'))}")
+    _total_mb = sum(r.get("dl_bytes", 0) for r in rows) / 1e6
+    if _total_mb >= 0.5:
+        print(f"  {_c(C.dim, T('speed_traffic').format(mb=int(round(_total_mb))))}")
     return rows
 
 
@@ -5364,7 +5420,7 @@ def _run_active6(json_mode, egress6):
         print_report6(res6)
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
-    speed6 = print_speed_section(json_mode=json_mode, family=6)
+    speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
     out = {"ip": egress6, "ipv6": True,
            "active": {"egress_ipv6": egress6, "ipv6_report": res6,
                       "streaming_ipv6": streaming6, "speed_ipv6": speed6}}
@@ -5375,6 +5431,8 @@ def _run_active6(json_mode, egress6):
 
 def run_active(json_mode=False, stack=None):
     # 每次运行主动测试前清空会话级缓存，确保切换网络/VPN 后立即生效
+    global _SPEED_DECISION
+    _SPEED_DECISION = None  # 测速确认门每次自检重新询问
     with _unlock_lock:
         _unlock_cache.clear()
     with _cache_lock:
@@ -5454,7 +5512,7 @@ def run_active(json_mode=False, stack=None):
 
     total, clean, marked, bl = check_dnsbl(egress)
 
-    st_res = print_speed_section(json_mode=json_mode)
+    st_res = print_speed_section(json_mode=json_mode, gated=True)
 
     if not json_mode:
         _section(T("sec_mail"))
@@ -5507,7 +5565,7 @@ def run_active(json_mode=False, stack=None):
             print_report6(res6, embedded=True)
             _section(T("sec_stream") + " (IPv6)")
         streaming6_json = _run_streaming_table(egress6, json_mode=json_mode, family=6)
-        speed6_res = print_speed_section(json_mode=json_mode, family=6)
+        speed6_res = print_speed_section(json_mode=json_mode, family=6, gated=True)
 
     if not json_mode:
         _print_completeness(res)
@@ -5727,6 +5785,8 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                     break
                 with lock:
                     counter[0] += len(chunk)
+                if counter[0] >= DL_CAP_BYTES:
+                    return
             conn.close()
             fails = 0
         except Exception:
@@ -6554,6 +6614,7 @@ def _print_cli_help():
   --proxy-user USER / --proxy-pass PASS
                   代理认证 (可选)
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
+  --no-speed      自检时跳过网速测试
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
   --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
   --explain       输出评分维度与扣分规则说明
@@ -6592,6 +6653,7 @@ Options:
   --proxy-user USER / --proxy-pass PASS
                   Proxy authentication (optional)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
+  --no-speed      Skip the speed test during self-check
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
@@ -6625,6 +6687,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   代理驗證 (可選)
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
+  --no-speed      自檢時跳過網速測試
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
   --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
   --explain       輸出評分維度與扣分規則說明
@@ -6657,6 +6720,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   プロキシ認証 (任意)
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
+  --no-speed      セルフチェック時に速度テストをスキップ
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
   --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
   --explain       スコアリングのルールと重みを表示
@@ -6689,6 +6753,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   Аутентификация прокси (необязательно)
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковый мультиконнект)
+  --no-speed      Пропустить тест скорости при самопроверке
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
   --json          Вывод в JSON (с IP, --active или --proxy)
   --explain       Правила и веса скоринга
@@ -6721,6 +6786,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   احراز هویت پروکسی (اختیاری)
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج چنداتصالی)
+  --no-speed      رد کردن تست سرعت هنگام خودبررسی
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
   --json          خروجی JSON (با IP، --active یا --proxy)
@@ -6743,7 +6809,7 @@ Examples:
 
 
 def main():
-    global LANG, _FORCE_STACK
+    global LANG, _FORCE_STACK, _NO_SPEED
     _init_console()
 
     parser = _CLIArgumentParser(prog="acheck.py", add_help=False)
@@ -6759,6 +6825,8 @@ def main():
     parser.add_argument("--proxy-pass", default=None)
     parser.add_argument("--speed", action="store_true",
                         help="multi-region download speed test")
+    parser.add_argument("--no-speed", action="store_true", dest="no_speed",
+                        help="skip the speed test during self-check")
     parser.add_argument("--batch", metavar="NODES", default=None,
                         help="batch node test, comma-separated host:port or socks5:// URLs")
     parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
@@ -6781,6 +6849,7 @@ def main():
 
     if ns.lang:
         LANG = ns.lang
+    _NO_SPEED = bool(ns.no_speed)
 
     if ns.ipv4_only and ns.ipv6_only:
         if "--json" in sys.argv:
