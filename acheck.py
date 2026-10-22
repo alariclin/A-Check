@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.8 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.9 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.8"
+VERSION = "4.14.9"
 
 
 def _init_console():
@@ -2137,7 +2137,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.8 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.9 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3002,7 +3002,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.8 免 Key 公开版):
+评分规则 (v4.14.9 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3034,7 +3034,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.8 免 Key 公開版):
+評分規則 (v4.14.9 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3066,7 +3066,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.8 Keyless Public Edition):
+Scoring rules (v4.14.9 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3099,7 +3099,7 @@ Scoring rules (v4.14.8 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.8 キー不要公開版):
+スコアリングルール (v4.14.9 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3131,7 +3131,7 @@ Scoring rules (v4.14.8 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.8 Публичная версия без ключей):
+Правила оценки (v4.14.9 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3163,7 +3163,7 @@ Scoring rules (v4.14.8 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.8):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.9):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -4648,7 +4648,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.8 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.9 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4664,26 +4664,90 @@ def get_egress_ip():
     return None
 
 
+def _https_get_pinned6(host, path, timeout=6):
+    """显式 AF_INET6 解析 + 钉栈 HTTPS GET (SNI=host), 返回响应体文本或 None。
+    某些解析环境 (如 AWS VPC resolver + glibc) 对纯 AAAA 域名在 AF_UNSPEC
+    查询时返回 EAI_NODATA, urllib 直连必败; 显式 v6 解析 (curl -6 的做法) 可通。"""
+    try:
+        infos = _getaddrinfo_timed(host, 443, family=socket.AF_INET6, timeout=timeout)
+    except Exception:
+        return None
+    for info in infos:
+        ip6 = info[4][0]
+        sk = None
+        ss = None
+        try:
+            ctx = ssl.create_default_context()
+            sk = socket.create_connection((ip6, 443), timeout=timeout)
+            ss = ctx.wrap_socket(sk, server_hostname=host)
+            ss.sendall((
+                f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+                f"User-Agent: {UA_BROWSER}\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+            ).encode())
+            raw = b""
+            while len(raw) < 16384:
+                chunk = ss.recv(4096)
+                if not chunk:
+                    break
+                raw += chunk
+            head, _, body = raw.partition(b"\r\n\r\n")
+            if b" 200 " not in head.split(b"\r\n", 1)[0]:
+                continue
+            if b"chunked" in head.lower():
+                out = b""
+                rest = body
+                while True:
+                    ln, _, rest = rest.partition(b"\r\n")
+                    try:
+                        sz = int(ln.strip() or b"0", 16)
+                    except ValueError:
+                        break
+                    if sz == 0:
+                        break
+                    out += rest[:sz]
+                    rest = rest[sz + 2:]
+                body = out
+            return body.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        finally:
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
+    return None
+
+
 def get_egress_ip6():
     sources = [
-        "https://api6.ipify.org?format=json",
-        "https://ipv6.icanhazip.com",
-        "https://6.ipw.cn/api/ip/myip?json",
+        ("api6.ipify.org", "/?format=json"),
+        ("ipv6.icanhazip.com", "/"),
+        ("6.ipw.cn", "/api/ip/myip?json"),
     ]
-    for url in sources:
+    for host, path in sources:
+        raw = None
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
+            req = urllib.request.Request(f"https://{host}{path}",
+                                         headers={"User-Agent": UA_BROWSER})
             with urllib.request.urlopen(req, timeout=6) as r:
-                raw = r.read(512).decode("utf-8", errors="replace").strip()
-                if raw.startswith("{"):
-                    d = json.loads(raw)
-                    ip = d.get("ip") or d.get("IP") or d.get("ip_address")
-                else:
-                    ip = raw.splitlines()[0].strip() if raw else ""
-                if ip:
-                    _p = ipaddress.ip_address(str(ip).strip())
-                    if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
-                        return str(_p)
+                raw = r.read(512).decode("utf-8", errors="replace")
+        except Exception:
+            raw = _https_get_pinned6(host, path)
+        if not raw:
+            continue
+        raw = raw.strip()
+        try:
+            if raw.startswith("{"):
+                d = json.loads(raw)
+                ip = d.get("ip") or d.get("IP") or d.get("ip_address")
+            else:
+                ip = raw.splitlines()[0].strip() if raw else ""
+            if ip:
+                _p = ipaddress.ip_address(str(ip).strip())
+                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
+                    return str(_p)
         except Exception:
             continue
     return None
@@ -7206,17 +7270,27 @@ def _banner_net_info():
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
     _v6addr = None
-    for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
+    for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
         try:
-            req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=3) as r:
-                _cand = r.read(128).decode("utf-8", errors="replace").strip()
+            _cand = (_https_get_pinned6(_host, "/", timeout=3) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
             if _ip6.is_global:
                 _v6addr = str(_ip6)
                 break
         except Exception:
             continue
+    if _v6addr is None:
+        for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
+            try:
+                req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    _cand = r.read(128).decode("utf-8", errors="replace").strip()
+                _ip6 = ipaddress.IPv6Address(_cand)
+                if _ip6.is_global:
+                    _v6addr = str(_ip6)
+                    break
+            except Exception:
+                continue
     if _v6addr is None:
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
