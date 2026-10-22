@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.7 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.8 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.7"
+VERSION = "4.14.8"
 
 
 def _init_console():
@@ -864,7 +864,7 @@ STR = {
         "m_update": "アップデート確認",
         "upd_latest": "最新バージョンです (v%s)",
         "upd_available": "新しいバージョンがあります: v%s (現在 v%s), GitHub からダウンロードしてください",
-        "upd_failed": "アップデート確認に失敗しました",
+        "upd_failed": "アップデート確認に失敗しました [確認不可]",
         "speed_col_region": "地域",
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
@@ -1004,9 +1004,9 @@ STR = {
         "virt_phys": "物理マシン",
         "virt_vm": "仮想マシン",
         "virt_container": "コンテナ",
-        "infer_avail": "利用可能",
-        "infer_limit": "制限あり",
-        "infer_block": "ブロック",
+        "infer_avail": "おそらく利用可能",
+        "infer_limit": "制限の可能性",
+        "infer_block": "ブロックの可能性",
     },
     "ru": {
         "active_ip_ignored": "※ Режим --active проверяет исходящий IP этого устройства; указанный IP игнорируется.",
@@ -1095,7 +1095,7 @@ STR = {
         "m_update": "Проверить обновления",
         "upd_latest": "Установлена последняя версия (v%s)",
         "upd_available": "Доступна новая версия: v%s (текущая v%s), скачайте с GitHub",
-        "upd_failed": "Не удалось проверить обновления",
+        "upd_failed": "Не удалось проверить обновления [Не проверено]",
         "speed_col_region": "Регион",
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
@@ -1235,9 +1235,9 @@ STR = {
         "virt_phys": "Физ. сервер",
         "virt_vm": "ВМ",
         "virt_container": "Контейнер",
-        "infer_avail": "Доступно",
-        "infer_limit": "Ограничено",
-        "infer_block": "Заблок.",
+        "infer_avail": "Вероятно доступно",
+        "infer_limit": "Возможно ограничено",
+        "infer_block": "Возможна блокировка",
     },
     "fa": {
         "active_ip_ignored": "※ حالت --active آیپی خروجی همین دستگاه را بررسی میکند؛ آرگومان IP نادیده گرفته میشود.",
@@ -1326,7 +1326,7 @@ STR = {
         "m_update": "بررسی به‌روزرسانی",
         "upd_latest": "آخرین نسخه نصب است (v%s)",
         "upd_available": "نسخه جدید موجود است: v%s (فعلی v%s)، از GitHub دانلود کنید",
-        "upd_failed": "بررسی به‌روزرسانی ناموفق بود",
+        "upd_failed": "بررسی به‌روزرسانی ناموفق بود [غیرقابل تأیید]",
         "speed_col_region": "منطقه",
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
@@ -2137,7 +2137,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.7 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.8 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3002,7 +3002,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.7 免 Key 公开版):
+评分规则 (v4.14.8 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3034,7 +3034,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.7 免 Key 公開版):
+評分規則 (v4.14.8 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3066,7 +3066,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.7 Keyless Public Edition):
+Scoring rules (v4.14.8 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3099,7 +3099,7 @@ Scoring rules (v4.14.7 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.7 キー不要公開版):
+スコアリングルール (v4.14.8 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3119,7 +3119,7 @@ Scoring rules (v4.14.7 Keyless Public Edition):
     プロキシ / VPN 検出               +40
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
-  [純度] = 100 - 総合 (独自換算)
+  [純度] = 100 - 総合 (独自換算、第三者スコアではない)
   [ストリーミング解錠方式]
     ネイティブ: プラットフォームが出口 IP の地域と評価を直接認める
     DNS 解錠 (Smart DNS): 名前解決が解錠プロバイダのノードへ誘導され、SNI プロキシ経由で中継される
@@ -3131,7 +3131,7 @@ Scoring rules (v4.14.7 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.7 Публичная версия без ключей):
+Правила оценки (v4.14.8 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3151,7 +3151,7 @@ Scoring rules (v4.14.7 Keyless Public Edition):
     Обнаружен прокси / VPN            +40
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
-  [Чистота] = 100 - Итого
+  [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
   [Способы разблокировки стриминга]
     Нативная: платформа напрямую принимает регион и репутацию исходящего IP
     DNS-разблокировка (Smart DNS): разрешение имени направляется на узел провайдера разблокировки и ретранслируется через SNI-прокси
@@ -3163,7 +3163,7 @@ Scoring rules (v4.14.7 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.7):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.8):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3183,7 +3183,7 @@ Scoring rules (v4.14.7 Keyless Public Edition):
     شناسایی پروکسی / VPN              +40
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
-  [خلوص] = 100 - ترکیبی
+  [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
   [روش‌های رفع مسدودیت استریم]
     بومی: پلتفرم مستقیماً منطقه و اعتبار IP خروجی را می‌پذیرد
     رفع مسدودیت DNS ‏(Smart DNS): حل نام به گره ارائه‌دهنده رفع مسدودیت هدایت و از طریق پروکسی SNI بازپخش می‌شود
@@ -4648,7 +4648,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.7 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.8 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5452,6 +5452,19 @@ DNS_SERVERS_V6 = [
 ]
 
 
+# 公共解析器的 DoH IPv6 端点 (名称, IPv6 地址, DoH 主机名); 路径统一 /dns-query。
+# 仅收标准库 HTTP/1.1 可达者: Quad9/Mullvad 的 DoH 需 HTTP/2, 不收 (与 IPv4 侧删 Quad9-DoH 同理)。
+DNS_SERVERS_DOH6 = [
+    ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com"),
+    ("Google", "2001:4860:4860::8888", "dns.google"),
+    ("AdGuard", "2a10:50c0::ad1:ff", "dns.adguard-dns.com"),
+    ("NextDNS", "2a07:a8c1::", "dns.nextdns.io"),
+    ("ControlD", "2606:1a40::22", "freedns.controld.com"),
+    ("DNS.SB", "2a09::", "doh.dns.sb"),
+    ("OpenDNS", "2620:0:ccc::2", "doh.opendns.com"),
+]
+
+
 def test_dns_servers6(timeout=3):
     """IPv6 通道 DNS 测试: 对公共解析器的 IPv6 地址钉栈测 UDP53 与 DoT853,
     报文与判定与 test_dns_servers 相同, 仅传输走 IPv6。"""
@@ -5527,12 +5540,69 @@ def test_dns_servers6(timeout=3):
         return {"name": name, "ip": ip, "proto": "DoT853",
                 "ok": False, "rtt_ms": None}
 
-    res = {"plain6": [], "dot6": []}
+    def _th6(name, ip, host):
+        sk = None
+        ss = None
+        try:
+            tid, pkt = _bq()
+            ctx = ssl.create_default_context()
+            sk = socket.create_connection((ip, 443), timeout=max(timeout, 5))
+            ss = ctx.wrap_socket(sk, server_hostname=host)
+            req = (
+                f"POST /dns-query HTTP/1.1\r\nHost: {host}\r\n"
+                "Accept: application/dns-message\r\n"
+                "Content-Type: application/dns-message\r\n"
+                f"Content-Length: {len(pkt)}\r\nConnection: close\r\n\r\n"
+            ).encode() + pkt
+            t0 = time.time()
+            ss.sendall(req)
+            raw = b""
+            while True:
+                chunk = ss.recv(65536)
+                if not chunk:
+                    break
+                raw += chunk
+            rtt = round((time.time() - t0) * 1000, 1)
+            head, _, body = raw.partition(b"\r\n\r\n")
+            if b" 200 " in head.split(b"\r\n", 1)[0]:
+                if b"chunked" in head.lower():
+                    out = b""
+                    rest = body
+                    while True:
+                        ln, _, rest = rest.partition(b"\r\n")
+                        try:
+                            sz = int(ln.strip() or b"0", 16)
+                        except ValueError:
+                            break
+                        if sz == 0:
+                            break
+                        out += rest[:sz]
+                        rest = rest[sz + 2:]
+                    body = out
+                if _ok(body, tid):
+                    return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                            "ok": True, "rtt_ms": rtt}
+        except Exception:
+            pass
+        finally:
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
+        return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                "ok": False, "rtt_ms": None}
+
+    res = {"plain6": [], "doh6": [], "dot6": []}
     with ThreadPoolExecutor(max_workers=14) as ex:
         plain_futs = [ex.submit(_tp6, n, ip) for n, ip, _ in DNS_SERVERS_V6]
+        doh_futs = [ex.submit(_th6, n, ip, h) for n, ip, h in DNS_SERVERS_DOH6]
         dot_futs = [ex.submit(_tt6, n, ip, sni) for n, ip, sni in DNS_SERVERS_V6]
         for f in plain_futs:
             res["plain6"].append(f.result())
+        for f in doh_futs:
+            res["doh6"].append(f.result())
         for f in dot_futs:
             res["dot6"].append(f.result())
     for k in res:
@@ -5544,17 +5614,26 @@ def print_dns6_test(results):
     """渲染 IPv6 通道 DNS 结果 (独立章节, 位于 IPv6 段内: 报告之后、流媒体之前)。"""
     titles = {
         "plain6": "IPv6 DNS (UDP 53)",
+        "doh6": "IPv6 DNS over HTTPS",
         "dot6": "IPv6 DNS over TLS (853)",
     }
-    for key in ("plain6", "dot6"):
+    all_ok = []
+    for key in ("plain6", "doh6", "dot6"):
         lst = results[key]
         ok_list = [r for r in lst if r["ok"]]
         fail_list = [r for r in lst if not r["ok"]]
+        all_ok.extend(ok_list)
         print(f"\n  {_c(C.bold, titles[key])} ({len(ok_list)}/{len(lst)})")
         for r in ok_list:
             print(f"    {_c(C.green, '✓')} {r['name']:12} {r['ip']:40} {r['rtt_ms']:6.1f}ms")
         for r in fail_list:
             print(f"    {_c(C.red, '✗')} {r['name']:12} {r['ip']:40}")
+    if all_ok:
+        best = min(all_ok, key=lambda x: x["rtt_ms"])
+        fast_lbl = "★ 最快: " if LANG in ("zh", "zh-TW") else "★ Fastest: "
+        print(
+            f"\n  {_c(C.cyan, fast_lbl)}{best['name']} [{best['proto']}] {best['ip']} - {best['rtt_ms']:.1f}ms"
+        )
     print()
 
 
@@ -6141,12 +6220,12 @@ def _run_streaming_table_impl(egress, json_mode=False):
 
 
 def _run_active6(json_mode, egress6):
-    """仅 IPv6 自检: v6 报告 + v6 流媒体 + v6 测速"""
+    """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速"""
     res6 = run_passive6(egress6)
     dns6_res = test_dns_servers6()
     if not json_mode:
         print_report6(res6)
-        _section(T("sec_dns"))
+        _section(T("sec_dns") + " (IPv6)")
         print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
@@ -7807,8 +7886,8 @@ def main():
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
-        print()
-        return
+        print(f"\n  {T('cancelled')}")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
