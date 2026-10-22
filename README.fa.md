@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.10-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.11-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,17 +97,17 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.10/A-Check-v4.14.10-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.11/A-Check-v4.14.11-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
