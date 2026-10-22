@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.2 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.3 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.2"
+VERSION = "4.14.3"
 
 
 def _init_console():
@@ -110,6 +110,8 @@ STR = {
         "coord_country": "经纬度识别",
         "sec_fraud": "欺诈与维度评分",
         "sec_signals6": "信誉信号 (逐源)",
+        "v6_score_note": "※ IPv6 评分与 IPv4 同公式, 仅计入支持 IPv6 的数据源 (威胁/声誉数据较少), 为前缀/运营商级估计",
+        "speed_max_note": "※ 本段 {n} 个节点, 每节点下载上限 200 MB, 整段最多约 {max} MB 流量",
         "current_egress6": "当前出口 IPv6",
         "sec_ipv6": "IPv6 双栈检测",
         "v6_leak_warn": "⚠ IPv6 泄漏风险：IPv4 出口为 AS{a4}，IPv6 出口为 AS{a6}，不在同一网络——IPv6 流量很可能未经过代理/VPN，正直连暴露",
@@ -174,7 +176,7 @@ STR = {
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
         "speed_note": "※ 多连接峰值口径: 与单连接实际下载速度有差异, 仅供参考",
-        "speed_ask": "网速测试会产生下载流量 (单节点上限 200 MB), 是否进行? [y/n] (回车=跳过): ",
+        "speed_ask": "网速测试会产生下载流量 (单节点上限 200 MB; IPv4 {n4} 个节点全测最多约 {max4} MB, 双栈另加 IPv6 {n6} 个节点最多约 {max6} MB), 是否进行? [y/n] (回车=跳过): ",
         "speed_skipped": "已跳过网速测试",
         "speed_traffic": "本段测速共下载约 {mb} MB",
         "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 28 地区节点不同",
@@ -348,6 +350,8 @@ STR = {
         "stack_prompt": "Choose [1-3] (Enter=Auto): ",
         "egress6_fail": "No IPv6 egress detected (this host may be IPv4-only)",
         "sec_signals6": "Reputation Signals (per source)",
+        "v6_score_note": "※ IPv6 scores use the IPv4 formula with IPv6-capable sources only (less threat/reputation data); prefix/operator-level estimates",
+        "speed_max_note": "※ {n} nodes in this section, 200 MB download cap each, up to ~{max} MB total traffic",
         "v6_prefix_note": "IPv6 data is prefix/operator-level; no per-address reputation exists",
         "v6_op_est": "operator-level estimate",
         "v6_listed": "Listed",
@@ -403,7 +407,7 @@ STR = {
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
         "speed_note": "※ Multi-connection peak throughput; differs from single-connection downloads, for reference only",
-        "speed_ask": "The speed test downloads data (capped at 200 MB per node). Run it? [y/n] (Enter = skip): ",
+        "speed_ask": "The speed test downloads data (200 MB cap per node; all {n4} IPv4 nodes up to ~{max4} MB, plus {n6} IPv6 nodes up to ~{max6} MB on dual-stack). Run it? [y/n] (Enter = skip): ",
         "speed_skipped": "Speed test skipped",
         "speed_traffic": "Total downloaded in this section: about {mb} MB",
         "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 28 IPv4 regions",
@@ -576,6 +580,8 @@ STR = {
         "egress6_fail": "未偵測到 IPv6 出口 (本機可能只有 IPv4)",
         "geo_group": "地理位置",
         "sec_signals6": "信譽信號 (逐源)",
+        "v6_score_note": "※ IPv6 評分與 IPv4 同公式, 僅計入支援 IPv6 的資料源 (威脅/聲譽資料較少), 為前綴/營運商級估計",
+        "speed_max_note": "※ 本段 {n} 個節點, 每節點下載上限 200 MB, 整段最多約 {max} MB 流量",
         "v6_prefix_note": "IPv6 為前綴/營運商粒度資料，無單位址的信譽紀錄",
         "v6_op_est": "營運商級估計",
         "v6_listed": "已命中名單",
@@ -632,7 +638,7 @@ STR = {
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
         "speed_note": "※ 多連接峰值口徑: 與單連接實際下載速度有差異, 僅供參考",
-        "speed_ask": "網速測試會產生下載流量 (單節點上限 200 MB), 是否進行? [y/n] (回車=跳過): ",
+        "speed_ask": "網速測試會產生下載流量 (單節點上限 200 MB; IPv4 {n4} 個節點全測最多約 {max4} MB, 雙棧另加 IPv6 {n6} 個節點最多約 {max6} MB), 是否進行? [y/n] (回車=跳過): ",
         "speed_skipped": "已跳過網速測試",
         "speed_traffic": "本段測速共下載約 {mb} MB",
         "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 28 地區節點不同",
@@ -804,6 +810,8 @@ STR = {
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
         "sec_signals6": "レピュテーション信号（ソース別）",
+        "v6_score_note": "※ IPv6 スコアは IPv4 と同じ式で、IPv6 対応ソースのみから算出 (脅威/評判データは少なめ)。プレフィックス/事業者レベルの推定です",
+        "speed_max_note": "※ 本セクション {n} ノード、各ノード上限 200 MB、整段で最大約 {max} MB",
         "v6_prefix_note": "IPv6データはプレフィックス/事業者粒度で、アドレス単位の評価記録はありません",
         "v6_op_est": "事業者レベルの推定",
         "v6_listed": "リスト掲載あり",
@@ -861,7 +869,7 @@ STR = {
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
         "speed_note": "※ 複数接続のピーク値です。単一接続の実ダウンロードとは異なります（参考値）",
-        "speed_ask": "速度テストはダウンロード流量が発生します (1ノード上限 200 MB)。実行しますか? [y/n] (Enter=スキップ): ",
+        "speed_ask": "速度テストはダウンロード流量が発生します (1ノード上限 200 MB; IPv4 {n4} ノード全部で最大約 {max4} MB、デュアルスタック時は IPv6 {n6} ノードで最大約 {max6} MB 追加)。実行しますか? [y/n] (Enter=スキップ): ",
         "speed_skipped": "速度テストをスキップしました",
         "speed_traffic": "このセクションのダウンロード合計: 約 {mb} MB",
         "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の28地域とは異なります)",
@@ -1032,6 +1040,8 @@ STR = {
         "sec_basic": "Основная информация и ASN/BGP",
         "sec_type": "Атрибуты типа IP",
         "sec_signals6": "Сигналы репутации (по источникам)",
+        "v6_score_note": "※ Оценка IPv6 — по формуле IPv4, но только по источникам с поддержкой IPv6 (меньше данных угроз/репутации); уровень префикса/оператора",
+        "speed_max_note": "※ В этом разделе {n} узлов, лимит 200 МБ на узел, всего до ~{max} МБ трафика",
         "v6_prefix_note": "Данные IPv6 — на уровне префикса/оператора; репутации отдельных адресов не существует",
         "v6_op_est": "оценка на уровне оператора",
         "v6_listed": "В списке",
@@ -1090,7 +1100,7 @@ STR = {
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
         "speed_note": "※ Пиковая пропускная способность в несколько потоков; отличается от одиночной загрузки, только для справки",
-        "speed_ask": "Тест скорости скачивает данные (лимит 200 МБ на узел). Выполнить? [y/n] (Enter — пропуск): ",
+        "speed_ask": "Тест скорости скачивает данные (лимит 200 МБ на узел; все {n4} узла IPv4 — до ~{max4} МБ, при двойном стеке ещё {n6} узлов IPv6 — до ~{max6} МБ). Выполнить? [y/n] (Enter — пропуск): ",
         "speed_skipped": "Тест скорости пропущен",
         "speed_traffic": "Всего скачано в этом разделе: около {mb} МБ",
         "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 28 регионам IPv4",
@@ -1260,6 +1270,8 @@ STR = {
         "checking": "در حال بررسی",
         "sec_basic": "اطلاعات پایه و ASN/BGP",
         "sec_signals6": "سیگنال‌های اعتبار (به تفکیک منبع)",
+        "v6_score_note": "※ امتیاز IPv6 با همان فرمول IPv4 اما فقط از منابع دارای پشتیبانی IPv6 محاسبه می‌شود (داده تهدید/اعتبار کمتر)؛ برآورد سطح پیشوند/اپراتور است",
+        "speed_max_note": "※ این بخش {n} گره دارد، سقف دانلود هر گره ۲۰۰ مگابایت، در مجموع حداکثر حدود {max} مگابایت",
         "v6_prefix_note": "داده‌های IPv6 در سطح پیشوند/اپراتور است؛ سابقه اعتبار برای تک‌آدرس وجود ندارد",
         "v6_op_est": "برآورد سطح اپراتور",
         "v6_listed": "در فهرست هست",
@@ -1319,7 +1331,7 @@ STR = {
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
         "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
-        "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره). اجرا شود؟ [y/n] (Enter = رد کردن): ",
+        "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره؛ همه {n4} گره IPv4 حداکثر حدود {max4} مگابایت، در حالت دوپشته {n6} گره IPv6 نیز حداکثر حدود {max6} مگابایت اضافه می‌شود). اجرا شود؟ [y/n] (Enter = رد کردن): ",
         "speed_skipped": "تست سرعت رد شد",
         "speed_traffic": "مجموع دانلود این بخش: حدود {mb} مگابایت",
         "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۲۸ منطقهٔ IPv4",
@@ -2125,7 +2137,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.2 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.3 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2617,7 +2629,7 @@ class IPLocate(Provider):
                 "region": d.get("subdivision", ""), "city": d.get("city", ""),
                 "latitude": d.get("latitude"), "longitude": d.get("longitude"),
                 "timezone": d.get("time_zone", ""),
-                "asn": asn.get("asn", ""), "asn_type": asn.get("type", ""),
+                "asn": _parse_asn(asn.get("asn")), "asn_type": asn.get("type", ""),
                 "isp": asn.get("name", ""), "org": asn.get("name", ""),
                 "proxy": pv.get("is_proxy"), "vpn": pv.get("is_vpn"),
                 "tor": pv.get("is_tor"), "hosting": pv.get("is_hosting"),
@@ -2654,7 +2666,7 @@ class IPQuery(Provider):
                 "region": loc.get("state", ""), "city": loc.get("city", ""),
                 "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
                 "timezone": loc.get("timezone", ""),
-                "asn": isp.get("asn", ""), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
+                "asn": _parse_asn(isp.get("asn")), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
                 "proxy": risk.get("is_proxy"), "vpn": risk.get("is_vpn"),
                 "tor": risk.get("is_tor"), "datacenter": risk.get("is_datacenter"),
                 "mobile": risk.get("is_mobile"), "risk_score": risk.get("risk_score"),
@@ -2683,7 +2695,7 @@ class IpapiCo(Provider):
                 "region": d.get("region", ""), "city": d.get("city", ""),
                 "latitude": d.get("latitude"), "longitude": d.get("longitude"),
                 "timezone": d.get("timezone", ""),
-                "asn": d.get("asn", ""), "org": d.get("org", ""), "isp": d.get("org", ""),
+                "asn": _parse_asn(d.get("asn")), "org": d.get("org", ""), "isp": d.get("org", ""),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -2710,7 +2722,7 @@ class TwoIp(Provider):
                 "region": d.get("region", ""), "city": d.get("city", ""),
                 "latitude": d.get("lat"), "longitude": d.get("lon"),
                 "timezone": d.get("timezone", ""),
-                "asn": asn.get("id"), "isp": asn.get("name", ""),
+                "asn": _parse_asn(asn.get("id")), "isp": asn.get("name", ""),
                 "hosting": asn.get("hosting"),
                 "ts": now_iso(),
             }
@@ -2748,7 +2760,7 @@ class OTX(Provider):
                 "pulses": (d.get("pulse_info") or {}).get("count", 0),
                 "cloud_provider": cloud,
                 "country": d.get("country_name", ""), "city": d.get("city", ""),
-                "asn": d.get("asn", ""),
+                "asn": _parse_asn(d.get("asn")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -2916,7 +2928,7 @@ class HackerTarget(Provider):
                 "country": _s(kv.get("country", "")), "region": _s(kv.get("state", "")),
                 "city": _s(kv.get("city", "")),
                 "latitude": _f(kv.get("latitude")), "longitude": _f(kv.get("longitude")),
-                "asn": asn, "prefix": prefix, "netname": netname,
+                "asn": _parse_asn(asn), "prefix": prefix, "netname": netname,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -2989,7 +3001,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.2 免 Key 公开版):
+评分规则 (v4.14.3 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3016,12 +3028,12 @@ SCORING_RULES = {
     未知: 本次检测未获得明确信号
   [IPv6]
     被动查询仅做前缀/运营商粒度: 地理/ASN/类型/Spamhaus DROPv6 名单
-    信誉信号逐源透传 (Scamalytics 为运营商级估计), 不合成总分
+    评分与 IPv4 同公式, 仅计入支持 IPv6 的数据源 (威胁/声誉较少), 属前缀级估计; 信誉信号另逐源透传
     无地址级信誉数据, 未命中名单不等于干净
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.2 免 Key 公開版):
+評分規則 (v4.14.3 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3048,12 +3060,12 @@ SCORING_RULES = {
     未知: 本次檢測未獲得明確信號
   [IPv6]
     被動查詢僅做前綴/營運商粒度: 地理/ASN/類型/Spamhaus DROPv6 名單
-    信譽信號逐源透傳 (Scamalytics 為營運商級估計), 不合成總分
+    評分與 IPv4 同公式, 僅計入支援 IPv6 的資料源 (威脅/聲譽較少), 屬前綴級估計; 信譽信號另逐源透傳
     無位址級信譽資料, 未命中名單不等於乾淨
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.2 Keyless Public Edition):
+Scoring rules (v4.14.3 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3080,13 +3092,13 @@ Scoring rules (v4.14.2 Keyless Public Edition):
     Unknown: no clear signal was obtained in this run
   [IPv6]
     Passive lookups are prefix/operator-level only: geo/ASN/type/Spamhaus DROPv6
-    Reputation signals pass through per source (Scamalytics is an operator-level
-    estimate); no composite score is computed
+    Scores use the IPv4 formula over IPv6-capable sources only (less threat/
+    reputation data), as prefix-level estimates; signals also pass through per source
     No per-address reputation data exists; not listed does not mean clean
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.2 キー不要公開版):
+スコアリングルール (v4.14.3 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3113,12 +3125,12 @@ Scoring rules (v4.14.2 Keyless Public Edition):
     不明: 今回の検出では明確な信号が得られなかった
   [IPv6]
     受動検索はプレフィックス/事業者粒度のみ: 地理/ASN/種別/Spamhaus DROPv6
-    評価信号はソースごとにそのまま表示 (Scamalytics は事業者レベルの推定)、総合スコアは算出しない
+    スコアは IPv4 と同じ式で IPv6 対応ソースのみから算出 (脅威/評判は少なめ) し、プレフィックスレベルの推定として表示。信号はソースごとにも表示
     アドレス単位の評価データは存在せず、リスト未掲載は「クリーン」を意味しない
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.2 Публичная версия без ключей):
+Правила оценки (v4.14.3 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3145,12 +3157,12 @@ Scoring rules (v4.14.2 Keyless Public Edition):
     Неизвестно: в этом запуске чёткий сигнал не получен
   [IPv6]
     Пассивные запросы — только на уровне префикса/оператора: гео/ASN/тип/Spamhaus DROPv6
-    Сигналы репутации передаются по источникам (Scamalytics — оценка уровня оператора); общий балл не вычисляется
+    Балл считается по формуле IPv4 только по источникам с поддержкой IPv6 (меньше данных угроз/репутации), как оценка уровня префикса; сигналы также показываются по источникам
     Данных репутации по отдельным адресам нет; отсутствие в списках не означает «чистый»
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.2):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.3):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3177,7 +3189,7 @@ Scoring rules (v4.14.2 Keyless Public Edition):
     نامشخص: در این اجرا سیگنال روشنی به دست نیامد
   [IPv6]
     جست‌وجوی غیرفعال فقط در سطح پیشوند/اپراتور است: جغرافیا/ASN/نوع/Spamhaus DROPv6
-    سیگنال‌های اعتبار به تفکیک منبع نمایش داده می‌شوند (Scamalytics برآورد سطح اپراتور است)؛ امتیاز ترکیبی محاسبه نمی‌شود
+    امتیاز با همان فرمول IPv4 و فقط از منابع دارای پشتیبانی IPv6 محاسبه می‌شود (داده تهدید/اعتبار کمتر) و برآورد سطح پیشوند است؛ سیگنال‌ها نیز به تفکیک منبع نمایش داده می‌شوند
     داده اعتبار در سطح تک‌آدرس وجود ندارد؛ نبودن در فهرست به معنای پاک بودن نیست
     حالت فعال دوپشته است: خروجی IPv6/تشخیص نشت/استریمینگ و سرعت به تفکیک پشته
 """,
@@ -3880,7 +3892,8 @@ def _print_basic_block(s, prof):
         isp_str = prof.get("isp") or "?"
         org_str = prof.get("org") or ""
         _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
-        print(f"  {T('isp')}: {isp_str}" + (f" / {org_str}" if org_str and org_str != isp_str else "") + _as_sfx)
+        _isp_disp = isp_str + (f" / {org_str}" if org_str and org_str != isp_str else "")
+        print(f"  {_c(C.dim, T('isp') + ':')} {_c(C.bold, _isp_disp)}" + (_c(C.cyan, _as_sfx) if _as_sfx else ""))
     rs = s.get("ripestat", {})
     if rs.get("ok"):
         if rs.get("age_years") is not None:
@@ -3889,19 +3902,20 @@ def _print_basic_block(s, prof):
             age = T("unverifiable")
         vis = rs.get("visibility") or "?"
         first = rs.get("first_seen") or "?"
-        print(f"  BGP: {age} | {T('bgp_visibility')}: {vis} | {T('bgp_first')}: {first}")
+        print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
     pt = s.get("ptr", {})
     if pt.get("ok"):
         if pt.get("ptr"):
             fcr = "✓" if pt.get("fcrdns") else "✗"
-            print(f"  PTR [{fcr}]: {pt['ptr']}")
+            _fc = C.green if pt.get("fcrdns") else C.red
+            print(f"  {_c(C.dim, 'PTR')} [{_c(_fc, fcr)}]: {_c(C.bold, pt['ptr'])}")
         else:
-            print(f"  PTR: {T('ptr_none')}")
+            print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('ptr_none'))}")
     else:
-        print(f"  PTR: {T('unverifiable')}")
+        print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('unverifiable'))}")
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("range"):
-        print(f"  {T('ip_range')}: {pc['range']}")
+        print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, pc['range'])}")
 
     # 地理位置组: 国旗排头并列 (位置/多源对比/经纬度识别/时区), 坐标/地图随后
     # [1.6] 多源位置
@@ -4023,7 +4037,13 @@ def _print_basic_block(s, prof):
     if _has_geo:
         print(f"  {_c(C.bold, _c(C.cyan, T('geo_group')))}")
         if _loc_str:
-            print(f"  {_fl(_pcc)}{T('location')}: {_loc_str}")
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_str}")
+        if prof.get("timezone"):
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {prof['timezone']}")
+        if prof.get("latitude") is not None and prof.get("longitude") is not None:
+            _cf = _fl(_cg.get("cc") if _cg.get("ok") else _pcc)
+            print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {prof['latitude']}, {prof['longitude']}")
+            print(f"  {_cf}{_c(C.dim, T('map') + ':')} {_c(C.cyan, 'https://www.google.com/maps?q=%s,%s' % (prof['latitude'], prof['longitude']))}")
         if locs:
             _lbl = T("sec_loc")
             _ind = " " * (_disp_width(_lbl) + 2)
@@ -4031,19 +4051,13 @@ def _print_basic_block(s, prof):
                 _loc, _names = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() else "")
                 if _i == 0:
-                    print(f"  {_gf}{_lbl}: {_loc}")
+                    print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_loc}")
                 else:
                     print(f"  {_gf}{_ind}{_loc}")
         else:
             print(f"  {T('no_loc_data')}")
         if _cg.get("ok"):
-            print(f"  {_fl(_cg.get('cc'))}{T('coord_country')}: {_cg.get('country')}")
-        if prof.get("timezone"):
-            print(f"  {_fl(_pcc)}{T('timezone')}: {prof['timezone']}")
-        if prof.get("latitude") is not None and prof.get("longitude") is not None:
-            _cf = _fl(_cg.get("cc") if _cg.get("ok") else _pcc)
-            print(f"  {_cf}{T('coords')}: {prof['latitude']}, {prof['longitude']}")
-            print(f"  {_cf}{T('map')}: https://www.google.com/maps?q={prof['latitude']},{prof['longitude']}")
+            print(f"  {_fl(_cg.get('cc'))}{_c(C.dim, T('coord_country') + ':')} {_cg.get('country')}")
     elif not locs:
         print(f"  {T('no_loc_data')}")
 
@@ -4092,6 +4106,24 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             type_sources.append(("Heuristic", T("dc")))
         elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
             type_sources.append(("Heuristic", T("residential")))
+    il = s.get("iplocate", {})
+    if il.get("ok"):
+        if il.get("hosting") or il.get("asn_type") == "hosting":
+            type_sources.append(("iplocate.io", T("dc")))
+        elif il.get("asn_type") == "isp":
+            type_sources.append(("iplocate.io", T("residential")))
+        else:
+            type_sources.append(("iplocate.io", T("unknown")))
+    iq = s.get("ipquery", {})
+    if iq.get("ok"):
+        if iq.get("datacenter"):
+            type_sources.append(("ipquery.io", T("dc")))
+        elif iq.get("mobile"):
+            type_sources.append(("ipquery.io", T("unknown")))
+        else:
+            type_sources.append(("ipquery.io", T("residential")
+                                 if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
+                                 else T("unknown")))
     if type_sources:
         print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in type_sources))
         cells = []
@@ -4287,7 +4319,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 # 主动检测 (流媒体/邮局/DNSBL/测速)
 # ============================================================
 # ============================================================
-# IPv6 被动查询 (v4.14.2): 前缀/运营商粒度, 不合成总分
+# IPv6 被动查询 (v4.14.3): 前缀/运营商粒度, 不合成总分
 # 纳入源经实测验证 (2026-10-21 逐源探针); 排除:
 #   greynoise 官方 API 仅接受 IPv4; sansisc 对 v6 返回与地址无关的常量;
 #   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
@@ -4349,11 +4381,24 @@ def run_passive6(ip):
         except Exception:
             pass
 
+    t_pts, t_ev = score_threat(sources)
+    f_pts, f_ev = score_fraud(sources)
+    r_pts, r_ev = score_reputation(sources)
+    p_pts, p_ev = score_platform(sources)
+    combined6 = round(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
+
     return {
         "ip": ip_s,
         "ipv6": True,
         "profile": _prof,
         "sources": sources,
+        "scores": {
+            "threat": (t_pts, t_ev),
+            "fraud": (f_pts, f_ev),
+            "reputation": (r_pts, r_ev),
+            "platform": (p_pts, p_ev),
+            "combined": combined6,
+        },
         "completeness": {
             "pct": completeness,
             "ok": ok_count,
@@ -4499,7 +4544,7 @@ def print_report6(res, embedded=False):
         else:
             print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
 
-    # [3] 信誉信号 (逐源透传, 不合成总分)
+    # [3] 信誉信号 (逐源透传)
     _section(T("sec_signals6"))
     sc = s.get("scamalytics", {})
     if sc.get("ok"):
@@ -4525,7 +4570,48 @@ def print_report6(res, embedded=False):
         _ptxt = ", ".join(str(p) for p in _ports[:12]) if _ports else T("none")
         print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
-    # [4] 完整度 (无置信度合成: v6 数据粒度不足以支撑)
+    # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
+    _section(T("sec_fraud"))
+    _scs6 = res.get("scores") or {}
+    _srows6 = [("Scamalytics",
+                sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
+    for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
+                       (T("dim_reputation"), "reputation"),
+                       (T("dim_platform"), "platform")):
+        _dv6 = _scs6.get(_dk6)
+        _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
+    _comb6 = _scs6.get("combined")
+    _pcol6 = C.green
+    if _comb6 is not None:
+        _pur6 = 100 - _comb6
+        if _pur6 >= 85:
+            _pl6, _pcol6 = T("purity_best"), C.green
+        elif _pur6 >= 70:
+            _pl6, _pcol6 = T("purity_good"), C.green
+        elif _pur6 >= 50:
+            _pl6, _pcol6 = T("purity_fair"), C.yellow
+        elif _pur6 >= 30:
+            _pl6, _pcol6 = T("purity_poor"), C.yellow
+        else:
+            _pl6, _pcol6 = T("purity_bad"), C.red
+        _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
+        _srows6.append((T("purity"), _pur6, _pl6))
+    _lw6 = _bar_label_width()
+    for _n6, _v6, _e6 in _srows6:
+        if _v6 is None:
+            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        elif _n6 == T("purity"):
+            print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
+        elif _e6:
+            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
+        else:
+            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
+    print(f"  {_c(C.dim, T('v6_score_note'))}")
+    print(f"  {_c(C.dim, T('purity_note'))}")
+    if (_scs6.get("platform") or (0,))[0] >= 30:
+        print(f"  {_c(C.dim, T('platform_note'))}")
+
+    # [5] 完整度
     _section(T("sec_complete6"))
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
@@ -4545,7 +4631,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.2 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.3 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5167,7 +5253,6 @@ DNS_SERVERS_DOH = [
     ("Cloudflare-DoH", "https://cloudflare-dns.com/dns-query"),
     ("Cloudflare-DoH-IP", "https://1.1.1.1/dns-query"),
     ("Google-DoH", "https://dns.google/dns-query"),
-    ("Quad9-DoH", "https://dns.quad9.net:5053/dns-query"),
     ("AliDNS-DoH", "https://dns.alidns.com/dns-query"),
     ("DNSPod-DoH", "https://doh.pub/dns-query"),
     ("AdGuard-DoH", "https://dns.adguard-dns.com/dns-query"),
@@ -5565,7 +5650,14 @@ def _speed_allowed(json_mode):
         _SPEED_DECISION = True
     else:
         try:
-            ans = input("\n  " + T("speed_ask")).strip().lower()
+            _ask = T("speed_ask")
+            try:
+                _cap_mb = DL_CAP_BYTES // 1048576
+                _ask = _ask.format(n4=len(SPEED_REGIONS), max4=len(SPEED_REGIONS) * _cap_mb,
+                                   n6=len(SPEED6_ENDPOINTS), max6=len(SPEED6_ENDPOINTS) * _cap_mb)
+            except Exception:
+                pass
+            ans = input("\n  " + _ask).strip().lower()
         except EOFError:
             ans = ""
         _SPEED_DECISION = ans in ("y", "yes")
@@ -5591,6 +5683,11 @@ def print_speed_section(json_mode=False, family=0, gated=False):
         else "※ For reference only: actual speed varies by server/route, not max ISP bandwidth"
     )
     print(f"  {_c(C.yellow, warn_txt)}")
+    try:
+        _sn = SPEED6_ENDPOINTS if family == 6 else SPEED_REGIONS
+        print(f"  {_c(C.dim, T('speed_max_note').format(n=len(_sn), max=len(_sn) * (DL_CAP_BYTES // 1048576)))}")
+    except Exception:
+        pass
     hdr = "  %-22s %-10s %s" % (T("speed_col_region"), T("speed_col_latency"),
                                 T("speed_col_down"))
     print(_c(C.cyan, hdr))
@@ -5846,17 +5943,17 @@ def print_system_info(si=None, io_res=None):
     _section(T("sec_sys"), sub=True)
     if si is None:
         si = get_system_info()
-    print(f"  {_pad('CPU', 10)}: {si['cpu'][:60]}")
-    print(f"  {_pad(T('sys_mem'), 10)}: {si['mem']}")
-    print(f"  {_pad(T('sys_disk'), 10)}: {si['disk']}")
-    print(f"  {_pad(T('sys_os'), 10)}: {si['os']} [{si['arch']}]")
-    print(f"  {_pad(T('sys_virt'), 10)}: {si['virt']}")
+    print(f"  {_c(C.dim, _pad('CPU', 10))}: {si['cpu'][:60]}")
+    print(f"  {_c(C.dim, _pad(T('sys_mem'), 10))}: {si['mem']}")
+    print(f"  {_c(C.dim, _pad(T('sys_disk'), 10))}: {si['disk']}")
+    print(f"  {_c(C.dim, _pad(T('sys_os'), 10))}: {si['os']} [{si['arch']}]")
+    print(f"  {_c(C.dim, _pad(T('sys_virt'), 10))}: {si['virt']}")
     if io_res is None:
         io_res = disk_io_test()
     if io_res:
         w = f"{io_res['write_mbs']:.0f} MB/s"
         rd = f"{io_res['read_mbs']:.0f} MB/s"
-        print(f"  {_pad(T('sys_io'), 10)}: {T('sys_write')} {_c(C.green, w)} / {T('sys_read')} {_c(C.green, rd)}")
+        print(f"  {_c(C.dim, _pad(T('sys_io'), 10))}: {T('sys_write')} {_c(C.green, w)} / {T('sys_read')} {_c(C.green, rd)}")
     print()
 
 
@@ -6099,9 +6196,9 @@ def run_active(json_mode=False, stack=None):
 
     if not json_mode:
         if egress:
-            print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+            print(f"  {_c(C.dim, T('current_egress') + ':')} {_c(C.bold, _c(C.cyan, egress))}")
         if egress6:
-            print(f"  {T('current_egress6')}: {_c(C.cyan, egress6)}")
+            print(f"  {_c(C.dim, T('current_egress6') + ':')} {_c(C.bold, _c(C.cyan, egress6))}")
         if egress:
             print(f"  {_c(C.dim, T('egress_note'))}\n")
 
