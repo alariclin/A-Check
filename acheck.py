@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.14 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.15 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -46,14 +46,14 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
 import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.14"
+VERSION = "4.14.15"
 
 
 def _init_console():
@@ -2088,6 +2088,11 @@ class PTRCheck(Provider):
 # ---- 显示层本地化查表 (数据源无语言参数时, 国家名/时区名按界面语言呈现) ----
 _CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA', 'germany': 'DE', 'france': 'FR', 'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'singapore': 'SG', 'india': 'IN', 'brazil': 'BR', 'russia': 'RU', 'united kingdom': 'GB', 'netherlands': 'NL', 'switzerland': 'CH', 'sweden': 'SE', 'norway': 'NO', 'finland': 'FI', 'denmark': 'DK', 'austria': 'AT', 'belgium': 'BE', 'ireland': 'IE', 'poland': 'PL', 'turkey': 'TR', 'mexico': 'MX', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO', 'peru': 'PE', 'egypt': 'EG', 'nigeria': 'NG', 'kenya': 'KE', 'morocco': 'MA', 'israel': 'IL', 'united arab emirates': 'AE', 'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'thailand': 'TH', 'vietnam': 'VN', 'indonesia': 'ID', 'malaysia': 'MY', 'philippines': 'PH', 'taiwan': 'TW', 'hong kong': 'HK', 'china': 'CN', 'australia': 'AU', 'new zealand': 'NZ', 'south africa': 'ZA', 'greece': 'GR', 'portugal': 'PT', 'czechia': 'CZ', 'hungary': 'HU', 'romania': 'RO', 'ukraine': 'UA', 'italy': 'IT', 'spain': 'ES'}
 _COUNTRY_NAMES = {'zh': {'US': '美国', 'CA': '加拿大', 'DE': '德国', 'FR': '法国', 'JP': '日本', 'KR': '韩国', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄罗斯', 'GB': '英国', 'NL': '荷兰', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬兰', 'DK': '丹麦', 'AT': '奥地利', 'BE': '比利时', 'IE': '爱尔兰', 'PL': '波兰', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥伦比亚', 'PE': '秘鲁', 'EG': '埃及', 'NG': '尼日利亚', 'KE': '肯尼亚', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿联酋', 'SA': '沙特阿拉伯', 'QA': '卡塔尔', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉国', 'TH': '泰国', 'VN': '越南', 'ID': '印度尼西亚', 'MY': '马来西亚', 'PH': '菲律宾', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': '澳大利亚', 'NZ': '新西兰', 'ZA': '南非', 'GR': '希腊', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '罗马尼亚', 'UA': '乌克兰', 'IT': '意大利', 'ES': '西班牙'}, 'zh-TW': {'US': '美國', 'CA': '加拿大', 'DE': '德國', 'FR': '法國', 'JP': '日本', 'KR': '韓國', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄羅斯', 'GB': '英國', 'NL': '荷蘭', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬蘭', 'DK': '丹麥', 'AT': '奧地利', 'BE': '比利時', 'IE': '愛爾蘭', 'PL': '波蘭', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥倫比亞', 'PE': '秘魯', 'EG': '埃及', 'NG': '奈及利亞', 'KE': '肯亞', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿聯酋', 'SA': '沙烏地阿拉伯', 'QA': '卡達', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉國', 'TH': '泰國', 'VN': '越南', 'ID': '印度尼西亞', 'MY': '馬來西亞', 'PH': '菲律賓', 'TW': '台灣', 'HK': '香港', 'CN': '中國', 'AU': '澳大利亞', 'NZ': '紐西蘭', 'ZA': '南非', 'GR': '希臘', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '羅馬尼亞', 'UA': '烏克蘭', 'IT': '義大利', 'ES': '西班牙'}, 'ja': {'US': 'アメリカ', 'CA': 'カナダ', 'DE': 'ドイツ', 'FR': 'フランス', 'JP': '日本', 'KR': '韓国', 'SG': 'シンガポール', 'IN': 'インド', 'BR': 'ブラジル', 'RU': 'ロシア', 'GB': 'イギリス', 'NL': 'オランダ', 'CH': 'スイス', 'SE': 'スウェーデン', 'NO': 'ノルウェー', 'FI': 'フィンランド', 'DK': 'デンマーク', 'AT': 'オーストリア', 'BE': 'ベルギー', 'IE': 'アイルランド', 'PL': 'ポーランド', 'TR': 'トルコ', 'MX': 'メキシコ', 'AR': 'アルゼンチン', 'CL': 'チリ', 'CO': 'コロンビア', 'PE': 'ペルー', 'EG': 'エジプト', 'NG': 'ナイジェリア', 'KE': 'ケニア', 'MA': 'モロッコ', 'IL': 'イスラエル', 'AE': 'アラブ首長国連邦', 'SA': 'サウジアラビア', 'QA': 'カタール', 'KW': 'クウェート', 'IR': 'イラン', 'IQ': 'イラク', 'PK': 'パキスタン', 'BD': 'バングラデシュ', 'TH': 'タイ', 'VN': 'ベトナム', 'ID': 'インドネシア', 'MY': 'マレーシア', 'PH': 'フィリピン', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': 'オーストラリア', 'NZ': 'ニュージーランド', 'ZA': '南アフリカ', 'GR': 'ギリシャ', 'PT': 'ポルトガル', 'CZ': 'チェコ', 'HU': 'ハンガリー', 'RO': 'ルーマニア', 'UA': 'ウクライナ', 'IT': 'イタリア', 'ES': 'スペイン'}, 'ru': {'US': 'США', 'CA': 'Канада', 'DE': 'Германия', 'FR': 'Франция', 'JP': 'Япония', 'KR': 'Южная Корея', 'SG': 'Сингапур', 'IN': 'Индия', 'BR': 'Бразилия', 'RU': 'Россия', 'GB': 'Великобритания', 'NL': 'Нидерланды', 'CH': 'Швейцария', 'SE': 'Швеция', 'NO': 'Норвегия', 'FI': 'Финляндия', 'DK': 'Дания', 'AT': 'Австрия', 'BE': 'Бельгия', 'IE': 'Ирландия', 'PL': 'Польша', 'TR': 'Турция', 'MX': 'Мексика', 'AR': 'Аргентина', 'CL': 'Чили', 'CO': 'Колумбия', 'PE': 'Перу', 'EG': 'Египет', 'NG': 'Нигерия', 'KE': 'Кения', 'MA': 'Марокко', 'IL': 'Израиль', 'AE': 'ОАЭ', 'SA': 'Саудовская Аравия', 'QA': 'Катар', 'KW': 'Кувейт', 'IR': 'Иран', 'IQ': 'Ирак', 'PK': 'Пакистан', 'BD': 'Бангладеш', 'TH': 'Таиланд', 'VN': 'Вьетнам', 'ID': 'Индонезия', 'MY': 'Малайзия', 'PH': 'Филиппины', 'TW': 'Тайвань', 'HK': 'Гонконг', 'CN': 'Китай', 'AU': 'Австралия', 'NZ': 'Новая Зеландия', 'ZA': 'ЮАР', 'GR': 'Греция', 'PT': 'Португалия', 'CZ': 'Чехия', 'HU': 'Венгрия', 'RO': 'Румыния', 'UA': 'Украина', 'IT': 'Италия', 'ES': 'Испания'}, 'fa': {'US': 'آمریکا', 'CA': 'کانادا', 'DE': 'آلمان', 'FR': 'فرانسه', 'JP': 'ژاپن', 'KR': 'کره جنوبی', 'SG': 'سنگاپور', 'IN': 'هند', 'BR': 'برزیل', 'RU': 'روسیه', 'GB': 'بریتانیا', 'NL': 'هلند', 'CH': 'سوئیس', 'SE': 'سوئد', 'NO': 'نروژ', 'FI': 'فنلاند', 'DK': 'دانمارک', 'AT': 'اتریش', 'BE': 'بلژیک', 'IE': 'ایرلند', 'PL': 'لهستان', 'TR': 'ترکیه', 'MX': 'مکزیک', 'AR': 'آرژانتین', 'CL': 'شیلی', 'CO': 'کلمبیا', 'PE': 'پرو', 'EG': 'مصر', 'NG': 'نیجریه', 'KE': 'کنیا', 'MA': 'مراکش', 'IL': 'اسرائیل', 'AE': 'امارات', 'SA': 'عربستان سعودی', 'QA': 'قطر', 'KW': 'کویت', 'IR': 'ایران', 'IQ': 'عراق', 'PK': 'پاکستان', 'BD': 'بنگلادش', 'TH': 'تایلند', 'VN': 'ویتنام', 'ID': 'اندونزی', 'MY': 'مالزی', 'PH': 'فیلیپین', 'TW': 'تایوان', 'HK': 'هنگ\u200cکنگ', 'CN': 'چین', 'AU': 'استرالیا', 'NZ': 'نیوزیلند', 'ZA': 'آفریقای جنوبی', 'GR': 'یونان', 'PT': 'پرتغال', 'CZ': 'چک', 'HU': 'مجارستان', 'RO': 'رومانی', 'UA': 'اوکراین', 'IT': 'ایتالیا', 'ES': 'اسپانیا'}}
+_CC_EN.update({'afghanistan': 'AF', 'albania': 'AL', 'algeria': 'DZ', 'american samoa': 'AS', 'andorra': 'AD', 'angola': 'AO', 'anguilla': 'AI', 'antarctica': 'AQ', 'antigua and barbuda': 'AG', 'armenia': 'AM', 'aruba': 'AW', 'azerbaijan': 'AZ', 'bahamas': 'BS', 'bahrain': 'BH', 'barbados': 'BB', 'belarus': 'BY', 'belize': 'BZ', 'benin': 'BJ', 'bermuda': 'BM', 'bhutan': 'BT', 'bolivia': 'BO', 'bosnia and herzegovina': 'BA', 'botswana': 'BW', 'brunei': 'BN', 'bulgaria': 'BG', 'burkina faso': 'BF', 'burundi': 'BI', 'cambodia': 'KH', 'cameroon': 'CM', 'cape verde': 'CV', 'cayman islands': 'KY', 'central african republic': 'CF', 'chad': 'TD', 'comoros': 'KM', 'congo': 'CG', 'congo (democratic republic)': 'CD', 'cook islands': 'CK', 'costa rica': 'CR', 'croatia': 'HR', 'cuba': 'CU', 'cyprus': 'CY', 'djibouti': 'DJ', 'dominica': 'DM', 'dominican republic': 'DO', 'ecuador': 'EC', 'el salvador': 'SV', 'equatorial guinea': 'GQ', 'eritrea': 'ER', 'estonia': 'EE', 'eswatini': 'SZ', 'ethiopia': 'ET', 'falkland islands': 'FK', 'faroe islands': 'FO', 'fiji': 'FJ', 'gabon': 'GA', 'gambia': 'GM', 'georgia': 'GE', 'ghana': 'GH', 'gibraltar': 'GI', 'greenland': 'GL', 'grenada': 'GD', 'guam': 'GU', 'guatemala': 'GT', 'guinea': 'GN', 'guinea-bissau': 'GW', 'guyana': 'GY', 'haiti': 'HT', 'honduras': 'HN', 'iceland': 'IS', 'jamaica': 'JM', 'jordan': 'JO', 'kazakhstan': 'KZ', 'kiribati': 'KI', 'kosovo': 'XK', 'kyrgyzstan': 'KG', 'laos': 'LA', 'latvia': 'LV', 'lebanon': 'LB', 'lesotho': 'LS', 'liberia': 'LR', 'libya': 'LY', 'liechtenstein': 'LI', 'lithuania': 'LT', 'luxembourg': 'LU', 'macau': 'MO', 'madagascar': 'MG', 'malawi': 'MW', 'maldives': 'MV', 'mali': 'ML', 'malta': 'MT', 'marshall islands': 'MH', 'mauritania': 'MR', 'mauritius': 'MU', 'micronesia': 'FM', 'moldova': 'MD', 'monaco': 'MC', 'mongolia': 'MN', 'montenegro': 'ME', 'mozambique': 'MZ', 'myanmar': 'MM', 'namibia': 'NA', 'nepal': 'NP', 'nicaragua': 'NI', 'niger': 'NE', 'north korea': 'KP', 'north macedonia': 'MK', 'northern mariana islands': 'MP', 'oman': 'OM', 'palau': 'PW', 'palestine': 'PS', 'panama': 'PA', 'papua new guinea': 'PG', 'paraguay': 'PY', 'puerto rico': 'PR', 'rwanda': 'RW', 'saint kitts and nevis': 'KN', 'saint lucia': 'LC', 'samoa': 'WS', 'san marino': 'SM', 'sao tome and principe': 'ST', 'senegal': 'SN', 'serbia': 'RS', 'seychelles': 'SC', 'sierra leone': 'SL', 'slovakia': 'SK', 'slovenia': 'SI', 'solomon islands': 'SB', 'somalia': 'SO', 'south sudan': 'SS', 'sri lanka': 'LK', 'sudan': 'SD', 'suriname': 'SR', 'syria': 'SY', 'tajikistan': 'TJ', 'tanzania': 'TZ', 'timor-leste': 'TL', 'togo': 'TG', 'tonga': 'TO', 'trinidad and tobago': 'TT', 'tunisia': 'TN', 'turkmenistan': 'TM', 'tuvalu': 'TV', 'uganda': 'UG', 'uruguay': 'UY', 'uzbekistan': 'UZ', 'vanuatu': 'VU', 'venezuela': 'VE', 'yemen': 'YE', 'zambia': 'ZM', 'zimbabwe': 'ZW', 'guernsey': 'GG', 'jersey': 'JE', 'isle of man': 'IM', 'aland': 'AX', 'curacao': 'CW', 'sint maarten': 'SX', 'bonaire': 'BQ', 'saint barthelemy': 'BL', 'saint martin': 'MF', 'mayotte': 'YT', 'reunion': 'RE', 'martinique': 'MQ', 'guadeloupe': 'GP', 'french guiana': 'GF', 'french polynesia': 'PF', 'new caledonia': 'NC', 'niue': 'NU', 'norfolk island': 'NF', 'christmas island': 'CX', 'pitcairn': 'PN', 'saint helena': 'SH', 'montserrat': 'MS', 'british virgin islands': 'VG', 'u.s. virgin islands': 'VI', 'turks and caicos': 'TC'})
+_EXTRA_CN = {'zh': {'AF': '阿富汗', 'AL': '阿尔巴尼亚', 'DZ': '阿尔及利亚', 'AS': '美属萨摩亚', 'AD': '安道尔', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南极洲', 'AG': '安提瓜和巴布达', 'AM': '亚美尼亚', 'AW': '阿鲁巴', 'AZ': '阿塞拜疆', 'BS': '巴哈马', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄罗斯', 'BZ': '伯利兹', 'BJ': '贝宁', 'BM': '百慕大', 'BT': '不丹', 'BO': '玻利维亚', 'BA': '波黑', 'BW': '博茨瓦纳', 'BN': '文莱', 'BG': '保加利亚', 'BF': '布基纳法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麦隆', 'CV': '佛得角', 'KY': '开曼群岛', 'CF': '中非共和国', 'TD': '乍得', 'KM': '科摩罗', 'CG': '刚果（布）', 'CD': '刚果（金）', 'CK': '库克群岛', 'CR': '哥斯达黎加', 'HR': '克罗地亚', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多米尼加', 'EC': '厄瓜多尔', 'SV': '萨尔瓦多', 'GQ': '赤道几内亚', 'ER': '厄立特里亚', 'EE': '爱沙尼亚', 'SZ': '斯威士兰', 'ET': '埃塞俄比亚', 'FK': '福克兰群岛', 'FO': '法罗群岛', 'FJ': '斐济', 'GA': '加蓬', 'GM': '冈比亚', 'GE': '格鲁吉亚', 'GH': '加纳', 'GI': '直布罗陀', 'GL': '格陵兰', 'GD': '格林纳达', 'GU': '关岛', 'GT': '危地马拉', 'GN': '几内亚', 'GW': '几内亚比绍', 'GY': '圭亚那', 'HT': '海地', 'HN': '洪都拉斯', 'IS': '冰岛', 'JM': '牙买加', 'JO': '约旦', 'KZ': '哈萨克斯坦', 'KI': '基里巴斯', 'XK': '科索沃', 'KG': '吉尔吉斯斯坦', 'LA': '老挝', 'LV': '拉脱维亚', 'LB': '黎巴嫩', 'LS': '莱索托', 'LR': '利比里亚', 'LY': '利比亚', 'LI': '列支敦士登', 'LT': '立陶宛', 'LU': '卢森堡', 'MO': '澳门', 'MG': '马达加斯加', 'MW': '马拉维', 'MV': '马尔代夫', 'ML': '马里', 'MT': '马耳他', 'MH': '马绍尔群岛', 'MR': '毛里塔尼亚', 'MU': '毛里求斯', 'FM': '密克罗尼西亚', 'MD': '摩尔多瓦', 'MC': '摩纳哥', 'MN': '蒙古', 'ME': '黑山', 'MZ': '莫桑比克', 'MM': '缅甸', 'NA': '纳米比亚', 'NP': '尼泊尔', 'NI': '尼加拉瓜', 'NE': '尼日尔', 'KP': '朝鲜', 'MK': '北马其顿', 'MP': '北马里亚纳群岛', 'OM': '阿曼', 'PW': '帕劳', 'PS': '巴勒斯坦', 'PA': '巴拿马', 'PG': '巴布亚新几内亚', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '卢旺达', 'KN': '圣基茨和尼维斯', 'LC': '圣卢西亚', 'WS': '萨摩亚', 'SM': '圣马力诺', 'ST': '圣多美和普林西比', 'SN': '塞内加尔', 'RS': '塞尔维亚', 'SC': '塞舌尔', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛文尼亚', 'SB': '所罗门群岛', 'SO': '索马里', 'SS': '南苏丹', 'LK': '斯里兰卡', 'SD': '苏丹', 'SR': '苏里南', 'SY': '叙利亚', 'TJ': '塔吉克斯坦', 'TZ': '坦桑尼亚', 'TL': '东帝汶', 'TG': '多哥', 'TO': '汤加', 'TT': '特立尼达和多巴哥', 'TN': '突尼斯', 'TM': '土库曼斯坦', 'TV': '图瓦卢', 'UG': '乌干达', 'UY': '乌拉圭', 'UZ': '乌兹别克斯坦', 'VU': '瓦努阿图', 'VE': '委内瑞拉', 'YE': '也门', 'ZM': '赞比亚', 'ZW': '津巴布韦', 'GG': '根西岛', 'JE': '泽西岛', 'IM': '马恩岛', 'AX': '奥兰群岛', 'CW': '库拉索', 'SX': '圣马丁（荷属）', 'BQ': '博奈尔', 'BL': '圣巴泰勒米', 'MF': '圣马丁（法属）', 'YT': '马约特', 'RE': '留尼汪', 'MQ': '马提尼克', 'GP': '瓜德罗普', 'GF': '法属圭亚那', 'PF': '法属波利尼西亚', 'NC': '新喀里多尼亚', 'NU': '纽埃', 'NF': '诺福克岛', 'CX': '圣诞岛', 'PN': '皮特凯恩群岛', 'SH': '圣赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英属维尔京群岛', 'VI': '美属维尔京群岛', 'TC': '特克斯和凯科斯群岛'}, 'zh-TW': {'AF': '阿富汗', 'AL': '阿爾巴尼亞', 'DZ': '阿爾及利亞', 'AS': '美屬薩摩亞', 'AD': '安道爾', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南極洲', 'AG': '安提瓜和巴布達', 'AM': '亞美尼亞', 'AW': '阿魯巴', 'AZ': '亞塞拜然', 'BS': '巴哈馬', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄羅斯', 'BZ': '貝里斯', 'BJ': '貝南', 'BM': '百慕達', 'BT': '不丹', 'BO': '玻利維亞', 'BA': '波赫', 'BW': '波札那', 'BN': '汶萊', 'BG': '保加利亞', 'BF': '布基納法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麥隆', 'CV': '維德角', 'KY': '開曼群島', 'CF': '中非共和國', 'TD': '查德', 'KM': '葛摩', 'CG': '剛果（布）', 'CD': '剛果（金）', 'CK': '庫克群島', 'CR': '哥斯大黎加', 'HR': '克羅埃西亞', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多明尼加', 'EC': '厄瓜多', 'SV': '薩爾瓦多', 'GQ': '赤道幾內亞', 'ER': '厄利垂亞', 'EE': '愛沙尼亞', 'SZ': '史瓦帝尼', 'ET': '衣索比亞', 'FK': '福克蘭群島', 'FO': '法羅群島', 'FJ': '斐濟', 'GA': '加彭', 'GM': '甘比亞', 'GE': '喬治亞', 'GH': '迦納', 'GI': '直布羅陀', 'GL': '格陵蘭', 'GD': '格瑞那達', 'GU': '關島', 'GT': '瓜地馬拉', 'GN': '幾內亞', 'GW': '幾內亞比索', 'GY': '蓋亞那', 'HT': '海地', 'HN': '宏都拉斯', 'IS': '冰島', 'JM': '牙買加', 'JO': '約旦', 'KZ': '哈薩克斯坦', 'KI': '吉里巴斯', 'XK': '科索沃', 'KG': '吉爾吉斯斯坦', 'LA': '寮國', 'LV': '拉脫維亞', 'LB': '黎巴嫩', 'LS': '賴索托', 'LR': '賴比瑞亞', 'LY': '利比亞', 'LI': '列支敦斯登', 'LT': '立陶宛', 'LU': '盧森堡', 'MO': '澳門', 'MG': '馬達加斯加', 'MW': '馬拉威', 'MV': '馬爾地夫', 'ML': '馬利', 'MT': '馬耳他', 'MH': '馬紹爾群島', 'MR': '茅利塔尼亞', 'MU': '模里西斯', 'FM': '密克羅尼西亞', 'MD': '摩爾多瓦', 'MC': '摩納哥', 'MN': '蒙古', 'ME': '蒙特內哥羅', 'MZ': '莫三比克', 'MM': '緬甸', 'NA': '納米比亞', 'NP': '尼泊爾', 'NI': '尼加拉瓜', 'NE': '尼日', 'KP': '北韓', 'MK': '北馬其頓', 'MP': '北馬里亞納群島', 'OM': '阿曼', 'PW': '帛琉', 'PS': '巴勒斯坦', 'PA': '巴拿馬', 'PG': '巴布亞紐幾內亞', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '盧安達', 'KN': '聖基茨和尼維斯', 'LC': '聖露西亞', 'WS': '薩摩亞', 'SM': '聖馬利諾', 'ST': '聖多美和普林西比', 'SN': '塞內加爾', 'RS': '塞爾維亞', 'SC': '塞舌爾', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛維尼亞', 'SB': '所羅門群島', 'SO': '索馬利亞', 'SS': '南蘇丹', 'LK': '斯里蘭卡', 'SD': '蘇丹', 'SR': '蘇利南', 'SY': '敘利亞', 'TJ': '塔吉克斯坦', 'TZ': '坦尚尼亞', 'TL': '東帝汶', 'TG': '多哥', 'TO': '東加', 'TT': '特立尼達和多巴哥', 'TN': '突尼西亞', 'TM': '土庫曼斯坦', 'TV': '圖瓦盧', 'UG': '烏干達', 'UY': '烏拉圭', 'UZ': '烏茲別克斯坦', 'VU': '瓦努阿圖', 'VE': '委內瑞拉', 'YE': '葉門', 'ZM': '贊比亞', 'ZW': '津巴布韋', 'GG': '根西島', 'JE': '澤西島', 'IM': '馬恩島', 'AX': '奧蘭群島', 'CW': '庫拉索', 'SX': '聖馬丁（荷屬）', 'BQ': '博奈爾', 'BL': '聖巴泰勒米', 'MF': '聖馬丁（法屬）', 'YT': '馬約特', 'RE': '留尼汪', 'MQ': '馬提尼克', 'GP': '瓜德羅普', 'GF': '法屬圭亞那', 'PF': '法屬波利尼西亞', 'NC': '新喀里多尼亞', 'NU': '紐埃', 'NF': '諾福克島', 'CX': '聖誕島', 'PN': '皮特凱恩群島', 'SH': '聖赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英屬維爾京群島', 'VI': '美屬維爾京群島', 'TC': '特克斯和凱科斯群島'}, 'ja': {'AF': 'アフガニスタン', 'AL': 'アルバニア', 'DZ': 'アルジェリア', 'AS': '米領サモア', 'AD': 'アンドラ', 'AO': 'アンゴラ', 'AI': 'アンギラ', 'AQ': '南極', 'AG': 'アンティグア・バーブーダ', 'AM': 'アルメニア', 'AW': 'アルバ', 'AZ': 'アゼルバイジャン', 'BS': 'バハマ', 'BH': 'バーレーン', 'BB': 'バルバドス', 'BY': 'ベラルーシ', 'BZ': 'ベリーズ', 'BJ': 'ベナン', 'BM': 'バミューダ', 'BT': 'ブータン', 'BO': 'ボリビア', 'BA': 'ボスニア・ヘルツェゴビナ', 'BW': 'ボツワナ', 'BN': 'ブルネイ', 'BG': 'ブルガリア', 'BF': 'ブルキナファソ', 'BI': 'ブルンジ', 'KH': 'カンボジア', 'CM': 'カメルーン', 'CV': 'カーボベルデ', 'KY': 'ケイマン諸島', 'CF': '中央アフリカ', 'TD': 'チャド', 'KM': 'コモロ', 'CG': 'コンゴ共和国', 'CD': 'コンゴ民主共和国', 'CK': 'クック諸島', 'CR': 'コスタリカ', 'HR': 'クロアチア', 'CU': 'キューバ', 'CY': 'キプロス', 'DJ': 'ジブチ', 'DM': 'ドミニカ国', 'DO': 'ドミニカ共和国', 'EC': 'エクアドル', 'SV': 'エルサルバドル', 'GQ': '赤道ギニア', 'ER': 'エリトリア', 'EE': 'エストニア', 'SZ': 'エスワティニ', 'ET': 'エチオピア', 'FK': 'フォークランド諸島', 'FO': 'フェロー諸島', 'FJ': 'フィジー', 'GA': 'ガボン', 'GM': 'ガンビア', 'GE': 'ジョージア', 'GH': 'ガーナ', 'GI': 'ジブラルタル', 'GL': 'グリーンランド', 'GD': 'グレナダ', 'GU': 'グアム', 'GT': 'グアテマラ', 'GN': 'ギニア', 'GW': 'ギニアビサウ', 'GY': 'ガイアナ', 'HT': 'ハイチ', 'HN': 'ホンジュラス', 'IS': 'アイスランド', 'JM': 'ジャマイカ', 'JO': 'ヨルダン', 'KZ': 'カザフスタン', 'KI': 'キリバス', 'XK': 'コソボ', 'KG': 'キルギス', 'LA': 'ラオス', 'LV': 'ラトビア', 'LB': 'レバノン', 'LS': 'レソト', 'LR': 'リベリア', 'LY': 'リビア', 'LI': 'リヒテンシュタイン', 'LT': 'リトアニア', 'LU': 'ルクセンブルク', 'MO': 'マカオ', 'MG': 'マダガスカル', 'MW': 'マラウイ', 'MV': 'モルディブ', 'ML': 'マリ', 'MT': 'マルタ', 'MH': 'マーシャル諸島', 'MR': 'モーリタニア', 'MU': 'モーリシャス', 'FM': 'ミクロネシア', 'MD': 'モルドバ', 'MC': 'モナコ', 'MN': 'モンゴル', 'ME': 'モンテネグロ', 'MZ': 'モザンビーク', 'MM': 'ミャンマー', 'NA': 'ナミビア', 'NP': 'ネパール', 'NI': 'ニカラグア', 'NE': 'ニジェール', 'KP': '北朝鮮', 'MK': '北マケドニア', 'MP': '北マリアナ諸島', 'OM': 'オマーン', 'PW': 'パラオ', 'PS': 'パレスチナ', 'PA': 'パナマ', 'PG': 'パプアニューギニア', 'PY': 'パラグアイ', 'PR': 'プエルトリコ', 'RW': 'ルワンダ', 'KN': 'セントクリストファー・ネイビス', 'LC': 'セントルシア', 'WS': 'サモア', 'SM': 'サンマリノ', 'ST': 'サントメ・プリンシペ', 'SN': 'セネガル', 'RS': 'セルビア', 'SC': 'セーシェル', 'SL': 'シエラレオネ', 'SK': 'スロバキア', 'SI': 'スロベニア', 'SB': 'ソロモン諸島', 'SO': 'ソマリア', 'SS': '南スーダン', 'LK': 'スリランカ', 'SD': 'スーダン', 'SR': 'スリナム', 'SY': 'シリア', 'TJ': 'タジキスタン', 'TZ': 'タンザニア', 'TL': '東ティモール', 'TG': 'トーゴ', 'TO': 'トンガ', 'TT': 'トリニダード・トバゴ', 'TN': 'チュニジア', 'TM': 'トルクメニスタン', 'TV': 'ツバル', 'UG': 'ウガンダ', 'UY': 'ウルグアイ', 'UZ': 'ウズベキスタン', 'VU': 'バヌアツ', 'VE': 'ベネズエラ', 'YE': 'イエメン', 'ZM': 'ザンビア', 'ZW': 'ジンバブエ', 'GG': 'ガーンジー', 'JE': 'ジャージー', 'IM': 'マン島', 'AX': 'オーランド諸島', 'CW': 'キュラソー', 'SX': 'シント・マールテン', 'BQ': 'ボネール', 'BL': 'サン・バルテルミー', 'MF': 'サン・マルタン', 'YT': 'マヨット', 'RE': 'レユニオン', 'MQ': 'マルティニーク', 'GP': 'グアドループ', 'GF': 'フランス領ギアナ', 'PF': 'フランス領ポリネシア', 'NC': 'ニューカレドニア', 'NU': 'ニウエ', 'NF': 'ノーフォーク島', 'CX': 'クリスマス島', 'PN': 'ピトケアン諸島', 'SH': 'セントヘレナ', 'MS': 'モントセラト', 'VG': '英領バージン諸島', 'VI': '米領バージン諸島', 'TC': 'タークス・カイコス諸島'}, 'ru': {'AF': 'Афганистан', 'AL': 'Албания', 'DZ': 'Алжир', 'AS': 'Американское Самоа', 'AD': 'Андорра', 'AO': 'Ангола', 'AI': 'Ангилья', 'AQ': 'Антарктида', 'AG': 'Антигуа и Барбуда', 'AM': 'Армения', 'AW': 'Аруба', 'AZ': 'Азербайджан', 'BS': 'Багамы', 'BH': 'Бахрейн', 'BB': 'Барбадос', 'BY': 'Беларусь', 'BZ': 'Белиз', 'BJ': 'Бенин', 'BM': 'Бермуды', 'BT': 'Бутан', 'BO': 'Боливия', 'BA': 'Босния и Герцеговина', 'BW': 'Ботсвана', 'BN': 'Бруней', 'BG': 'Болгария', 'BF': 'Буркина-Фасо', 'BI': 'Бурунди', 'KH': 'Камбоджа', 'CM': 'Камерун', 'CV': 'Кабо-Верде', 'KY': 'Каймановы острова', 'CF': 'ЦАР', 'TD': 'Чад', 'KM': 'Коморы', 'CG': 'Конго', 'CD': 'ДР Конго', 'CK': 'Острова Кука', 'CR': 'Коста-Рика', 'HR': 'Хорватия', 'CU': 'Куба', 'CY': 'Кипр', 'DJ': 'Джибути', 'DM': 'Доминика', 'DO': 'Доминиканская Республика', 'EC': 'Эквадор', 'SV': 'Сальвадор', 'GQ': 'Экваториальная Гвинея', 'ER': 'Эритрея', 'EE': 'Эстония', 'SZ': 'Эсватини', 'ET': 'Эфиопия', 'FK': 'Фолклендские острова', 'FO': 'Фарерские острова', 'FJ': 'Фиджи', 'GA': 'Габон', 'GM': 'Гамбия', 'GE': 'Грузия', 'GH': 'Гана', 'GI': 'Гибралтар', 'GL': 'Гренландия', 'GD': 'Гренада', 'GU': 'Гуам', 'GT': 'Гватемала', 'GN': 'Гвинея', 'GW': 'Гвинея-Бисау', 'GY': 'Гайана', 'HT': 'Гаити', 'HN': 'Гондурас', 'IS': 'Исландия', 'JM': 'Ямайка', 'JO': 'Иордания', 'KZ': 'Казахстан', 'KI': 'Кирибати', 'XK': 'Косово', 'KG': 'Киргизия', 'LA': 'Лаос', 'LV': 'Латвия', 'LB': 'Ливан', 'LS': 'Лесото', 'LR': 'Либерия', 'LY': 'Ливия', 'LI': 'Лихтенштейн', 'LT': 'Литва', 'LU': 'Люксембург', 'MO': 'Макао', 'MG': 'Мадагаскар', 'MW': 'Малави', 'MV': 'Мальдивы', 'ML': 'Мали', 'MT': 'Мальта', 'MH': 'Маршалловы Острова', 'MR': 'Мавритания', 'MU': 'Маврикий', 'FM': 'Микронезия', 'MD': 'Молдова', 'MC': 'Монако', 'MN': 'Монголия', 'ME': 'Черногория', 'MZ': 'Мозамбик', 'MM': 'Мьянма', 'NA': 'Намибия', 'NP': 'Непал', 'NI': 'Никарагуа', 'NE': 'Нигер', 'KP': 'Северная Корея', 'MK': 'Северная Македония', 'MP': 'Северные Марианские острова', 'OM': 'Оман', 'PW': 'Палау', 'PS': 'Палестина', 'PA': 'Панама', 'PG': 'Папуа — Новая Гвинея', 'PY': 'Парагвай', 'PR': 'Пуэрто-Рико', 'RW': 'Руанда', 'KN': 'Сент-Китс и Невис', 'LC': 'Сент-Люсия', 'WS': 'Самоа', 'SM': 'Сан-Марино', 'ST': 'Сан-Томе и Принсипи', 'SN': 'Сенегал', 'RS': 'Сербия', 'SC': 'Сейшелы', 'SL': 'Сьерра-Леоне', 'SK': 'Словакия', 'SI': 'Словения', 'SB': 'Соломоновы Острова', 'SO': 'Сомали', 'SS': 'Южный Судан', 'LK': 'Шри-Ланка', 'SD': 'Судан', 'SR': 'Суринам', 'SY': 'Сирия', 'TJ': 'Таджикистан', 'TZ': 'Танзания', 'TL': 'Восточный Тимор', 'TG': 'Того', 'TO': 'Тонга', 'TT': 'Тринидад и Тобаго', 'TN': 'Тунис', 'TM': 'Туркменистан', 'TV': 'Тувалу', 'UG': 'Уганда', 'UY': 'Уругвай', 'UZ': 'Узбекистан', 'VU': 'Вануату', 'VE': 'Венесуэла', 'YE': 'Йемен', 'ZM': 'Замбия', 'ZW': 'Зимбабве', 'GG': 'Гернси', 'JE': 'Джерси', 'IM': 'Остров Мэн', 'AX': 'Аландские острова', 'CW': 'Кюрасао', 'SX': 'Синт-Мартен', 'BQ': 'Бонайре', 'BL': 'Сен-Бартелеми', 'MF': 'Сен-Мартен', 'YT': 'Майотта', 'RE': 'Реюньон', 'MQ': 'Мартиника', 'GP': 'Гваделупа', 'GF': 'Французская Гвиана', 'PF': 'Французская Полинезия', 'NC': 'Новая Каледония', 'NU': 'Ниуэ', 'NF': 'Остров Норфолк', 'CX': 'Остров Рождества', 'PN': 'Питкэрн', 'SH': 'Остров Святой Елены', 'MS': 'Монтсеррат', 'VG': 'Британские Виргинские острова', 'VI': 'Американские Виргинские острова', 'TC': 'Теркс и Кайкос'}, 'fa': {'AF': 'افغانستان', 'AL': 'آلبانی', 'DZ': 'الجزایر', 'AS': 'ساموآی آمریکا', 'AD': 'آندورا', 'AO': 'آنگولا', 'AI': 'آنگویلا', 'AQ': 'جنوبگان', 'AG': 'آنتیگوا و باربودا', 'AM': 'ارمنستان', 'AW': 'آروبا', 'AZ': 'آذربایجان', 'BS': 'باهاما', 'BH': 'بحرین', 'BB': 'باربادوس', 'BY': 'بلاروس', 'BZ': 'بلیز', 'BJ': 'بنین', 'BM': 'برمودا', 'BT': 'بوتان', 'BO': 'بولیوی', 'BA': 'بوسنی و هرزگوین', 'BW': 'بوتسوانا', 'BN': 'برونئی', 'BG': 'بلغارستان', 'BF': 'بورکینافاسو', 'BI': 'بوروندی', 'KH': 'کامبوج', 'CM': 'کامرون', 'CV': 'کیپ ورد', 'KY': 'جزایر کیمن', 'CF': 'جمهوری آفریقای مرکزی', 'TD': 'چاد', 'KM': 'کومور', 'CG': 'کنگو', 'CD': 'جمهوری دموکراتیک کنگو', 'CK': 'جزایر کوک', 'CR': 'کاستاریکا', 'HR': 'کرواسی', 'CU': 'کوبا', 'CY': 'قبرس', 'DJ': 'جیبوتی', 'DM': 'دومینیکا', 'DO': 'جمهوری دومینیکن', 'EC': 'اکوادور', 'SV': 'السالوادور', 'GQ': 'گینه استوایی', 'ER': 'اریتره', 'EE': 'استونی', 'SZ': 'اسواتینی', 'ET': 'اتیوپی', 'FK': 'جزایر فالکلند', 'FO': 'جزایر فارو', 'FJ': 'فیجی', 'GA': 'گابن', 'GM': 'گامبیا', 'GE': 'گرجستان', 'GH': 'غنا', 'GI': 'جبل\u200cالطارق', 'GL': 'گرینلند', 'GD': 'گرنادا', 'GU': 'گوام', 'GT': 'گواتمالا', 'GN': 'گینه', 'GW': 'گینه بیسائو', 'GY': 'گویان', 'HT': 'هائیتی', 'HN': 'هندوراس', 'IS': 'ایسلند', 'JM': 'جامائیکا', 'JO': 'اردن', 'KZ': 'قزاقستان', 'KI': 'کیریباتی', 'XK': 'کوزوو', 'KG': 'قرقیزستان', 'LA': 'لائوس', 'LV': 'لتونی', 'LB': 'لبنان', 'LS': 'لسوتو', 'LR': 'لیبریا', 'LY': 'لیبی', 'LI': 'لیختن\u200cاشتاین', 'LT': 'لیتوانی', 'LU': 'لوکزامبورگ', 'MO': 'ماکائو', 'MG': 'ماداگاسکار', 'MW': 'مالاوی', 'MV': 'مالدیو', 'ML': 'مالی', 'MT': 'مالت', 'MH': 'جزایر مارشال', 'MR': 'موریتانی', 'MU': 'موریس', 'FM': 'میکرونزی', 'MD': 'مولداوی', 'MC': 'موناکو', 'MN': 'مغولستان', 'ME': 'مونته\u200cنگرو', 'MZ': 'موزامبیک', 'MM': 'میانمار', 'NA': 'نامیبیا', 'NP': 'نپال', 'NI': 'نیکاراگوئه', 'NE': 'نیجر', 'KP': 'کره شمالی', 'MK': 'مقدونیه شمالی', 'MP': 'جزایر ماریانای شمالی', 'OM': 'عمان', 'PW': 'پالائو', 'PS': 'فلسطین', 'PA': 'پاناما', 'PG': 'پاپوا گینه نو', 'PY': 'پاراگوئه', 'PR': 'پورتوریکو', 'RW': 'رواندا', 'KN': 'سنت کیتس و نویس', 'LC': 'سنت لوسیا', 'WS': 'ساموآ', 'SM': 'سن مارینو', 'ST': 'سائوتومه و پرنسیپ', 'SN': 'سنگال', 'RS': 'صربستان', 'SC': 'سیشل', 'SL': 'سیرالئون', 'SK': 'اسلواکی', 'SI': 'اسلوونی', 'SB': 'جزایر سلیمان', 'SO': 'سومالی', 'SS': 'سودان جنوبی', 'LK': 'سری\u200cلانکا', 'SD': 'سودان', 'SR': 'سورینام', 'SY': 'سوریه', 'TJ': 'تاجیکستان', 'TZ': 'تانزانیا', 'TL': 'تیمور شرقی', 'TG': 'توگو', 'TO': 'تونگا', 'TT': 'ترینیداد و توباگو', 'TN': 'تونس', 'TM': 'ترکمنستان', 'TV': 'تووالو', 'UG': 'اوگاندا', 'UY': 'اروگوئه', 'UZ': 'ازبکستان', 'VU': 'وانواتو', 'VE': 'ونزوئلا', 'YE': 'یمن', 'ZM': 'زامبیا', 'ZW': 'زیمبابوه', 'GG': 'گرنزی', 'JE': 'جرزی', 'IM': 'جزیره من', 'AX': 'جزایر الند', 'CW': 'کوراسائو', 'SX': 'سینت مارتن', 'BQ': 'بونیر', 'BL': 'سن بارتلمی', 'MF': 'سن مارتن', 'YT': 'مایوت', 'RE': 'رئونیون', 'MQ': 'مارتینیک', 'GP': 'گوادلوپ', 'GF': 'گویان فرانسه', 'PF': 'پلی\u200cنزی فرانسه', 'NC': 'کالدونیای جدید', 'NU': 'نیوئه', 'NF': 'جزیره نورفک', 'CX': 'جزیره کریسمس', 'PN': 'پیتکرن', 'SH': 'سنت هلنا', 'MS': 'مونتسرات', 'VG': 'جزایر ویرجین بریتانیا', 'VI': 'جزایر ویرجین آمریکا', 'TC': 'جزایر تورکس و کایکوس'}}
+for _lg in ("zh", "zh-TW", "ja", "ru", "fa"):
+    _COUNTRY_NAMES[_lg].update(_EXTRA_CN[_lg])
+
 _TZ_CONT = {'zh': {'Africa': '非洲', 'America': '美洲', 'Antarctica': '南极洲', 'Asia': '亚洲', 'Atlantic': '大西洋', 'Australia': '澳大利亚', 'Europe': '欧洲', 'Indian': '印度洋', 'Pacific': '太平洋'}, 'zh-TW': {'Africa': '非洲', 'America': '美洲', 'Antarctica': '南極洲', 'Asia': '亞洲', 'Atlantic': '大西洋', 'Australia': '澳大利亞', 'Europe': '歐洲', 'Indian': '印度洋', 'Pacific': '太平洋'}, 'ja': {'Africa': 'アフリカ', 'America': 'アメリカ', 'Antarctica': '南極', 'Asia': 'アジア', 'Atlantic': '大西洋', 'Australia': 'オーストラリア', 'Europe': 'ヨーロッパ', 'Indian': 'インド洋', 'Pacific': '太平洋'}, 'ru': {'Africa': 'Африка', 'America': 'Америка', 'Antarctica': 'Антарктида', 'Asia': 'Азия', 'Atlantic': 'Атлантика', 'Australia': 'Австралия', 'Europe': 'Европа', 'Indian': 'Индийский океан', 'Pacific': 'Тихий океан'}, 'fa': {'Africa': 'آفریقا', 'America': 'آمریکا', 'Antarctica': 'جنوبگان', 'Asia': 'آسیا', 'Atlantic': 'اقیانوس اطلس', 'Australia': 'استرالیا', 'Europe': 'اروپا', 'Indian': 'اقیانوس هند', 'Pacific': 'اقیانوس آرام'}}
 _TZ_CITY = {'zh': {'Cairo': '开罗', 'Johannesburg': '约翰内斯堡', 'Lagos': '拉各斯', 'Anchorage': '安克雷奇', 'Bogota': '波哥大', 'Chicago': '芝加哥', 'Denver': '丹佛', 'Halifax': '哈利法克斯', 'Lima': '利马', 'Los_Angeles': '洛杉矶', 'Mexico_City': '墨西哥城', 'New_York': '纽约', 'Phoenix': '菲尼克斯', 'Santiago': '圣地亚哥', 'Sao_Paulo': '圣保罗', 'St_Johns': '圣约翰斯', 'Toronto': '多伦多', 'Vancouver': '温哥华', 'Winnipeg': '温尼伯', 'Almaty': '阿拉木图', 'Bangkok': '曼谷', 'Colombo': '科伦坡', 'Dhaka': '达卡', 'Dubai': '迪拜', 'Ho_Chi_Minh': '胡志明市', 'Hong_Kong': '香港', 'Jakarta': '雅加达', 'Jerusalem': '耶路撒冷', 'Kabul': '喀布尔', 'Karachi': '卡拉奇', 'Kathmandu': '加德满都', 'Kolkata': '加尔各答', 'Kuala_Lumpur': '吉隆坡', 'Manila': '马尼拉', 'Riyadh': '利雅得', 'Seoul': '首尔', 'Shanghai': '上海', 'Singapore': '新加坡', 'Taipei': '台北', 'Tehran': '德黑兰', 'Tokyo': '东京', 'Reykjavik': '雷克雅未克', 'Adelaide': '阿德莱德', 'Brisbane': '布里斯班', 'Melbourne': '墨尔本', 'Perth': '珀斯', 'Sydney': '悉尼', 'Amsterdam': '阿姆斯特丹', 'Berlin': '柏林', 'Istanbul': '伊斯坦布尔', 'London': '伦敦', 'Madrid': '马德里', 'Moscow': '莫斯科', 'Paris': '巴黎', 'Rome': '罗马', 'Stockholm': '斯德哥尔摩', 'Vienna': '维也纳', 'Warsaw': '华沙', 'Auckland': '奥克兰', 'Chatham': '查塔姆', 'Buenos_Aires': '布宜诺斯艾利斯', 'Ulaanbaatar': '乌兰巴托', 'Honolulu': '檀香山', 'Zurich': '苏黎世', 'Lisbon': '里斯本', 'Dublin': '都柏林', 'Helsinki': '赫尔辛基', 'Oslo': '奥斯陆', 'Copenhagen': '哥本哈根', 'Prague': '布拉格', 'Budapest': '布达佩斯', 'Athens': '雅典', 'Kyiv': '基辅'}, 'zh-TW': {'Cairo': '開羅', 'Johannesburg': '約翰內斯堡', 'Lagos': '拉各斯', 'Anchorage': '安克雷奇', 'Bogota': '波哥大', 'Chicago': '芝加哥', 'Denver': '丹佛', 'Halifax': '哈利法克斯', 'Lima': '利馬', 'Los_Angeles': '洛杉磯', 'Mexico_City': '墨西哥城', 'New_York': '紐約', 'Phoenix': '菲尼克斯', 'Santiago': '聖地亞哥', 'Sao_Paulo': '聖保羅', 'St_Johns': '聖約翰斯', 'Toronto': '多倫多', 'Vancouver': '溫哥華', 'Winnipeg': '溫尼伯', 'Almaty': '阿拉木圖', 'Bangkok': '曼谷', 'Colombo': '科倫坡', 'Dhaka': '達卡', 'Dubai': '杜拜', 'Ho_Chi_Minh': '胡志明市', 'Hong_Kong': '香港', 'Jakarta': '雅加達', 'Jerusalem': '耶路撒冷', 'Kabul': '喀布爾', 'Karachi': '卡拉奇', 'Kathmandu': '加德滿都', 'Kolkata': '加爾各答', 'Kuala_Lumpur': '吉隆坡', 'Manila': '馬尼拉', 'Riyadh': '利雅得', 'Seoul': '首爾', 'Shanghai': '上海', 'Singapore': '新加坡', 'Taipei': '台北', 'Tehran': '德黑蘭', 'Tokyo': '東京', 'Reykjavik': '雷克雅未克', 'Adelaide': '阿德萊德', 'Brisbane': '布里斯班', 'Melbourne': '墨爾本', 'Perth': '珀斯', 'Sydney': '悉尼', 'Amsterdam': '阿姆斯特丹', 'Berlin': '柏林', 'Istanbul': '伊斯坦布爾', 'London': '倫敦', 'Madrid': '馬德里', 'Moscow': '莫斯科', 'Paris': '巴黎', 'Rome': '羅馬', 'Stockholm': '斯德哥爾摩', 'Vienna': '維也納', 'Warsaw': '華沙', 'Auckland': '奧克蘭', 'Chatham': '查塔姆', 'Buenos_Aires': '布宜諾斯艾利斯', 'Ulaanbaatar': '烏蘭巴托', 'Honolulu': '檀香山', 'Zurich': '蘇黎世', 'Lisbon': '里斯本', 'Dublin': '都柏林', 'Helsinki': '赫爾辛基', 'Oslo': '奧斯陸', 'Copenhagen': '哥本哈根', 'Prague': '布拉格', 'Budapest': '布達佩斯', 'Athens': '雅典', 'Kyiv': '基輔'}, 'ja': {'Cairo': 'カイロ', 'Johannesburg': 'ヨハネスブルグ', 'Lagos': 'ラゴス', 'Anchorage': 'アンカレッジ', 'Bogota': 'ボゴタ', 'Chicago': 'シカゴ', 'Denver': 'デンバー', 'Halifax': 'ハリファックス', 'Lima': 'リマ', 'Los_Angeles': 'ロサンゼルス', 'Mexico_City': 'メキシコシティ', 'New_York': 'ニューヨーク', 'Phoenix': 'フェニックス', 'Santiago': 'サンティアゴ', 'Sao_Paulo': 'サンパウロ', 'St_Johns': 'セントジョンズ', 'Toronto': 'トロント', 'Vancouver': 'バンクーバー', 'Winnipeg': 'ウィニペグ', 'Almaty': 'アルマトイ', 'Bangkok': 'バンコク', 'Colombo': 'コロンボ', 'Dhaka': 'ダッカ', 'Dubai': 'ドバイ', 'Ho_Chi_Minh': 'ホーチミン', 'Hong_Kong': '香港', 'Jakarta': 'ジャカルタ', 'Jerusalem': 'エルサレム', 'Kabul': 'カブール', 'Karachi': 'カラチ', 'Kathmandu': 'カトマンズ', 'Kolkata': 'コルカタ', 'Kuala_Lumpur': 'クアラルンプール', 'Manila': 'マニラ', 'Riyadh': 'リヤド', 'Seoul': 'ソウル', 'Shanghai': '上海', 'Singapore': 'シンガポール', 'Taipei': '台北', 'Tehran': 'テヘラン', 'Tokyo': '東京', 'Reykjavik': 'レイキャビク', 'Adelaide': 'アデレード', 'Brisbane': 'ブリスベン', 'Melbourne': 'メルボルン', 'Perth': 'パース', 'Sydney': 'シドニー', 'Amsterdam': 'アムステルダム', 'Berlin': 'ベルリン', 'Istanbul': 'イスタンブール', 'London': 'ロンドン', 'Madrid': 'マドリード', 'Moscow': 'モスクワ', 'Paris': 'パリ', 'Rome': 'ローマ', 'Stockholm': 'ストックホルム', 'Vienna': 'ウィーン', 'Warsaw': 'ワルシャワ', 'Auckland': 'オークランド', 'Chatham': 'チャタム', 'Buenos_Aires': 'ブエノスアイレス', 'Ulaanbaatar': 'ウランバートル', 'Honolulu': 'ホノルル', 'Zurich': 'チューリッヒ', 'Lisbon': 'リスボン', 'Dublin': 'ダブリン', 'Helsinki': 'ヘルシンキ', 'Oslo': 'オスロ', 'Copenhagen': 'コペンハーゲン', 'Prague': 'プラハ', 'Budapest': 'ブダペスト', 'Athens': 'アテネ', 'Kyiv': 'キーウ'}, 'ru': {'Cairo': 'Каир', 'Johannesburg': 'Йоханнесбург', 'Lagos': 'Лагос', 'Anchorage': 'Анкоридж', 'Bogota': 'Богота', 'Chicago': 'Чикаго', 'Denver': 'Денвер', 'Halifax': 'Галифакс', 'Lima': 'Лима', 'Los_Angeles': 'Лос-Анджелес', 'Mexico_City': 'Мехико', 'New_York': 'Нью-Йорк', 'Phoenix': 'Финикс', 'Santiago': 'Сантьяго', 'Sao_Paulo': 'Сан-Паулу', 'St_Johns': 'Сент-Джонс', 'Toronto': 'Торонто', 'Vancouver': 'Ванкувер', 'Winnipeg': 'Виннипег', 'Almaty': 'Алматы', 'Bangkok': 'Бангкок', 'Colombo': 'Коломбо', 'Dhaka': 'Дакка', 'Dubai': 'Дубай', 'Ho_Chi_Minh': 'Хошимин', 'Hong_Kong': 'Гонконг', 'Jakarta': 'Джакарта', 'Jerusalem': 'Иерусалим', 'Kabul': 'Кабул', 'Karachi': 'Карачи', 'Kathmandu': 'Катманду', 'Kolkata': 'Калькутта', 'Kuala_Lumpur': 'Куала-Лумпур', 'Manila': 'Манила', 'Riyadh': 'Эр-Рияд', 'Seoul': 'Сеул', 'Shanghai': 'Шанхай', 'Singapore': 'Сингапур', 'Taipei': 'Тайбэй', 'Tehran': 'Тегеран', 'Tokyo': 'Токио', 'Reykjavik': 'Рейкьявик', 'Adelaide': 'Аделаида', 'Brisbane': 'Брисбен', 'Melbourne': 'Мельбурн', 'Perth': 'Перт', 'Sydney': 'Сидней', 'Amsterdam': 'Амстердам', 'Berlin': 'Берлин', 'Istanbul': 'Стамбул', 'London': 'Лондон', 'Madrid': 'Мадрид', 'Moscow': 'Москва', 'Paris': 'Париж', 'Rome': 'Рим', 'Stockholm': 'Стокгольм', 'Vienna': 'Вена', 'Warsaw': 'Варшава', 'Auckland': 'Окленд', 'Chatham': 'Чатем', 'Buenos_Aires': 'Буэнос-Айрес', 'Ulaanbaatar': 'Улан-Батор', 'Honolulu': 'Гонолулу', 'Zurich': 'Цюрих', 'Lisbon': 'Лиссабон', 'Dublin': 'Дублин', 'Helsinki': 'Хельсинки', 'Oslo': 'Осло', 'Copenhagen': 'Копенгаген', 'Prague': 'Прага', 'Budapest': 'Будапешт', 'Athens': 'Афины', 'Kyiv': 'Киев'}, 'fa': {'Cairo': 'قاهره', 'Johannesburg': 'ژوهانسبورگ', 'Lagos': 'لاگوس', 'Anchorage': 'انکوریج', 'Bogota': 'بوگوتا', 'Chicago': 'شیکاگو', 'Denver': 'دنور', 'Halifax': 'هالیفاکس', 'Lima': 'لیما', 'Los_Angeles': 'لس\u200cآنجلس', 'Mexico_City': 'مکزیکوسیتی', 'New_York': 'نیویورک', 'Phoenix': 'فینیکس', 'Santiago': 'سانتیاگو', 'Sao_Paulo': 'سائوپائولو', 'St_Johns': 'سنت جانز', 'Toronto': 'تورنتو', 'Vancouver': 'ونکوور', 'Winnipeg': 'وینیپگ', 'Almaty': 'آلماتی', 'Bangkok': 'بانکوک', 'Colombo': 'کلمبو', 'Dhaka': 'داکا', 'Dubai': 'دبی', 'Ho_Chi_Minh': 'هوشی\u200cمین', 'Hong_Kong': 'هنگ\u200cکنگ', 'Jakarta': 'جاکارتا', 'Jerusalem': 'اورشلیم', 'Kabul': 'کابل', 'Karachi': 'کراچی', 'Kathmandu': 'کاتماندو', 'Kolkata': 'کلکته', 'Kuala_Lumpur': 'کوالالامپور', 'Manila': 'مانیل', 'Riyadh': 'ریاض', 'Seoul': 'سئول', 'Shanghai': 'شانگهای', 'Singapore': 'سنگاپور', 'Taipei': 'تایپه', 'Tehran': 'تهران', 'Tokyo': 'توکیو', 'Reykjavik': 'ریکیاویک', 'Adelaide': 'آدلاید', 'Brisbane': 'بریزبن', 'Melbourne': 'ملبورن', 'Perth': 'پرت', 'Sydney': 'سیدنی', 'Amsterdam': 'آمستردام', 'Berlin': 'برلین', 'Istanbul': 'استانبول', 'London': 'لندن', 'Madrid': 'مادرید', 'Moscow': 'مسکو', 'Paris': 'پاریس', 'Rome': 'رم', 'Stockholm': 'استکهلم', 'Vienna': 'وین', 'Warsaw': 'ورشو', 'Auckland': 'اوکلند', 'Chatham': 'چتم', 'Buenos_Aires': 'بوئنوس آیرس', 'Ulaanbaatar': 'اولان\u200cباتور', 'Honolulu': 'هونولولو', 'Zurich': 'زوریخ', 'Lisbon': 'لیسبون', 'Dublin': 'دوبلین', 'Helsinki': 'هلسینکی', 'Oslo': 'اسلو', 'Copenhagen': 'کپنهاگ', 'Prague': 'پراگ', 'Budapest': 'بوداپست', 'Athens': 'آتن', 'Kyiv': 'کی\u200cیف'}}
 _UTC_NAMES = {"zh": "协调世界时", "zh-TW": "協調世界時", "ja": "協定世界時",
@@ -2164,11 +2169,119 @@ _ANY_REGION2EN = _any2en(_REGION_L10N)
 _ANY_CITY2EN = _any2en(_CITY_L10N)
 
 
+
+
+# ---- 在线地名兜底 (本地表未收录时查 Wikidata 官方条目名, 结果仅用于显示层) ----
+_GEO_EXTRA = {"lang": None, "city": {}, "region": {}}
+_WD_LANGS = {"zh": ["zh", "zh-cn", "zh-hans"], "zh-TW": ["zh-tw", "zh-hant", "zh"],
+             "ja": ["ja"], "ru": ["ru"], "fa": ["fa"]}
+_WD_PLACE = ("city", "town", "village", "municipality", "settlement", "borough",
+             "commune", "capital", "county seat", "census-designated", "urban")
+_WD_ADMIN = ("province", "state", "krai", "oblast", "canton", "prefecture",
+             "region", "county", "district", "territory", "department",
+             "governorate")
+
+
+def _wd_label(name, kind, context):
+    """Wikidata 检索地名条目, 返回界面语言的条目名 (去消歧后缀); 无则 None。"""
+    try:
+        q = urllib.parse.quote(context or name)
+        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                           f"&search={q}&language=en&format=json&limit=5&type=item",
+                           timeout=5, retries=1, use_cache=False)
+        if not ok:
+            return None
+        cands = json.loads(raw).get("search", [])
+        words = _WD_PLACE if kind == "city" else _WD_ADMIN
+        pick = None
+        for c in cands:
+            if (c.get("label") or "").lower() != name.lower():
+                continue
+            desc = (c.get("description") or "").lower()
+            if any(w in desc for w in words):
+                pick = c
+                break
+        if pick is None:
+            return None
+        langs = _WD_LANGS.get(LANG, [])
+        if not langs:
+            return None
+        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                           f"&ids={pick['id']}&props=labels"
+                           f"&languages={'|'.join(langs)}&format=json",
+                           timeout=5, retries=1, use_cache=False)
+        if not ok:
+            return None
+        labels = json.loads(raw)["entities"][pick["id"]].get("labels", {})
+        for lg in langs:
+            if lg in labels:
+                v = re.sub(r"\s*[\(（][^\)）]*[\)）]\s*$", "",
+                           labels[lg]["value"]).strip()
+                return v or None
+        return None
+    except Exception:
+        return None
+
+
+def _resolve_geo_online(jobs):
+    """jobs: [(kind, name, context)]; 本地表未收录的 ASCII 地名并行查 Wikidata。"""
+    if LANG == "en" or not jobs:
+        return
+    if _GEO_EXTRA["lang"] != LANG:
+        _GEO_EXTRA.update({"lang": LANG, "city": {}, "region": {}})
+    todo, seen = [], set()
+    for kind, name, ctx in jobs:
+        name = (name or "").strip()
+        if not name or len(name) < 3 or any(ch.isdigit() for ch in name):
+            continue
+        if not name.isascii():
+            continue  # 已是本地化文本的不拿去英文库检索
+        if name in _GEO_EXTRA[kind]:
+            continue
+        any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
+        table = _CITY_L10N if kind == "city" else _REGION_L10N
+        en = any2en.get(name)
+        if en and table.get(LANG, {}).get(en):
+            continue  # 本地表已收录
+        if (kind, name) in seen:
+            if ctx and ctx.isascii():
+                todo = [(k, n, ctx if (k, n) == (kind, name) else c)
+                        for (k, n, c) in todo]
+            continue
+        seen.add((kind, name))
+        todo.append((kind, name, ctx))
+    todo = todo[:6]
+
+    def _one(job):
+        kind, name, ctx = job
+        v = _wd_label(name, kind, ctx)
+        if v:
+            _GEO_EXTRA[kind][name] = v
+            any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
+            any2en[v] = any2en.get(name, name)
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(_one, todo))
+
+
+def _extra_sub(disp, kind):
+    """把在线兜底命中的地名替换进对比行整串。"""
+    if _GEO_EXTRA.get("lang") != LANG:
+        return disp
+    for variant, loc in _GEO_EXTRA[kind].items():
+        if variant in disp:
+            disp = disp.replace(variant, loc, 1)
+    return disp
+
 def _loc_region(text):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。"""
     if LANG == "en" or not text:
         return text
-    en = _ANY_REGION2EN.get(str(text).strip())
+    t = str(text).strip()
+    if _GEO_EXTRA.get("lang") == LANG and t in _GEO_EXTRA["region"]:
+        return _GEO_EXTRA["region"][t]
+    en = _ANY_REGION2EN.get(t)
     if en:
         return _REGION_L10N.get(LANG, {}).get(en, text)
     return text
@@ -2178,7 +2291,10 @@ def _loc_city(text):
     """城市名 -> 界面语言 (同上)。"""
     if LANG == "en" or not text:
         return text
-    en = _ANY_CITY2EN.get(str(text).strip())
+    t = str(text).strip()
+    if _GEO_EXTRA.get("lang") == LANG and t in _GEO_EXTRA["city"]:
+        return _GEO_EXTRA["city"][t]
+    en = _ANY_CITY2EN.get(t)
     if en:
         return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
@@ -2277,7 +2393,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.14 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.15 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3142,7 +3258,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.14 免 Key 公开版):
+评分规则 (v4.14.15 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3174,7 +3290,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.14 免 Key 公開版):
+評分規則 (v4.14.15 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3206,7 +3322,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.14 Keyless Public Edition):
+Scoring rules (v4.14.15 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3239,7 +3355,7 @@ Scoring rules (v4.14.14 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.14 キー不要公開版):
+スコアリングルール (v4.14.15 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3271,7 +3387,7 @@ Scoring rules (v4.14.14 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.14 Публичная версия без ключей):
+Правила оценки (v4.14.15 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3303,7 +3419,7 @@ Scoring rules (v4.14.14 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.14):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.15):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3585,9 +3701,21 @@ def run_passive(ip):
             pass
         return p.key, res
 
-    with ThreadPoolExecutor(max_workers=14) as ex:
-        for k, v in ex.map(_query_one, avail_providers):
-            sources[k] = v
+    _ex = ThreadPoolExecutor(max_workers=14)
+    try:
+        _futs = {_ex.submit(_query_one, p): p for p in avail_providers}
+        try:
+            for _f in as_completed(_futs, timeout=30):
+                _k, _v = _f.result()
+                sources[_k] = _v
+        except _CFTimeoutError:
+            pass
+        for _f, _p in _futs.items():
+            if _p.key not in sources:
+                sources[_p.key] = {"ok": False, "err": "timeout"}
+                _f.cancel()
+    finally:
+        _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
         print("\r" + " " * max(40, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
@@ -4114,6 +4242,25 @@ def _print_basic_block(s, prof):
     if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
         locs.append(("GeoJS", f"{gjs.get('country')} {gjs.get('region')} {gjs.get('city')}".strip(),
                      gjs.get("country"), gjs.get("city")))
+    _gjobs = []
+    if prof.get("city"):
+        _gjobs.append(("city", prof["city"],
+                       f"{prof.get('city')}, {_ANY_REGION2EN.get(str(prof.get('region') or '').strip(), prof.get('region'))}"))
+    if prof.get("region"):
+        _gjobs.append(("region", prof["region"],
+                       f"{prof.get('region')}, {prof.get('country')}"))
+    for _nm, _loc, _co, _ci in locs:
+        _mid = _loc
+        if _co and _mid.startswith(_co):
+            _mid = _mid[len(_co):].strip()
+        if _ci and _mid.endswith(_ci):
+            _mid = _mid[:-len(_ci)].strip()
+        if _ci:
+            _gjobs.append(("city", _ci,
+                           f"{_ci}, {_ANY_REGION2EN.get(_mid, _mid)}"))
+        if _mid:
+            _gjobs.append(("region", _mid, _loc))
+    _resolve_geo_online(_gjobs)
     if locs:
         _CC = {"united states": "us", "united states of america": "us",
                "china": "cn", "australia": "au", "canada": "ca",
@@ -4211,7 +4358,7 @@ def _print_basic_block(s, prof):
             for k in _order:
                 _loc, _names = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N)}")
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N), "region"), "city")}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -4799,7 +4946,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.14 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.15 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
