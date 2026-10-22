@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.5 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.6 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.5"
+VERSION = "4.14.6"
 
 
 def _init_console():
@@ -2137,7 +2137,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.5 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.6 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2972,9 +2972,10 @@ def _build_unified_profile(s):
     ox = s.get("otx", {}) if s.get("otx", {}).get("ok") else {}
     ht = s.get("hackertarget", {}) if s.get("hackertarget", {}).get("ok") else {}
     ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
+    rd = s.get("rdap", {}) if s.get("rdap", {}).get("ok") else {}
 
     isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ""
-    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or ""
+    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or rd.get("org") or rd.get("netname") or ""
     _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
@@ -2990,7 +2991,7 @@ def _build_unified_profile(s):
         "org": org,
         "asn": _parse_asn(asn),
         "country": country,
-        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or "",
+        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or "",
         "region": region,
         "city": city,
         "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude") or il.get("latitude") or iq.get("latitude") or co.get("latitude") or ti.get("latitude") or ht.get("latitude"),
@@ -3001,7 +3002,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.5 免 Key 公开版):
+评分规则 (v4.14.6 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3033,7 +3034,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.5 免 Key 公開版):
+評分規則 (v4.14.6 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3065,7 +3066,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.5 Keyless Public Edition):
+Scoring rules (v4.14.6 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3098,7 +3099,7 @@ Scoring rules (v4.14.5 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.5 キー不要公開版):
+スコアリングルール (v4.14.6 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3130,7 +3131,7 @@ Scoring rules (v4.14.5 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.5 Публичная версия без ключей):
+Правила оценки (v4.14.6 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3162,7 +3163,7 @@ Scoring rules (v4.14.5 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.5):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.6):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3916,8 +3917,12 @@ def _print_basic_block(s, prof):
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("range"):
         print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, pc['range'])}")
+    else:
+        _rd = s.get("rdap", {})
+        if _rd.get("ok") and _rd.get("cidr"):
+            print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, _rd['cidr'])}")
 
-    # 地理位置组: 国旗排头并列 (位置/多源对比/经纬度识别/时区), 坐标/地图随后
+    # 地理位置组: 国旗排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
     locs = []
@@ -4112,12 +4117,6 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                 type_sources.append(("ipwho.is", T("residential")))
             else:
                 type_sources.append(("ipwho.is", T("unknown")))
-    elif prof.get("ok"):
-        dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if dc:
-            type_sources.append(("Heuristic", T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            type_sources.append(("Heuristic", T("residential")))
     il = s.get("iplocate", {})
     if il.get("ok"):
         if il.get("hosting") or il.get("asn_type") == "hosting":
@@ -4136,6 +4135,12 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             type_sources.append(("ipquery.io", T("residential")
                                  if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
                                  else T("unknown")))
+    if not wi.get("ok") and prof.get("ok"):
+        dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+        if dc:
+            type_sources.append(("Heuristic", T("dc")))
+        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+            type_sources.append(("Heuristic", T("residential")))
     if type_sources:
         print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in type_sources))
         cells = []
@@ -4643,7 +4648,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.5 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.6 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5536,7 +5541,7 @@ def test_dns_servers6(timeout=3):
 
 
 def print_dns6_test(results):
-    """渲染 IPv6 通道 DNS 结果 (挂在 [5] 段内, 不另起章节头)。"""
+    """渲染 IPv6 通道 DNS 结果 (双栈时挂在 [5] 段内; v6-only 时由调用方另起章节)。"""
     titles = {
         "plain6": "IPv6 DNS (UDP 53)",
         "dot6": "IPv6 DNS over TLS (853)",
