@@ -49,12 +49,7 @@ from datetime import datetime, timezone
 import argparse
 import http.client
 
-# Linux/macOS 下强制 UTF-8 stdio: C/POSIX locale 时防中文与方块字乱码
-for _s in (sys.stdout, sys.stderr, sys.stdin):
-    try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+# stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
 VERSION = "4.14.0"
 
@@ -66,7 +61,7 @@ def _init_console():
             os.system("")
         except Exception:
             pass
-    for _stream in (sys.stdout, sys.stderr):
+    for _stream in (sys.stdout, sys.stderr, sys.stdin):
         if hasattr(_stream, "reconfigure"):
             try:
                 _stream.reconfigure(encoding="utf-8", errors="replace")
@@ -4150,8 +4145,29 @@ _FORCE_FAMILY = 0  # 主动分栈测试期间置 4/6, _active_get 据此钉住�
 _FORCE_STACK = None  # 自检范围覆盖: None=自动/询问, "4"/"6"=仅测该栈 (CLI 标志)
 
 
+def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5):
+    """带超时的 getaddrinfo: 标准库解析无超时参数, DNS 失联时会无限阻塞;
+    放守护线程里等, 超时按解析失败抛 OSError, 不让任何调用方挂死。"""
+    _box = {}
+
+    def _run():
+        try:
+            _box["r"] = socket.getaddrinfo(host, port, family, type)
+        except Exception as e:
+            _box["e"] = e
+
+    _t = threading.Thread(target=_run, daemon=True)
+    _t.start()
+    _t.join(timeout)
+    if _t.is_alive():
+        raise OSError(f"DNS resolution timed out: {host}")
+    if "e" in _box:
+        raise _box["e"]
+    return _box["r"]
+
+
 def _pinned_connect(conn, family):
-    infos = socket.getaddrinfo(conn.host, conn.port, family, socket.SOCK_STREAM)
+    infos = _getaddrinfo_timed(conn.host, conn.port, family)
     last = None
     for af, _st, _proto, _nm, sa in infos:
         try:
@@ -5759,9 +5775,8 @@ def get_resolver_ips(probes=3, timeout=8):
     try:
         for _ in range(probes):
             try:
-                infos = socket.getaddrinfo("whoami.akamai.net", 80,
-                                           family=socket.AF_INET,
-                                           type=socket.SOCK_STREAM)
+                infos = _getaddrinfo_timed("whoami.akamai.net", 80,
+                                           family=socket.AF_INET)
                 ip = infos[0][4][0]
                 if ip and ip not in seen:
                     seen.append(ip)
@@ -5837,7 +5852,7 @@ def tcp_ping_stats(host, port, count=10, timeout=3, family=0):
     addrs = None
     if family:
         try:
-            _infos = socket.getaddrinfo(host, port, socket.AF_INET6 if family == 6 else socket.AF_INET, socket.SOCK_STREAM)
+            _infos = _getaddrinfo_timed(host, port, socket.AF_INET6 if family == 6 else socket.AF_INET)
             addrs = [(af, sa) for af, _t, _p, _n, sa in _infos]
         except Exception:
             addrs = []
@@ -6256,9 +6271,9 @@ def _banner_net_info():
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "dns_ok": False}
     try:
-        info["dns_ok"] = bool(socket.getaddrinfo("cloudflare.com", 53,
-                                                 socket.AF_UNSPEC,
-                                                 socket.SOCK_DGRAM))
+        info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
+                                                  socket.AF_UNSPEC,
+                                                  socket.SOCK_DGRAM))
     except Exception:
         info["dns_ok"] = False
     try:
@@ -6991,4 +7006,5 @@ if __name__ == "__main__":
         print(f"\n  {T('cancelled')}")
         sys.exit(130)
     except EOFError:
-        pass
+        print(f"\n  {T('cancelled')}")
+        sys.exit(130)

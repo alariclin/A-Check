@@ -95,12 +95,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 **一键运行**（复制粘贴即可，自动下载当前发布包并启动）：
 
-macOS（脚本包）：
-```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
-```
-
-macOS（App 包）：
+macOS：
 ```
 curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```

@@ -95,12 +95,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 **ワンクリック実行**（コピー＆ペーストで現在のリリースをダウンロードして起動）：
 
-macOS（スクリプト）：
-```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
-```
-
-macOS（アプリ）：
+macOS：
 ```
 curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```

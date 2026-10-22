@@ -95,12 +95,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 **اجرای تک‌دستوری** (کپی و جای‌گذاری کنید — نسخهٔ فعلی را دانلود و اجرا می‌کند):
 
-macOS (بستهٔ اسکریپت):
-```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
-```
-
-macOS (بستهٔ برنامه):
+macOS:
 ```
 curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```

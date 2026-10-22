@@ -95,12 +95,7 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 **One-click run** (copy & paste — downloads the current release package and starts it):
 
-macOS (script):
-```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-mac && bash run.sh
-```
-
-macOS (app):
+macOS:
 ```
 curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.0/A-Check-v4.14.0-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
