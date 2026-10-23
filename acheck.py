@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.15"
+VERSION = "4.14.16"
 
 
 def _init_console():
@@ -7659,9 +7659,10 @@ def print_banner():
         v6t = ""
     else:
         v6t = " " + T("bn_none")
-    print("        %s%s" % (_white("IPv6 "), v6 + (_white(v6t) if v6t else "")))
+    print("%s%s%s" % (" " * (_disp_width(T("bn_network")) + 4),
+                      _white("IPv6 "), v6 + (_white(v6t) if v6t else "")))
     # 状态行 (图例)
-    legend = "%s%s · %s%s · %s%s" % (
+    legend = "%s %s · %s %s · %s %s" % (
         _c(C.green, "●"), _white(T("bn_ok")), _c(C.dim, "○"),
         _white(T("bn_untested")), _c(C.red, "●"), _white(T("bn_fault")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_status")), legend))

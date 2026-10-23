@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.0 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.15 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -9,9 +9,11 @@ IP 信誉检测 v4.14.0 — 全量修复与并发优化公开版 (零 API Key �
 
 数据源 (全部免 Key 公开情报，多源聚合):
   威胁情报: Scamalytics, StopForumSpam, urlscan.io, SANS ISC, proxycheck.io,
-           Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise
-  注册与实体: RIPEstat, PTR/FCrDNS, DB-IP
-  归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com
+           Shodan InternetDB, Feodo Tracker, EmergingThreats, Tor Exit Nodes, GreyNoise,
+           AlienVault OTX, blocklist.de, IPsum
+  注册与实体: RIPEstat, RDAP (RIR), PTR/FCrDNS, DB-IP
+  归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com, iplocate.io, ipquery.io,
+           ipapi.co, 2ip.io, ipapi.is, ip.guide, GeoJS, HackerTarget, country.is, X4BNet
 
 用法:
     python3 acheck.py                        # 交互菜单 (默认中文，可切换 6 种语言)
@@ -44,18 +46,25 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
 import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.0"
+VERSION = "4.14.16"
 
 
 def _init_console():
     """仅在作为主程序运行时初始化控制台编码与颜色，避免被 import 时产生副作用。"""
+    if sys.platform != "win32":
+        try:
+            # 引入 readline 行编辑: 同时接受 ^H 与 DEL 两种退格,
+            # 避免某些终端退格被回显为 ^H 且不删字 (tty erase 不匹配)
+            import readline  # noqa: F401
+        except Exception:
+            pass
     if sys.platform == "win32":
         try:
             os.system("")
@@ -101,6 +110,8 @@ STR = {
         "coord_country": "经纬度识别",
         "sec_fraud": "欺诈与维度评分",
         "sec_signals6": "信誉信号 (逐源)",
+        "v6_score_note": "※ IPv6 评分与 IPv4 同公式, 仅计入支持 IPv6 的数据源 (威胁/声誉数据较少), 为前缀/运营商级估计",
+        "speed_max_note": "※ 本段 {n} 个节点, 每节点下载上限 200 MB, 整段最多约 {max} MB 流量",
         "current_egress6": "当前出口 IPv6",
         "sec_ipv6": "IPv6 双栈检测",
         "v6_leak_warn": "⚠ IPv6 泄漏风险：IPv4 出口为 AS{a4}，IPv6 出口为 AS{a6}，不在同一网络——IPv6 流量很可能未经过代理/VPN，正直连暴露",
@@ -165,7 +176,10 @@ STR = {
         "speed_col_latency": "延迟",
         "speed_col_down": "下载",
         "speed_note": "※ 多连接峰值口径: 与单连接实际下载速度有差异, 仅供参考",
-        "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 17 地区节点不同",
+        "speed_ask": "网速测试会产生下载流量 (单节点上限 200 MB; IPv4 {n4} 个节点全测最多约 {max4} MB, 双栈另加 IPv6 {n6} 个节点最多约 {max6} MB), 是否进行? [y/n] (回车=跳过): ",
+        "speed_skipped": "已跳过网速测试",
+        "speed_traffic": "本段测速共下载约 {mb} MB",
+        "speed6_note": "※ IPv6 测速使用双栈端点, 与 IPv4 的 28 地区节点不同",
         "diag_speed_testing": "代理吞吐测速中 (多地区节点)…",
         "diag_speed_ok": "最快线路: %s · 下载 %.1f Mbps",
         "diag_speed_fail": "吞吐测速失败",
@@ -336,6 +350,8 @@ STR = {
         "stack_prompt": "Choose [1-3] (Enter=Auto): ",
         "egress6_fail": "No IPv6 egress detected (this host may be IPv4-only)",
         "sec_signals6": "Reputation Signals (per source)",
+        "v6_score_note": "※ IPv6 scores use the IPv4 formula with IPv6-capable sources only (less threat/reputation data); prefix/operator-level estimates",
+        "speed_max_note": "※ {n} nodes in this section, 200 MB download cap each, up to ~{max} MB total traffic",
         "v6_prefix_note": "IPv6 data is prefix/operator-level; no per-address reputation exists",
         "v6_op_est": "operator-level estimate",
         "v6_listed": "Listed",
@@ -391,7 +407,10 @@ STR = {
         "speed_col_latency": "Latency",
         "speed_col_down": "Download",
         "speed_note": "※ Multi-connection peak throughput; differs from single-connection downloads, for reference only",
-        "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 17 IPv4 regions",
+        "speed_ask": "The speed test downloads data (200 MB cap per node; all {n4} IPv4 nodes up to ~{max4} MB, plus {n6} IPv6 nodes up to ~{max6} MB on dual-stack). Run it? [y/n] (Enter = skip): ",
+        "speed_skipped": "Speed test skipped",
+        "speed_traffic": "Total downloaded in this section: about {mb} MB",
+        "speed6_note": "※ IPv6 speed test uses dual-stack endpoints, not the 28 IPv4 regions",
         "diag_speed_testing": "Testing proxy throughput (regional nodes)…",
         "diag_speed_ok": "Fastest: %s · Download %.1f Mbps",
         "diag_speed_fail": "Throughput test failed",
@@ -561,6 +580,8 @@ STR = {
         "egress6_fail": "未偵測到 IPv6 出口 (本機可能只有 IPv4)",
         "geo_group": "地理位置",
         "sec_signals6": "信譽信號 (逐源)",
+        "v6_score_note": "※ IPv6 評分與 IPv4 同公式, 僅計入支援 IPv6 的資料源 (威脅/聲譽資料較少), 為前綴/營運商級估計",
+        "speed_max_note": "※ 本段 {n} 個節點, 每節點下載上限 200 MB, 整段最多約 {max} MB 流量",
         "v6_prefix_note": "IPv6 為前綴/營運商粒度資料，無單位址的信譽紀錄",
         "v6_op_est": "營運商級估計",
         "v6_listed": "已命中名單",
@@ -617,7 +638,10 @@ STR = {
         "speed_col_latency": "延遲",
         "speed_col_down": "下載",
         "speed_note": "※ 多連接峰值口徑: 與單連接實際下載速度有差異, 僅供參考",
-        "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 17 地區節點不同",
+        "speed_ask": "網速測試會產生下載流量 (單節點上限 200 MB; IPv4 {n4} 個節點全測最多約 {max4} MB, 雙棧另加 IPv6 {n6} 個節點最多約 {max6} MB), 是否進行? [y/n] (回車=跳過): ",
+        "speed_skipped": "已跳過網速測試",
+        "speed_traffic": "本段測速共下載約 {mb} MB",
+        "speed6_note": "※ IPv6 測速使用雙棧端點, 與 IPv4 的 28 地區節點不同",
         "diag_speed_testing": "代理吞吐測速中 (多地區節點)…",
         "diag_speed_ok": "最快線路: %s · 下載 %.1f Mbps",
         "diag_speed_fail": "吞吐測速失敗",
@@ -786,6 +810,8 @@ STR = {
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
         "sec_signals6": "レピュテーション信号（ソース別）",
+        "v6_score_note": "※ IPv6 スコアは IPv4 と同じ式で、IPv6 対応ソースのみから算出 (脅威/評判データは少なめ)。プレフィックス/事業者レベルの推定です",
+        "speed_max_note": "※ 本セクション {n} ノード、各ノード上限 200 MB、整段で最大約 {max} MB",
         "v6_prefix_note": "IPv6データはプレフィックス/事業者粒度で、アドレス単位の評価記録はありません",
         "v6_op_est": "事業者レベルの推定",
         "v6_listed": "リスト掲載あり",
@@ -838,12 +864,15 @@ STR = {
         "m_update": "アップデート確認",
         "upd_latest": "最新バージョンです (v%s)",
         "upd_available": "新しいバージョンがあります: v%s (現在 v%s), GitHub からダウンロードしてください",
-        "upd_failed": "アップデート確認に失敗しました",
+        "upd_failed": "アップデート確認に失敗しました [確認不可]",
         "speed_col_region": "地域",
         "speed_col_latency": "遅延",
         "speed_col_down": "ダウンロード",
         "speed_note": "※ 複数接続のピーク値です。単一接続の実ダウンロードとは異なります（参考値）",
-        "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の17地域とは異なります)",
+        "speed_ask": "速度テストはダウンロード流量が発生します (1ノード上限 200 MB; IPv4 {n4} ノード全部で最大約 {max4} MB、デュアルスタック時は IPv6 {n6} ノードで最大約 {max6} MB 追加)。実行しますか? [y/n] (Enter=スキップ): ",
+        "speed_skipped": "速度テストをスキップしました",
+        "speed_traffic": "このセクションのダウンロード合計: 約 {mb} MB",
+        "speed6_note": "※ IPv6 速度測定はデュアルスタックのエンドポイントを使用します (IPv4 の28地域とは異なります)",
         "diag_speed_testing": "プロキシのスループットを測定中 (地域別ノード)…",
         "diag_speed_ok": "最速: %s · ダウンロード %.1f Mbps",
         "diag_speed_fail": "スループット測定に失敗",
@@ -975,9 +1004,9 @@ STR = {
         "virt_phys": "物理マシン",
         "virt_vm": "仮想マシン",
         "virt_container": "コンテナ",
-        "infer_avail": "利用可能",
-        "infer_limit": "制限あり",
-        "infer_block": "ブロック",
+        "infer_avail": "おそらく利用可能",
+        "infer_limit": "制限の可能性",
+        "infer_block": "ブロックの可能性",
     },
     "ru": {
         "active_ip_ignored": "※ Режим --active проверяет исходящий IP этого устройства; указанный IP игнорируется.",
@@ -1011,6 +1040,8 @@ STR = {
         "sec_basic": "Основная информация и ASN/BGP",
         "sec_type": "Атрибуты типа IP",
         "sec_signals6": "Сигналы репутации (по источникам)",
+        "v6_score_note": "※ Оценка IPv6 — по формуле IPv4, но только по источникам с поддержкой IPv6 (меньше данных угроз/репутации); уровень префикса/оператора",
+        "speed_max_note": "※ В этом разделе {n} узлов, лимит 200 МБ на узел, всего до ~{max} МБ трафика",
         "v6_prefix_note": "Данные IPv6 — на уровне префикса/оператора; репутации отдельных адресов не существует",
         "v6_op_est": "оценка на уровне оператора",
         "v6_listed": "В списке",
@@ -1064,12 +1095,15 @@ STR = {
         "m_update": "Проверить обновления",
         "upd_latest": "Установлена последняя версия (v%s)",
         "upd_available": "Доступна новая версия: v%s (текущая v%s), скачайте с GitHub",
-        "upd_failed": "Не удалось проверить обновления",
+        "upd_failed": "Не удалось проверить обновления [Не проверено]",
         "speed_col_region": "Регион",
         "speed_col_latency": "Задержка",
         "speed_col_down": "Загрузка",
         "speed_note": "※ Пиковая пропускная способность в несколько потоков; отличается от одиночной загрузки, только для справки",
-        "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 17 регионам IPv4",
+        "speed_ask": "Тест скорости скачивает данные (лимит 200 МБ на узел; все {n4} узла IPv4 — до ~{max4} МБ, при двойном стеке ещё {n6} узлов IPv6 — до ~{max6} МБ). Выполнить? [y/n] (Enter — пропуск): ",
+        "speed_skipped": "Тест скорости пропущен",
+        "speed_traffic": "Всего скачано в этом разделе: около {mb} МБ",
+        "speed6_note": "※ Тест IPv6 идёт по двухстековым точкам, а не по 28 регионам IPv4",
         "diag_speed_testing": "Измерение пропускной способности прокси (региональные узлы)…",
         "diag_speed_ok": "Быстрее всего: %s · Загрузка %.1f Mbps",
         "diag_speed_fail": "Тест пропускной способности не удался",
@@ -1201,9 +1235,9 @@ STR = {
         "virt_phys": "Физ. сервер",
         "virt_vm": "ВМ",
         "virt_container": "Контейнер",
-        "infer_avail": "Доступно",
-        "infer_limit": "Ограничено",
-        "infer_block": "Заблок.",
+        "infer_avail": "Вероятно доступно",
+        "infer_limit": "Возможно ограничено",
+        "infer_block": "Возможна блокировка",
     },
     "fa": {
         "active_ip_ignored": "※ حالت --active آیپی خروجی همین دستگاه را بررسی میکند؛ آرگومان IP نادیده گرفته میشود.",
@@ -1236,6 +1270,8 @@ STR = {
         "checking": "در حال بررسی",
         "sec_basic": "اطلاعات پایه و ASN/BGP",
         "sec_signals6": "سیگنال‌های اعتبار (به تفکیک منبع)",
+        "v6_score_note": "※ امتیاز IPv6 با همان فرمول IPv4 اما فقط از منابع دارای پشتیبانی IPv6 محاسبه می‌شود (داده تهدید/اعتبار کمتر)؛ برآورد سطح پیشوند/اپراتور است",
+        "speed_max_note": "※ این بخش {n} گره دارد، سقف دانلود هر گره ۲۰۰ مگابایت، در مجموع حداکثر حدود {max} مگابایت",
         "v6_prefix_note": "داده‌های IPv6 در سطح پیشوند/اپراتور است؛ سابقه اعتبار برای تک‌آدرس وجود ندارد",
         "v6_op_est": "برآورد سطح اپراتور",
         "v6_listed": "در فهرست هست",
@@ -1290,12 +1326,15 @@ STR = {
         "m_update": "بررسی به‌روزرسانی",
         "upd_latest": "آخرین نسخه نصب است (v%s)",
         "upd_available": "نسخه جدید موجود است: v%s (فعلی v%s)، از GitHub دانلود کنید",
-        "upd_failed": "بررسی به‌روزرسانی ناموفق بود",
+        "upd_failed": "بررسی به‌روزرسانی ناموفق بود [غیرقابل تأیید]",
         "speed_col_region": "منطقه",
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
         "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
-        "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۱۷ منطقهٔ IPv4",
+        "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره؛ همه {n4} گره IPv4 حداکثر حدود {max4} مگابایت، در حالت دوپشته {n6} گره IPv6 نیز حداکثر حدود {max6} مگابایت اضافه می‌شود). اجرا شود؟ [y/n] (Enter = رد کردن): ",
+        "speed_skipped": "تست سرعت رد شد",
+        "speed_traffic": "مجموع دانلود این بخش: حدود {mb} مگابایت",
+        "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۲۸ منطقهٔ IPv4",
         "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (گره‌های منطقه‌ای)…",
         "diag_speed_ok": "سریع‌ترین: %s · دانلود %.1f Mbps",
         "diag_speed_fail": "تست توان ناموفق بود",
@@ -1546,6 +1585,7 @@ UA_BROWSER = (
 )
 # 测速下载专用 UA: 部分测速站 (如 Hetzner) 按 UA 过滤, 浏览器 UA 会被直接断开
 UA_TOOL = "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"
+DL_CAP_BYTES = 200 * 1024 * 1024  # 测速单节点下载上限 (达量即停, 防高带宽节点烧流量)
 
 _cache = {}
 _cache_lock = threading.Lock()
@@ -2044,13 +2084,269 @@ class PTRCheck(Provider):
         return {"ok": True, "ptr": host, "fcrdns": fcrdns, "ts": now_iso()}
 
 
+
+# ---- 显示层本地化查表 (数据源无语言参数时, 国家名/时区名按界面语言呈现) ----
+_CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA', 'germany': 'DE', 'france': 'FR', 'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'singapore': 'SG', 'india': 'IN', 'brazil': 'BR', 'russia': 'RU', 'united kingdom': 'GB', 'netherlands': 'NL', 'switzerland': 'CH', 'sweden': 'SE', 'norway': 'NO', 'finland': 'FI', 'denmark': 'DK', 'austria': 'AT', 'belgium': 'BE', 'ireland': 'IE', 'poland': 'PL', 'turkey': 'TR', 'mexico': 'MX', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO', 'peru': 'PE', 'egypt': 'EG', 'nigeria': 'NG', 'kenya': 'KE', 'morocco': 'MA', 'israel': 'IL', 'united arab emirates': 'AE', 'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'thailand': 'TH', 'vietnam': 'VN', 'indonesia': 'ID', 'malaysia': 'MY', 'philippines': 'PH', 'taiwan': 'TW', 'hong kong': 'HK', 'china': 'CN', 'australia': 'AU', 'new zealand': 'NZ', 'south africa': 'ZA', 'greece': 'GR', 'portugal': 'PT', 'czechia': 'CZ', 'hungary': 'HU', 'romania': 'RO', 'ukraine': 'UA', 'italy': 'IT', 'spain': 'ES'}
+_COUNTRY_NAMES = {'zh': {'US': '美国', 'CA': '加拿大', 'DE': '德国', 'FR': '法国', 'JP': '日本', 'KR': '韩国', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄罗斯', 'GB': '英国', 'NL': '荷兰', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬兰', 'DK': '丹麦', 'AT': '奥地利', 'BE': '比利时', 'IE': '爱尔兰', 'PL': '波兰', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥伦比亚', 'PE': '秘鲁', 'EG': '埃及', 'NG': '尼日利亚', 'KE': '肯尼亚', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿联酋', 'SA': '沙特阿拉伯', 'QA': '卡塔尔', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉国', 'TH': '泰国', 'VN': '越南', 'ID': '印度尼西亚', 'MY': '马来西亚', 'PH': '菲律宾', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': '澳大利亚', 'NZ': '新西兰', 'ZA': '南非', 'GR': '希腊', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '罗马尼亚', 'UA': '乌克兰', 'IT': '意大利', 'ES': '西班牙'}, 'zh-TW': {'US': '美國', 'CA': '加拿大', 'DE': '德國', 'FR': '法國', 'JP': '日本', 'KR': '韓國', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄羅斯', 'GB': '英國', 'NL': '荷蘭', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬蘭', 'DK': '丹麥', 'AT': '奧地利', 'BE': '比利時', 'IE': '愛爾蘭', 'PL': '波蘭', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥倫比亞', 'PE': '秘魯', 'EG': '埃及', 'NG': '奈及利亞', 'KE': '肯亞', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿聯酋', 'SA': '沙烏地阿拉伯', 'QA': '卡達', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉國', 'TH': '泰國', 'VN': '越南', 'ID': '印度尼西亞', 'MY': '馬來西亞', 'PH': '菲律賓', 'TW': '台灣', 'HK': '香港', 'CN': '中國', 'AU': '澳大利亞', 'NZ': '紐西蘭', 'ZA': '南非', 'GR': '希臘', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '羅馬尼亞', 'UA': '烏克蘭', 'IT': '義大利', 'ES': '西班牙'}, 'ja': {'US': 'アメリカ', 'CA': 'カナダ', 'DE': 'ドイツ', 'FR': 'フランス', 'JP': '日本', 'KR': '韓国', 'SG': 'シンガポール', 'IN': 'インド', 'BR': 'ブラジル', 'RU': 'ロシア', 'GB': 'イギリス', 'NL': 'オランダ', 'CH': 'スイス', 'SE': 'スウェーデン', 'NO': 'ノルウェー', 'FI': 'フィンランド', 'DK': 'デンマーク', 'AT': 'オーストリア', 'BE': 'ベルギー', 'IE': 'アイルランド', 'PL': 'ポーランド', 'TR': 'トルコ', 'MX': 'メキシコ', 'AR': 'アルゼンチン', 'CL': 'チリ', 'CO': 'コロンビア', 'PE': 'ペルー', 'EG': 'エジプト', 'NG': 'ナイジェリア', 'KE': 'ケニア', 'MA': 'モロッコ', 'IL': 'イスラエル', 'AE': 'アラブ首長国連邦', 'SA': 'サウジアラビア', 'QA': 'カタール', 'KW': 'クウェート', 'IR': 'イラン', 'IQ': 'イラク', 'PK': 'パキスタン', 'BD': 'バングラデシュ', 'TH': 'タイ', 'VN': 'ベトナム', 'ID': 'インドネシア', 'MY': 'マレーシア', 'PH': 'フィリピン', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': 'オーストラリア', 'NZ': 'ニュージーランド', 'ZA': '南アフリカ', 'GR': 'ギリシャ', 'PT': 'ポルトガル', 'CZ': 'チェコ', 'HU': 'ハンガリー', 'RO': 'ルーマニア', 'UA': 'ウクライナ', 'IT': 'イタリア', 'ES': 'スペイン'}, 'ru': {'US': 'США', 'CA': 'Канада', 'DE': 'Германия', 'FR': 'Франция', 'JP': 'Япония', 'KR': 'Южная Корея', 'SG': 'Сингапур', 'IN': 'Индия', 'BR': 'Бразилия', 'RU': 'Россия', 'GB': 'Великобритания', 'NL': 'Нидерланды', 'CH': 'Швейцария', 'SE': 'Швеция', 'NO': 'Норвегия', 'FI': 'Финляндия', 'DK': 'Дания', 'AT': 'Австрия', 'BE': 'Бельгия', 'IE': 'Ирландия', 'PL': 'Польша', 'TR': 'Турция', 'MX': 'Мексика', 'AR': 'Аргентина', 'CL': 'Чили', 'CO': 'Колумбия', 'PE': 'Перу', 'EG': 'Египет', 'NG': 'Нигерия', 'KE': 'Кения', 'MA': 'Марокко', 'IL': 'Израиль', 'AE': 'ОАЭ', 'SA': 'Саудовская Аравия', 'QA': 'Катар', 'KW': 'Кувейт', 'IR': 'Иран', 'IQ': 'Ирак', 'PK': 'Пакистан', 'BD': 'Бангладеш', 'TH': 'Таиланд', 'VN': 'Вьетнам', 'ID': 'Индонезия', 'MY': 'Малайзия', 'PH': 'Филиппины', 'TW': 'Тайвань', 'HK': 'Гонконг', 'CN': 'Китай', 'AU': 'Австралия', 'NZ': 'Новая Зеландия', 'ZA': 'ЮАР', 'GR': 'Греция', 'PT': 'Португалия', 'CZ': 'Чехия', 'HU': 'Венгрия', 'RO': 'Румыния', 'UA': 'Украина', 'IT': 'Италия', 'ES': 'Испания'}, 'fa': {'US': 'آمریکا', 'CA': 'کانادا', 'DE': 'آلمان', 'FR': 'فرانسه', 'JP': 'ژاپن', 'KR': 'کره جنوبی', 'SG': 'سنگاپور', 'IN': 'هند', 'BR': 'برزیل', 'RU': 'روسیه', 'GB': 'بریتانیا', 'NL': 'هلند', 'CH': 'سوئیس', 'SE': 'سوئد', 'NO': 'نروژ', 'FI': 'فنلاند', 'DK': 'دانمارک', 'AT': 'اتریش', 'BE': 'بلژیک', 'IE': 'ایرلند', 'PL': 'لهستان', 'TR': 'ترکیه', 'MX': 'مکزیک', 'AR': 'آرژانتین', 'CL': 'شیلی', 'CO': 'کلمبیا', 'PE': 'پرو', 'EG': 'مصر', 'NG': 'نیجریه', 'KE': 'کنیا', 'MA': 'مراکش', 'IL': 'اسرائیل', 'AE': 'امارات', 'SA': 'عربستان سعودی', 'QA': 'قطر', 'KW': 'کویت', 'IR': 'ایران', 'IQ': 'عراق', 'PK': 'پاکستان', 'BD': 'بنگلادش', 'TH': 'تایلند', 'VN': 'ویتنام', 'ID': 'اندونزی', 'MY': 'مالزی', 'PH': 'فیلیپین', 'TW': 'تایوان', 'HK': 'هنگ\u200cکنگ', 'CN': 'چین', 'AU': 'استرالیا', 'NZ': 'نیوزیلند', 'ZA': 'آفریقای جنوبی', 'GR': 'یونان', 'PT': 'پرتغال', 'CZ': 'چک', 'HU': 'مجارستان', 'RO': 'رومانی', 'UA': 'اوکراین', 'IT': 'ایتالیا', 'ES': 'اسپانیا'}}
+_CC_EN.update({'afghanistan': 'AF', 'albania': 'AL', 'algeria': 'DZ', 'american samoa': 'AS', 'andorra': 'AD', 'angola': 'AO', 'anguilla': 'AI', 'antarctica': 'AQ', 'antigua and barbuda': 'AG', 'armenia': 'AM', 'aruba': 'AW', 'azerbaijan': 'AZ', 'bahamas': 'BS', 'bahrain': 'BH', 'barbados': 'BB', 'belarus': 'BY', 'belize': 'BZ', 'benin': 'BJ', 'bermuda': 'BM', 'bhutan': 'BT', 'bolivia': 'BO', 'bosnia and herzegovina': 'BA', 'botswana': 'BW', 'brunei': 'BN', 'bulgaria': 'BG', 'burkina faso': 'BF', 'burundi': 'BI', 'cambodia': 'KH', 'cameroon': 'CM', 'cape verde': 'CV', 'cayman islands': 'KY', 'central african republic': 'CF', 'chad': 'TD', 'comoros': 'KM', 'congo': 'CG', 'congo (democratic republic)': 'CD', 'cook islands': 'CK', 'costa rica': 'CR', 'croatia': 'HR', 'cuba': 'CU', 'cyprus': 'CY', 'djibouti': 'DJ', 'dominica': 'DM', 'dominican republic': 'DO', 'ecuador': 'EC', 'el salvador': 'SV', 'equatorial guinea': 'GQ', 'eritrea': 'ER', 'estonia': 'EE', 'eswatini': 'SZ', 'ethiopia': 'ET', 'falkland islands': 'FK', 'faroe islands': 'FO', 'fiji': 'FJ', 'gabon': 'GA', 'gambia': 'GM', 'georgia': 'GE', 'ghana': 'GH', 'gibraltar': 'GI', 'greenland': 'GL', 'grenada': 'GD', 'guam': 'GU', 'guatemala': 'GT', 'guinea': 'GN', 'guinea-bissau': 'GW', 'guyana': 'GY', 'haiti': 'HT', 'honduras': 'HN', 'iceland': 'IS', 'jamaica': 'JM', 'jordan': 'JO', 'kazakhstan': 'KZ', 'kiribati': 'KI', 'kosovo': 'XK', 'kyrgyzstan': 'KG', 'laos': 'LA', 'latvia': 'LV', 'lebanon': 'LB', 'lesotho': 'LS', 'liberia': 'LR', 'libya': 'LY', 'liechtenstein': 'LI', 'lithuania': 'LT', 'luxembourg': 'LU', 'macau': 'MO', 'madagascar': 'MG', 'malawi': 'MW', 'maldives': 'MV', 'mali': 'ML', 'malta': 'MT', 'marshall islands': 'MH', 'mauritania': 'MR', 'mauritius': 'MU', 'micronesia': 'FM', 'moldova': 'MD', 'monaco': 'MC', 'mongolia': 'MN', 'montenegro': 'ME', 'mozambique': 'MZ', 'myanmar': 'MM', 'namibia': 'NA', 'nepal': 'NP', 'nicaragua': 'NI', 'niger': 'NE', 'north korea': 'KP', 'north macedonia': 'MK', 'northern mariana islands': 'MP', 'oman': 'OM', 'palau': 'PW', 'palestine': 'PS', 'panama': 'PA', 'papua new guinea': 'PG', 'paraguay': 'PY', 'puerto rico': 'PR', 'rwanda': 'RW', 'saint kitts and nevis': 'KN', 'saint lucia': 'LC', 'samoa': 'WS', 'san marino': 'SM', 'sao tome and principe': 'ST', 'senegal': 'SN', 'serbia': 'RS', 'seychelles': 'SC', 'sierra leone': 'SL', 'slovakia': 'SK', 'slovenia': 'SI', 'solomon islands': 'SB', 'somalia': 'SO', 'south sudan': 'SS', 'sri lanka': 'LK', 'sudan': 'SD', 'suriname': 'SR', 'syria': 'SY', 'tajikistan': 'TJ', 'tanzania': 'TZ', 'timor-leste': 'TL', 'togo': 'TG', 'tonga': 'TO', 'trinidad and tobago': 'TT', 'tunisia': 'TN', 'turkmenistan': 'TM', 'tuvalu': 'TV', 'uganda': 'UG', 'uruguay': 'UY', 'uzbekistan': 'UZ', 'vanuatu': 'VU', 'venezuela': 'VE', 'yemen': 'YE', 'zambia': 'ZM', 'zimbabwe': 'ZW', 'guernsey': 'GG', 'jersey': 'JE', 'isle of man': 'IM', 'aland': 'AX', 'curacao': 'CW', 'sint maarten': 'SX', 'bonaire': 'BQ', 'saint barthelemy': 'BL', 'saint martin': 'MF', 'mayotte': 'YT', 'reunion': 'RE', 'martinique': 'MQ', 'guadeloupe': 'GP', 'french guiana': 'GF', 'french polynesia': 'PF', 'new caledonia': 'NC', 'niue': 'NU', 'norfolk island': 'NF', 'christmas island': 'CX', 'pitcairn': 'PN', 'saint helena': 'SH', 'montserrat': 'MS', 'british virgin islands': 'VG', 'u.s. virgin islands': 'VI', 'turks and caicos': 'TC'})
+_EXTRA_CN = {'zh': {'AF': '阿富汗', 'AL': '阿尔巴尼亚', 'DZ': '阿尔及利亚', 'AS': '美属萨摩亚', 'AD': '安道尔', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南极洲', 'AG': '安提瓜和巴布达', 'AM': '亚美尼亚', 'AW': '阿鲁巴', 'AZ': '阿塞拜疆', 'BS': '巴哈马', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄罗斯', 'BZ': '伯利兹', 'BJ': '贝宁', 'BM': '百慕大', 'BT': '不丹', 'BO': '玻利维亚', 'BA': '波黑', 'BW': '博茨瓦纳', 'BN': '文莱', 'BG': '保加利亚', 'BF': '布基纳法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麦隆', 'CV': '佛得角', 'KY': '开曼群岛', 'CF': '中非共和国', 'TD': '乍得', 'KM': '科摩罗', 'CG': '刚果（布）', 'CD': '刚果（金）', 'CK': '库克群岛', 'CR': '哥斯达黎加', 'HR': '克罗地亚', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多米尼加', 'EC': '厄瓜多尔', 'SV': '萨尔瓦多', 'GQ': '赤道几内亚', 'ER': '厄立特里亚', 'EE': '爱沙尼亚', 'SZ': '斯威士兰', 'ET': '埃塞俄比亚', 'FK': '福克兰群岛', 'FO': '法罗群岛', 'FJ': '斐济', 'GA': '加蓬', 'GM': '冈比亚', 'GE': '格鲁吉亚', 'GH': '加纳', 'GI': '直布罗陀', 'GL': '格陵兰', 'GD': '格林纳达', 'GU': '关岛', 'GT': '危地马拉', 'GN': '几内亚', 'GW': '几内亚比绍', 'GY': '圭亚那', 'HT': '海地', 'HN': '洪都拉斯', 'IS': '冰岛', 'JM': '牙买加', 'JO': '约旦', 'KZ': '哈萨克斯坦', 'KI': '基里巴斯', 'XK': '科索沃', 'KG': '吉尔吉斯斯坦', 'LA': '老挝', 'LV': '拉脱维亚', 'LB': '黎巴嫩', 'LS': '莱索托', 'LR': '利比里亚', 'LY': '利比亚', 'LI': '列支敦士登', 'LT': '立陶宛', 'LU': '卢森堡', 'MO': '澳门', 'MG': '马达加斯加', 'MW': '马拉维', 'MV': '马尔代夫', 'ML': '马里', 'MT': '马耳他', 'MH': '马绍尔群岛', 'MR': '毛里塔尼亚', 'MU': '毛里求斯', 'FM': '密克罗尼西亚', 'MD': '摩尔多瓦', 'MC': '摩纳哥', 'MN': '蒙古', 'ME': '黑山', 'MZ': '莫桑比克', 'MM': '缅甸', 'NA': '纳米比亚', 'NP': '尼泊尔', 'NI': '尼加拉瓜', 'NE': '尼日尔', 'KP': '朝鲜', 'MK': '北马其顿', 'MP': '北马里亚纳群岛', 'OM': '阿曼', 'PW': '帕劳', 'PS': '巴勒斯坦', 'PA': '巴拿马', 'PG': '巴布亚新几内亚', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '卢旺达', 'KN': '圣基茨和尼维斯', 'LC': '圣卢西亚', 'WS': '萨摩亚', 'SM': '圣马力诺', 'ST': '圣多美和普林西比', 'SN': '塞内加尔', 'RS': '塞尔维亚', 'SC': '塞舌尔', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛文尼亚', 'SB': '所罗门群岛', 'SO': '索马里', 'SS': '南苏丹', 'LK': '斯里兰卡', 'SD': '苏丹', 'SR': '苏里南', 'SY': '叙利亚', 'TJ': '塔吉克斯坦', 'TZ': '坦桑尼亚', 'TL': '东帝汶', 'TG': '多哥', 'TO': '汤加', 'TT': '特立尼达和多巴哥', 'TN': '突尼斯', 'TM': '土库曼斯坦', 'TV': '图瓦卢', 'UG': '乌干达', 'UY': '乌拉圭', 'UZ': '乌兹别克斯坦', 'VU': '瓦努阿图', 'VE': '委内瑞拉', 'YE': '也门', 'ZM': '赞比亚', 'ZW': '津巴布韦', 'GG': '根西岛', 'JE': '泽西岛', 'IM': '马恩岛', 'AX': '奥兰群岛', 'CW': '库拉索', 'SX': '圣马丁（荷属）', 'BQ': '博奈尔', 'BL': '圣巴泰勒米', 'MF': '圣马丁（法属）', 'YT': '马约特', 'RE': '留尼汪', 'MQ': '马提尼克', 'GP': '瓜德罗普', 'GF': '法属圭亚那', 'PF': '法属波利尼西亚', 'NC': '新喀里多尼亚', 'NU': '纽埃', 'NF': '诺福克岛', 'CX': '圣诞岛', 'PN': '皮特凯恩群岛', 'SH': '圣赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英属维尔京群岛', 'VI': '美属维尔京群岛', 'TC': '特克斯和凯科斯群岛'}, 'zh-TW': {'AF': '阿富汗', 'AL': '阿爾巴尼亞', 'DZ': '阿爾及利亞', 'AS': '美屬薩摩亞', 'AD': '安道爾', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南極洲', 'AG': '安提瓜和巴布達', 'AM': '亞美尼亞', 'AW': '阿魯巴', 'AZ': '亞塞拜然', 'BS': '巴哈馬', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄羅斯', 'BZ': '貝里斯', 'BJ': '貝南', 'BM': '百慕達', 'BT': '不丹', 'BO': '玻利維亞', 'BA': '波赫', 'BW': '波札那', 'BN': '汶萊', 'BG': '保加利亞', 'BF': '布基納法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麥隆', 'CV': '維德角', 'KY': '開曼群島', 'CF': '中非共和國', 'TD': '查德', 'KM': '葛摩', 'CG': '剛果（布）', 'CD': '剛果（金）', 'CK': '庫克群島', 'CR': '哥斯大黎加', 'HR': '克羅埃西亞', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多明尼加', 'EC': '厄瓜多', 'SV': '薩爾瓦多', 'GQ': '赤道幾內亞', 'ER': '厄利垂亞', 'EE': '愛沙尼亞', 'SZ': '史瓦帝尼', 'ET': '衣索比亞', 'FK': '福克蘭群島', 'FO': '法羅群島', 'FJ': '斐濟', 'GA': '加彭', 'GM': '甘比亞', 'GE': '喬治亞', 'GH': '迦納', 'GI': '直布羅陀', 'GL': '格陵蘭', 'GD': '格瑞那達', 'GU': '關島', 'GT': '瓜地馬拉', 'GN': '幾內亞', 'GW': '幾內亞比索', 'GY': '蓋亞那', 'HT': '海地', 'HN': '宏都拉斯', 'IS': '冰島', 'JM': '牙買加', 'JO': '約旦', 'KZ': '哈薩克斯坦', 'KI': '吉里巴斯', 'XK': '科索沃', 'KG': '吉爾吉斯斯坦', 'LA': '寮國', 'LV': '拉脫維亞', 'LB': '黎巴嫩', 'LS': '賴索托', 'LR': '賴比瑞亞', 'LY': '利比亞', 'LI': '列支敦斯登', 'LT': '立陶宛', 'LU': '盧森堡', 'MO': '澳門', 'MG': '馬達加斯加', 'MW': '馬拉威', 'MV': '馬爾地夫', 'ML': '馬利', 'MT': '馬耳他', 'MH': '馬紹爾群島', 'MR': '茅利塔尼亞', 'MU': '模里西斯', 'FM': '密克羅尼西亞', 'MD': '摩爾多瓦', 'MC': '摩納哥', 'MN': '蒙古', 'ME': '蒙特內哥羅', 'MZ': '莫三比克', 'MM': '緬甸', 'NA': '納米比亞', 'NP': '尼泊爾', 'NI': '尼加拉瓜', 'NE': '尼日', 'KP': '北韓', 'MK': '北馬其頓', 'MP': '北馬里亞納群島', 'OM': '阿曼', 'PW': '帛琉', 'PS': '巴勒斯坦', 'PA': '巴拿馬', 'PG': '巴布亞紐幾內亞', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '盧安達', 'KN': '聖基茨和尼維斯', 'LC': '聖露西亞', 'WS': '薩摩亞', 'SM': '聖馬利諾', 'ST': '聖多美和普林西比', 'SN': '塞內加爾', 'RS': '塞爾維亞', 'SC': '塞舌爾', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛維尼亞', 'SB': '所羅門群島', 'SO': '索馬利亞', 'SS': '南蘇丹', 'LK': '斯里蘭卡', 'SD': '蘇丹', 'SR': '蘇利南', 'SY': '敘利亞', 'TJ': '塔吉克斯坦', 'TZ': '坦尚尼亞', 'TL': '東帝汶', 'TG': '多哥', 'TO': '東加', 'TT': '特立尼達和多巴哥', 'TN': '突尼西亞', 'TM': '土庫曼斯坦', 'TV': '圖瓦盧', 'UG': '烏干達', 'UY': '烏拉圭', 'UZ': '烏茲別克斯坦', 'VU': '瓦努阿圖', 'VE': '委內瑞拉', 'YE': '葉門', 'ZM': '贊比亞', 'ZW': '津巴布韋', 'GG': '根西島', 'JE': '澤西島', 'IM': '馬恩島', 'AX': '奧蘭群島', 'CW': '庫拉索', 'SX': '聖馬丁（荷屬）', 'BQ': '博奈爾', 'BL': '聖巴泰勒米', 'MF': '聖馬丁（法屬）', 'YT': '馬約特', 'RE': '留尼汪', 'MQ': '馬提尼克', 'GP': '瓜德羅普', 'GF': '法屬圭亞那', 'PF': '法屬波利尼西亞', 'NC': '新喀里多尼亞', 'NU': '紐埃', 'NF': '諾福克島', 'CX': '聖誕島', 'PN': '皮特凱恩群島', 'SH': '聖赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英屬維爾京群島', 'VI': '美屬維爾京群島', 'TC': '特克斯和凱科斯群島'}, 'ja': {'AF': 'アフガニスタン', 'AL': 'アルバニア', 'DZ': 'アルジェリア', 'AS': '米領サモア', 'AD': 'アンドラ', 'AO': 'アンゴラ', 'AI': 'アンギラ', 'AQ': '南極', 'AG': 'アンティグア・バーブーダ', 'AM': 'アルメニア', 'AW': 'アルバ', 'AZ': 'アゼルバイジャン', 'BS': 'バハマ', 'BH': 'バーレーン', 'BB': 'バルバドス', 'BY': 'ベラルーシ', 'BZ': 'ベリーズ', 'BJ': 'ベナン', 'BM': 'バミューダ', 'BT': 'ブータン', 'BO': 'ボリビア', 'BA': 'ボスニア・ヘルツェゴビナ', 'BW': 'ボツワナ', 'BN': 'ブルネイ', 'BG': 'ブルガリア', 'BF': 'ブルキナファソ', 'BI': 'ブルンジ', 'KH': 'カンボジア', 'CM': 'カメルーン', 'CV': 'カーボベルデ', 'KY': 'ケイマン諸島', 'CF': '中央アフリカ', 'TD': 'チャド', 'KM': 'コモロ', 'CG': 'コンゴ共和国', 'CD': 'コンゴ民主共和国', 'CK': 'クック諸島', 'CR': 'コスタリカ', 'HR': 'クロアチア', 'CU': 'キューバ', 'CY': 'キプロス', 'DJ': 'ジブチ', 'DM': 'ドミニカ国', 'DO': 'ドミニカ共和国', 'EC': 'エクアドル', 'SV': 'エルサルバドル', 'GQ': '赤道ギニア', 'ER': 'エリトリア', 'EE': 'エストニア', 'SZ': 'エスワティニ', 'ET': 'エチオピア', 'FK': 'フォークランド諸島', 'FO': 'フェロー諸島', 'FJ': 'フィジー', 'GA': 'ガボン', 'GM': 'ガンビア', 'GE': 'ジョージア', 'GH': 'ガーナ', 'GI': 'ジブラルタル', 'GL': 'グリーンランド', 'GD': 'グレナダ', 'GU': 'グアム', 'GT': 'グアテマラ', 'GN': 'ギニア', 'GW': 'ギニアビサウ', 'GY': 'ガイアナ', 'HT': 'ハイチ', 'HN': 'ホンジュラス', 'IS': 'アイスランド', 'JM': 'ジャマイカ', 'JO': 'ヨルダン', 'KZ': 'カザフスタン', 'KI': 'キリバス', 'XK': 'コソボ', 'KG': 'キルギス', 'LA': 'ラオス', 'LV': 'ラトビア', 'LB': 'レバノン', 'LS': 'レソト', 'LR': 'リベリア', 'LY': 'リビア', 'LI': 'リヒテンシュタイン', 'LT': 'リトアニア', 'LU': 'ルクセンブルク', 'MO': 'マカオ', 'MG': 'マダガスカル', 'MW': 'マラウイ', 'MV': 'モルディブ', 'ML': 'マリ', 'MT': 'マルタ', 'MH': 'マーシャル諸島', 'MR': 'モーリタニア', 'MU': 'モーリシャス', 'FM': 'ミクロネシア', 'MD': 'モルドバ', 'MC': 'モナコ', 'MN': 'モンゴル', 'ME': 'モンテネグロ', 'MZ': 'モザンビーク', 'MM': 'ミャンマー', 'NA': 'ナミビア', 'NP': 'ネパール', 'NI': 'ニカラグア', 'NE': 'ニジェール', 'KP': '北朝鮮', 'MK': '北マケドニア', 'MP': '北マリアナ諸島', 'OM': 'オマーン', 'PW': 'パラオ', 'PS': 'パレスチナ', 'PA': 'パナマ', 'PG': 'パプアニューギニア', 'PY': 'パラグアイ', 'PR': 'プエルトリコ', 'RW': 'ルワンダ', 'KN': 'セントクリストファー・ネイビス', 'LC': 'セントルシア', 'WS': 'サモア', 'SM': 'サンマリノ', 'ST': 'サントメ・プリンシペ', 'SN': 'セネガル', 'RS': 'セルビア', 'SC': 'セーシェル', 'SL': 'シエラレオネ', 'SK': 'スロバキア', 'SI': 'スロベニア', 'SB': 'ソロモン諸島', 'SO': 'ソマリア', 'SS': '南スーダン', 'LK': 'スリランカ', 'SD': 'スーダン', 'SR': 'スリナム', 'SY': 'シリア', 'TJ': 'タジキスタン', 'TZ': 'タンザニア', 'TL': '東ティモール', 'TG': 'トーゴ', 'TO': 'トンガ', 'TT': 'トリニダード・トバゴ', 'TN': 'チュニジア', 'TM': 'トルクメニスタン', 'TV': 'ツバル', 'UG': 'ウガンダ', 'UY': 'ウルグアイ', 'UZ': 'ウズベキスタン', 'VU': 'バヌアツ', 'VE': 'ベネズエラ', 'YE': 'イエメン', 'ZM': 'ザンビア', 'ZW': 'ジンバブエ', 'GG': 'ガーンジー', 'JE': 'ジャージー', 'IM': 'マン島', 'AX': 'オーランド諸島', 'CW': 'キュラソー', 'SX': 'シント・マールテン', 'BQ': 'ボネール', 'BL': 'サン・バルテルミー', 'MF': 'サン・マルタン', 'YT': 'マヨット', 'RE': 'レユニオン', 'MQ': 'マルティニーク', 'GP': 'グアドループ', 'GF': 'フランス領ギアナ', 'PF': 'フランス領ポリネシア', 'NC': 'ニューカレドニア', 'NU': 'ニウエ', 'NF': 'ノーフォーク島', 'CX': 'クリスマス島', 'PN': 'ピトケアン諸島', 'SH': 'セントヘレナ', 'MS': 'モントセラト', 'VG': '英領バージン諸島', 'VI': '米領バージン諸島', 'TC': 'タークス・カイコス諸島'}, 'ru': {'AF': 'Афганистан', 'AL': 'Албания', 'DZ': 'Алжир', 'AS': 'Американское Самоа', 'AD': 'Андорра', 'AO': 'Ангола', 'AI': 'Ангилья', 'AQ': 'Антарктида', 'AG': 'Антигуа и Барбуда', 'AM': 'Армения', 'AW': 'Аруба', 'AZ': 'Азербайджан', 'BS': 'Багамы', 'BH': 'Бахрейн', 'BB': 'Барбадос', 'BY': 'Беларусь', 'BZ': 'Белиз', 'BJ': 'Бенин', 'BM': 'Бермуды', 'BT': 'Бутан', 'BO': 'Боливия', 'BA': 'Босния и Герцеговина', 'BW': 'Ботсвана', 'BN': 'Бруней', 'BG': 'Болгария', 'BF': 'Буркина-Фасо', 'BI': 'Бурунди', 'KH': 'Камбоджа', 'CM': 'Камерун', 'CV': 'Кабо-Верде', 'KY': 'Каймановы острова', 'CF': 'ЦАР', 'TD': 'Чад', 'KM': 'Коморы', 'CG': 'Конго', 'CD': 'ДР Конго', 'CK': 'Острова Кука', 'CR': 'Коста-Рика', 'HR': 'Хорватия', 'CU': 'Куба', 'CY': 'Кипр', 'DJ': 'Джибути', 'DM': 'Доминика', 'DO': 'Доминиканская Республика', 'EC': 'Эквадор', 'SV': 'Сальвадор', 'GQ': 'Экваториальная Гвинея', 'ER': 'Эритрея', 'EE': 'Эстония', 'SZ': 'Эсватини', 'ET': 'Эфиопия', 'FK': 'Фолклендские острова', 'FO': 'Фарерские острова', 'FJ': 'Фиджи', 'GA': 'Габон', 'GM': 'Гамбия', 'GE': 'Грузия', 'GH': 'Гана', 'GI': 'Гибралтар', 'GL': 'Гренландия', 'GD': 'Гренада', 'GU': 'Гуам', 'GT': 'Гватемала', 'GN': 'Гвинея', 'GW': 'Гвинея-Бисау', 'GY': 'Гайана', 'HT': 'Гаити', 'HN': 'Гондурас', 'IS': 'Исландия', 'JM': 'Ямайка', 'JO': 'Иордания', 'KZ': 'Казахстан', 'KI': 'Кирибати', 'XK': 'Косово', 'KG': 'Киргизия', 'LA': 'Лаос', 'LV': 'Латвия', 'LB': 'Ливан', 'LS': 'Лесото', 'LR': 'Либерия', 'LY': 'Ливия', 'LI': 'Лихтенштейн', 'LT': 'Литва', 'LU': 'Люксембург', 'MO': 'Макао', 'MG': 'Мадагаскар', 'MW': 'Малави', 'MV': 'Мальдивы', 'ML': 'Мали', 'MT': 'Мальта', 'MH': 'Маршалловы Острова', 'MR': 'Мавритания', 'MU': 'Маврикий', 'FM': 'Микронезия', 'MD': 'Молдова', 'MC': 'Монако', 'MN': 'Монголия', 'ME': 'Черногория', 'MZ': 'Мозамбик', 'MM': 'Мьянма', 'NA': 'Намибия', 'NP': 'Непал', 'NI': 'Никарагуа', 'NE': 'Нигер', 'KP': 'Северная Корея', 'MK': 'Северная Македония', 'MP': 'Северные Марианские острова', 'OM': 'Оман', 'PW': 'Палау', 'PS': 'Палестина', 'PA': 'Панама', 'PG': 'Папуа — Новая Гвинея', 'PY': 'Парагвай', 'PR': 'Пуэрто-Рико', 'RW': 'Руанда', 'KN': 'Сент-Китс и Невис', 'LC': 'Сент-Люсия', 'WS': 'Самоа', 'SM': 'Сан-Марино', 'ST': 'Сан-Томе и Принсипи', 'SN': 'Сенегал', 'RS': 'Сербия', 'SC': 'Сейшелы', 'SL': 'Сьерра-Леоне', 'SK': 'Словакия', 'SI': 'Словения', 'SB': 'Соломоновы Острова', 'SO': 'Сомали', 'SS': 'Южный Судан', 'LK': 'Шри-Ланка', 'SD': 'Судан', 'SR': 'Суринам', 'SY': 'Сирия', 'TJ': 'Таджикистан', 'TZ': 'Танзания', 'TL': 'Восточный Тимор', 'TG': 'Того', 'TO': 'Тонга', 'TT': 'Тринидад и Тобаго', 'TN': 'Тунис', 'TM': 'Туркменистан', 'TV': 'Тувалу', 'UG': 'Уганда', 'UY': 'Уругвай', 'UZ': 'Узбекистан', 'VU': 'Вануату', 'VE': 'Венесуэла', 'YE': 'Йемен', 'ZM': 'Замбия', 'ZW': 'Зимбабве', 'GG': 'Гернси', 'JE': 'Джерси', 'IM': 'Остров Мэн', 'AX': 'Аландские острова', 'CW': 'Кюрасао', 'SX': 'Синт-Мартен', 'BQ': 'Бонайре', 'BL': 'Сен-Бартелеми', 'MF': 'Сен-Мартен', 'YT': 'Майотта', 'RE': 'Реюньон', 'MQ': 'Мартиника', 'GP': 'Гваделупа', 'GF': 'Французская Гвиана', 'PF': 'Французская Полинезия', 'NC': 'Новая Каледония', 'NU': 'Ниуэ', 'NF': 'Остров Норфолк', 'CX': 'Остров Рождества', 'PN': 'Питкэрн', 'SH': 'Остров Святой Елены', 'MS': 'Монтсеррат', 'VG': 'Британские Виргинские острова', 'VI': 'Американские Виргинские острова', 'TC': 'Теркс и Кайкос'}, 'fa': {'AF': 'افغانستان', 'AL': 'آلبانی', 'DZ': 'الجزایر', 'AS': 'ساموآی آمریکا', 'AD': 'آندورا', 'AO': 'آنگولا', 'AI': 'آنگویلا', 'AQ': 'جنوبگان', 'AG': 'آنتیگوا و باربودا', 'AM': 'ارمنستان', 'AW': 'آروبا', 'AZ': 'آذربایجان', 'BS': 'باهاما', 'BH': 'بحرین', 'BB': 'باربادوس', 'BY': 'بلاروس', 'BZ': 'بلیز', 'BJ': 'بنین', 'BM': 'برمودا', 'BT': 'بوتان', 'BO': 'بولیوی', 'BA': 'بوسنی و هرزگوین', 'BW': 'بوتسوانا', 'BN': 'برونئی', 'BG': 'بلغارستان', 'BF': 'بورکینافاسو', 'BI': 'بوروندی', 'KH': 'کامبوج', 'CM': 'کامرون', 'CV': 'کیپ ورد', 'KY': 'جزایر کیمن', 'CF': 'جمهوری آفریقای مرکزی', 'TD': 'چاد', 'KM': 'کومور', 'CG': 'کنگو', 'CD': 'جمهوری دموکراتیک کنگو', 'CK': 'جزایر کوک', 'CR': 'کاستاریکا', 'HR': 'کرواسی', 'CU': 'کوبا', 'CY': 'قبرس', 'DJ': 'جیبوتی', 'DM': 'دومینیکا', 'DO': 'جمهوری دومینیکن', 'EC': 'اکوادور', 'SV': 'السالوادور', 'GQ': 'گینه استوایی', 'ER': 'اریتره', 'EE': 'استونی', 'SZ': 'اسواتینی', 'ET': 'اتیوپی', 'FK': 'جزایر فالکلند', 'FO': 'جزایر فارو', 'FJ': 'فیجی', 'GA': 'گابن', 'GM': 'گامبیا', 'GE': 'گرجستان', 'GH': 'غنا', 'GI': 'جبل\u200cالطارق', 'GL': 'گرینلند', 'GD': 'گرنادا', 'GU': 'گوام', 'GT': 'گواتمالا', 'GN': 'گینه', 'GW': 'گینه بیسائو', 'GY': 'گویان', 'HT': 'هائیتی', 'HN': 'هندوراس', 'IS': 'ایسلند', 'JM': 'جامائیکا', 'JO': 'اردن', 'KZ': 'قزاقستان', 'KI': 'کیریباتی', 'XK': 'کوزوو', 'KG': 'قرقیزستان', 'LA': 'لائوس', 'LV': 'لتونی', 'LB': 'لبنان', 'LS': 'لسوتو', 'LR': 'لیبریا', 'LY': 'لیبی', 'LI': 'لیختن\u200cاشتاین', 'LT': 'لیتوانی', 'LU': 'لوکزامبورگ', 'MO': 'ماکائو', 'MG': 'ماداگاسکار', 'MW': 'مالاوی', 'MV': 'مالدیو', 'ML': 'مالی', 'MT': 'مالت', 'MH': 'جزایر مارشال', 'MR': 'موریتانی', 'MU': 'موریس', 'FM': 'میکرونزی', 'MD': 'مولداوی', 'MC': 'موناکو', 'MN': 'مغولستان', 'ME': 'مونته\u200cنگرو', 'MZ': 'موزامبیک', 'MM': 'میانمار', 'NA': 'نامیبیا', 'NP': 'نپال', 'NI': 'نیکاراگوئه', 'NE': 'نیجر', 'KP': 'کره شمالی', 'MK': 'مقدونیه شمالی', 'MP': 'جزایر ماریانای شمالی', 'OM': 'عمان', 'PW': 'پالائو', 'PS': 'فلسطین', 'PA': 'پاناما', 'PG': 'پاپوا گینه نو', 'PY': 'پاراگوئه', 'PR': 'پورتوریکو', 'RW': 'رواندا', 'KN': 'سنت کیتس و نویس', 'LC': 'سنت لوسیا', 'WS': 'ساموآ', 'SM': 'سن مارینو', 'ST': 'سائوتومه و پرنسیپ', 'SN': 'سنگال', 'RS': 'صربستان', 'SC': 'سیشل', 'SL': 'سیرالئون', 'SK': 'اسلواکی', 'SI': 'اسلوونی', 'SB': 'جزایر سلیمان', 'SO': 'سومالی', 'SS': 'سودان جنوبی', 'LK': 'سری\u200cلانکا', 'SD': 'سودان', 'SR': 'سورینام', 'SY': 'سوریه', 'TJ': 'تاجیکستان', 'TZ': 'تانزانیا', 'TL': 'تیمور شرقی', 'TG': 'توگو', 'TO': 'تونگا', 'TT': 'ترینیداد و توباگو', 'TN': 'تونس', 'TM': 'ترکمنستان', 'TV': 'تووالو', 'UG': 'اوگاندا', 'UY': 'اروگوئه', 'UZ': 'ازبکستان', 'VU': 'وانواتو', 'VE': 'ونزوئلا', 'YE': 'یمن', 'ZM': 'زامبیا', 'ZW': 'زیمبابوه', 'GG': 'گرنزی', 'JE': 'جرزی', 'IM': 'جزیره من', 'AX': 'جزایر الند', 'CW': 'کوراسائو', 'SX': 'سینت مارتن', 'BQ': 'بونیر', 'BL': 'سن بارتلمی', 'MF': 'سن مارتن', 'YT': 'مایوت', 'RE': 'رئونیون', 'MQ': 'مارتینیک', 'GP': 'گوادلوپ', 'GF': 'گویان فرانسه', 'PF': 'پلی\u200cنزی فرانسه', 'NC': 'کالدونیای جدید', 'NU': 'نیوئه', 'NF': 'جزیره نورفک', 'CX': 'جزیره کریسمس', 'PN': 'پیتکرن', 'SH': 'سنت هلنا', 'MS': 'مونتسرات', 'VG': 'جزایر ویرجین بریتانیا', 'VI': 'جزایر ویرجین آمریکا', 'TC': 'جزایر تورکس و کایکوس'}}
+for _lg in ("zh", "zh-TW", "ja", "ru", "fa"):
+    _COUNTRY_NAMES[_lg].update(_EXTRA_CN[_lg])
+
+_TZ_CONT = {'zh': {'Africa': '非洲', 'America': '美洲', 'Antarctica': '南极洲', 'Asia': '亚洲', 'Atlantic': '大西洋', 'Australia': '澳大利亚', 'Europe': '欧洲', 'Indian': '印度洋', 'Pacific': '太平洋'}, 'zh-TW': {'Africa': '非洲', 'America': '美洲', 'Antarctica': '南極洲', 'Asia': '亞洲', 'Atlantic': '大西洋', 'Australia': '澳大利亞', 'Europe': '歐洲', 'Indian': '印度洋', 'Pacific': '太平洋'}, 'ja': {'Africa': 'アフリカ', 'America': 'アメリカ', 'Antarctica': '南極', 'Asia': 'アジア', 'Atlantic': '大西洋', 'Australia': 'オーストラリア', 'Europe': 'ヨーロッパ', 'Indian': 'インド洋', 'Pacific': '太平洋'}, 'ru': {'Africa': 'Африка', 'America': 'Америка', 'Antarctica': 'Антарктида', 'Asia': 'Азия', 'Atlantic': 'Атлантика', 'Australia': 'Австралия', 'Europe': 'Европа', 'Indian': 'Индийский океан', 'Pacific': 'Тихий океан'}, 'fa': {'Africa': 'آفریقا', 'America': 'آمریکا', 'Antarctica': 'جنوبگان', 'Asia': 'آسیا', 'Atlantic': 'اقیانوس اطلس', 'Australia': 'استرالیا', 'Europe': 'اروپا', 'Indian': 'اقیانوس هند', 'Pacific': 'اقیانوس آرام'}}
+_TZ_CITY = {'zh': {'Cairo': '开罗', 'Johannesburg': '约翰内斯堡', 'Lagos': '拉各斯', 'Anchorage': '安克雷奇', 'Bogota': '波哥大', 'Chicago': '芝加哥', 'Denver': '丹佛', 'Halifax': '哈利法克斯', 'Lima': '利马', 'Los_Angeles': '洛杉矶', 'Mexico_City': '墨西哥城', 'New_York': '纽约', 'Phoenix': '菲尼克斯', 'Santiago': '圣地亚哥', 'Sao_Paulo': '圣保罗', 'St_Johns': '圣约翰斯', 'Toronto': '多伦多', 'Vancouver': '温哥华', 'Winnipeg': '温尼伯', 'Almaty': '阿拉木图', 'Bangkok': '曼谷', 'Colombo': '科伦坡', 'Dhaka': '达卡', 'Dubai': '迪拜', 'Ho_Chi_Minh': '胡志明市', 'Hong_Kong': '香港', 'Jakarta': '雅加达', 'Jerusalem': '耶路撒冷', 'Kabul': '喀布尔', 'Karachi': '卡拉奇', 'Kathmandu': '加德满都', 'Kolkata': '加尔各答', 'Kuala_Lumpur': '吉隆坡', 'Manila': '马尼拉', 'Riyadh': '利雅得', 'Seoul': '首尔', 'Shanghai': '上海', 'Singapore': '新加坡', 'Taipei': '台北', 'Tehran': '德黑兰', 'Tokyo': '东京', 'Reykjavik': '雷克雅未克', 'Adelaide': '阿德莱德', 'Brisbane': '布里斯班', 'Melbourne': '墨尔本', 'Perth': '珀斯', 'Sydney': '悉尼', 'Amsterdam': '阿姆斯特丹', 'Berlin': '柏林', 'Istanbul': '伊斯坦布尔', 'London': '伦敦', 'Madrid': '马德里', 'Moscow': '莫斯科', 'Paris': '巴黎', 'Rome': '罗马', 'Stockholm': '斯德哥尔摩', 'Vienna': '维也纳', 'Warsaw': '华沙', 'Auckland': '奥克兰', 'Chatham': '查塔姆', 'Buenos_Aires': '布宜诺斯艾利斯', 'Ulaanbaatar': '乌兰巴托', 'Honolulu': '檀香山', 'Zurich': '苏黎世', 'Lisbon': '里斯本', 'Dublin': '都柏林', 'Helsinki': '赫尔辛基', 'Oslo': '奥斯陆', 'Copenhagen': '哥本哈根', 'Prague': '布拉格', 'Budapest': '布达佩斯', 'Athens': '雅典', 'Kyiv': '基辅'}, 'zh-TW': {'Cairo': '開羅', 'Johannesburg': '約翰內斯堡', 'Lagos': '拉各斯', 'Anchorage': '安克雷奇', 'Bogota': '波哥大', 'Chicago': '芝加哥', 'Denver': '丹佛', 'Halifax': '哈利法克斯', 'Lima': '利馬', 'Los_Angeles': '洛杉磯', 'Mexico_City': '墨西哥城', 'New_York': '紐約', 'Phoenix': '菲尼克斯', 'Santiago': '聖地亞哥', 'Sao_Paulo': '聖保羅', 'St_Johns': '聖約翰斯', 'Toronto': '多倫多', 'Vancouver': '溫哥華', 'Winnipeg': '溫尼伯', 'Almaty': '阿拉木圖', 'Bangkok': '曼谷', 'Colombo': '科倫坡', 'Dhaka': '達卡', 'Dubai': '杜拜', 'Ho_Chi_Minh': '胡志明市', 'Hong_Kong': '香港', 'Jakarta': '雅加達', 'Jerusalem': '耶路撒冷', 'Kabul': '喀布爾', 'Karachi': '卡拉奇', 'Kathmandu': '加德滿都', 'Kolkata': '加爾各答', 'Kuala_Lumpur': '吉隆坡', 'Manila': '馬尼拉', 'Riyadh': '利雅得', 'Seoul': '首爾', 'Shanghai': '上海', 'Singapore': '新加坡', 'Taipei': '台北', 'Tehran': '德黑蘭', 'Tokyo': '東京', 'Reykjavik': '雷克雅未克', 'Adelaide': '阿德萊德', 'Brisbane': '布里斯班', 'Melbourne': '墨爾本', 'Perth': '珀斯', 'Sydney': '悉尼', 'Amsterdam': '阿姆斯特丹', 'Berlin': '柏林', 'Istanbul': '伊斯坦布爾', 'London': '倫敦', 'Madrid': '馬德里', 'Moscow': '莫斯科', 'Paris': '巴黎', 'Rome': '羅馬', 'Stockholm': '斯德哥爾摩', 'Vienna': '維也納', 'Warsaw': '華沙', 'Auckland': '奧克蘭', 'Chatham': '查塔姆', 'Buenos_Aires': '布宜諾斯艾利斯', 'Ulaanbaatar': '烏蘭巴托', 'Honolulu': '檀香山', 'Zurich': '蘇黎世', 'Lisbon': '里斯本', 'Dublin': '都柏林', 'Helsinki': '赫爾辛基', 'Oslo': '奧斯陸', 'Copenhagen': '哥本哈根', 'Prague': '布拉格', 'Budapest': '布達佩斯', 'Athens': '雅典', 'Kyiv': '基輔'}, 'ja': {'Cairo': 'カイロ', 'Johannesburg': 'ヨハネスブルグ', 'Lagos': 'ラゴス', 'Anchorage': 'アンカレッジ', 'Bogota': 'ボゴタ', 'Chicago': 'シカゴ', 'Denver': 'デンバー', 'Halifax': 'ハリファックス', 'Lima': 'リマ', 'Los_Angeles': 'ロサンゼルス', 'Mexico_City': 'メキシコシティ', 'New_York': 'ニューヨーク', 'Phoenix': 'フェニックス', 'Santiago': 'サンティアゴ', 'Sao_Paulo': 'サンパウロ', 'St_Johns': 'セントジョンズ', 'Toronto': 'トロント', 'Vancouver': 'バンクーバー', 'Winnipeg': 'ウィニペグ', 'Almaty': 'アルマトイ', 'Bangkok': 'バンコク', 'Colombo': 'コロンボ', 'Dhaka': 'ダッカ', 'Dubai': 'ドバイ', 'Ho_Chi_Minh': 'ホーチミン', 'Hong_Kong': '香港', 'Jakarta': 'ジャカルタ', 'Jerusalem': 'エルサレム', 'Kabul': 'カブール', 'Karachi': 'カラチ', 'Kathmandu': 'カトマンズ', 'Kolkata': 'コルカタ', 'Kuala_Lumpur': 'クアラルンプール', 'Manila': 'マニラ', 'Riyadh': 'リヤド', 'Seoul': 'ソウル', 'Shanghai': '上海', 'Singapore': 'シンガポール', 'Taipei': '台北', 'Tehran': 'テヘラン', 'Tokyo': '東京', 'Reykjavik': 'レイキャビク', 'Adelaide': 'アデレード', 'Brisbane': 'ブリスベン', 'Melbourne': 'メルボルン', 'Perth': 'パース', 'Sydney': 'シドニー', 'Amsterdam': 'アムステルダム', 'Berlin': 'ベルリン', 'Istanbul': 'イスタンブール', 'London': 'ロンドン', 'Madrid': 'マドリード', 'Moscow': 'モスクワ', 'Paris': 'パリ', 'Rome': 'ローマ', 'Stockholm': 'ストックホルム', 'Vienna': 'ウィーン', 'Warsaw': 'ワルシャワ', 'Auckland': 'オークランド', 'Chatham': 'チャタム', 'Buenos_Aires': 'ブエノスアイレス', 'Ulaanbaatar': 'ウランバートル', 'Honolulu': 'ホノルル', 'Zurich': 'チューリッヒ', 'Lisbon': 'リスボン', 'Dublin': 'ダブリン', 'Helsinki': 'ヘルシンキ', 'Oslo': 'オスロ', 'Copenhagen': 'コペンハーゲン', 'Prague': 'プラハ', 'Budapest': 'ブダペスト', 'Athens': 'アテネ', 'Kyiv': 'キーウ'}, 'ru': {'Cairo': 'Каир', 'Johannesburg': 'Йоханнесбург', 'Lagos': 'Лагос', 'Anchorage': 'Анкоридж', 'Bogota': 'Богота', 'Chicago': 'Чикаго', 'Denver': 'Денвер', 'Halifax': 'Галифакс', 'Lima': 'Лима', 'Los_Angeles': 'Лос-Анджелес', 'Mexico_City': 'Мехико', 'New_York': 'Нью-Йорк', 'Phoenix': 'Финикс', 'Santiago': 'Сантьяго', 'Sao_Paulo': 'Сан-Паулу', 'St_Johns': 'Сент-Джонс', 'Toronto': 'Торонто', 'Vancouver': 'Ванкувер', 'Winnipeg': 'Виннипег', 'Almaty': 'Алматы', 'Bangkok': 'Бангкок', 'Colombo': 'Коломбо', 'Dhaka': 'Дакка', 'Dubai': 'Дубай', 'Ho_Chi_Minh': 'Хошимин', 'Hong_Kong': 'Гонконг', 'Jakarta': 'Джакарта', 'Jerusalem': 'Иерусалим', 'Kabul': 'Кабул', 'Karachi': 'Карачи', 'Kathmandu': 'Катманду', 'Kolkata': 'Калькутта', 'Kuala_Lumpur': 'Куала-Лумпур', 'Manila': 'Манила', 'Riyadh': 'Эр-Рияд', 'Seoul': 'Сеул', 'Shanghai': 'Шанхай', 'Singapore': 'Сингапур', 'Taipei': 'Тайбэй', 'Tehran': 'Тегеран', 'Tokyo': 'Токио', 'Reykjavik': 'Рейкьявик', 'Adelaide': 'Аделаида', 'Brisbane': 'Брисбен', 'Melbourne': 'Мельбурн', 'Perth': 'Перт', 'Sydney': 'Сидней', 'Amsterdam': 'Амстердам', 'Berlin': 'Берлин', 'Istanbul': 'Стамбул', 'London': 'Лондон', 'Madrid': 'Мадрид', 'Moscow': 'Москва', 'Paris': 'Париж', 'Rome': 'Рим', 'Stockholm': 'Стокгольм', 'Vienna': 'Вена', 'Warsaw': 'Варшава', 'Auckland': 'Окленд', 'Chatham': 'Чатем', 'Buenos_Aires': 'Буэнос-Айрес', 'Ulaanbaatar': 'Улан-Батор', 'Honolulu': 'Гонолулу', 'Zurich': 'Цюрих', 'Lisbon': 'Лиссабон', 'Dublin': 'Дублин', 'Helsinki': 'Хельсинки', 'Oslo': 'Осло', 'Copenhagen': 'Копенгаген', 'Prague': 'Прага', 'Budapest': 'Будапешт', 'Athens': 'Афины', 'Kyiv': 'Киев'}, 'fa': {'Cairo': 'قاهره', 'Johannesburg': 'ژوهانسبورگ', 'Lagos': 'لاگوس', 'Anchorage': 'انکوریج', 'Bogota': 'بوگوتا', 'Chicago': 'شیکاگو', 'Denver': 'دنور', 'Halifax': 'هالیفاکس', 'Lima': 'لیما', 'Los_Angeles': 'لس\u200cآنجلس', 'Mexico_City': 'مکزیکوسیتی', 'New_York': 'نیویورک', 'Phoenix': 'فینیکس', 'Santiago': 'سانتیاگو', 'Sao_Paulo': 'سائوپائولو', 'St_Johns': 'سنت جانز', 'Toronto': 'تورنتو', 'Vancouver': 'ونکوور', 'Winnipeg': 'وینیپگ', 'Almaty': 'آلماتی', 'Bangkok': 'بانکوک', 'Colombo': 'کلمبو', 'Dhaka': 'داکا', 'Dubai': 'دبی', 'Ho_Chi_Minh': 'هوشی\u200cمین', 'Hong_Kong': 'هنگ\u200cکنگ', 'Jakarta': 'جاکارتا', 'Jerusalem': 'اورشلیم', 'Kabul': 'کابل', 'Karachi': 'کراچی', 'Kathmandu': 'کاتماندو', 'Kolkata': 'کلکته', 'Kuala_Lumpur': 'کوالالامپور', 'Manila': 'مانیل', 'Riyadh': 'ریاض', 'Seoul': 'سئول', 'Shanghai': 'شانگهای', 'Singapore': 'سنگاپور', 'Taipei': 'تایپه', 'Tehran': 'تهران', 'Tokyo': 'توکیو', 'Reykjavik': 'ریکیاویک', 'Adelaide': 'آدلاید', 'Brisbane': 'بریزبن', 'Melbourne': 'ملبورن', 'Perth': 'پرت', 'Sydney': 'سیدنی', 'Amsterdam': 'آمستردام', 'Berlin': 'برلین', 'Istanbul': 'استانبول', 'London': 'لندن', 'Madrid': 'مادرید', 'Moscow': 'مسکو', 'Paris': 'پاریس', 'Rome': 'رم', 'Stockholm': 'استکهلم', 'Vienna': 'وین', 'Warsaw': 'ورشو', 'Auckland': 'اوکلند', 'Chatham': 'چتم', 'Buenos_Aires': 'بوئنوس آیرس', 'Ulaanbaatar': 'اولان\u200cباتور', 'Honolulu': 'هونولولو', 'Zurich': 'زوریخ', 'Lisbon': 'لیسبون', 'Dublin': 'دوبلین', 'Helsinki': 'هلسینکی', 'Oslo': 'اسلو', 'Copenhagen': 'کپنهاگ', 'Prague': 'پراگ', 'Budapest': 'بوداپست', 'Athens': 'آتن', 'Kyiv': 'کی\u200cیف'}}
+_UTC_NAMES = {"zh": "协调世界时", "zh-TW": "協調世界時", "ja": "協定世界時",
+              "ru": "Всемирное время (UTC)", "fa": "ساعت هماهنگ جهانی"}
+
+
+_ZH_NAME2CODE = {v: k for k, v in _COUNTRY_NAMES["zh"].items()}
+
+
+def _loc_country_name(text):
+    """国家名/代码 -> 界面语言国家名 (en 界面或查不到时原样)。"""
+    if LANG == "en" or not text:
+        return text
+    t = str(text).strip()
+    if LANG == "zh-TW" and t in _ZH_NAME2CODE:
+        return _COUNTRY_NAMES["zh-TW"][_ZH_NAME2CODE[t]]
+    code = None
+    if len(t) == 2 and t.isalpha():
+        code = t.upper()
+    else:
+        code = _CC_EN.get(t.lower())
+    if code == "UK":
+        code = "GB"
+    if code:
+        return _COUNTRY_NAMES.get(LANG, {}).get(code, text)
+    return text
+
+
+def _loc_display(disp):
+    """多源对比行: 把开头的国家 (代码或英文名) 换成本地化国家名, 其余原样。"""
+    if LANG == "en" or not disp:
+        return disp
+    m = re.match(r"^([A-Z]{2})\s+(.*)$", disp)
+    if m:
+        code = "GB" if m.group(1) == "UK" else m.group(1)
+        loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
+        if loc:
+            return f"{loc} {m.group(2)}"
+    if LANG == "zh-TW":
+        for zh_name, code in sorted(_ZH_NAME2CODE.items(), key=lambda kv: -len(kv[0])):
+            if disp.startswith(zh_name):
+                return _COUNTRY_NAMES["zh-TW"][code] + disp[len(zh_name):]
+    low = disp.lower()
+    for name, code in sorted(_CC_EN.items(), key=lambda kv: -len(kv[0])):
+        if low.startswith(name + " ") or low == name:
+            loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
+            if loc:
+                return loc + disp[len(name):]
+    return disp
+
+
+
+_REGION_L10N = {'zh': {'Alabama': '阿拉巴马州', 'Alaska': '阿拉斯加州', 'Arizona': '亚利桑那州', 'Arkansas': '阿肯色州', 'California': '加利福尼亚州', 'Colorado': '科罗拉多州', 'Connecticut': '康涅狄格州', 'Delaware': '特拉华州', 'Florida': '佛罗里达州', 'Georgia': '佐治亚州', 'Hawaii': '夏威夷州', 'Idaho': '爱达荷州', 'Illinois': '伊利诺伊州', 'Indiana': '印第安纳州', 'Iowa': '艾奥瓦州', 'Kansas': '堪萨斯州', 'Kentucky': '肯塔基州', 'Louisiana': '路易斯安那州', 'Maine': '缅因州', 'Maryland': '马里兰州', 'Massachusetts': '马萨诸塞州', 'Michigan': '密歇根州', 'Minnesota': '明尼苏达州', 'Mississippi': '密西西比州', 'Missouri': '密苏里州', 'Montana': '蒙大拿州', 'Nebraska': '内布拉斯加州', 'Nevada': '内华达州', 'New Hampshire': '新罕布什尔州', 'New Jersey': '新泽西州', 'New Mexico': '新墨西哥州', 'New York': '纽约州', 'North Carolina': '北卡罗来纳州', 'North Dakota': '北达科他州', 'Ohio': '俄亥俄州', 'Oklahoma': '俄克拉荷马州', 'Oregon': '俄勒冈州', 'Pennsylvania': '宾夕法尼亚州', 'Rhode Island': '罗得岛州', 'South Carolina': '南卡罗来纳州', 'South Dakota': '南达科他州', 'Tennessee': '田纳西州', 'Texas': '得克萨斯州', 'Utah': '犹他州', 'Vermont': '佛蒙特州', 'Virginia': '弗吉尼亚州', 'Washington': '华盛顿州', 'West Virginia': '西弗吉尼亚州', 'Wisconsin': '威斯康星州', 'Wyoming': '怀俄明州', 'District of Columbia': '哥伦比亚特区', 'New South Wales': '新南威尔士州', 'Victoria': '维多利亚州', 'Queensland': '昆士兰州', 'Western Australia': '西澳大利亚州', 'South Australia': '南澳大利亚州', 'Tasmania': '塔斯马尼亚州', 'Northern Territory': '北领地', 'Australian Capital Territory': '首都领地', 'Ontario': '安大略省', 'Quebec': '魁北克省', 'British Columbia': '不列颠哥伦比亚省', 'Alberta': '艾伯塔省', 'Manitoba': '曼尼托巴省', 'Saskatchewan': '萨斯喀彻温省', 'Nova Scotia': '新斯科舍省', 'New Brunswick': '新不伦瑞克省', 'Newfoundland and Labrador': '纽芬兰与拉布拉多省', 'Prince Edward Island': '爱德华王子岛省', 'England': '英格兰', 'Scotland': '苏格兰', 'Wales': '威尔士', 'Bavaria': '巴伐利亚州'}, 'zh-TW': {'Alabama': '阿拉巴馬州', 'Alaska': '阿拉斯加州', 'Arizona': '亞利桑那州', 'Arkansas': '阿肯色州', 'California': '加利福尼亞州', 'Colorado': '科羅拉多州', 'Connecticut': '康涅狄格州', 'Delaware': '德拉瓦州', 'Florida': '佛羅里達州', 'Georgia': '喬治亞州', 'Hawaii': '夏威夷州', 'Idaho': '愛達荷州', 'Illinois': '伊利諾州', 'Indiana': '印第安納州', 'Iowa': '愛荷華州', 'Kansas': '堪薩斯州', 'Kentucky': '肯塔基州', 'Louisiana': '路易斯安那州', 'Maine': '緬因州', 'Maryland': '馬里蘭州', 'Massachusetts': '麻薩諸塞州', 'Michigan': '密西根州', 'Minnesota': '明尼蘇達州', 'Mississippi': '密西西比州', 'Missouri': '密蘇里州', 'Montana': '蒙大拿州', 'Nebraska': '內布拉斯加州', 'Nevada': '內華達州', 'New Hampshire': '新罕布夏州', 'New Jersey': '紐澤西州', 'New Mexico': '新墨西哥州', 'New York': '紐約州', 'North Carolina': '北卡羅來納州', 'North Dakota': '北達科他州', 'Ohio': '俄亥俄州', 'Oklahoma': '奧克拉荷馬州', 'Oregon': '俄勒岡州', 'Pennsylvania': '賓夕法尼亞州', 'Rhode Island': '羅得島州', 'South Carolina': '南卡羅來納州', 'South Dakota': '南達科他州', 'Tennessee': '田納西州', 'Texas': '德克薩斯州', 'Utah': '猶他州', 'Vermont': '佛蒙特州', 'Virginia': '維吉尼亞州', 'Washington': '華盛頓州', 'West Virginia': '西維吉尼亞州', 'Wisconsin': '威斯康辛州', 'Wyoming': '懷俄明州', 'District of Columbia': '哥倫比亞特區', 'New South Wales': '新南威爾士州', 'Victoria': '維多利亞州', 'Queensland': '昆士蘭州', 'Western Australia': '西澳大利亞州', 'South Australia': '南澳大利亞州', 'Tasmania': '塔斯馬尼亞州', 'Northern Territory': '北領地', 'Australian Capital Territory': '首都領地', 'Ontario': '安大略省', 'Quebec': '魁北克省', 'British Columbia': '卑詩省', 'Alberta': '亞伯達省', 'Manitoba': '曼尼托巴省', 'Saskatchewan': '薩斯喀徹溫省', 'Nova Scotia': '新斯科細亞省', 'New Brunswick': '新布藍茲維省', 'Newfoundland and Labrador': '紐芬蘭與拉布拉多省', 'Prince Edward Island': '愛德華王子島省', 'England': '英格蘭', 'Scotland': '蘇格蘭', 'Wales': '威爾斯', 'Bavaria': '巴伐利亞州'}, 'ja': {'Alabama': 'アラバマ州', 'Alaska': 'アラスカ州', 'Arizona': 'アリゾナ州', 'Arkansas': 'アーカンソー州', 'California': 'カリフォルニア州', 'Colorado': 'コロラド州', 'Connecticut': 'コネチカット州', 'Delaware': 'デラウェア州', 'Florida': 'フロリダ州', 'Georgia': 'ジョージア州', 'Hawaii': 'ハワイ州', 'Idaho': 'アイダホ州', 'Illinois': 'イリノイ州', 'Indiana': 'インディアナ州', 'Iowa': 'アイオワ州', 'Kansas': 'カンザス州', 'Kentucky': 'ケンタッキー州', 'Louisiana': 'ルイジアナ州', 'Maine': 'メイン州', 'Maryland': 'メリーランド州', 'Massachusetts': 'マサチューセッツ州', 'Michigan': 'ミシガン州', 'Minnesota': 'ミネソタ州', 'Mississippi': 'ミシシッピ州', 'Missouri': 'ミズーリ州', 'Montana': 'モンタナ州', 'Nebraska': 'ネブラスカ州', 'Nevada': 'ネバダ州', 'New Hampshire': 'ニューハンプシャー州', 'New Jersey': 'ニュージャージー州', 'New Mexico': 'ニューメキシコ州', 'New York': 'ニューヨーク州', 'North Carolina': 'ノースカロライナ州', 'North Dakota': 'ノースダコタ州', 'Ohio': 'オハイオ州', 'Oklahoma': 'オクラホマ州', 'Oregon': 'オレゴン州', 'Pennsylvania': 'ペンシルベニア州', 'Rhode Island': 'ロードアイランド州', 'South Carolina': 'サウスカロライナ州', 'South Dakota': 'サウスダコタ州', 'Tennessee': 'テネシー州', 'Texas': 'テキサス州', 'Utah': 'ユタ州', 'Vermont': 'バーモント州', 'Virginia': 'バージニア州', 'Washington': 'ワシントン州', 'West Virginia': 'ウェストバージニア州', 'Wisconsin': 'ウィスコンシン州', 'Wyoming': 'ワイオミング州', 'District of Columbia': 'コロンビア特別区', 'New South Wales': 'ニューサウスウェールズ州', 'Victoria': 'ビクトリア州', 'Queensland': 'クイーンズランド州', 'Western Australia': '西オーストラリア州', 'South Australia': '南オーストラリア州', 'Tasmania': 'タスマニア州', 'Northern Territory': 'ノーザンテリトリー', 'Australian Capital Territory': '首都特別地域', 'Ontario': 'オンタリオ州', 'Quebec': 'ケベック州', 'British Columbia': 'ブリティッシュコロンビア州', 'Alberta': 'アルバータ州', 'Manitoba': 'マニトバ州', 'Saskatchewan': 'サスカチュワン州', 'Nova Scotia': 'ノバスコシア州', 'New Brunswick': 'ニューブランズウィック州', 'Newfoundland and Labrador': 'ニューファンドランド・ラブラドール州', 'Prince Edward Island': 'プリンスエドワード島州', 'England': 'イングランド', 'Scotland': 'スコットランド', 'Wales': 'ウェールズ', 'Bavaria': 'バイエルン州'}, 'ru': {'Alabama': 'Алабама', 'Alaska': 'Аляска', 'Arizona': 'Аризона', 'Arkansas': 'Арканзас', 'California': 'Калифорния', 'Colorado': 'Колорадо', 'Connecticut': 'Коннектикут', 'Delaware': 'Делавэр', 'Florida': 'Флорида', 'Georgia': 'Джорджия', 'Hawaii': 'Гавайи', 'Idaho': 'Айдахо', 'Illinois': 'Иллинойс', 'Indiana': 'Индиана', 'Iowa': 'Айова', 'Kansas': 'Канзас', 'Kentucky': 'Кентукки', 'Louisiana': 'Луизиана', 'Maine': 'Мэн', 'Maryland': 'Мэриленд', 'Massachusetts': 'Массачусетс', 'Michigan': 'Мичиган', 'Minnesota': 'Миннесота', 'Mississippi': 'Миссисипи', 'Missouri': 'Миссури', 'Montana': 'Монтана', 'Nebraska': 'Небраска', 'Nevada': 'Невада', 'New Hampshire': 'Нью-Гэмпшир', 'New Jersey': 'Нью-Джерси', 'New Mexico': 'Нью-Мексико', 'New York': 'штат Нью-Йорк', 'North Carolina': 'Северная Каролина', 'North Dakota': 'Северная Дакота', 'Ohio': 'Огайо', 'Oklahoma': 'Оклахома', 'Oregon': 'Орегон', 'Pennsylvania': 'Пенсильвания', 'Rhode Island': 'Род-Айленд', 'South Carolina': 'Южная Каролина', 'South Dakota': 'Южная Дакота', 'Tennessee': 'Теннесси', 'Texas': 'Техас', 'Utah': 'Юта', 'Vermont': 'Вермонт', 'Virginia': 'Вирджиния', 'Washington': 'штат Вашингтон', 'West Virginia': 'Западная Вирджиния', 'Wisconsin': 'Висконсин', 'Wyoming': 'Вайоминг', 'District of Columbia': 'Округ Колумбия', 'New South Wales': 'Новый Южный Уэльс', 'Victoria': 'Виктория', 'Queensland': 'Квинсленд', 'Western Australia': 'Западная Австралия', 'South Australia': 'Южная Австралия', 'Tasmania': 'Тасмания', 'Northern Territory': 'Северная территория', 'Australian Capital Territory': 'Столичная территория', 'Ontario': 'Онтарио', 'Quebec': 'Квебек', 'British Columbia': 'Британская Колумбия', 'Alberta': 'Альберта', 'Manitoba': 'Манитоба', 'Saskatchewan': 'Саскачеван', 'Nova Scotia': 'Новая Шотландия', 'New Brunswick': 'Нью-Брансуик', 'Newfoundland and Labrador': 'Ньюфаундленд и Лабрадор', 'Prince Edward Island': 'Остров Принца Эдуарда', 'England': 'Англия', 'Scotland': 'Шотландия', 'Wales': 'Уэльс', 'Bavaria': 'Бавария'}, 'fa': {'Alabama': 'آلاباما', 'Alaska': 'آلاسکا', 'Arizona': 'آریزونا', 'Arkansas': 'آرکانزاس', 'California': 'کالیفرنیا', 'Colorado': 'کلرادو', 'Connecticut': 'کنتیکت', 'Delaware': 'دلاویر', 'Florida': 'فلوریدا', 'Georgia': 'جورجیا', 'Hawaii': 'هاوایی', 'Idaho': 'آیداهو', 'Illinois': 'ایلینوی', 'Indiana': 'ایندیانا', 'Iowa': 'آیووا', 'Kansas': 'کانزاس', 'Kentucky': 'کنتاکی', 'Louisiana': 'لوئیزیانا', 'Maine': 'مین', 'Maryland': 'مریلند', 'Massachusetts': 'ماساچوست', 'Michigan': 'میشیگان', 'Minnesota': 'مینه\u200cسوتا', 'Mississippi': 'میسیسیپی', 'Missouri': 'میسوری', 'Montana': 'مونتانا', 'Nebraska': 'نبراسکا', 'Nevada': 'نوادا', 'New Hampshire': 'نیوهمپشایر', 'New Jersey': 'نیوجرسی', 'New Mexico': 'نیومکزیکو', 'New York': 'ایالت نیویورک', 'North Carolina': 'کارولینای شمالی', 'North Dakota': 'داکوتای شمالی', 'Ohio': 'اوهایو', 'Oklahoma': 'اکلاهما', 'Oregon': 'اورگن', 'Pennsylvania': 'پنسیلوانیا', 'Rhode Island': 'رود آیلند', 'South Carolina': 'کارولینای جنوبی', 'South Dakota': 'داکوتای جنوبی', 'Tennessee': 'تنسی', 'Texas': 'تگزاس', 'Utah': 'یوتا', 'Vermont': 'ورمانت', 'Virginia': 'ویرجینیا', 'Washington': 'ایالت واشینگتن', 'West Virginia': 'ویرجینیای غربی', 'Wisconsin': 'ویسکانسین', 'Wyoming': 'وایومینگ', 'District of Columbia': 'ناحیه کلمبیا', 'New South Wales': 'نیو ساوت ولز', 'Victoria': 'ویکتوریا', 'Queensland': 'کوئینزلند', 'Western Australia': 'استرالیای غربی', 'South Australia': 'استرالیای جنوبی', 'Tasmania': 'تاسمانی', 'Northern Territory': 'قلمرو شمالی', 'Australian Capital Territory': 'قلمرو پایتختی', 'Ontario': 'انتاریو', 'Quebec': 'کبک', 'British Columbia': 'بریتیش کلمبیا', 'Alberta': 'آلبرتا', 'Manitoba': 'مانیتوبا', 'Saskatchewan': 'ساسکاچوان', 'Nova Scotia': 'نوا اسکوشیا', 'New Brunswick': 'نیوبرانزویک', 'Newfoundland and Labrador': 'نیوفاندلند و لابرادور', 'Prince Edward Island': 'جزیره پرنس ادوارد', 'England': 'انگلستان', 'Scotland': 'اسکاتلند', 'Wales': 'ولز', 'Bavaria': 'باواریا'}}
+_CITY_L10N = {'zh': {'New York': '纽约', 'Los Angeles': '洛杉矶', 'Chicago': '芝加哥', 'Houston': '休斯顿', 'Phoenix': '菲尼克斯', 'Philadelphia': '费城', 'San Antonio': '圣安东尼奥', 'San Diego': '圣迭戈', 'Dallas': '达拉斯', 'San Jose': '圣何塞', 'Austin': '奥斯汀', 'Jacksonville': '杰克逊维尔', 'Columbus': '哥伦布', 'Charlotte': '夏洛特', 'San Francisco': '旧金山', 'Indianapolis': '印第安纳波利斯', 'Seattle': '西雅图', 'Denver': '丹佛', 'Washington': '华盛顿', 'Boston': '波士顿', 'Nashville': '纳什维尔', 'Las Vegas': '拉斯维加斯', 'Portland': '波特兰', 'Louisville': '路易斯维尔', 'Milwaukee': '密尔沃基', 'Atlanta': '亚特兰大', 'Kansas City': '堪萨斯城', 'Miami': '迈阿密', 'Minneapolis': '明尼阿波利斯', 'Tampa': '坦帕', 'New Orleans': '新奥尔良', 'Pittsburgh': '匹兹堡', 'Cincinnati': '辛辛那提', 'Sacramento': '萨克拉门托', 'Orlando': '奥兰多', 'Salt Lake City': '盐湖城', 'Honolulu': '檀香山', 'Oakland': '奥克兰', 'Santa Clara': '圣克拉拉', 'Buffalo': '布法罗', 'Sydney': '悉尼', 'Melbourne': '墨尔本', 'Brisbane': '布里斯班', 'Perth': '珀斯', 'Adelaide': '阿德莱德', 'Canberra': '堪培拉', 'Hobart': '霍巴特', 'Darwin': '达尔文', 'Auckland': '奥克兰', 'Wellington': '惠灵顿', 'London': '伦敦', 'Paris': '巴黎', 'Berlin': '柏林', 'Frankfurt': '法兰克福', 'Munich': '慕尼黑', 'Hamburg': '汉堡', 'Madrid': '马德里', 'Barcelona': '巴塞罗那', 'Rome': '罗马', 'Milan': '米兰', 'Amsterdam': '阿姆斯特丹', 'Rotterdam': '鹿特丹', 'Brussels': '布鲁塞尔', 'Vienna': '维也纳', 'Zurich': '苏黎世', 'Geneva': '日内瓦', 'Stockholm': '斯德哥尔摩', 'Oslo': '奥斯陆', 'Copenhagen': '哥本哈根', 'Helsinki': '赫尔辛基', 'Dublin': '都柏林', 'Lisbon': '里斯本', 'Athens': '雅典', 'Warsaw': '华沙', 'Krakow': '克拉科夫', 'Prague': '布拉格', 'Budapest': '布达佩斯', 'Bucharest': '布加勒斯特', 'Sofia': '索菲亚', 'Moscow': '莫斯科', 'Saint Petersburg': '圣彼得堡', 'Kyiv': '基辅', 'Minsk': '明斯克', 'Istanbul': '伊斯坦布尔', 'Ankara': '安卡拉', 'Reykjavik': '雷克雅未克', 'Tallinn': '塔林', 'Riga': '里加', 'Vilnius': '维尔纽斯', 'Tokyo': '东京', 'Osaka': '大阪', 'Seoul': '首尔', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '广州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武汉', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': '新加坡', 'Bangkok': '曼谷', 'Jakarta': '雅加达', 'Manila': '马尼拉', 'Kuala Lumpur': '吉隆坡', 'Hanoi': '河内', 'Ho Chi Minh City': '胡志明市', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': '孟买', 'Delhi': '德里', 'New Delhi': '新德里', 'Bangalore': '班加罗尔', 'Hyderabad': '海得拉巴', 'Chennai': '金奈', 'Kolkata': '加尔各答', 'Pune': '浦那', 'Ahmedabad': '艾哈迈达巴德', 'Karachi': '卡拉奇', 'Lahore': '拉合尔', 'Islamabad': '伊斯兰堡', 'Dhaka': '达卡', 'Colombo': '科伦坡', 'Kathmandu': '加德满都', 'Dubai': '迪拜', 'Abu Dhabi': '阿布扎比', 'Riyadh': '利雅得', 'Jeddah': '吉达', 'Doha': '多哈', 'Kuwait City': '科威特城', 'Jerusalem': '耶路撒冷', 'Tel Aviv': '特拉维夫', 'Tehran': '德黑兰', 'Mashhad': '马什哈德', 'Isfahan': '伊斯法罕', 'Shiraz': '设拉子', 'Baghdad': '巴格达', 'Cairo': '开罗', 'Alexandria': '亚历山大', 'Lagos': '拉各斯', 'Nairobi': '内罗毕', 'Johannesburg': '约翰内斯堡', 'Cape Town': '开普敦', 'Toronto': '多伦多', 'Vancouver': '温哥华', 'Montreal': '蒙特利尔', 'Ottawa': '渥太华', 'Calgary': '卡尔加里', 'Edmonton': '埃德蒙顿', 'Winnipeg': '温尼伯', 'Quebec City': '魁北克市', 'Hamilton': '汉密尔顿', 'Mexico City': '墨西哥城', 'Guadalajara': '瓜达拉哈拉', 'Monterrey': '蒙特雷', 'Sao Paulo': '圣保罗', 'Rio de Janeiro': '里约热内卢', 'Buenos Aires': '布宜诺斯艾利斯', 'Santiago': '圣地亚哥', 'Lima': '利马', 'Bogota': '波哥大', 'Quito': '基多', 'Montevideo': '蒙得维的亚'}, 'zh-TW': {'New York': '紐約', 'Los Angeles': '洛杉磯', 'Chicago': '芝加哥', 'Houston': '休士頓', 'Phoenix': '菲尼克斯', 'Philadelphia': '費城', 'San Antonio': '聖安東尼奧', 'San Diego': '聖迭戈', 'Dallas': '達拉斯', 'San Jose': '聖荷西', 'Austin': '奧斯汀', 'Jacksonville': '傑克遜維爾', 'Columbus': '哥倫布', 'Charlotte': '夏洛特', 'San Francisco': '舊金山', 'Indianapolis': '印第安納波利斯', 'Seattle': '西雅圖', 'Denver': '丹佛', 'Washington': '華盛頓', 'Boston': '波士頓', 'Nashville': '納什維爾', 'Las Vegas': '拉斯維加斯', 'Portland': '波特蘭', 'Louisville': '路易斯維爾', 'Milwaukee': '密爾沃基', 'Atlanta': '亞特蘭大', 'Kansas City': '堪薩斯城', 'Miami': '邁阿密', 'Minneapolis': '明尼阿波利斯', 'Tampa': '坦帕', 'New Orleans': '新奧爾良', 'Pittsburgh': '匹茲堡', 'Cincinnati': '辛辛那提', 'Sacramento': '薩克拉門托', 'Orlando': '奧蘭多', 'Salt Lake City': '鹽湖城', 'Honolulu': '檀香山', 'Oakland': '奧克蘭', 'Santa Clara': '聖克拉拉', 'Buffalo': '水牛城', 'Sydney': '悉尼', 'Melbourne': '墨爾本', 'Brisbane': '布里斯班', 'Perth': '珀斯', 'Adelaide': '阿德萊德', 'Canberra': '坎培拉', 'Hobart': '霍巴特', 'Darwin': '達爾文', 'Auckland': '奧克蘭', 'Wellington': '惠靈頓', 'London': '倫敦', 'Paris': '巴黎', 'Berlin': '柏林', 'Frankfurt': '法蘭克福', 'Munich': '慕尼黑', 'Hamburg': '漢堡', 'Madrid': '馬德里', 'Barcelona': '巴塞隆那', 'Rome': '羅馬', 'Milan': '米蘭', 'Amsterdam': '阿姆斯特丹', 'Rotterdam': '鹿特丹', 'Brussels': '布魯塞爾', 'Vienna': '維也納', 'Zurich': '蘇黎世', 'Geneva': '日內瓦', 'Stockholm': '斯德哥爾摩', 'Oslo': '奧斯陸', 'Copenhagen': '哥本哈根', 'Helsinki': '赫爾辛基', 'Dublin': '都柏林', 'Lisbon': '里斯本', 'Athens': '雅典', 'Warsaw': '華沙', 'Krakow': '克拉科夫', 'Prague': '布拉格', 'Budapest': '布達佩斯', 'Bucharest': '布加勒斯特', 'Sofia': '索菲亞', 'Moscow': '莫斯科', 'Saint Petersburg': '聖彼得堡', 'Kyiv': '基輔', 'Minsk': '明斯克', 'Istanbul': '伊斯坦布爾', 'Ankara': '安卡拉', 'Reykjavik': '雷克雅未克', 'Tallinn': '塔林', 'Riga': '里加', 'Vilnius': '維爾紐斯', 'Tokyo': '東京', 'Osaka': '大阪', 'Seoul': '首爾', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '廣州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武漢', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': '新加坡', 'Bangkok': '曼谷', 'Jakarta': '雅加達', 'Manila': '馬尼拉', 'Kuala Lumpur': '吉隆坡', 'Hanoi': '河內', 'Ho Chi Minh City': '胡志明市', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': '孟買', 'Delhi': '德里', 'New Delhi': '新德里', 'Bangalore': '班加羅爾', 'Hyderabad': '海得拉巴', 'Chennai': '金奈', 'Kolkata': '加爾各答', 'Pune': '浦那', 'Ahmedabad': '艾哈邁達巴德', 'Karachi': '卡拉奇', 'Lahore': '拉合爾', 'Islamabad': '伊斯蘭堡', 'Dhaka': '達卡', 'Colombo': '科倫坡', 'Kathmandu': '加德滿都', 'Dubai': '杜拜', 'Abu Dhabi': '阿布達比', 'Riyadh': '利雅得', 'Jeddah': '吉達', 'Doha': '多哈', 'Kuwait City': '科威特城', 'Jerusalem': '耶路撒冷', 'Tel Aviv': '特拉維夫', 'Tehran': '德黑蘭', 'Mashhad': '馬什哈德', 'Isfahan': '伊斯法罕', 'Shiraz': '設拉子', 'Baghdad': '巴格達', 'Cairo': '開羅', 'Alexandria': '亞歷山大', 'Lagos': '拉各斯', 'Nairobi': '奈洛比', 'Johannesburg': '約翰內斯堡', 'Cape Town': '開普敦', 'Toronto': '多倫多', 'Vancouver': '溫哥華', 'Montreal': '蒙特利爾', 'Ottawa': '渥太華', 'Calgary': '卡爾加里', 'Edmonton': '埃德蒙頓', 'Winnipeg': '溫尼伯', 'Quebec City': '魁北克市', 'Hamilton': '漢密爾頓', 'Mexico City': '墨西哥城', 'Guadalajara': '瓜達拉哈拉', 'Monterrey': '蒙特雷', 'Sao Paulo': '聖保羅', 'Rio de Janeiro': '里約熱內盧', 'Buenos Aires': '布宜諾斯艾利斯', 'Santiago': '聖地亞哥', 'Lima': '利馬', 'Bogota': '波哥大', 'Quito': '基多', 'Montevideo': '蒙特維多'}, 'ja': {'New York': 'ニューヨーク', 'Los Angeles': 'ロサンゼルス', 'Chicago': 'シカゴ', 'Houston': 'ヒューストン', 'Phoenix': 'フェニックス', 'Philadelphia': 'フィラデルフィア', 'San Antonio': 'サンアントニオ', 'San Diego': 'サンディエゴ', 'Dallas': 'ダラス', 'San Jose': 'サンノゼ', 'Austin': 'オースティン', 'Jacksonville': 'ジャクソンビル', 'Columbus': 'コロンバス', 'Charlotte': 'シャーロット', 'San Francisco': 'サンフランシスコ', 'Indianapolis': 'インディアナポリス', 'Seattle': 'シアトル', 'Denver': 'デンバー', 'Washington': 'ワシントン', 'Boston': 'ボストン', 'Nashville': 'ナッシュビル', 'Las Vegas': 'ラスベガス', 'Portland': 'ポートランド', 'Louisville': 'ルイビル', 'Milwaukee': 'ミルウォーキー', 'Atlanta': 'アトランタ', 'Kansas City': 'カンザスシティ', 'Miami': 'マイアミ', 'Minneapolis': 'ミネアポリス', 'Tampa': 'タンパ', 'New Orleans': 'ニューオーリンズ', 'Pittsburgh': 'ピッツバーグ', 'Cincinnati': 'シンシナティ', 'Sacramento': 'サクラメント', 'Orlando': 'オーランド', 'Salt Lake City': 'ソルトレイクシティ', 'Honolulu': 'ホノルル', 'Oakland': 'オークランド', 'Santa Clara': 'サンタクララ', 'Buffalo': 'バッファロー', 'Sydney': 'シドニー', 'Melbourne': 'メルボルン', 'Brisbane': 'ブリスベン', 'Perth': 'パース', 'Adelaide': 'アデレード', 'Canberra': 'キャンベラ', 'Hobart': 'ホバート', 'Darwin': 'ダーウィン', 'Auckland': 'オークランド', 'Wellington': 'ウェリントン', 'London': 'ロンドン', 'Paris': 'パリ', 'Berlin': 'ベルリン', 'Frankfurt': 'フランクフルト', 'Munich': 'ミュンヘン', 'Hamburg': 'ハンブルク', 'Madrid': 'マドリード', 'Barcelona': 'バルセロナ', 'Rome': 'ローマ', 'Milan': 'ミラノ', 'Amsterdam': 'アムステルダム', 'Rotterdam': 'ロッテルダム', 'Brussels': 'ブリュッセル', 'Vienna': 'ウィーン', 'Zurich': 'チューリッヒ', 'Geneva': 'ジュネーブ', 'Stockholm': 'ストックホルム', 'Oslo': 'オスロ', 'Copenhagen': 'コペンハーゲン', 'Helsinki': 'ヘルシンキ', 'Dublin': 'ダブリン', 'Lisbon': 'リスボン', 'Athens': 'アテネ', 'Warsaw': 'ワルシャワ', 'Krakow': 'クラクフ', 'Prague': 'プラハ', 'Budapest': 'ブダペスト', 'Bucharest': 'ブカレスト', 'Sofia': 'ソフィア', 'Moscow': 'モスクワ', 'Saint Petersburg': 'サンクトペテルブルク', 'Kyiv': 'キーウ', 'Minsk': 'ミンスク', 'Istanbul': 'イスタンブール', 'Ankara': 'アンカラ', 'Reykjavik': 'レイキャビク', 'Tallinn': 'タリン', 'Riga': 'リガ', 'Vilnius': 'ビリニュス', 'Tokyo': '東京', 'Osaka': '大阪', 'Seoul': 'ソウル', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '広州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武漢', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': 'シンガポール', 'Bangkok': 'バンコク', 'Jakarta': 'ジャカルタ', 'Manila': 'マニラ', 'Kuala Lumpur': 'クアラルンプール', 'Hanoi': 'ハノイ', 'Ho Chi Minh City': 'ホーチミン', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': 'ムンバイ', 'Delhi': 'デリー', 'New Delhi': 'ニューデリー', 'Bangalore': 'バンガロール', 'Hyderabad': 'ハイデラバード', 'Chennai': 'チェンナイ', 'Kolkata': 'コルカタ', 'Pune': 'プネー', 'Ahmedabad': 'アフマダーバード', 'Karachi': 'カラチ', 'Lahore': 'ラホール', 'Islamabad': 'イスラマバード', 'Dhaka': 'ダッカ', 'Colombo': 'コロンボ', 'Kathmandu': 'カトマンズ', 'Dubai': 'ドバイ', 'Abu Dhabi': 'アブダビ', 'Riyadh': 'リヤド', 'Jeddah': 'ジッダ', 'Doha': 'ドーハ', 'Kuwait City': 'クウェートシティ', 'Jerusalem': 'エルサレム', 'Tel Aviv': 'テルアビブ', 'Tehran': 'テヘラン', 'Mashhad': 'マシュハド', 'Isfahan': 'エスファハーン', 'Shiraz': 'シーラーズ', 'Baghdad': 'バグダッド', 'Cairo': 'カイロ', 'Alexandria': 'アレクサンドリア', 'Lagos': 'ラゴス', 'Nairobi': 'ナイロビ', 'Johannesburg': 'ヨハネスブルグ', 'Cape Town': 'ケープタウン', 'Toronto': 'トロント', 'Vancouver': 'バンクーバー', 'Montreal': 'モントリオール', 'Ottawa': 'オタワ', 'Calgary': 'カルガリー', 'Edmonton': 'エドモントン', 'Winnipeg': 'ウィニペグ', 'Quebec City': 'ケベックシティ', 'Hamilton': 'ハミルトン', 'Mexico City': 'メキシコシティ', 'Guadalajara': 'グアダラハラ', 'Monterrey': 'モンテレイ', 'Sao Paulo': 'サンパウロ', 'Rio de Janeiro': 'リオデジャネイロ', 'Buenos Aires': 'ブエノスアイレス', 'Santiago': 'サンティアゴ', 'Lima': 'リマ', 'Bogota': 'ボゴタ', 'Quito': 'キト', 'Montevideo': 'モンテビデオ'}, 'ru': {'New York': 'Нью-Йорк', 'Los Angeles': 'Лос-Анджелес', 'Chicago': 'Чикаго', 'Houston': 'Хьюстон', 'Phoenix': 'Финикс', 'Philadelphia': 'Филадельфия', 'San Antonio': 'Сан-Антонио', 'San Diego': 'Сан-Диего', 'Dallas': 'Даллас', 'San Jose': 'Сан-Хосе', 'Austin': 'Остин', 'Jacksonville': 'Джэксонвилл', 'Columbus': 'Колумбус', 'Charlotte': 'Шарлотт', 'San Francisco': 'Сан-Франциско', 'Indianapolis': 'Индианаполис', 'Seattle': 'Сиэтл', 'Denver': 'Денвер', 'Washington': 'Вашингтон', 'Boston': 'Бостон', 'Nashville': 'Нэшвилл', 'Las Vegas': 'Лас-Вегас', 'Portland': 'Портленд', 'Louisville': 'Луисвилл', 'Milwaukee': 'Милуоки', 'Atlanta': 'Атланта', 'Kansas City': 'Канзас-Сити', 'Miami': 'Майами', 'Minneapolis': 'Миннеаполис', 'Tampa': 'Тампа', 'New Orleans': 'Новый Орлеан', 'Pittsburgh': 'Питтсбург', 'Cincinnati': 'Цинциннати', 'Sacramento': 'Сакраменто', 'Orlando': 'Орландо', 'Salt Lake City': 'Солт-Лейк-Сити', 'Honolulu': 'Гонолулу', 'Oakland': 'Окленд', 'Santa Clara': 'Санта-Клара', 'Buffalo': 'Буффало', 'Sydney': 'Сидней', 'Melbourne': 'Мельбурн', 'Brisbane': 'Брисбен', 'Perth': 'Перт', 'Adelaide': 'Аделаида', 'Canberra': 'Канберра', 'Hobart': 'Хобарт', 'Darwin': 'Дарвин', 'Auckland': 'Окленд', 'Wellington': 'Веллингтон', 'London': 'Лондон', 'Paris': 'Париж', 'Berlin': 'Берлин', 'Frankfurt': 'Франкфурт', 'Munich': 'Мюнхен', 'Hamburg': 'Гамбург', 'Madrid': 'Мадрид', 'Barcelona': 'Барселона', 'Rome': 'Рим', 'Milan': 'Милан', 'Amsterdam': 'Амстердам', 'Rotterdam': 'Роттердам', 'Brussels': 'Брюссель', 'Vienna': 'Вена', 'Zurich': 'Цюрих', 'Geneva': 'Женева', 'Stockholm': 'Стокгольм', 'Oslo': 'Осло', 'Copenhagen': 'Копенгаген', 'Helsinki': 'Хельсинки', 'Dublin': 'Дублин', 'Lisbon': 'Лиссабон', 'Athens': 'Афины', 'Warsaw': 'Варшава', 'Krakow': 'Краков', 'Prague': 'Прага', 'Budapest': 'Будапешт', 'Bucharest': 'Бухарест', 'Sofia': 'София', 'Moscow': 'Москва', 'Saint Petersburg': 'Санкт-Петербург', 'Kyiv': 'Киев', 'Minsk': 'Минск', 'Istanbul': 'Стамбул', 'Ankara': 'Анкара', 'Reykjavik': 'Рейкьявик', 'Tallinn': 'Таллин', 'Riga': 'Рига', 'Vilnius': 'Вильнюс', 'Tokyo': 'Токио', 'Osaka': 'Осака', 'Seoul': 'Сеул', 'Busan': 'Пусан', 'Beijing': 'Пекин', 'Shanghai': 'Шанхай', 'Guangzhou': 'Гуанчжоу', 'Shenzhen': 'Шэньчжэнь', 'Chengdu': 'Чэнду', 'Wuhan': 'Ухань', "Xi'an": 'Сиань', 'Nanjing': 'Нанкин', 'Hangzhou': 'Ханчжоу', 'Singapore': 'Сингапур', 'Bangkok': 'Бангкок', 'Jakarta': 'Джакарта', 'Manila': 'Манила', 'Kuala Lumpur': 'Куала-Лумпур', 'Hanoi': 'Ханой', 'Ho Chi Minh City': 'Хошимин', 'Taipei': 'Тайбэй', 'Hong Kong': 'Гонконг', 'Mumbai': 'Мумбаи', 'Delhi': 'Дели', 'New Delhi': 'Нью-Дели', 'Bangalore': 'Бангалор', 'Hyderabad': 'Хайдарабад', 'Chennai': 'Ченнаи', 'Kolkata': 'Калькутта', 'Pune': 'Пуна', 'Ahmedabad': 'Ахмадабад', 'Karachi': 'Карачи', 'Lahore': 'Лахор', 'Islamabad': 'Исламабад', 'Dhaka': 'Дакка', 'Colombo': 'Коломбо', 'Kathmandu': 'Катманду', 'Dubai': 'Дубай', 'Abu Dhabi': 'Абу-Даби', 'Riyadh': 'Эр-Рияд', 'Jeddah': 'Джидда', 'Doha': 'Доха', 'Kuwait City': 'Эль-Кувейт', 'Jerusalem': 'Иерусалим', 'Tel Aviv': 'Тель-Авив', 'Tehran': 'Тегеран', 'Mashhad': 'Мешхед', 'Isfahan': 'Исфахан', 'Shiraz': 'Шираз', 'Baghdad': 'Багдад', 'Cairo': 'Каир', 'Alexandria': 'Александрия', 'Lagos': 'Лагос', 'Nairobi': 'Найроби', 'Johannesburg': 'Йоханнесбург', 'Cape Town': 'Кейптаун', 'Toronto': 'Торонто', 'Vancouver': 'Ванкувер', 'Montreal': 'Монреаль', 'Ottawa': 'Оттава', 'Calgary': 'Калгари', 'Edmonton': 'Эдмонтон', 'Winnipeg': 'Виннипег', 'Quebec City': 'Квебек', 'Hamilton': 'Гамильтон', 'Mexico City': 'Мехико', 'Guadalajara': 'Гвадалахара', 'Monterrey': 'Монтеррей', 'Sao Paulo': 'Сан-Паулу', 'Rio de Janeiro': 'Рио-де-Жанейро', 'Buenos Aires': 'Буэнос-Айрес', 'Santiago': 'Сантьяго', 'Lima': 'Лима', 'Bogota': 'Богота', 'Quito': 'Кито', 'Montevideo': 'Монтевидео'}, 'fa': {'New York': 'نیویورک', 'Los Angeles': 'لس\u200cآنجلس', 'Chicago': 'شیکاگو', 'Houston': 'هیوستون', 'Phoenix': 'فینیکس', 'Philadelphia': 'فیلادلفیا', 'San Antonio': 'سن آنتونیو', 'San Diego': 'سن دیگو', 'Dallas': 'دالاس', 'San Jose': 'سن خوزه', 'Austin': 'آستین', 'Jacksonville': 'جکسون\u200cویل', 'Columbus': 'کلمبوس', 'Charlotte': 'شارلوت', 'San Francisco': 'سان\u200cفرانسیسکو', 'Indianapolis': 'ایندیاناپولیس', 'Seattle': 'سیاتل', 'Denver': 'دنور', 'Washington': 'واشینگتن', 'Boston': 'بوستون', 'Nashville': 'نشویل', 'Las Vegas': 'لاس وگاس', 'Portland': 'پورتلند', 'Louisville': 'لویی\u200cویل', 'Milwaukee': 'میلواکی', 'Atlanta': 'آتلانتا', 'Kansas City': 'کانزاس\u200cسیتی', 'Miami': 'میامی', 'Minneapolis': 'مینیاپولیس', 'Tampa': 'تامپا', 'New Orleans': 'نیواورلئان', 'Pittsburgh': 'پیتسبرگ', 'Cincinnati': 'سینسیناتی', 'Sacramento': 'ساکرامنتو', 'Orlando': 'اورلاندو', 'Salt Lake City': 'سالت\u200cلیک\u200cسیتی', 'Honolulu': 'هونولولو', 'Oakland': 'اوکلند', 'Santa Clara': 'سانتا کلارا', 'Buffalo': 'بوفالو', 'Sydney': 'سیدنی', 'Melbourne': 'ملبورن', 'Brisbane': 'بریزبن', 'Perth': 'پرت', 'Adelaide': 'آدلاید', 'Canberra': 'کانبرا', 'Hobart': 'هوبارت', 'Darwin': 'داروین', 'Auckland': 'اوکلند', 'Wellington': 'ولینگتون', 'London': 'لندن', 'Paris': 'پاریس', 'Berlin': 'برلین', 'Frankfurt': 'فرانکفورت', 'Munich': 'مونیخ', 'Hamburg': 'هامبورگ', 'Madrid': 'مادرید', 'Barcelona': 'بارسلونا', 'Rome': 'رم', 'Milan': 'میلان', 'Amsterdam': 'آمستردام', 'Rotterdam': 'روتردام', 'Brussels': 'بروکسل', 'Vienna': 'وین', 'Zurich': 'زوریخ', 'Geneva': 'ژنو', 'Stockholm': 'استکهلم', 'Oslo': 'اسلو', 'Copenhagen': 'کپنهاگ', 'Helsinki': 'هلسینکی', 'Dublin': 'دوبلین', 'Lisbon': 'لیسبون', 'Athens': 'آتن', 'Warsaw': 'ورشو', 'Krakow': 'کراکوف', 'Prague': 'پراگ', 'Budapest': 'بوداپست', 'Bucharest': 'بخارست', 'Sofia': 'صوفیه', 'Moscow': 'مسکو', 'Saint Petersburg': 'سن\u200cپترزبورگ', 'Kyiv': 'کی\u200cیف', 'Minsk': 'مینسک', 'Istanbul': 'استانبول', 'Ankara': 'آنکارا', 'Reykjavik': 'ریکیاویک', 'Tallinn': 'تالین', 'Riga': 'ریگا', 'Vilnius': 'ویلنیوس', 'Tokyo': 'توکیو', 'Osaka': 'اوزاکا', 'Seoul': 'سئول', 'Busan': 'بوسان', 'Beijing': 'پکن', 'Shanghai': 'شانگهای', 'Guangzhou': 'گوانگژو', 'Shenzhen': 'شنژن', 'Chengdu': 'چنگدو', 'Wuhan': 'ووهان', "Xi'an": 'شی\u200cآن', 'Nanjing': 'نانجینگ', 'Hangzhou': 'هانگژو', 'Singapore': 'سنگاپور', 'Bangkok': 'بانکوک', 'Jakarta': 'جاکارتا', 'Manila': 'مانیل', 'Kuala Lumpur': 'کوالالامپور', 'Hanoi': 'هانوی', 'Ho Chi Minh City': 'هوشی\u200cمین', 'Taipei': 'تایپه', 'Hong Kong': 'هنگ\u200cکنگ', 'Mumbai': 'بمبئی', 'Delhi': 'دهلی', 'New Delhi': 'دهلی نو', 'Bangalore': 'بنگلور', 'Hyderabad': 'حیدرآباد', 'Chennai': 'چنای', 'Kolkata': 'کلکته', 'Pune': 'پونا', 'Ahmedabad': 'احمدآباد', 'Karachi': 'کراچی', 'Lahore': 'لاهور', 'Islamabad': 'اسلام\u200cآباد', 'Dhaka': 'داکا', 'Colombo': 'کلمبو', 'Kathmandu': 'کاتماندو', 'Dubai': 'دبی', 'Abu Dhabi': 'ابوظبی', 'Riyadh': 'ریاض', 'Jeddah': 'جده', 'Doha': 'دوحه', 'Kuwait City': 'شهر کویت', 'Jerusalem': 'اورشلیم', 'Tel Aviv': 'تل\u200cآویو', 'Tehran': 'تهران', 'Mashhad': 'مشهد', 'Isfahan': 'اصفهان', 'Shiraz': 'شیراز', 'Baghdad': 'بغداد', 'Cairo': 'قاهره', 'Alexandria': 'اسکندریه', 'Lagos': 'لاگوس', 'Nairobi': 'نایروبی', 'Johannesburg': 'ژوهانسبورگ', 'Cape Town': 'کیپ\u200cتاون', 'Toronto': 'تورنتو', 'Vancouver': 'ونکوور', 'Montreal': 'مونترال', 'Ottawa': 'اتاوا', 'Calgary': 'کلگری', 'Edmonton': 'ادمونتون', 'Winnipeg': 'وینیپگ', 'Quebec City': 'کبک', 'Hamilton': 'همیلتون', 'Mexico City': 'مکزیکوسیتی', 'Guadalajara': 'گوادالاخارا', 'Monterrey': 'مونتری', 'Sao Paulo': 'سائوپائولو', 'Rio de Janeiro': 'ریودوژانیرو', 'Buenos Aires': 'بوئنوس آیرس', 'Santiago': 'سانتیاگو', 'Lima': 'لیما', 'Bogota': 'بوگوتا', 'Quito': 'کیتو', 'Montevideo': 'مونته\u200cویدئو'}}
+
+
+def _any2en(table):
+    m = {}
+    for per_lang in table.values():
+        for en, name in per_lang.items():
+            m[en] = en
+            m[name] = en
+    return m
+
+
+_CITY_L10N["zh"].update({"New York City": "纽约市", "Oklahoma City": "俄克拉荷马城"})
+_CITY_L10N["zh-TW"].update({"New York City": "紐約市", "Oklahoma City": "奧克拉荷馬城"})
+_CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma City": "オクラホマシティ"})
+_CITY_L10N["ru"].update({"New York City": "Нью-Йорк", "Oklahoma City": "Оклахома-Сити"})
+_CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهماسیتی"})
+
+
+_ANY_REGION2EN = _any2en(_REGION_L10N)
+_ANY_CITY2EN = _any2en(_CITY_L10N)
+
+
+
+
+# ---- 在线地名兜底 (本地表未收录时查 Wikidata 官方条目名, 结果仅用于显示层) ----
+_GEO_EXTRA = {"lang": None, "city": {}, "region": {}}
+_WD_LANGS = {"zh": ["zh", "zh-cn", "zh-hans"], "zh-TW": ["zh-tw", "zh-hant", "zh"],
+             "ja": ["ja"], "ru": ["ru"], "fa": ["fa"]}
+_WD_PLACE = ("city", "town", "village", "municipality", "settlement", "borough",
+             "commune", "capital", "county seat", "census-designated", "urban")
+_WD_ADMIN = ("province", "state", "krai", "oblast", "canton", "prefecture",
+             "region", "county", "district", "territory", "department",
+             "governorate")
+
+
+def _wd_label(name, kind, context):
+    """Wikidata 检索地名条目, 返回界面语言的条目名 (去消歧后缀); 无则 None。"""
+    try:
+        q = urllib.parse.quote(context or name)
+        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                           f"&search={q}&language=en&format=json&limit=5&type=item",
+                           timeout=5, retries=1, use_cache=False)
+        if not ok:
+            return None
+        cands = json.loads(raw).get("search", [])
+        words = _WD_PLACE if kind == "city" else _WD_ADMIN
+        pick = None
+        for c in cands:
+            if (c.get("label") or "").lower() != name.lower():
+                continue
+            desc = (c.get("description") or "").lower()
+            if any(w in desc for w in words):
+                pick = c
+                break
+        if pick is None:
+            return None
+        langs = _WD_LANGS.get(LANG, [])
+        if not langs:
+            return None
+        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                           f"&ids={pick['id']}&props=labels"
+                           f"&languages={'|'.join(langs)}&format=json",
+                           timeout=5, retries=1, use_cache=False)
+        if not ok:
+            return None
+        labels = json.loads(raw)["entities"][pick["id"]].get("labels", {})
+        for lg in langs:
+            if lg in labels:
+                v = re.sub(r"\s*[\(（][^\)）]*[\)）]\s*$", "",
+                           labels[lg]["value"]).strip()
+                return v or None
+        return None
+    except Exception:
+        return None
+
+
+def _resolve_geo_online(jobs):
+    """jobs: [(kind, name, context)]; 本地表未收录的 ASCII 地名并行查 Wikidata。"""
+    if LANG == "en" or not jobs:
+        return
+    if _GEO_EXTRA["lang"] != LANG:
+        _GEO_EXTRA.update({"lang": LANG, "city": {}, "region": {}})
+    todo, seen = [], set()
+    for kind, name, ctx in jobs:
+        name = (name or "").strip()
+        if not name or len(name) < 3 or any(ch.isdigit() for ch in name):
+            continue
+        if not name.isascii():
+            continue  # 已是本地化文本的不拿去英文库检索
+        if name in _GEO_EXTRA[kind]:
+            continue
+        any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
+        table = _CITY_L10N if kind == "city" else _REGION_L10N
+        en = any2en.get(name)
+        if en and table.get(LANG, {}).get(en):
+            continue  # 本地表已收录
+        if (kind, name) in seen:
+            if ctx and ctx.isascii():
+                todo = [(k, n, ctx if (k, n) == (kind, name) else c)
+                        for (k, n, c) in todo]
+            continue
+        seen.add((kind, name))
+        todo.append((kind, name, ctx))
+    todo = todo[:6]
+
+    def _one(job):
+        kind, name, ctx = job
+        v = _wd_label(name, kind, ctx)
+        if v:
+            _GEO_EXTRA[kind][name] = v
+            any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
+            any2en[v] = any2en.get(name, name)
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            list(ex.map(_one, todo))
+
+
+def _extra_sub(disp, kind):
+    """把在线兜底命中的地名替换进对比行整串。"""
+    if _GEO_EXTRA.get("lang") != LANG:
+        return disp
+    for variant, loc in _GEO_EXTRA[kind].items():
+        if variant in disp:
+            disp = disp.replace(variant, loc, 1)
+    return disp
+
+def _loc_region(text):
+    """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。"""
+    if LANG == "en" or not text:
+        return text
+    t = str(text).strip()
+    if _GEO_EXTRA.get("lang") == LANG and t in _GEO_EXTRA["region"]:
+        return _GEO_EXTRA["region"][t]
+    en = _ANY_REGION2EN.get(t)
+    if en:
+        return _REGION_L10N.get(LANG, {}).get(en, text)
+    return text
+
+
+def _loc_city(text):
+    """城市名 -> 界面语言 (同上)。"""
+    if LANG == "en" or not text:
+        return text
+    t = str(text).strip()
+    if _GEO_EXTRA.get("lang") == LANG and t in _GEO_EXTRA["city"]:
+        return _GEO_EXTRA["city"][t]
+    en = _ANY_CITY2EN.get(t)
+    if en:
+        return _CITY_L10N.get(LANG, {}).get(en, text)
+    return text
+
+
+def _loc_sub_in(disp, any2en, table):
+    """在对比行整串里按最长变体匹配替换一个地名 (州/省或城市)。"""
+    best = None
+    for variant, en in any2en.items():
+        if variant in disp and (best is None or len(variant) > len(best[0])):
+            best = (variant, en)
+    if best:
+        loc = table.get(LANG, {}).get(best[1])
+        if loc and loc != best[0]:
+            return disp.replace(best[0], loc, 1)
+    return disp
+
+
+def _loc_tz(tz):
+    """IANA 时区名 -> 界面语言 (洲/城查表; 未收录时原样)。"""
+    if LANG == "en" or not tz:
+        return tz
+    if tz == "UTC":
+        return _UTC_NAMES.get(LANG, tz)
+    parts = str(tz).split("/")
+    cont = _TZ_CONT.get(LANG, {}).get(parts[0])
+    city = _TZ_CITY.get(LANG, {}).get(parts[-1])
+    if cont and city:
+        return f"{cont}/{city}"
+    return tz
+
+
+def _ipwho_lang():
+    """ipwho.is 本地化参数: 其数据源无 zh-TW/fa, zh-TW 回退 zh-CN, fa 不传 (英文)。"""
+    return {"zh": "zh-CN", "zh-TW": "zh-CN", "ja": "ja", "ru": "ru"}.get(LANG)
+
+
+def _nominatim_lang():
+    """Nominatim accept-language (支持全部界面语言)。"""
+    return {"zh": "zh-CN", "zh-TW": "zh-TW", "ja": "ja", "ru": "ru",
+            "fa": "fa", "en": "en"}.get(LANG, "en")
+
+
 @register
 class IPWhoIs(Provider):
     key = "ipwhois"
     name = "ipwho.is"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipwho.is/{ip}", use_cache=False)
+        _l = _ipwho_lang()
+        ok, raw = http_get(f"https://ipwho.is/{ip}" + (f"?lang={_l}" if _l else ""),
+                           use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -2097,7 +2393,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.0 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.15 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2567,6 +2863,352 @@ class SpamhausDROP(Provider):
 # ============================================================
 # 多源画像融合与评分体系 (6 语言完整规则说明，零 Key 残留)
 # ============================================================
+@register
+class IPLocate(Provider):
+    key = "iplocate"
+    name = "iplocate.io"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://iplocate.io/api/lookup/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if not d.get("country"):
+                return {"ok": False, "err": "empty response"}
+            asn = d.get("asn") or {}
+            pv = d.get("privacy") or {}
+            ho = d.get("hosting") or {}
+            return {
+                "ok": True,
+                "country": d.get("country", ""), "country_code": d.get("country_code", ""),
+                "region": d.get("subdivision", ""), "city": d.get("city", ""),
+                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
+                "timezone": d.get("time_zone", ""),
+                "asn": _parse_asn(asn.get("asn")), "asn_type": asn.get("type", ""),
+                "isp": asn.get("name", ""), "org": asn.get("name", ""),
+                "proxy": pv.get("is_proxy"), "vpn": pv.get("is_vpn"),
+                "tor": pv.get("is_tor"), "hosting": pv.get("is_hosting"),
+                "is_abuser": pv.get("is_abuser"),
+                "is_anycast": d.get("is_anycast"), "is_satellite": d.get("is_satellite"),
+                "is_icloud_relay": pv.get("is_icloud_relay"),
+                "cloud_provider": ho.get("provider", ""),
+                "network": ho.get("network") or asn.get("route", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IPQuery(Provider):
+    key = "ipquery"
+    name = "ipquery.io"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.ipquery.io/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            loc = d.get("location") or {}
+            isp = d.get("isp") or {}
+            risk = d.get("risk") or {}
+            if not loc.get("country"):
+                return {"ok": False, "err": "empty response"}
+            return {
+                "ok": True,
+                "country": loc.get("country", ""), "country_code": loc.get("country_code", ""),
+                "region": loc.get("state", ""), "city": loc.get("city", ""),
+                "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
+                "timezone": loc.get("timezone", ""),
+                "asn": _parse_asn(isp.get("asn")), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
+                "proxy": risk.get("is_proxy"), "vpn": risk.get("is_vpn"),
+                "tor": risk.get("is_tor"), "datacenter": risk.get("is_datacenter"),
+                "mobile": risk.get("is_mobile"), "risk_score": risk.get("risk_score"),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class IpapiCo(Provider):
+    key = "ipapico"
+    name = "ipapi.co"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://ipapi.co/{ip}/json/", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if d.get("error") or not d.get("country_name"):
+                return {"ok": False, "err": str(d.get("reason", "error"))[:60]}
+            return {
+                "ok": True,
+                "country": d.get("country_name", ""), "country_code": d.get("country_code", ""),
+                "region": d.get("region", ""), "city": d.get("city", ""),
+                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
+                "timezone": d.get("timezone", ""),
+                "asn": _parse_asn(d.get("asn")), "org": d.get("org", ""), "isp": d.get("org", ""),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class TwoIp(Provider):
+    key = "twoip"
+    name = "2ip.io"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.2ip.io/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            asn = d.get("asn") or {}
+            if not d.get("country"):
+                return {"ok": False, "err": "empty response"}
+            return {
+                "ok": True,
+                "country": d.get("country", ""), "country_code": d.get("code", ""),
+                "region": d.get("region", ""), "city": d.get("city", ""),
+                "latitude": d.get("lat"), "longitude": d.get("lon"),
+                "timezone": d.get("timezone", ""),
+                "asn": _parse_asn(asn.get("id")), "isp": asn.get("name", ""),
+                "hosting": asn.get("hosting"),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class OTX(Provider):
+    key = "otx"
+    name = "AlienVault OTX"
+
+    def check(self, ip):
+        try:
+            ver = ipaddress.ip_address(ip).version
+        except Exception:
+            ver = 4
+        ok, raw = http_get(
+            f"https://otx.alienvault.com/api/v1/indicators/IPv{ver}/{ip}/general",
+            use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if "reputation" not in d and "pulse_info" not in d:
+                return {"ok": False, "err": "unexpected response"}
+            cloud = ""
+            for v in d.get("validation") or []:
+                msg = str(v.get("message", ""))
+                if "provider=" in msg:
+                    cloud = msg.split("provider=")[-1].strip()
+            return {
+                "ok": True,
+                "reputation": d.get("reputation", 0),
+                "pulses": (d.get("pulse_info") or {}).get("count", 0),
+                "cloud_provider": cloud,
+                "country": d.get("country_name", ""), "city": d.get("city", ""),
+                "asn": _parse_asn(d.get("asn")),
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class BlocklistDE(Provider):
+    key = "blocklistde"
+    name = "blocklist.de"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.blocklist.de/api.php?ip={ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            ma = re.search(r"attacks:\s*(\d+)", raw)
+            mr = re.search(r"reports:\s*(\d+)", raw)
+            if not ma and not mr:
+                return {"ok": False, "err": "unexpected response"}
+            return {
+                "ok": True,
+                "attacks": int(ma.group(1)) if ma else 0,
+                "reports": int(mr.group(1)) if mr else 0,
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class RDAP(Provider):
+    key = "rdap"
+    name = "RDAP (RIR)"
+
+    def check(self, ip):
+        d = None
+        for base in ("https://rdap.arin.net/registry/ip/",
+                     "https://rdap.db.ripe.net/ip/"):
+            ok, raw = http_get(base + ip, use_cache=False)
+            if not ok:
+                continue
+            try:
+                cand = json.loads(raw)
+            except Exception:
+                continue
+            if isinstance(cand, dict) and cand.get("name"):
+                d = cand
+                break
+        if d is None:
+            return {"ok": False, "err": "no rdap record"}
+        cidr = ""
+        for c in d.get("cidr0_cidrs") or []:
+            pfx = c.get("v4prefix") or c.get("v6prefix")
+            if pfx:
+                cidr = f"{pfx}/{c.get('length')}"
+                break
+        org = ""
+        for e in d.get("entities") or []:
+            if "registrant" in (e.get("roles") or []) or e.get("handle"):
+                org = e.get("handle", "")
+                if org:
+                    break
+        return {
+            "ok": True,
+            "netname": d.get("name", ""), "org": org,
+            "country": d.get("country", ""), "cidr": cidr,
+            "ts": now_iso(),
+        }
+
+
+@register
+class IPsum(Provider):
+    key = "ipsum"
+    name = "IPsum"
+
+    def check(self, ip):
+        def _parse(raw):
+            out = {}
+            for line in raw.splitlines():
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) >= 2:
+                    try:
+                        out[parts[0]] = int(parts[1])
+                    except ValueError:
+                        pass
+            return out
+
+        lst = _get_threat_list(
+            "ipsum",
+            "https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt",
+            _parse)
+        if lst is None:
+            return {"ok": False, "err": "list download failed"}
+        level = lst.get(str(ip), 0)
+        return {"ok": True, "listed": level > 0, "level": level, "ts": now_iso()}
+
+
+@register
+class X4BNetVPN(Provider):
+    key = "x4bvpn"
+    name = "X4BNet VPN Ranges"
+
+    def check(self, ip):
+        def _parse(raw):
+            nets = []
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    nets.append(ipaddress.ip_network(line, strict=False))
+                except ValueError:
+                    pass
+            return nets
+
+        try:
+            addr = ipaddress.ip_address(ip)
+        except Exception:
+            return {"ok": False, "err": "bad ip"}
+        nets = _get_threat_list(
+            f"x4bvpn{addr.version}",
+            f"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv{addr.version}.txt",
+            _parse)
+        if nets is None:
+            return {"ok": False, "err": "list download failed"}
+        listed = any(addr in n for n in nets if n.version == addr.version)
+        return {"ok": True, "listed": listed, "ts": now_iso()}
+
+
+@register
+class HackerTarget(Provider):
+    key = "hackertarget"
+    name = "HackerTarget"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.hackertarget.com/geoip/?q={ip}", use_cache=False)
+        if not ok or "Country:" not in raw:
+            return {"ok": False, "err": raw if not ok else "unexpected response"}
+        try:
+            kv = {}
+            for line in raw.splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    kv[k.strip().lower()] = v.strip()
+            asn = prefix = netname = ""
+            ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={ip}",
+                                 use_cache=False)
+            if ok2:
+                parts = [p.strip() for p in raw2.strip().strip('"').split('","')]
+                if len(parts) >= 4:
+                    asn, prefix, netname = parts[1], parts[2], parts[3]
+            def _f(x):
+                try:
+                    return float(x)
+                except (TypeError, ValueError):
+                    return None
+
+            def _s(x):
+                return "" if x in (None, "None", "N/A") else x
+            return {
+                "ok": True,
+                "country": _s(kv.get("country", "")), "region": _s(kv.get("state", "")),
+                "city": _s(kv.get("city", "")),
+                "latitude": _f(kv.get("latitude")), "longitude": _f(kv.get("longitude")),
+                "asn": _parse_asn(asn), "prefix": prefix, "netname": netname,
+                "ts": now_iso(),
+            }
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
+@register
+class CountryIs(Provider):
+    key = "countryis"
+    name = "country.is"
+
+    def check(self, ip):
+        ok, raw = http_get(f"https://api.country.is/{ip}", use_cache=False)
+        if not ok:
+            return {"ok": False, "err": raw}
+        try:
+            d = json.loads(raw)
+            if not d.get("country"):
+                return {"ok": False, "err": "empty response"}
+            return {"ok": True, "country_code": d.get("country", ""), "ts": now_iso()}
+        except Exception as e:
+            return {"ok": False, "err": str(e)[:80]}
+
+
 def _build_unified_profile(s):
     """多源融合兜底：消除 ipwho.is 单点故障，自动从 ipinfo/proxycheck/dbip/freeipapi/ripestat 补齐。"""
     wi = s.get("ipwhois", {}) if s.get("ipwhois", {}).get("ok") else {}
@@ -2579,17 +3221,25 @@ def _build_unified_profile(s):
     ai = s.get("ipapiis", {}) if s.get("ipapiis", {}).get("ok") else {}
     gu = s.get("ipguide", {}) if s.get("ipguide", {}).get("ok") else {}
     gj = s.get("geojs", {}) if s.get("geojs", {}).get("ok") else {}
+    il = s.get("iplocate", {}) if s.get("iplocate", {}).get("ok") else {}
+    iq = s.get("ipquery", {}) if s.get("ipquery", {}).get("ok") else {}
+    co = s.get("ipapico", {}) if s.get("ipapico", {}).get("ok") else {}
+    ti = s.get("twoip", {}) if s.get("twoip", {}).get("ok") else {}
+    ox = s.get("otx", {}) if s.get("otx", {}).get("ok") else {}
+    ht = s.get("hackertarget", {}) if s.get("hackertarget", {}).get("ok") else {}
+    ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
+    rd = s.get("rdap", {}) if s.get("rdap", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or ""
-    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or ""
-    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or ""
+    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ""
+    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or rd.get("org") or rd.get("netname") or ""
+    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
     except (ValueError, TypeError):
         asn = None
-    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or wa.get("country") or ai.get("country") or gu.get("country") or gj.get("country") or ""
-    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or ""
-    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or ""
+    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or wa.get("country") or ai.get("country") or gu.get("country") or gj.get("country") or il.get("country") or iq.get("country") or co.get("country") or ti.get("country") or ht.get("country") or ox.get("country") or ""
+    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or ""
+    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ""
 
     return {
         "ok": bool(isp or org or country or asn),
@@ -2597,18 +3247,18 @@ def _build_unified_profile(s):
         "org": org,
         "asn": _parse_asn(asn),
         "country": country,
-        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or "",
+        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or "",
         "region": region,
         "city": city,
-        "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude"),
-        "longitude": wi.get("longitude") or wa.get("longitude") or ai.get("longitude") or gu.get("longitude") or gj.get("longitude"),
-        "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or "",
+        "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude") or il.get("latitude") or iq.get("latitude") or co.get("latitude") or ti.get("latitude") or ht.get("latitude"),
+        "longitude": wi.get("longitude") or wa.get("longitude") or ai.get("longitude") or gu.get("longitude") or gj.get("longitude") or il.get("longitude") or iq.get("longitude") or co.get("longitude") or ti.get("longitude") or ht.get("longitude"),
+        "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or il.get("timezone") or iq.get("timezone") or co.get("timezone") or ti.get("timezone") or "",
     }
 
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.0 免 Key 公开版):
+评分规则 (v4.14.15 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -2635,12 +3285,12 @@ SCORING_RULES = {
     未知: 本次检测未获得明确信号
   [IPv6]
     被动查询仅做前缀/运营商粒度: 地理/ASN/类型/Spamhaus DROPv6 名单
-    信誉信号逐源透传 (Scamalytics 为运营商级估计), 不合成总分
+    评分与 IPv4 同公式, 仅计入支持 IPv6 的数据源 (威胁/声誉较少), 属前缀级估计; 信誉信号另逐源透传
     无地址级信誉数据, 未命中名单不等于干净
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.0 免 Key 公開版):
+評分規則 (v4.14.15 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -2667,12 +3317,12 @@ SCORING_RULES = {
     未知: 本次檢測未獲得明確信號
   [IPv6]
     被動查詢僅做前綴/營運商粒度: 地理/ASN/類型/Spamhaus DROPv6 名單
-    信譽信號逐源透傳 (Scamalytics 為營運商級估計), 不合成總分
+    評分與 IPv4 同公式, 僅計入支援 IPv6 的資料源 (威脅/聲譽較少), 屬前綴級估計; 信譽信號另逐源透傳
     無位址級信譽資料, 未命中名單不等於乾淨
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.0 Keyless Public Edition):
+Scoring rules (v4.14.15 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -2699,13 +3349,13 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Unknown: no clear signal was obtained in this run
   [IPv6]
     Passive lookups are prefix/operator-level only: geo/ASN/type/Spamhaus DROPv6
-    Reputation signals pass through per source (Scamalytics is an operator-level
-    estimate); no composite score is computed
+    Scores use the IPv4 formula over IPv6-capable sources only (less threat/
+    reputation data), as prefix-level estimates; signals also pass through per source
     No per-address reputation data exists; not listed does not mean clean
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.0 キー不要公開版):
+スコアリングルール (v4.14.15 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -2725,19 +3375,19 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     プロキシ / VPN 検出               +40
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
-  [純度] = 100 - 総合 (独自換算)
+  [純度] = 100 - 総合 (独自換算、第三者スコアではない)
   [ストリーミング解錠方式]
     ネイティブ: プラットフォームが出口 IP の地域と評価を直接認める
     DNS 解錠 (Smart DNS): 名前解決が解錠プロバイダのノードへ誘導され、SNI プロキシ経由で中継される
     不明: 今回の検出では明確な信号が得られなかった
   [IPv6]
     受動検索はプレフィックス/事業者粒度のみ: 地理/ASN/種別/Spamhaus DROPv6
-    評価信号はソースごとにそのまま表示 (Scamalytics は事業者レベルの推定)、総合スコアは算出しない
+    スコアは IPv4 と同じ式で IPv6 対応ソースのみから算出 (脅威/評判は少なめ) し、プレフィックスレベルの推定として表示。信号はソースごとにも表示
     アドレス単位の評価データは存在せず、リスト未掲載は「クリーン」を意味しない
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.0 Публичная версия без ключей):
+Правила оценки (v4.14.15 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -2757,19 +3407,19 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     Обнаружен прокси / VPN            +40
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
-  [Чистота] = 100 - Итого
+  [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
   [Способы разблокировки стриминга]
     Нативная: платформа напрямую принимает регион и репутацию исходящего IP
     DNS-разблокировка (Smart DNS): разрешение имени направляется на узел провайдера разблокировки и ретранслируется через SNI-прокси
     Неизвестно: в этом запуске чёткий сигнал не получен
   [IPv6]
     Пассивные запросы — только на уровне префикса/оператора: гео/ASN/тип/Spamhaus DROPv6
-    Сигналы репутации передаются по источникам (Scamalytics — оценка уровня оператора); общий балл не вычисляется
+    Балл считается по формуле IPv4 только по источникам с поддержкой IPv6 (меньше данных угроз/репутации), как оценка уровня префикса; сигналы также показываются по источникам
     Данных репутации по отдельным адресам нет; отсутствие в списках не означает «чистый»
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.0):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.15):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -2789,14 +3439,14 @@ Scoring rules (v4.14.0 Keyless Public Edition):
     شناسایی پروکسی / VPN              +40
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
-  [خلوص] = 100 - ترکیبی
+  [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
   [روش‌های رفع مسدودیت استریم]
     بومی: پلتفرم مستقیماً منطقه و اعتبار IP خروجی را می‌پذیرد
     رفع مسدودیت DNS ‏(Smart DNS): حل نام به گره ارائه‌دهنده رفع مسدودیت هدایت و از طریق پروکسی SNI بازپخش می‌شود
     نامشخص: در این اجرا سیگنال روشنی به دست نیامد
   [IPv6]
     جست‌وجوی غیرفعال فقط در سطح پیشوند/اپراتور است: جغرافیا/ASN/نوع/Spamhaus DROPv6
-    سیگنال‌های اعتبار به تفکیک منبع نمایش داده می‌شوند (Scamalytics برآورد سطح اپراتور است)؛ امتیاز ترکیبی محاسبه نمی‌شود
+    امتیاز با همان فرمول IPv4 و فقط از منابع دارای پشتیبانی IPv6 محاسبه می‌شود (داده تهدید/اعتبار کمتر) و برآورد سطح پیشوند است؛ سیگنال‌ها نیز به تفکیک منبع نمایش داده می‌شوند
     داده اعتبار در سطح تک‌آدرس وجود ندارد؛ نبودن در فهرست به معنای پاک بودن نیست
     حالت فعال دوپشته است: خروجی IPv6/تشخیص نشت/استریمینگ و سرعت به تفکیک پشته
 """,
@@ -3051,9 +3701,21 @@ def run_passive(ip):
             pass
         return p.key, res
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        for k, v in ex.map(_query_one, avail_providers):
-            sources[k] = v
+    _ex = ThreadPoolExecutor(max_workers=14)
+    try:
+        _futs = {_ex.submit(_query_one, p): p for p in avail_providers}
+        try:
+            for _f in as_completed(_futs, timeout=30):
+                _k, _v = _f.result()
+                sources[_k] = _v
+        except _CFTimeoutError:
+            pass
+        for _f, _p in _futs.items():
+            if _p.key not in sources:
+                sources[_p.key] = {"ok": False, "err": "timeout"}
+                _f.cancel()
+    finally:
+        _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
         print("\r" + " " * max(40, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
@@ -3094,7 +3756,7 @@ def run_passive(ip):
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
         try:
             _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
-                  "&format=json&zoom=3" % (_prof["latitude"], _prof["longitude"]))
+                  "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
@@ -3102,7 +3764,7 @@ def run_passive(ip):
                          .get("address") or {})
             if _addr.get("country"):
                 sources["coordgeo"] = {
-                    "ok": True, "country": _addr.get("country"),
+                    "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
                     "cc": (_addr.get("country_code") or "").upper()}
         except Exception:
             pass
@@ -3234,7 +3896,7 @@ def _print_streaming_inference(res):
     sf = s.get("stopforumspam", {})
     has_abuse = (sf.get("ok") and sf.get("frequency", 0) > 0)
 
-    print(f"  {T('location')}: {country or '?'}")
+    print(f"  {T('location')}: {_loc_country_name(country) or '?'}")
     if is_proxy or is_vpn:
         ip_type_lbl = f"{T('proxy')}/{T('vpn')}"
     elif is_tor:
@@ -3499,7 +4161,8 @@ def _print_basic_block(s, prof):
         isp_str = prof.get("isp") or "?"
         org_str = prof.get("org") or ""
         _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
-        print(f"  {T('isp')}: {isp_str}" + (f" / {org_str}" if org_str and org_str != isp_str else "") + _as_sfx)
+        _isp_disp = isp_str + (f" / {org_str}" if org_str and org_str != isp_str else "")
+        print(f"  {_c(C.dim, T('isp') + ':')} {_c(C.bold, _isp_disp)}" + (_c(C.cyan, _as_sfx) if _as_sfx else ""))
     rs = s.get("ripestat", {})
     if rs.get("ok"):
         if rs.get("age_years") is not None:
@@ -3508,21 +4171,26 @@ def _print_basic_block(s, prof):
             age = T("unverifiable")
         vis = rs.get("visibility") or "?"
         first = rs.get("first_seen") or "?"
-        print(f"  BGP: {age} | {T('bgp_visibility')}: {vis} | {T('bgp_first')}: {first}")
+        print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
     pt = s.get("ptr", {})
     if pt.get("ok"):
         if pt.get("ptr"):
             fcr = "✓" if pt.get("fcrdns") else "✗"
-            print(f"  PTR [{fcr}]: {pt['ptr']}")
+            _fc = C.green if pt.get("fcrdns") else C.red
+            print(f"  {_c(C.dim, 'PTR')} [{_c(_fc, fcr)}]: {_c(C.bold, pt['ptr'])}")
         else:
-            print(f"  PTR: {T('ptr_none')}")
+            print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('ptr_none'))}")
     else:
-        print(f"  PTR: {T('unverifiable')}")
+        print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('unverifiable'))}")
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("range"):
-        print(f"  {T('ip_range')}: {pc['range']}")
+        print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, pc['range'])}")
+    else:
+        _rd = s.get("rdap", {})
+        if _rd.get("ok") and _rd.get("cidr"):
+            print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, _rd['cidr'])}")
 
-    # 地理位置组: 国旗排头并列 (位置/多源对比/经纬度识别/时区), 坐标/地图随后
+    # 地理位置组: 国旗排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
     locs = []
@@ -3554,10 +4222,45 @@ def _print_basic_block(s, prof):
     if igd.get("ok") and (igd.get("country") or igd.get("city")):
         locs.append(("ip.guide", f"{igd.get('country')} {igd.get('city')}".strip(),
                      igd.get("country"), igd.get("city")))
+    ilc = s.get("iplocate", {})
+    if ilc.get("ok") and (ilc.get("country") or ilc.get("city")):
+        locs.append(("iplocate.io", f"{ilc.get('country')} {ilc.get('region')} {ilc.get('city')}".strip(),
+                     ilc.get("country"), ilc.get("city")))
+    iqc = s.get("ipquery", {})
+    if iqc.get("ok") and (iqc.get("country") or iqc.get("city")):
+        locs.append(("ipquery.io", f"{iqc.get('country')} {iqc.get('region')} {iqc.get('city')}".strip(),
+                     iqc.get("country"), iqc.get("city")))
+    coc = s.get("ipapico", {})
+    if coc.get("ok") and (coc.get("country") or coc.get("city")):
+        locs.append(("ipapi.co", f"{coc.get('country')} {coc.get('region')} {coc.get('city')}".strip(),
+                     coc.get("country"), coc.get("city")))
+    tic = s.get("twoip", {})
+    if tic.get("ok") and (tic.get("country") or tic.get("city")):
+        locs.append(("2ip.io", f"{tic.get('country')} {tic.get('region')} {tic.get('city')}".strip(),
+                     tic.get("country"), tic.get("city")))
     gjs = s.get("geojs", {})
     if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
         locs.append(("GeoJS", f"{gjs.get('country')} {gjs.get('region')} {gjs.get('city')}".strip(),
                      gjs.get("country"), gjs.get("city")))
+    _gjobs = []
+    if prof.get("city"):
+        _gjobs.append(("city", prof["city"],
+                       f"{prof.get('city')}, {_ANY_REGION2EN.get(str(prof.get('region') or '').strip(), prof.get('region'))}"))
+    if prof.get("region"):
+        _gjobs.append(("region", prof["region"],
+                       f"{prof.get('region')}, {prof.get('country')}"))
+    for _nm, _loc, _co, _ci in locs:
+        _mid = _loc
+        if _co and _mid.startswith(_co):
+            _mid = _mid[len(_co):].strip()
+        if _ci and _mid.endswith(_ci):
+            _mid = _mid[:-len(_ci)].strip()
+        if _ci:
+            _gjobs.append(("city", _ci,
+                           f"{_ci}, {_ANY_REGION2EN.get(_mid, _mid)}"))
+        if _mid:
+            _gjobs.append(("region", _mid, _loc))
+    _resolve_geo_online(_gjobs)
     if locs:
         _CC = {"united states": "us", "united states of america": "us",
                "china": "cn", "australia": "au", "canada": "ca",
@@ -3582,8 +4285,23 @@ def _print_basic_block(s, prof):
                "romania": "ro", "ukraine": "ua", "italy": "it",
                "spain": "es"}
 
+        _ANY2CODE = {}
+        for _lg in _COUNTRY_NAMES.values():
+            for _cd, _nm in _lg.items():
+                _ANY2CODE[_nm] = _cd
+                _ANY2CODE[_nm.lower()] = _cd
+
         def _norm(txt):
+            _t0 = str(txt or "").strip()
+            if _t0 in _ANY_CITY2EN:
+                return _ANY_CITY2EN[_t0].lower()
+            if _t0 in _ANY_REGION2EN:
+                return _ANY_REGION2EN[_t0].lower()
+            if txt and str(txt).strip() in _ANY2CODE:
+                return _ANY2CODE[str(txt).strip()].lower()
             txt = (txt or "").lower().strip()
+            if txt in _ANY2CODE:
+                return _ANY2CODE[txt].lower()
             if txt in _CC:
                 return _CC[txt]
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
@@ -3613,40 +4331,36 @@ def _print_basic_block(s, prof):
         _cc = (cc or "").strip().upper()
         if _cc == "UK":
             _cc = "GB"
-        if not (len(_cc) == 2 and _cc.isalpha()):
+        if not (len(_cc) == 2 and _cc.isalpha() and _cc.isascii()):
             return "     "
         _badge = f"\x1b[44m\x1b[97m\x1b[1m {_cc} \x1b[0m" if _use_color() else f"[{_cc}]"
         return f"{_badge} "
 
     _loc_str = ""
     if prof.get("ok"):
-        _loc_str = f"{prof.get('country', '')} {prof.get('region', '')} {prof.get('city', '')}".strip()
+        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''))}".strip()
     _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
                     or prof.get("latitude") is not None)
     if _has_geo:
         print(f"  {_c(C.bold, _c(C.cyan, T('geo_group')))}")
         if _loc_str:
-            print(f"  {_fl(_pcc)}{T('location')}: {_loc_str}")
-        if locs:
-            _lbl = T("sec_loc")
-            _ind = " " * (_disp_width(_lbl) + 2)
-            for _i, k in enumerate(_order):
-                _loc, _names = _groups[k]
-                _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() else "")
-                if _i == 0:
-                    print(f"  {_gf}{_lbl}: {_loc}")
-                else:
-                    print(f"  {_gf}{_ind}{_loc}")
-        else:
-            print(f"  {T('no_loc_data')}")
-        if _cg.get("ok"):
-            print(f"  {_fl(_cg.get('cc'))}{T('coord_country')}: {_cg.get('country')}")
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_str}")
         if prof.get("timezone"):
-            print(f"  {_fl(_pcc)}{T('timezone')}: {prof['timezone']}")
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {_loc_tz(prof['timezone'])}")
         if prof.get("latitude") is not None and prof.get("longitude") is not None:
             _cf = _fl(_cg.get("cc") if _cg.get("ok") else _pcc)
-            print(f"  {_cf}{T('coords')}: {prof['latitude']}, {prof['longitude']}")
-            print(f"  {_cf}{T('map')}: https://www.google.com/maps?q={prof['latitude']},{prof['longitude']}")
+            print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {prof['latitude']}, {prof['longitude']}")
+            print(f"  {_cf}{_c(C.dim, T('map') + ':')} {_c(C.cyan, 'https://www.google.com/maps?q=%s,%s' % (prof['latitude'], prof['longitude']))}")
+        if _cg.get("ok"):
+            print(f"  {_fl(_cg.get('cc'))}{_c(C.dim, T('coord_country') + ':')} {_cg.get('country')}")
+        if locs:
+            _lbl = T("sec_loc")
+            for k in _order:
+                _loc, _names = _groups[k]
+                _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N), "region"), "city")}")
+        else:
+            print(f"  {T('no_loc_data')}")
     elif not locs:
         print(f"  {T('no_loc_data')}")
 
@@ -3678,6 +4392,18 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("type"):
         type_sources.append(("proxycheck", pc["type"]))
+    ia = s.get("ipapi", {})
+    if ia.get("ok"):
+        if ia.get("hosting"):
+            type_sources.append(("ip-api", T("dc")))
+        else:
+            _dc0, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if _dc0:
+                type_sources.append(("ip-api", T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                type_sources.append(("ip-api", T("residential")))
+            else:
+                type_sources.append(("ip-api", T("unknown")))
     if wi.get("ok"):
         if wi.get("hosting"):
             type_sources.append(("ipwho.is", T("dc")))
@@ -3689,7 +4415,25 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                 type_sources.append(("ipwho.is", T("residential")))
             else:
                 type_sources.append(("ipwho.is", T("unknown")))
-    elif prof.get("ok"):
+    il = s.get("iplocate", {})
+    if il.get("ok"):
+        if il.get("hosting") or il.get("asn_type") == "hosting":
+            type_sources.append(("iplocate.io", T("dc")))
+        elif il.get("asn_type") == "isp":
+            type_sources.append(("iplocate.io", T("residential")))
+        else:
+            type_sources.append(("iplocate.io", T("unknown")))
+    iq = s.get("ipquery", {})
+    if iq.get("ok"):
+        if iq.get("datacenter"):
+            type_sources.append(("ipquery.io", T("dc")))
+        elif iq.get("mobile"):
+            type_sources.append(("ipquery.io", T("unknown")))
+        else:
+            type_sources.append(("ipquery.io", T("residential")
+                                 if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
+                                 else T("unknown")))
+    if not wi.get("ok") and prof.get("ok"):
         dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if dc:
             type_sources.append(("Heuristic", T("dc")))
@@ -3735,6 +4479,13 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     sp = s.get("spamhaus", {})
     te = s.get("tor_exit", {})
     ia = s.get("ipapi", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    ti = s.get("twoip", {})
+    xv = s.get("x4bvpn", {})
+    isum = s.get("ipsum", {})
+    bd = s.get("blocklistde", {})
+    ox = s.get("otx", {})
 
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
@@ -3779,6 +4530,38 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         ("ip-api.com", [
             _hit(ia, bool(ia.get("proxy"))),
             _NA, _NA, _NA, _NA, _NA]),
+        ("iplocate.io", [
+            _hit(il, bool(il.get("proxy"))),
+            _hit(il, bool(il.get("vpn"))),
+            _hit(il, bool(il.get("tor"))),
+            _hit(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting"),
+            _NA,
+            _hit(il, bool(il.get("is_abuser")))]),
+        ("ipquery.io", [
+            _hit(iq, bool(iq.get("proxy"))),
+            _hit(iq, bool(iq.get("vpn"))),
+            _hit(iq, bool(iq.get("tor"))),
+            _hit(iq, bool(iq.get("datacenter"))),
+            _NA, _NA]),
+        ("2ip.io", [
+            _NA, _NA, _NA,
+            _hit(ti, bool(ti.get("hosting"))),
+            _NA, _NA]),
+        ("X4BNet VPN", [
+            _NA,
+            _hit(xv, bool(xv.get("listed"))),
+            _NA, _NA, _NA, _NA]),
+        ("IPsum", [
+            _NA, _NA, _NA, _NA,
+            _hit(isum, (isum.get("level") or 0) >= 2),
+            _NA]),
+        ("blocklist.de", [
+            _NA, _NA, _NA, _NA,
+            _hit(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
+            _NA]),
+        ("OTX", [
+            _NA, _NA, _NA, _NA, _NA,
+            _hit(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
     ]
     # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
@@ -3851,7 +4634,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 # 主动检测 (流媒体/邮局/DNSBL/测速)
 # ============================================================
 # ============================================================
-# IPv6 被动查询 (v4.14.0): 前缀/运营商粒度, 不合成总分
+# IPv6 被动查询: 前缀/运营商粒度, 评分与 v4 同公式 (前缀级估计)
 # 纳入源经实测验证 (2026-10-21 逐源探针); 排除:
 #   greynoise 官方 API 仅接受 IPv4; sansisc 对 v6 返回与地址无关的常量;
 #   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
@@ -3860,7 +4643,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapi", "ipapiis", "ipinfo",
                     "freeipapi", "dbip", "geojs", "ipguide", "ripestat",
                     "scamalytics", "proxycheck", "spamhaus", "shodan_idb",
-                    "ptr")
+                    "ptr", "iplocate", "ipquery", "ipapico", "twoip", "otx",
+                    "rdap", "hackertarget", "x4bvpn", "countryis")
 
 
 def run_passive6(ip):
@@ -3899,7 +4683,7 @@ def run_passive6(ip):
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
         try:
             _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
-                  "&format=json&zoom=3" % (_prof["latitude"], _prof["longitude"]))
+                  "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
@@ -3907,16 +4691,29 @@ def run_passive6(ip):
                          .get("address") or {})
             if _addr.get("country"):
                 sources["coordgeo"] = {
-                    "ok": True, "country": _addr.get("country"),
+                    "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
                     "cc": (_addr.get("country_code") or "").upper()}
         except Exception:
             pass
+
+    t_pts, t_ev = score_threat(sources)
+    f_pts, f_ev = score_fraud(sources)
+    r_pts, r_ev = score_reputation(sources)
+    p_pts, p_ev = score_platform(sources)
+    combined6 = round(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
 
     return {
         "ip": ip_s,
         "ipv6": True,
         "profile": _prof,
         "sources": sources,
+        "scores": {
+            "threat": (t_pts, t_ev),
+            "fraud": (f_pts, f_ev),
+            "reputation": (r_pts, r_ev),
+            "platform": (p_pts, p_ev),
+            "combined": combined6,
+        },
         "completeness": {
             "pct": completeness,
             "ok": ok_count,
@@ -3970,7 +4767,25 @@ def print_report6(res, embedded=False):
                 _ts6.append(("ipwho.is", T("residential")))
             else:
                 _ts6.append(("ipwho.is", T("unknown")))
-    elif prof.get("ok"):
+    _il6 = s.get("iplocate", {})
+    if _il6.get("ok"):
+        if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
+            _ts6.append(("iplocate.io", T("dc")))
+        elif _il6.get("asn_type") == "isp":
+            _ts6.append(("iplocate.io", T("residential")))
+        else:
+            _ts6.append(("iplocate.io", T("unknown")))
+    _iq6 = s.get("ipquery", {})
+    if _iq6.get("ok"):
+        if _iq6.get("datacenter"):
+            _ts6.append(("ipquery.io", T("dc")))
+        elif _iq6.get("mobile"):
+            _ts6.append(("ipquery.io", T("unknown")))
+        else:
+            _ts6.append(("ipquery.io", T("residential")
+                         if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
+                         else T("unknown")))
+    if not _wi6.get("ok") and prof.get("ok"):
         _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if _dc6:
             _ts6.append(("Heuristic", T("dc")))
@@ -4044,7 +4859,7 @@ def print_report6(res, embedded=False):
         else:
             print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
 
-    # [3] 信誉信号 (逐源透传, 不合成总分)
+    # [3] 信誉信号 (逐源透传)
     _section(T("sec_signals6"))
     sc = s.get("scamalytics", {})
     if sc.get("ok"):
@@ -4057,6 +4872,10 @@ def print_report6(res, embedded=False):
         print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
     else:
         print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+    _iq6s = s.get("ipquery", {})
+    if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
+        _v = _iq6s["risk_score"]
+        print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
     if sp.get("ok"):
         _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
                 else _c(C.green, T("v6_not_listed")))
@@ -4066,7 +4885,48 @@ def print_report6(res, embedded=False):
         _ptxt = ", ".join(str(p) for p in _ports[:12]) if _ports else T("none")
         print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
-    # [4] 完整度 (无置信度合成: v6 数据粒度不足以支撑)
+    # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
+    _section(T("sec_fraud"))
+    _scs6 = res.get("scores") or {}
+    _srows6 = [("Scamalytics",
+                sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
+    for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
+                       (T("dim_reputation"), "reputation"),
+                       (T("dim_platform"), "platform")):
+        _dv6 = _scs6.get(_dk6)
+        _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
+    _comb6 = _scs6.get("combined")
+    _pcol6 = C.green
+    if _comb6 is not None:
+        _pur6 = 100 - _comb6
+        if _pur6 >= 85:
+            _pl6, _pcol6 = T("purity_best"), C.green
+        elif _pur6 >= 70:
+            _pl6, _pcol6 = T("purity_good"), C.green
+        elif _pur6 >= 50:
+            _pl6, _pcol6 = T("purity_fair"), C.yellow
+        elif _pur6 >= 30:
+            _pl6, _pcol6 = T("purity_poor"), C.yellow
+        else:
+            _pl6, _pcol6 = T("purity_bad"), C.red
+        _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
+        _srows6.append((T("purity"), _pur6, _pl6))
+    _lw6 = _bar_label_width()
+    for _n6, _v6, _e6 in _srows6:
+        if _v6 is None:
+            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        elif _n6 == T("purity"):
+            print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
+        elif _e6:
+            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
+        else:
+            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
+    print(f"  {_c(C.dim, T('v6_score_note'))}")
+    print(f"  {_c(C.dim, T('purity_note'))}")
+    if (_scs6.get("platform") or (0,))[0] >= 30:
+        print(f"  {_c(C.dim, T('platform_note'))}")
+
+    # [5] 完整度
     _section(T("sec_complete6"))
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
@@ -4086,7 +4946,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.0 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.15 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -4102,26 +4962,90 @@ def get_egress_ip():
     return None
 
 
+def _https_get_pinned6(host, path, timeout=6):
+    """显式 AF_INET6 解析 + 钉栈 HTTPS GET (SNI=host), 返回响应体文本或 None。
+    某些解析环境 (如 AWS VPC resolver + glibc) 对纯 AAAA 域名在 AF_UNSPEC
+    查询时返回 EAI_NODATA, urllib 直连必败; 显式 v6 解析 (curl -6 的做法) 可通。"""
+    try:
+        infos = _getaddrinfo_timed(host, 443, family=socket.AF_INET6, timeout=timeout)
+    except Exception:
+        return None
+    for info in infos:
+        ip6 = info[4][0]
+        sk = None
+        ss = None
+        try:
+            ctx = ssl.create_default_context()
+            sk = socket.create_connection((ip6, 443), timeout=timeout)
+            ss = ctx.wrap_socket(sk, server_hostname=host)
+            ss.sendall((
+                f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
+                f"User-Agent: {UA_BROWSER}\r\nAccept: */*\r\nConnection: close\r\n\r\n"
+            ).encode())
+            raw = b""
+            while len(raw) < 16384:
+                chunk = ss.recv(4096)
+                if not chunk:
+                    break
+                raw += chunk
+            head, _, body = raw.partition(b"\r\n\r\n")
+            if b" 200 " not in head.split(b"\r\n", 1)[0]:
+                continue
+            if b"chunked" in head.lower():
+                out = b""
+                rest = body
+                while True:
+                    ln, _, rest = rest.partition(b"\r\n")
+                    try:
+                        sz = int(ln.strip() or b"0", 16)
+                    except ValueError:
+                        break
+                    if sz == 0:
+                        break
+                    out += rest[:sz]
+                    rest = rest[sz + 2:]
+                body = out
+            return body.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        finally:
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
+    return None
+
+
 def get_egress_ip6():
     sources = [
-        "https://api6.ipify.org?format=json",
-        "https://ipv6.icanhazip.com",
-        "https://6.ipw.cn/api/ip/myip?json",
+        ("api6.ipify.org", "/?format=json"),
+        ("ipv6.icanhazip.com", "/"),
+        ("6.ipw.cn", "/api/ip/myip?json"),
     ]
-    for url in sources:
+    for host, path in sources:
+        raw = None
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA_BROWSER})
+            req = urllib.request.Request(f"https://{host}{path}",
+                                         headers={"User-Agent": UA_BROWSER})
             with urllib.request.urlopen(req, timeout=6) as r:
-                raw = r.read(512).decode("utf-8", errors="replace").strip()
-                if raw.startswith("{"):
-                    d = json.loads(raw)
-                    ip = d.get("ip") or d.get("IP") or d.get("ip_address")
-                else:
-                    ip = raw.splitlines()[0].strip() if raw else ""
-                if ip:
-                    _p = ipaddress.ip_address(str(ip).strip())
-                    if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
-                        return str(_p)
+                raw = r.read(512).decode("utf-8", errors="replace")
+        except Exception:
+            raw = _https_get_pinned6(host, path)
+        if not raw:
+            continue
+        raw = raw.strip()
+        try:
+            if raw.startswith("{"):
+                d = json.loads(raw)
+                ip = d.get("ip") or d.get("IP") or d.get("ip_address")
+            else:
+                ip = raw.splitlines()[0].strip() if raw else ""
+            if ip:
+                _p = ipaddress.ip_address(str(ip).strip())
+                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
+                    return str(_p)
         except Exception:
             continue
     return None
@@ -4561,24 +5485,39 @@ SPEED_REGIONS = [
     ("KR Seoul", "sel-kor-ping.vultr.com"),
     ("SG Singapore", "sgp-ping.vultr.com"),
     ("IN Mumbai", "bom-in-ping.vultr.com"),
+    ("IN Bangalore", "blr-in-ping.vultr.com"),
+    ("IN Delhi", "del-in-ping.vultr.com"),
     ("AU Sydney", "syd-au-ping.vultr.com"),
+    ("AU Melbourne", "mel-au-ping.vultr.com"),
     ("UK London", "lon-gb-ping.vultr.com"),
     ("FR Paris", "par-fr-ping.vultr.com"),
+    ("ES Madrid", "mad-es-ping.vultr.com"),
     ("DE Frankfurt", "fra-de-ping.vultr.com"),
     ("NL Amsterdam", "ams-nl-ping.vultr.com"),
+    ("PL Warsaw", "waw-pl-ping.vultr.com"),
+    ("SE Stockholm", "sto-se-ping.vultr.com"),
     ("CA Toronto", "tor-ca-ping.vultr.com"),
     ("US New Jersey", "nj-us-ping.vultr.com"),
+    ("US Miami", "fl-us-ping.vultr.com"),
+    ("US Atlanta", "ga-us-ping.vultr.com"),
     ("US Chicago", "il-us-ping.vultr.com"),
     ("US Dallas", "tx-us-ping.vultr.com"),
     ("US Seattle", "wa-us-ping.vultr.com"),
+    ("US Silicon Valley", "sjo-ca-us-ping.vultr.com"),
     ("US Los Angeles", "lax-ca-us-ping.vultr.com"),
+    ("BR São Paulo", "sao-br-ping.vultr.com"),
+    ("MX Mexico City", "mex-mx-ping.vultr.com"),
     ("ZA Johannesburg", "jnb-za-ping.vultr.com"),
 ]
 _SPEED_FILE = "/vultr.com.100MB.bin"
-# IPv6 测速端点: 上方 17 个 Vultr 节点无 AAAA 记录 (实测 0/17), v6 只测真双栈端点
+# IPv6 测速端点: 上方 Vultr 节点基本无 AAAA (仅 Warsaw 有记录但 v6 下载未验通), v6 只测真双栈端点
 SPEED6_ENDPOINTS = [
     ("Global Cloudflare", "speed.cloudflare.com",
      "https://speed.cloudflare.com/__down?bytes=30000000"),
+    ("AU Sydney", "syd1-sy2.speedtest.network.ovh.net",
+     "https://syd1-sy2.speedtest.network.ovh.net/files/100Mb.dat"),
+    ("SG Singapore", "sin-speed.hetzner.com",
+     "https://sin-speed.hetzner.com/100MB.bin"),
     ("FR OVH", "proof.ovh.net", "https://proof.ovh.net/files/100Mb.dat"),
     ("DE Falkenstein", "fsn1-speed.hetzner.com",
      "https://fsn1-speed.hetzner.com/100MB.bin"),
@@ -4588,6 +5527,12 @@ SPEED6_ENDPOINTS = [
      "https://hel1-speed.hetzner.com/100MB.bin"),
     ("UK London", "download.thinkbroadband.com",
      "https://download.thinkbroadband.com/100MB.zip"),
+    ("NL Serverius", "speedtest1.serverius.net",
+     "https://speedtest1.serverius.net/files/100mb.bin"),
+    ("US Ashburn", "ash-speed.hetzner.com",
+     "https://ash-speed.hetzner.com/100MB.bin"),
+    ("US Hillsboro", "hil-speed.hetzner.com",
+     "https://hil-speed.hetzner.com/100MB.bin"),
 ]
 
 
@@ -4605,6 +5550,8 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
                         break
                     with lock:
                         counter[0] += len(chunk)
+                    if counter[0] >= DL_CAP_BYTES:
+                        return
             fails = 0
         except Exception:
             fails += 1
@@ -4612,7 +5559,8 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
 
 
 def measure_download_direct(url, duration=5, streams=3, family=0):
-    """多连接并发下载测速 (直连), 返回 Mbps 或 None。"""
+    """多连接并发下载测速 (直连), 返回 (Mbps 或 None, 下载字节数)。
+    单节点下载量受 DL_CAP_BYTES 上限约束。"""
     counter, lock = [0], threading.Lock()
     t0 = time.time()
     stop = t0 + duration
@@ -4622,8 +5570,8 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
                     range(streams)))
     elapsed = max(0.1, time.time() - t0)
     if counter[0] == 0:
-        return None
-    return round((counter[0] * 8 / 1e6) / elapsed, 2)
+        return None, 0
+    return round((counter[0] * 8 / 1e6) / elapsed, 2), counter[0]
 
 
 def regional_speed_test(duration=5, on_result=None, family=0):
@@ -4637,10 +5585,11 @@ def regional_speed_test(duration=5, on_result=None, family=0):
     for name, host, _url in _targets:
         tp = tcp_ping_stats(host, 443, count=3, timeout=2, family=family)
         lat = tp["avg_ms"] if tp.get("ok") else None
-        mbps = measure_download_direct(_url,
-                                       duration=duration, streams=3, family=family)
+        mbps, nbytes = measure_download_direct(_url,
+                                               duration=duration, streams=3,
+                                               family=family)
         row = {"region": name, "host": host,
-               "latency_ms": lat, "down_mbps": mbps}
+               "latency_ms": lat, "down_mbps": mbps, "dl_bytes": nbytes}
         rows.append(row)
         if on_result:
             on_result(row)
@@ -4665,16 +5614,36 @@ DNS_SERVERS_PLAIN = [
     ("Level3", ["4.2.2.1", "4.2.2.2"]),
     ("Verisign", ["64.6.64.6", "64.6.65.6"]),
     ("Shecan", ["178.22.122.100", "185.51.200.2"]),
+    ("CleanBrowsing", ["185.228.168.9", "185.228.169.9"]),
+    ("CZ.NIC", ["185.43.135.1", "217.31.204.1"]),
+    ("DNS.SB", ["185.222.222.222", "45.11.45.11"]),
+    ("Hurricane", ["74.82.42.42"]),
+    ("HiNet", ["168.95.1.1", "168.95.192.1"]),
+    ("SafeDNS", ["195.46.39.39", "195.46.39.40"]),
+    ("Cloudflare Sec", ["1.1.1.2", "1.0.0.2"]),
+    ("Cloudflare Fam", ["1.1.1.3", "1.0.0.3"]),
+    ("Quad9 ECS", ["9.9.9.11", "149.112.112.11"]),
+    ("NextDNS", ["45.90.28.0", "45.90.30.0"]),
+    ("ControlD", ["76.76.2.0", "76.76.10.0"]),
+    ("Mullvad", ["194.242.2.2", "194.242.2.3"]),
 ]
 
 DNS_SERVERS_DOH = [
     ("Cloudflare-DoH", "https://cloudflare-dns.com/dns-query"),
     ("Cloudflare-DoH-IP", "https://1.1.1.1/dns-query"),
     ("Google-DoH", "https://dns.google/dns-query"),
-    ("Quad9-DoH", "https://dns.quad9.net:5053/dns-query"),
     ("AliDNS-DoH", "https://dns.alidns.com/dns-query"),
     ("DNSPod-DoH", "https://doh.pub/dns-query"),
     ("AdGuard-DoH", "https://dns.adguard-dns.com/dns-query"),
+    ("Wikimedia-DoH", "https://wikimedia-dns.org/dns-query"),
+    ("ControlD-DoH", "https://freedns.controld.com/p0"),
+    ("CleanBrowsing-DoH", "https://doh.cleanbrowsing.org/doh/family-filter/"),
+    ("LibreDNS-DoH", "https://doh.libredns.gr/dns-query"),
+    ("OpenDNS-DoH", "https://doh.opendns.com/dns-query"),
+    ("DNS.SB-DoH", "https://doh.dns.sb/dns-query"),
+    ("NextDNS-DoH", "https://dns.nextdns.io/dns-query"),
+    ("Cloudflare Sec-DoH", "https://security.cloudflare-dns.com/dns-query"),
+    ("Cloudflare Fam-DoH", "https://family.cloudflare-dns.com/dns-query"),
 ]
 
 DNS_SERVERS_DOT = [
@@ -4683,6 +5652,13 @@ DNS_SERVERS_DOT = [
     ("Quad9-DoT", "9.9.9.9", "dns.quad9.net"),
     ("AliDNS-DoT", "223.5.5.5", "dns.alidns.com"),
     ("AdGuard-DoT", "94.140.14.14", "dns.adguard-dns.com"),
+    ("Mullvad-DoT", "194.242.2.2", "dns.mullvad.net"),
+    ("NextDNS-DoT", "45.90.28.0", "dns.nextdns.io"),
+    ("Quad9 ECS-DoT", "9.9.9.11", "dns11.quad9.net"),
+    ("Cloudflare Sec-DoT", "1.1.1.2", "security.cloudflare-dns.com"),
+    ("Cloudflare Fam-DoT", "1.1.1.3", "family.cloudflare-dns.com"),
+    ("CleanBrowsing-DoT", "185.228.168.9", "doh.cleanbrowsing.org"),
+    ("CZ.NIC-DoT", "185.43.135.1", "odvr.nic.cz"),
 ]
 
 
@@ -4770,7 +5746,7 @@ def test_dns_servers(timeout=3):
         return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
 
     res = {"plain": [], "doh": [], "dot": []}
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    with ThreadPoolExecutor(max_workers=24) as ex:
         plain_futs = [ex.submit(_tp, n, ips[0]) for n, ips in DNS_SERVERS_PLAIN]
         doh_futs = [ex.submit(_th, n, u) for n, u in DNS_SERVERS_DOH]
         dot_futs = [ex.submit(_tt, n, ip, sni) for n, ip, sni in DNS_SERVERS_DOT]
@@ -4793,9 +5769,9 @@ def print_dns_test(results=None):
         )
         results = test_dns_servers()
     titles = {
-        "plain": "传统 DNS (UDP 53)" if LANG in ("zh", "zh-TW") else "Plain DNS (UDP 53)",
-        "doh": "DNS over HTTPS",
-        "dot": "DNS over TLS (853)",
+        "plain": "IPv4 DNS (UDP 53)",
+        "doh": "IPv4 DNS over HTTPS",
+        "dot": "IPv4 DNS over TLS (853)",
     }
     all_ok = []
     for key in ("plain", "doh", "dot"):
@@ -4804,7 +5780,7 @@ def print_dns_test(results=None):
         fail_list = [r for r in lst if not r["ok"]]
         all_ok.extend(ok_list)
         print(f"\n  {_c(C.bold, titles[key])} ({len(ok_list)}/{len(lst)})")
-        for r in ok_list[:8]:
+        for r in ok_list:
             ip_disp = r["ip"][:28]
             print(f"    {_c(C.green, '✓')} {r['name']:18} {ip_disp:30} {r['rtt_ms']:6.1f}ms")
         for r in fail_list:
@@ -4818,6 +5794,209 @@ def print_dns_test(results=None):
         )
     print()
     return results
+
+
+# 公共解析器的 IPv6 地址 (名称, IPv6 地址, DoT SNI)
+DNS_SERVERS_V6 = [
+    ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com"),
+    ("Google", "2001:4860:4860::8888", "dns.google"),
+    ("Quad9", "2620:fe::fe", "dns.quad9.net"),
+    ("AdGuard", "2a10:50c0::ad1:ff", "dns.adguard-dns.com"),
+    ("OpenDNS", "2620:0:ccc::2", "dns.opendns.com"),
+    ("AliDNS", "2400:3200::1", "dns.alidns.com"),
+    ("DNSPod", "2402:4e00::", "dot.pub"),
+    ("Mullvad", "2a07:e340::2", "dns.mullvad.net"),
+    ("NextDNS", "2a07:a8c1::", "dns.nextdns.io"),
+    ("CZ.NIC", "2001:148f:ffff::1", "odvr.nic.cz"),
+    ("ControlD", "2606:1a40::22", "dns.controld.com"),
+    ("DNS.SB", "2a09::", "doh.dns.sb"),
+    ("Quad9 ECS", "2620:fe::11", "dns11.quad9.net"),
+]
+
+
+# 公共解析器的 DoH IPv6 端点 (名称, IPv6 地址, DoH 主机名); 路径统一 /dns-query。
+# 仅收标准库 HTTP/1.1 可达者: Quad9/Mullvad 的 DoH 需 HTTP/2, 不收 (与 IPv4 侧删 Quad9-DoH 同理)。
+DNS_SERVERS_DOH6 = [
+    ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com"),
+    ("Google", "2001:4860:4860::8888", "dns.google"),
+    ("AdGuard", "2a10:50c0::ad1:ff", "dns.adguard-dns.com"),
+    ("NextDNS", "2a07:a8c1::", "dns.nextdns.io"),
+    ("ControlD", "2606:1a40::22", "freedns.controld.com"),
+    ("DNS.SB", "2a09::", "doh.dns.sb"),
+    ("OpenDNS", "2620:0:ccc::2", "doh.opendns.com"),
+]
+
+
+def test_dns_servers6(timeout=3):
+    """IPv6 通道 DNS 测试: 对公共解析器的 IPv6 地址钉栈测 UDP53 与 DoT853,
+    报文与判定与 test_dns_servers 相同, 仅传输走 IPv6。"""
+    def _bq():
+        tid = random.randint(1, 65534)
+        hdr = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
+        qn = _encode_dns_name("google.com")
+        return tid, hdr + qn + struct.pack(">HH", 1, 1)
+
+    def _ok(d, tid):
+        return len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid \
+            and (d[3] & 0x0F) == 0
+
+    def _tp6(name, ip):
+        sk = None
+        try:
+            tid, pkt = _bq()
+            sk = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            sk.settimeout(timeout)
+            t0 = time.time()
+            sk.sendto(pkt, (ip, 53))
+            d, _ = sk.recvfrom(512)
+            rtt = round((time.time() - t0) * 1000, 1)
+            if _ok(d, tid):
+                return {"name": name, "ip": ip, "proto": "UDP53",
+                        "ok": True, "rtt_ms": rtt}
+        except Exception:
+            pass
+        finally:
+            if sk is not None:
+                try:
+                    sk.close()
+                except Exception:
+                    pass
+        return {"name": name, "ip": ip, "proto": "UDP53",
+                "ok": False, "rtt_ms": None}
+
+    def _tt6(name, ip, sni):
+        sk = None
+        ss = None
+        try:
+            tid, pkt = _bq()
+            fr = struct.pack(">H", len(pkt)) + pkt
+            ctx = ssl.create_default_context()
+            sk = socket.create_connection((ip, 853), timeout=timeout)
+            ss = ctx.wrap_socket(sk, server_hostname=sni)
+            t0 = time.time()
+            ss.sendall(fr)
+            len_bytes = ss.recv(2)
+            if len(len_bytes) < 2:
+                return {"name": name, "ip": ip, "proto": "DoT853",
+                        "ok": False, "rtt_ms": None}
+            rl = struct.unpack(">H", len_bytes)[0]
+            d = b""
+            while len(d) < rl:
+                chunk = ss.recv(rl - len(d))
+                if not chunk:
+                    break
+                d += chunk
+            rtt = round((time.time() - t0) * 1000, 1)
+            if _ok(d, tid):
+                return {"name": name, "ip": ip, "proto": "DoT853",
+                        "ok": True, "rtt_ms": rtt}
+        except Exception:
+            pass
+        finally:
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
+        return {"name": name, "ip": ip, "proto": "DoT853",
+                "ok": False, "rtt_ms": None}
+
+    def _th6(name, ip, host):
+        sk = None
+        ss = None
+        try:
+            tid, pkt = _bq()
+            ctx = ssl.create_default_context()
+            sk = socket.create_connection((ip, 443), timeout=max(timeout, 5))
+            ss = ctx.wrap_socket(sk, server_hostname=host)
+            req = (
+                f"POST /dns-query HTTP/1.1\r\nHost: {host}\r\n"
+                "Accept: application/dns-message\r\n"
+                "Content-Type: application/dns-message\r\n"
+                f"Content-Length: {len(pkt)}\r\nConnection: close\r\n\r\n"
+            ).encode() + pkt
+            t0 = time.time()
+            ss.sendall(req)
+            raw = b""
+            while True:
+                chunk = ss.recv(65536)
+                if not chunk:
+                    break
+                raw += chunk
+            rtt = round((time.time() - t0) * 1000, 1)
+            head, _, body = raw.partition(b"\r\n\r\n")
+            if b" 200 " in head.split(b"\r\n", 1)[0]:
+                if b"chunked" in head.lower():
+                    out = b""
+                    rest = body
+                    while True:
+                        ln, _, rest = rest.partition(b"\r\n")
+                        try:
+                            sz = int(ln.strip() or b"0", 16)
+                        except ValueError:
+                            break
+                        if sz == 0:
+                            break
+                        out += rest[:sz]
+                        rest = rest[sz + 2:]
+                    body = out
+                if _ok(body, tid):
+                    return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                            "ok": True, "rtt_ms": rtt}
+        except Exception:
+            pass
+        finally:
+            for sock_obj in (ss, sk):
+                if sock_obj is not None:
+                    try:
+                        sock_obj.close()
+                    except Exception:
+                        pass
+        return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                "ok": False, "rtt_ms": None}
+
+    res = {"plain6": [], "doh6": [], "dot6": []}
+    with ThreadPoolExecutor(max_workers=14) as ex:
+        plain_futs = [ex.submit(_tp6, n, ip) for n, ip, _ in DNS_SERVERS_V6]
+        doh_futs = [ex.submit(_th6, n, ip, h) for n, ip, h in DNS_SERVERS_DOH6]
+        dot_futs = [ex.submit(_tt6, n, ip, sni) for n, ip, sni in DNS_SERVERS_V6]
+        for f in plain_futs:
+            res["plain6"].append(f.result())
+        for f in doh_futs:
+            res["doh6"].append(f.result())
+        for f in dot_futs:
+            res["dot6"].append(f.result())
+    for k in res:
+        res[k].sort(key=lambda x: (not x["ok"], x["rtt_ms"] or 9999))
+    return res
+
+
+def print_dns6_test(results):
+    """渲染 IPv6 通道 DNS 结果 (独立章节, 位于 IPv6 段内: 报告之后、流媒体之前)。"""
+    titles = {
+        "plain6": "IPv6 DNS (UDP 53)",
+        "doh6": "IPv6 DNS over HTTPS",
+        "dot6": "IPv6 DNS over TLS (853)",
+    }
+    all_ok = []
+    for key in ("plain6", "doh6", "dot6"):
+        lst = results[key]
+        ok_list = [r for r in lst if r["ok"]]
+        fail_list = [r for r in lst if not r["ok"]]
+        all_ok.extend(ok_list)
+        print(f"\n  {_c(C.bold, titles[key])} ({len(ok_list)}/{len(lst)})")
+        for r in ok_list:
+            print(f"    {_c(C.green, '✓')} {r['name']:12} {r['ip']:40} {r['rtt_ms']:6.1f}ms")
+        for r in fail_list:
+            print(f"    {_c(C.red, '✗')} {r['name']:12} {r['ip']:40}")
+    if all_ok:
+        best = min(all_ok, key=lambda x: x["rtt_ms"])
+        fast_lbl = "★ 最快: " if LANG in ("zh", "zh-TW") else "★ Fastest: "
+        print(
+            f"\n  {_c(C.cyan, fast_lbl)}{best['name']} [{best['proto']}] {best['ip']} - {best['rtt_ms']:.1f}ms"
+        )
+    print()
 
 
 DNS_COUNTRY_DB = {
@@ -4899,7 +6078,7 @@ def recommend_dns_for_ip(country):
     key = _country_key(country)
     db = DNS_COUNTRY_DB[key]
     _section(T("sec_dns_rec"))
-    print(f"  {_c(C.dim, T('location') + ': ' + (country or '?'))}")
+    print(f"  {_c(C.dim, T('location') + ': ' + (_loc_country_name(country) or '?'))}")
     print(f"\n  {_c(C.green, '✓ 推荐:' if LANG in ('zh', 'zh-TW') else '✓ Recommended:')}")
     for name, ip, proto in db["rec"]:
         print(f"    {name:14} {ip:22} [{proto}]")
@@ -4912,9 +6091,46 @@ def recommend_dns_for_ip(country):
     print()
 
 
-def print_speed_section(json_mode=False, family=0):
+_NO_SPEED = False        # --no-speed: 自检时跳过测速
+_SPEED_DECISION = None   # 本次运行的测速确认结果缓存 (None=未决定)
+
+
+def _speed_allowed(json_mode):
+    """自检内测速开关: --no-speed 恒关; JSON/非交互终端恒开 (脚本兼容);
+    交互终端在测速段前询问一次 (默认否, 防下载流量消耗), 结果缓存。"""
+    global _SPEED_DECISION
+    if _SPEED_DECISION is not None:
+        return _SPEED_DECISION
+    if _NO_SPEED:
+        _SPEED_DECISION = False
+    elif json_mode or not sys.stdin.isatty():
+        _SPEED_DECISION = True
+    else:
+        try:
+            _ask = T("speed_ask")
+            try:
+                _cap_mb = DL_CAP_BYTES // 1048576
+                _ask = _ask.format(n4=len(SPEED_REGIONS), max4=len(SPEED_REGIONS) * _cap_mb,
+                                   n6=len(SPEED6_ENDPOINTS), max6=len(SPEED6_ENDPOINTS) * _cap_mb)
+            except Exception:
+                pass
+            ans = input("\n  " + _ask).strip().lower()
+        except EOFError:
+            ans = ""
+        _SPEED_DECISION = ans in ("y", "yes")
+    return _SPEED_DECISION
+
+
+def print_speed_section(json_mode=False, family=0, gated=False):
     """网速测试章节: 多地区节点下载测速表 (bench.sh 式, 多连接峰值口径)。
-    返回 rows [{region, latency_ms, down_mbps}]。"""
+    返回 rows [{region, latency_ms, down_mbps, dl_bytes}]。
+    gated=True (自检流程) 时先过 _speed_allowed 确认门。"""
+    if gated and not _speed_allowed(json_mode):
+        if json_mode:
+            return []
+        _section(T("sec_speed"))
+        print(f"  {_c(C.dim, T('speed_skipped'))}")
+        return []
     if json_mode:
         return regional_speed_test(family=family)
     _section(T("sec_speed"))
@@ -4924,6 +6140,11 @@ def print_speed_section(json_mode=False, family=0):
         else "※ For reference only: actual speed varies by server/route, not max ISP bandwidth"
     )
     print(f"  {_c(C.yellow, warn_txt)}")
+    try:
+        _sn = SPEED6_ENDPOINTS if family == 6 else SPEED_REGIONS
+        print(f"  {_c(C.dim, T('speed_max_note').format(n=len(_sn), max=len(_sn) * (DL_CAP_BYTES // 1048576)))}")
+    except Exception:
+        pass
     hdr = "  %-22s %-10s %s" % (T("speed_col_region"), T("speed_col_latency"),
                                 T("speed_col_down"))
     print(_c(C.cyan, hdr))
@@ -4939,6 +6160,9 @@ def print_speed_section(json_mode=False, family=0):
         print(f"  {_c(C.dim, T('speed6_note'))}")
     rows = regional_speed_test(on_result=_row, family=family)
     print(f"  {_c(C.yellow, T('speed_note'))}")
+    _total_mb = sum(r.get("dl_bytes", 0) for r in rows) / 1e6
+    if _total_mb >= 0.5:
+        print(f"  {_c(C.yellow, T('speed_traffic').format(mb=int(round(_total_mb))))}")
     return rows
 
 
@@ -5176,17 +6400,17 @@ def print_system_info(si=None, io_res=None):
     _section(T("sec_sys"), sub=True)
     if si is None:
         si = get_system_info()
-    print(f"  {_pad('CPU', 10)}: {si['cpu'][:60]}")
-    print(f"  {_pad(T('sys_mem'), 10)}: {si['mem']}")
-    print(f"  {_pad(T('sys_disk'), 10)}: {si['disk']}")
-    print(f"  {_pad(T('sys_os'), 10)}: {si['os']} [{si['arch']}]")
-    print(f"  {_pad(T('sys_virt'), 10)}: {si['virt']}")
+    print(f"  {_c(C.dim, _pad('CPU', 10))}: {si['cpu'][:60]}")
+    print(f"  {_c(C.dim, _pad(T('sys_mem'), 10))}: {si['mem']}")
+    print(f"  {_c(C.dim, _pad(T('sys_disk'), 10))}: {si['disk']}")
+    print(f"  {_c(C.dim, _pad(T('sys_os'), 10))}: {si['os']} [{si['arch']}]")
+    print(f"  {_c(C.dim, _pad(T('sys_virt'), 10))}: {si['virt']}")
     if io_res is None:
         io_res = disk_io_test()
     if io_res:
         w = f"{io_res['write_mbs']:.0f} MB/s"
         rd = f"{io_res['read_mbs']:.0f} MB/s"
-        print(f"  {_pad(T('sys_io'), 10)}: {T('sys_write')} {_c(C.green, w)} / {T('sys_read')} {_c(C.green, rd)}")
+        print(f"  {_c(C.dim, _pad(T('sys_io'), 10))}: {T('sys_write')} {_c(C.green, w)} / {T('sys_read')} {_c(C.green, rd)}")
     print()
 
 
@@ -5358,16 +6582,20 @@ def _run_streaming_table_impl(egress, json_mode=False):
 
 
 def _run_active6(json_mode, egress6):
-    """仅 IPv6 自检: v6 报告 + v6 流媒体 + v6 测速"""
+    """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速"""
     res6 = run_passive6(egress6)
+    dns6_res = test_dns_servers6()
     if not json_mode:
         print_report6(res6)
+        _section(T("sec_dns") + " (IPv6)")
+        print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
-    speed6 = print_speed_section(json_mode=json_mode, family=6)
+    speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
     out = {"ip": egress6, "ipv6": True,
            "active": {"egress_ipv6": egress6, "ipv6_report": res6,
-                      "streaming_ipv6": streaming6, "speed_ipv6": speed6}}
+                      "streaming_ipv6": streaming6, "speed_ipv6": speed6,
+                      "dns_ipv6": dns6_res}}
     if json_mode:
         print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
     return out
@@ -5375,6 +6603,8 @@ def _run_active6(json_mode, egress6):
 
 def run_active(json_mode=False, stack=None):
     # 每次运行主动测试前清空会话级缓存，确保切换网络/VPN 后立即生效
+    global _SPEED_DECISION
+    _SPEED_DECISION = None  # 测速确认门每次自检重新询问
     with _unlock_lock:
         _unlock_cache.clear()
     with _cache_lock:
@@ -5386,9 +6616,9 @@ def run_active(json_mode=False, stack=None):
         try:
             if sys.stdin.isatty():
                 print(f"\n  {T('stack_title')}:")
-                print(f"    1) {T('stack_auto')}")
-                print(f"    2) {T('stack_v4')}")
-                print(f"    3) {T('stack_v6')}")
+                print(f"    1. {T('stack_auto')}")
+                print(f"    2. {T('stack_v4')}")
+                print(f"    3. {T('stack_v6')}")
                 _sel = input(f"  {T('stack_prompt')}").strip()
                 stack = {"1": "auto", "2": "4", "3": "6"}.get(_sel, "auto")
         except Exception:
@@ -5422,9 +6652,9 @@ def run_active(json_mode=False, stack=None):
 
     if not json_mode:
         if egress:
-            print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+            print(f"  {_c(C.dim, T('current_egress') + ':')} {_c(C.bold, _c(C.cyan, egress))}")
         if egress6:
-            print(f"  {T('current_egress6')}: {_c(C.cyan, egress6)}")
+            print(f"  {_c(C.dim, T('current_egress6') + ':')} {_c(C.bold, _c(C.cyan, egress6))}")
         if egress:
             print(f"  {_c(C.dim, T('egress_note'))}\n")
 
@@ -5444,7 +6674,6 @@ def run_active(json_mode=False, stack=None):
         dns_res = print_dns_test(None)
     else:
         dns_res = test_dns_servers()
-
     mx_domains = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_p25 = ex.submit(check_mail_port25)
@@ -5454,7 +6683,7 @@ def run_active(json_mode=False, stack=None):
 
     total, clean, marked, bl = check_dnsbl(egress)
 
-    st_res = print_speed_section(json_mode=json_mode)
+    st_res = print_speed_section(json_mode=json_mode, gated=True)
 
     if not json_mode:
         _section(T("sec_mail"))
@@ -5494,8 +6723,10 @@ def run_active(json_mode=False, stack=None):
     res6 = None
     streaming6_json = None
     speed6_res = None
+    dns6_res = None
     if egress6:
         res6 = run_passive6(egress6)
+        dns6_res = test_dns_servers6()
         if not json_mode:
             _section(T("sec_ipv6"))
             _a4 = (res.get("profile") or {}).get("asn")
@@ -5505,9 +6736,11 @@ def run_active(json_mode=False, stack=None):
             elif _a4 and _a6:
                 print(f"  {_c(C.green, T('v6_same_exit').format(a=_a4))}")
             print_report6(res6, embedded=True)
+            _section(T("sec_dns") + " (IPv6)")
+            print_dns6_test(dns6_res)
             _section(T("sec_stream") + " (IPv6)")
         streaming6_json = _run_streaming_table(egress6, json_mode=json_mode, family=6)
-        speed6_res = print_speed_section(json_mode=json_mode, family=6)
+        speed6_res = print_speed_section(json_mode=json_mode, family=6, gated=True)
 
     if not json_mode:
         _print_completeness(res)
@@ -5534,6 +6767,7 @@ def run_active(json_mode=False, stack=None):
         res["active"]["ipv6_report"] = res6
         res["active"]["streaming_ipv6"] = streaming6_json
         res["active"]["speed_ipv6"] = speed6_res
+        res["active"]["dns_ipv6"] = dns6_res
 
     if json_mode:
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
@@ -5727,6 +6961,8 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                     break
                 with lock:
                     counter[0] += len(chunk)
+                if counter[0] >= DL_CAP_BYTES:
+                    return
             conn.close()
             fails = 0
         except Exception:
@@ -6311,7 +7547,7 @@ def _banner_net_info():
             except Exception:
                 try:
                     req = urllib.request.Request(
-                        "https://ipwho.is/%s" % egress,
+                        (("https://ipwho.is/%s?lang=%s" % (egress, _ipwho_lang())) if _ipwho_lang() else ("https://ipwho.is/%s" % egress)),
                         headers={"User-Agent": UA_BROWSER})
                     with urllib.request.urlopen(req, timeout=5) as r:
                         d = json.loads(r.read(8192).decode("utf-8",
@@ -6332,17 +7568,27 @@ def _banner_net_info():
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
     _v6addr = None
-    for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
+    for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
         try:
-            req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=3) as r:
-                _cand = r.read(128).decode("utf-8", errors="replace").strip()
+            _cand = (_https_get_pinned6(_host, "/", timeout=3) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
             if _ip6.is_global:
                 _v6addr = str(_ip6)
                 break
         except Exception:
             continue
+    if _v6addr is None:
+        for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
+            try:
+                req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
+                with urllib.request.urlopen(req, timeout=3) as r:
+                    _cand = r.read(128).decode("utf-8", errors="replace").strip()
+                _ip6 = ipaddress.IPv6Address(_cand)
+                if _ip6.is_global:
+                    _v6addr = str(_ip6)
+                    break
+            except Exception:
+                continue
     if _v6addr is None:
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -6413,9 +7659,10 @@ def print_banner():
         v6t = ""
     else:
         v6t = " " + T("bn_none")
-    print("        %s%s" % (_white("IPv6 "), v6 + (_white(v6t) if v6t else "")))
+    print("%s%s%s" % (" " * (_disp_width(T("bn_network")) + 4),
+                      _white("IPv6 "), v6 + (_white(v6t) if v6t else "")))
     # 状态行 (图例)
-    legend = "%s%s · %s%s · %s%s" % (
+    legend = "%s %s · %s %s · %s %s" % (
         _c(C.green, "●"), _white(T("bn_ok")), _c(C.dim, "○"),
         _white(T("bn_untested")), _c(C.red, "●"), _white(T("bn_fault")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_status")), legend))
@@ -6554,6 +7801,7 @@ def _print_cli_help():
   --proxy-user USER / --proxy-pass PASS
                   代理认证 (可选)
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
+  --no-speed      自检时跳过网速测试
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
   --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
   --explain       输出评分维度与扣分规则说明
@@ -6592,6 +7840,7 @@ Options:
   --proxy-user USER / --proxy-pass PASS
                   Proxy authentication (optional)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
+  --no-speed      Skip the speed test during self-check
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
@@ -6625,6 +7874,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   代理驗證 (可選)
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
+  --no-speed      自檢時跳過網速測試
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
   --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
   --explain       輸出評分維度與扣分規則說明
@@ -6657,6 +7907,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   プロキシ認証 (任意)
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
+  --no-speed      セルフチェック時に速度テストをスキップ
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
   --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
   --explain       スコアリングのルールと重みを表示
@@ -6689,6 +7940,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   Аутентификация прокси (необязательно)
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковый мультиконнект)
+  --no-speed      Пропустить тест скорости при самопроверке
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
   --json          Вывод в JSON (с IP, --active или --proxy)
   --explain       Правила и веса скоринга
@@ -6721,6 +7973,7 @@ Examples:
   --proxy-user USER / --proxy-pass PASS
                   احراز هویت پروکسی (اختیاری)
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج چنداتصالی)
+  --no-speed      رد کردن تست سرعت هنگام خودبررسی
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
   --json          خروجی JSON (با IP، --active یا --proxy)
@@ -6743,7 +7996,7 @@ Examples:
 
 
 def main():
-    global LANG, _FORCE_STACK
+    global LANG, _FORCE_STACK, _NO_SPEED
     _init_console()
 
     parser = _CLIArgumentParser(prog="acheck.py", add_help=False)
@@ -6759,6 +8012,8 @@ def main():
     parser.add_argument("--proxy-pass", default=None)
     parser.add_argument("--speed", action="store_true",
                         help="multi-region download speed test")
+    parser.add_argument("--no-speed", action="store_true", dest="no_speed",
+                        help="skip the speed test during self-check")
     parser.add_argument("--batch", metavar="NODES", default=None,
                         help="batch node test, comma-separated host:port or socks5:// URLs")
     parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
@@ -6781,6 +8036,7 @@ def main():
 
     if ns.lang:
         LANG = ns.lang
+    _NO_SPEED = bool(ns.no_speed)
 
     if ns.ipv4_only and ns.ipv6_only:
         if "--json" in sys.argv:
@@ -7003,8 +8259,8 @@ def main():
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
-        print()
-        return
+        print(f"\n  {T('cancelled')}")
+        sys.exit(130)
 
 
 if __name__ == "__main__":
