@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IP 信誉检测 v4.14.16 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.17 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -53,7 +53,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.16"
+VERSION = "4.14.17"
 
 
 def _init_console():
@@ -1483,6 +1483,21 @@ def T(key, **kwargs):
     return s
 
 
+def _L(zh, en, ja, ru, fa, zhtw=None):
+    """内联六语短文案 (未进 STR 表的局部文案用): 按当前 LANG 取值, zh-TW 缺省回退 zh。"""
+    if LANG == "zh":
+        return zh
+    if LANG == "zh-TW":
+        return zhtw if zhtw is not None else zh
+    if LANG == "ja":
+        return ja
+    if LANG == "ru":
+        return ru
+    if LANG == "fa":
+        return fa
+    return en
+
+
 # ============================================================
 # ANSI 颜色与终端显示宽度工具
 # ============================================================
@@ -2393,7 +2408,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.16 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.17 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3258,7 +3273,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.16 免 Key 公开版):
+评分规则 (v4.14.17 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3290,7 +3305,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.16 免 Key 公開版):
+評分規則 (v4.14.17 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3322,7 +3337,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.16 Keyless Public Edition):
+Scoring rules (v4.14.17 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3355,7 +3370,7 @@ Scoring rules (v4.14.16 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.16 キー不要公開版):
+スコアリングルール (v4.14.17 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3387,7 +3402,7 @@ Scoring rules (v4.14.16 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.16 Публичная версия без ключей):
+Правила оценки (v4.14.17 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3419,7 +3434,7 @@ Scoring rules (v4.14.16 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.16):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.17):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -4102,10 +4117,12 @@ def _print_streaming_inference(res):
         "WhatsApp": _infer_lenient("WhatsApp"),
     }
 
-    warn = (
-        "⚠ 以下为模拟推测，非实际连接测试"
-        if LANG in ("zh", "zh-TW")
-        else "⚠ Simulated inference, NOT actual connection tests"
+    warn = _L(
+        "⚠ 以下为模拟推测，非实际连接测试",
+        "⚠ Simulated inference, NOT actual connection tests",
+        "⚠ 以下はシミュレーション推測であり、実際の接続テストではありません",
+        "⚠ Это смоделированный вывод, НЕ реальные тесты подключения",
+        "⚠ این استنتاج شبیه‌سازی‌شده است، نه تست واقعی اتصال",
     )
     print(f"  {_c(C.yellow, warn)}")
 
@@ -4622,12 +4639,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     if include_streaming_inference:
         _done_txt = "✓ " + T("done")
         print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        if LANG in ("zh", "zh-TW"):
-            print(f"  {_c(C.yellow, '※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试')}")
-            print(f"  {_c(C.cyan, '  如需实测请用 [1] 本机自检')}")
-        else:
-            print(f"  {_c(C.yellow, '※ Passive mode: no active streaming/mail tests')}")
-            print(f"  {_c(C.cyan, '  Use [1] Self-check for active tests')}")
+        print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みません', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت غیرفعال: بدون تست فعال استریمینگ/ایمیل'))}")
+        print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用', '  Для активных тестов используйте [1] Самопроверка', '  برای تست فعال از [1] خودآزمایی استفاده کنید'))}")
 
 
 # ============================================================
@@ -4946,7 +4959,7 @@ def get_egress_ip():
     ]
     for url in sources:
         try:
-            _ua = {"User-Agent": "A-Check/4.14.16 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.17 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=6) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5265,7 +5278,7 @@ def test_netflix(local_ip=None):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
-        orig_tag = "自制" if LANG in ("zh", "zh-TW") else "Orig"
+        orig_tag = _L("自制", "Orig", "オリジナル", "Оригинал", "اصلی")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     return T("blocked"), "", None
@@ -5788,7 +5801,7 @@ def print_dns_test(results=None):
             print(f"    {_c(C.red, '✗')} {r['name']:18} {ip_disp:30}")
     if all_ok:
         best = min(all_ok, key=lambda x: x["rtt_ms"])
-        fast_lbl = "★ 最快: " if LANG in ("zh", "zh-TW") else "★ Fastest: "
+        fast_lbl = _L("★ 最快: ", "★ Fastest: ", "★ 最速: ", "★ Самый быстрый: ", "★ سریع‌ترین: ")
         print(
             f"\n  {_c(C.cyan, fast_lbl)}{best['name']} [{best['proto']}] {best['ip']} - {best['rtt_ms']:.1f}ms"
         )
@@ -5992,7 +6005,7 @@ def print_dns6_test(results):
             print(f"    {_c(C.red, '✗')} {r['name']:12} {r['ip']:40}")
     if all_ok:
         best = min(all_ok, key=lambda x: x["rtt_ms"])
-        fast_lbl = "★ 最快: " if LANG in ("zh", "zh-TW") else "★ Fastest: "
+        fast_lbl = _L("★ 最快: ", "★ Fastest: ", "★ 最速: ", "★ Самый быстрый: ", "★ سریع‌ترین: ")
         print(
             f"\n  {_c(C.cyan, fast_lbl)}{best['name']} [{best['proto']}] {best['ip']} - {best['rtt_ms']:.1f}ms"
         )
@@ -6014,6 +6027,12 @@ DNS_COUNTRY_DB = {
             ("Foreign DoH", "SNI 阻断"),
         ],
         "note": "国外公共 DNS 在中国大陆多被污染或阻断，优先用国内 DNS；DoH/DoT 走国外会被 SNI 阻断",
+        "note_l": {
+            "en": "Foreign public DNS is often polluted or blocked in mainland China; prefer domestic DNS. Overseas DoH/DoT is SNI-blocked",
+            "ja": "中国大陸では国外の公共DNSは汚染・阻断されがちです。国内DNSを優先してください。国外への DoH/DoT は SNI で阻断されます",
+            "ru": "Зарубежные публичные DNS в материковом Китае часто отравляются или блокируются; предпочитайте местные DNS. Зарубежный DoH/DoT блокируется по SNI",
+            "fa": "DNSهای عمومی خارجی در سرزمین اصلی چین اغلب آلوده یا مسدودند؛ DNS داخلی را ترجیح دهید. DoH/DoT خارجی با SNI مسدود می‌شود",
+        },
     },
     "ru": {
         "rec": [
@@ -6023,6 +6042,12 @@ DNS_COUNTRY_DB = {
         ],
         "blocked": [],
         "note": "Yandex 本土最快；国际 DNS 基本可用，偶发限速",
+        "note_l": {
+            "en": "Yandex is fastest locally; international DNS mostly works, with occasional throttling",
+            "ja": "Yandex が現地最速；国際DNSは概ね利用可、時折スロットリングあり",
+            "ru": "Yandex — самый быстрый местный; международные DNS в целом работают, иногда встречается троттлинг",
+            "fa": "Yandex سریع‌ترین گزینه بومی است؛ DNSهای بین‌المللی عموماً کار می‌کنند، گاه محدودسازی سرعت رخ می‌دهد",
+        },
     },
     "ir": {
         "rec": [
@@ -6036,6 +6061,12 @@ DNS_COUNTRY_DB = {
             ("OpenDNS", "Blocked"),
         ],
         "note": "伊朗屏蔽多数国外 DNS，Shecan/Electro 为本土反制裁 DNS；DoH 可尝试绕过",
+        "note_l": {
+            "en": "Iran blocks most foreign DNS; Shecan/Electro are local anti-sanctions DNS; DoH may get through",
+            "ja": "イランは国外DNSの大半を阻断。Shecan/Electro は現地の制裁対策DNS。DoH で通る場合あり",
+            "ru": "Иран блокирует большинство зарубежных DNS; Shecan/Electro — местные антисанкционные DNS; DoH может помочь",
+            "fa": "ایران بیشتر DNSهای خارجی را مسدود می‌کند؛ Shecan/Electro DNSهای بومی ضدتحریم‌اند؛ DoH شاید کار کند",
+        },
     },
     "tr": {
         "rec": [
@@ -6045,6 +6076,12 @@ DNS_COUNTRY_DB = {
         ],
         "blocked": [],
         "note": "土耳其偶发 DNS 污染，DoH 最稳",
+        "note_l": {
+            "en": "Occasional DNS poisoning in Turkey; DoH is the most stable",
+            "ja": "トルコでは散発的なDNS汚染あり；DoH が最も安定",
+            "ru": "В Турции эпизодически встречается отравление DNS; DoH наиболее стабилен",
+            "fa": "در ترکیه گاه آلودگی DNS رخ می‌دهد؛ DoH پایدارترین گزینه است",
+        },
     },
     "default": {
         "rec": [
@@ -6054,14 +6091,30 @@ DNS_COUNTRY_DB = {
         ],
         "blocked": [],
         "note": "无已知系统性阻断，三选一即可；隐私优先选 Quad9，速度优先选 Cloudflare",
+        "note_l": {
+            "en": "No known systematic blocking; any of the three works — Quad9 for privacy, Cloudflare for speed",
+            "ja": "既知の体系的な阻断はありません。3つのいずれでも可。プライバシー重視なら Quad9、速度重視なら Cloudflare",
+            "ru": "Известных системных блокировок нет; подойдёт любой из трёх — Quad9 для приватности, Cloudflare для скорости",
+            "fa": "مسدودسازی سیستماتیک شناخته‌شده‌ای نیست؛ هر سه مناسب‌اند — Quad9 برای حریم خصوصی، Cloudflare برای سرعت",
+        },
     },
 }
 
+_DNS_REASON_L = {
+    "DNS 污染/阻断": {"en": "DNS poisoning/blocking", "ja": "DNS汚染/阻断", "ru": "Отравление/блокировка DNS", "fa": "آلودگی/مسدودسازی DNS"},
+    "不稳定/部分阻断": {"en": "Unstable/partially blocked", "ja": "不安定/一部阻断", "ru": "Нестабильно/частичная блокировка", "fa": "ناپایدار/مسدودسازی جزئی"},
+    "阻断": {"en": "Blocked", "ja": "阻断", "ru": "Заблокировано", "fa": "مسدود"},
+    "SNI 阻断": {"en": "SNI blocking", "ja": "SNI阻断", "ru": "Блокировка по SNI", "fa": "مسدودسازی SNI"},
+}
+
 DNS_COUNTRY_MAP = {
-    "china": "cn", "cn": "cn", "中国": "cn", "china mainland": "cn",
+    "china": "cn", "cn": "cn", "中国": "cn", "china mainland": "cn", "چین": "cn",
     "russia": "ru", "ru": "ru", "russian federation": "ru", "俄罗斯": "ru", "俄羅斯": "ru",
+    "россия": "ru", "российская федерация": "ru", "ロシア": "ru", "ロシア連邦": "ru", "روسیه": "ru",
     "iran": "ir", "ir": "ir", "islamic republic of iran": "ir", "iran, islamic republic of": "ir", "iran (islamic republic of)": "ir", "伊朗": "ir",
+    "иран": "ir", "イラン": "ir", "ایران": "ir",
     "turkey": "tr", "tr": "tr", "türkiye": "tr", "turkiye": "tr", "土耳其": "tr",
+    "турция": "tr", "トルコ": "tr", "ترکیه": "tr",
 }
 
 
@@ -6079,15 +6132,17 @@ def recommend_dns_for_ip(country):
     db = DNS_COUNTRY_DB[key]
     _section(T("sec_dns_rec"))
     print(f"  {_c(C.dim, T('location') + ': ' + (_loc_country_name(country) or '?'))}")
-    print(f"\n  {_c(C.green, '✓ 推荐:' if LANG in ('zh', 'zh-TW') else '✓ Recommended:')}")
+    print(f"\n  {_c(C.green, _L('✓ 推荐:', '✓ Recommended:', '✓ おすすめ:', '✓ Рекомендуется:', '✓ توصیه‌شده:'))}")
     for name, ip, proto in db["rec"]:
         print(f"    {name:14} {ip:22} [{proto}]")
     if db["blocked"]:
-        print(f"\n  {_c(C.red, '✗ 已知不可用/被阻断:' if LANG in ('zh', 'zh-TW') else '✗ Known blocked:')}")
+        print(f"\n  {_c(C.red, _L('✗ 已知不可用/被阻断:', '✗ Known blocked:', '✗ 利用不可/ブロック済み:', '✗ Заблокировано/недоступно:', '✗ مسدود/غیرقابل استفاده:'))}")
         for name, reason in db["blocked"]:
+            reason = _DNS_REASON_L.get(reason, {}).get(LANG, reason)
             print(f"    {name:24} {reason}")
     if db["note"]:
-        print(f"\n  {_c(C.dim, '※ ' + db['note'])}")
+        _note = db.get("note_l", {}).get(LANG, db["note"])
+        print(f"\n  {_c(C.dim, '※ ' + _note)}")
     print()
 
 
@@ -6134,10 +6189,12 @@ def print_speed_section(json_mode=False, family=0, gated=False):
     if json_mode:
         return regional_speed_test(family=family)
     _section(T("sec_speed"))
-    warn_txt = (
-        "※ 仅供参考：实际速度受服务器/路由影响，非运营商承诺最大带宽"
-        if LANG in ("zh", "zh-TW")
-        else "※ For reference only: actual speed varies by server/route, not max ISP bandwidth"
+    warn_txt = _L(
+        "※ 仅供参考：实际速度受服务器/路由影响，非运营商承诺最大带宽",
+        "※ For reference only: actual speed varies by server/route, not max ISP bandwidth",
+        "※ 参考値：実際の速度はサーバー/経路に依存し、ISP の最大帯域の保証ではありません",
+        "※ Справочно: фактическая скорость зависит от сервера/маршрута, а не от макс. полосы провайдера",
+        "※ صرفاً جهت اطلاع: سرعت واقعی به سرور/مسیر بستگی دارد، نه حداکثر پهنای باند ISP",
     )
     print(f"  {_c(C.yellow, warn_txt)}")
     try:
@@ -6705,7 +6762,7 @@ def run_active(json_mode=False, stack=None):
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx_ok}/{mx_total}')}")
 
-        _dnsbl_lbl = "IP地址黑名单数据库" if LANG in ("zh", "zh-TW") else "DNSBL"
+        _dnsbl_lbl = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
         _eff = _c(C.cyan, str(total))
         _ok = _c(C.green, str(clean))
         _bl = _c(C.red if marked > 0 else C.green, str(marked))
