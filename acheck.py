@@ -212,7 +212,7 @@ STR = {
         "m_sysinfo": "系统信息与 IO 测试",
         "m_lang": "切换语言 / Language",
         "m_proxy": "代理诊断 (SOCKS5)",
-        "m_dnsleak": "DNS 泄漏检测",
+        "m_dnsleak": "DNS 出口一致性检测",
         "m_tcpping": "TCP 延迟测试",
         "m_explain": "评分规则说明",
         "m_quit": "退出脚本",
@@ -231,10 +231,10 @@ STR = {
         "diag_egress_fail": "✗ 获取出口 IP 失败: %s",
         "diag_reputation_testing": "正在检测出口 IP 信誉...",
         "diag_reputation_fail": "信誉检测失败: %s",
-        "diag_dns_testing": "正在检测 DNS 泄漏...",
-        "diag_dns_leaked": "⚠ 检测到 DNS 泄漏!",
-        "diag_dns_clean": "✓ 未检测到 DNS 泄漏",
-        "diag_dns_unknown": "[无法核实] DNS 泄漏检测失败",
+        "diag_dns_testing": "正在检测 DNS 出口一致性...",
+        "diag_dns_leaked": "⚠ DNS 出口与网络出口不一致：解析器 ASN ≠ 出口 ASN（隧道内自设公共 DNS 也会如此，不一定是泄漏）",
+        "diag_dns_clean": "✓ DNS 出口一致：解析器 ASN 与出口 ASN 相同",
+        "diag_dns_unknown": "[无法核实] DNS 出口一致性检测失败",
         "diag_tcp_testing": "正在测试 TCP 延迟 %s:%s...",
         "diag_tcp_ok": "平均 %.1f ms, 抖动 %.1f ms, 丢包 %.1f%%",
         "diag_tcp_fail": "✗ TCP 连接失败",
@@ -443,7 +443,7 @@ STR = {
         "m_sysinfo": "System info & IO test",
         "m_lang": "Language / 切换语言",
         "m_proxy": "Proxy diagnostics (SOCKS5)",
-        "m_dnsleak": "DNS leak check",
+        "m_dnsleak": "DNS egress consistency check",
         "m_tcpping": "TCP latency test",
         "m_explain": "Scoring rules",
         "m_quit": "Exit",
@@ -462,10 +462,10 @@ STR = {
         "diag_egress_fail": "✗ Failed to get egress IP: %s",
         "diag_reputation_testing": "Checking egress IP reputation...",
         "diag_reputation_fail": "Reputation check failed: %s",
-        "diag_dns_testing": "Checking for DNS leaks...",
-        "diag_dns_leaked": "⚠ DNS leak detected!",
-        "diag_dns_clean": "✓ No DNS leak detected",
-        "diag_dns_unknown": "[Unverifiable] DNS leak check failed",
+        "diag_dns_testing": "Checking DNS egress consistency...",
+        "diag_dns_leaked": "⚠ DNS egress differs from network egress: resolver ASN ≠ egress ASN (also happens with a custom public DNS inside a tunnel; not necessarily a leak)",
+        "diag_dns_clean": "✓ DNS egress consistent: resolver ASN matches egress ASN",
+        "diag_dns_unknown": "[Unverifiable] DNS egress consistency check failed",
         "diag_tcp_testing": "Testing TCP latency %s:%s...",
         "diag_tcp_ok": "avg %.1f ms, jitter %.1f ms, loss %.1f%%",
         "diag_tcp_fail": "✗ TCP connection failed",
@@ -674,7 +674,7 @@ STR = {
         "m_sysinfo": "系統資訊與 IO 測試",
         "m_lang": "切換語言 / Language",
         "m_proxy": "代理診斷 (SOCKS5)",
-        "m_dnsleak": "DNS 洩漏檢測",
+        "m_dnsleak": "DNS 出口一致性檢測",
         "m_tcpping": "TCP 延遲測試",
         "m_explain": "評分規則說明",
         "m_quit": "退出腳本",
@@ -693,10 +693,10 @@ STR = {
         "diag_egress_fail": "✗ 獲取出口 IP 失敗: %s",
         "diag_reputation_testing": "正在檢測出口 IP 信譽...",
         "diag_reputation_fail": "信譽檢測失敗: %s",
-        "diag_dns_testing": "正在檢測 DNS 洩漏...",
-        "diag_dns_leaked": "⚠ 檢測到 DNS 洩漏!",
-        "diag_dns_clean": "✓ 未檢測到 DNS 洩漏",
-        "diag_dns_unknown": "[無法核實] DNS 洩漏檢測失敗",
+        "diag_dns_testing": "正在檢測 DNS 出口一致性...",
+        "diag_dns_leaked": "⚠ DNS 出口與網路出口不一致：解析器 ASN ≠ 出口 ASN（隧道內自設公共 DNS 也會如此，不一定是洩漏）",
+        "diag_dns_clean": "✓ DNS 出口一致：解析器 ASN 與出口 ASN 相同",
+        "diag_dns_unknown": "[無法核實] DNS 出口一致性檢測失敗",
         "diag_tcp_testing": "正在測試 TCP 延遲 %s:%s...",
         "diag_tcp_ok": "平均 %.1f ms, 抖動 %.1f ms, 丟包 %.1f%%",
         "diag_tcp_fail": "✗ TCP 連接失敗",
@@ -905,7 +905,7 @@ STR = {
         "m_sysinfo": "システム情報とIOテスト",
         "m_lang": "言語切替 / Language",
         "m_proxy": "プロキシ診断 (SOCKS5)",
-        "m_dnsleak": "DNSリーク確認",
+        "m_dnsleak": "DNS 出口一致性確認",
         "m_tcpping": "TCP遅延テスト",
         "m_explain": "スコアリングルール",
         "m_quit": "終了",
@@ -924,10 +924,10 @@ STR = {
         "diag_egress_fail": "✗ 出口IPの取得に失敗: %s",
         "diag_reputation_testing": "出口IPのレピュテーションを確認中...",
         "diag_reputation_fail": "レピュテーション確認失敗: %s",
-        "diag_dns_testing": "DNSリークを確認中...",
-        "diag_dns_leaked": "⚠ DNSリークを検出!",
-        "diag_dns_clean": "✓ DNSリークなし",
-        "diag_dns_unknown": "[確認不可] DNSリーク確認失敗",
+        "diag_dns_testing": "DNS 出口一致性を確認中...",
+        "diag_dns_leaked": "⚠ DNS 出口とネットワーク出口が不一致：リゾルバ ASN ≠ 出口 ASN（トンネル内の独自パブリック DNS でも起こり得るため、必ずしもリークではない）",
+        "diag_dns_clean": "✓ DNS 出口一致：リゾルバ ASN と出口 ASN が一致",
+        "diag_dns_unknown": "[確認不可] DNS 出口一致性確認失敗",
         "diag_tcp_testing": "TCP遅延をテスト中 %s:%s...",
         "diag_tcp_ok": "平均 %.1f ms、ジッタ %.1f ms、損失 %.1f%%",
         "diag_tcp_fail": "✗ TCP接続失敗",
@@ -1136,7 +1136,7 @@ STR = {
         "m_sysinfo": "Система и тест IO",
         "m_lang": "Сменить язык / Language",
         "m_proxy": "Диагностика прокси (SOCKS5)",
-        "m_dnsleak": "Проверка утечек DNS",
+        "m_dnsleak": "Проверка согласованности DNS-выхода",
         "m_tcpping": "Тест задержки TCP",
         "m_explain": "Правила оценки",
         "m_quit": "Выход",
@@ -1155,10 +1155,10 @@ STR = {
         "diag_egress_fail": "✗ Не удалось получить IP: %s",
         "diag_reputation_testing": "Проверка репутации исходящего IP...",
         "diag_reputation_fail": "Ошибка проверки репутации: %s",
-        "diag_dns_testing": "Проверка утечек DNS...",
-        "diag_dns_leaked": "⚠ Обнаружена утечка DNS!",
-        "diag_dns_clean": "✓ Утечек DNS не обнаружено",
-        "diag_dns_unknown": "[Не проверено] Ошибка проверки DNS",
+        "diag_dns_testing": "Проверка согласованности DNS-выхода...",
+        "diag_dns_leaked": "⚠ DNS-выход не совпадает с сетевым выходом: ASN резолвера ≠ ASN выхода (так бывает и при собственном публичном DNS внутри туннеля; это не обязательно утечка)",
+        "diag_dns_clean": "✓ DNS-выход согласован: ASN резолвера совпадает с ASN выхода",
+        "diag_dns_unknown": "[Не проверено] Ошибка проверки согласованности DNS-выхода",
         "diag_tcp_testing": "Тестирование задержки TCP %s:%s...",
         "diag_tcp_ok": "сред. %.1f мс, джиттер %.1f мс, потери %.1f%%",
         "diag_tcp_fail": "✗ Ошибка TCP соединения",
@@ -1367,7 +1367,7 @@ STR = {
         "m_sysinfo": "اطلاعات سیستم و تست IO",
         "m_lang": "تغییر زبان / Language",
         "m_proxy": "عیب‌یابی پروکسی (SOCKS5)",
-        "m_dnsleak": "بررسی نشت DNS",
+        "m_dnsleak": "بررسی سازگاری خروجی DNS",
         "m_tcpping": "تست تأخیر TCP",
         "m_explain": "قوانین امتیازدهی",
         "m_quit": "خروج",
@@ -1386,10 +1386,10 @@ STR = {
         "diag_egress_fail": "✗ دریافت IP ناموفق: %s",
         "diag_reputation_testing": "در حال بررسی اعتبار IP خروجی...",
         "diag_reputation_fail": "خطا در بررسی اعتبار: %s",
-        "diag_dns_testing": "در حال بررسی نشت DNS...",
-        "diag_dns_leaked": "⚠ نشت DNS شناسایی شد!",
-        "diag_dns_clean": "✓ نشت DNS شناسایی نشد",
-        "diag_dns_unknown": "[غیرقابل تأیید] خطا در بررسی DNS",
+        "diag_dns_testing": "در حال بررسی سازگاری خروجی DNS...",
+        "diag_dns_leaked": "⚠ خروجی DNS با خروجی شبکه مطابقت ندارد: ASN حل‌کننده ≠ ASN خروجی (با DNS عمومی سفارشی داخل تونل هم رخ می‌دهد؛ لزوماً نشت نیست)",
+        "diag_dns_clean": "✓ خروجی DNS سازگار است: ASN حل‌کننده با ASN خروجی مطابقت دارد",
+        "diag_dns_unknown": "[غیرقابل تأیید] خطا در بررسی سازگاری خروجی DNS",
         "diag_tcp_testing": "در حال تست تأخیر TCP %s:%s...",
         "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f، افت %.1f%%",
         "diag_tcp_fail": "✗ خطای اتصال TCP",
@@ -7116,11 +7116,13 @@ def _ip_asn_org(ip, timeout=8):
 
 
 def dns_leak_check(egress_ip=None, timeout=8, require_egress=False):
-    """DNS 泄漏检测: 对比系统解析器 IP 与出口 IP 的 ASN/归属。
-    返回 (leaked: bool|None, detail: dict)。三态判定: 任一侧 ASN 查不到
-    时返回 None (未知), 不误报泄漏。
+    """DNS 出口一致性检测: 对比系统解析器 IP 与出口 IP 的 ASN/归属。
+    返回 (asn_mismatch: bool|None, detail: dict)。三态判定: 任一侧 ASN 查不到
+    时返回 None (未知); 任一解析器 ASN ≠ 出口 ASN 即判 mismatch=True。
+    注意口径: mismatch 只说明解析器与出口不在同一 ASN（隧道内自设公共 DNS
+    也会如此），不等于证实泄漏；反之 ASN 相同也不等于证明无泄漏。
     require_egress=True 时 egress_ip 为空直接判未知, 不回退直连出口
-    (代理诊断场景: 代理出口未知时拿直连出口做基准会误报无泄漏)。"""
+    (代理诊断场景: 代理出口未知时拿直连出口做基准会误报为一致)。"""
     if egress_ip:
         egress = egress_ip
     elif require_egress:
@@ -7134,7 +7136,7 @@ def dns_leak_check(egress_ip=None, timeout=8, require_egress=False):
                       "resolvers": resolvers}
     e_asn, e_org, e_cc = _ip_asn_org(egress, timeout=timeout)
     results = []
-    leaked = False
+    asn_mismatch = False
     unknown = e_asn is None
     for rip in resolvers:
         r_asn, r_org, r_cc = _ip_asn_org(rip, timeout=timeout)
@@ -7144,14 +7146,14 @@ def dns_leak_check(egress_ip=None, timeout=8, require_egress=False):
         else:
             same = (r_asn == e_asn)
             if not same:
-                leaked = True
+                asn_mismatch = True
         results.append({"resolver": rip, "asn": r_asn, "org": r_org,
                         "country": r_cc, "same_as_egress": same})
-    if unknown and not leaked:
+    if unknown and not asn_mismatch:
         return None, {"egress": egress, "egress_asn": e_asn,
                       "egress_org": e_org, "egress_country": e_cc,
                       "resolvers": results}
-    return leaked, {"egress": egress, "egress_asn": e_asn,
+    return asn_mismatch, {"egress": egress, "egress_asn": e_asn,
                     "egress_org": e_org, "egress_country": e_cc,
                     "resolvers": results}
 
@@ -7260,14 +7262,14 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
 
     # 4. DNS 泄漏 (用代理出口 IP 做对比基准)
     _note(T("diag_dns_testing"))
-    leaked, dinfo = dns_leak_check(egress_ip=eip, require_egress=True)
-    out["dns_leak"] = {"leaked": leaked, "detail": dinfo}
-    if leaked is True:
+    asn_mismatch, dinfo = dns_leak_check(egress_ip=eip, require_egress=True)
+    out["dns_leak"] = {"asn_mismatch": asn_mismatch, "detail": dinfo}
+    if asn_mismatch is True:
         _note(_c(C.red, T("diag_dns_leaked")))
         for r in dinfo.get("resolvers", []):
             _note("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
                                         r.get("asn") or "?"))
-    elif leaked is False:
+    elif asn_mismatch is False:
         _note(_c(C.green, T("diag_dns_clean")))
     else:
         _note(_c(C.dim, T("diag_dns_unknown")))
@@ -7806,14 +7808,14 @@ def run_streaming_only():
 
 
 def run_dnsleak_only():
-    """菜单独立入口: DNS 泄漏检测 (系统解析器 vs 直连出口)。"""
-    leaked, dinfo = dns_leak_check()
-    if leaked is True:
+    """菜单独立入口: DNS 出口一致性检测 (系统解析器 vs 直连出口)。"""
+    asn_mismatch, dinfo = dns_leak_check()
+    if asn_mismatch is True:
         print(f"  {_c(C.red, T('diag_dns_leaked'))}")
         for r in dinfo.get("resolvers", []):
             print("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
                                          r.get("asn") or "?"))
-    elif leaked is False:
+    elif asn_mismatch is False:
         print(f"  {_c(C.green, T('diag_dns_clean'))}")
     else:
         print(f"  {_c(C.dim, T('diag_dns_unknown'))}")
