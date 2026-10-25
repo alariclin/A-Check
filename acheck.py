@@ -1843,7 +1843,7 @@ def _get_system_nameservers():
 def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames=False):
     """
     发送标准 UDP 53 查询并解析返回记录:
-      qtype=1 (A), qtype=5 (CNAME), qtype=12 (PTR), qtype=15 (MX)
+      qtype=1 (A), qtype=5 (CNAME), qtype=12 (PTR), qtype=15 (MX), qtype=28 (AAAA)
     包含 socket 异常安全关闭与截断报文 (TC=1) 越界保护。
     """
     tid = random.randint(1, 65534)
@@ -1898,6 +1898,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         rdata = data[offset:offset + rdlength]
         if rtype == 1 and rdlength == 4:  # A record
             results.append(socket.inet_ntoa(rdata))
+        elif rtype == 28 and rdlength == 16:  # AAAA record
+            results.append(socket.inet_ntop(socket.AF_INET6, rdata))
         elif rtype == 5:  # CNAME record
             cname_host, _ = _decode_dns_name(data, offset)
             if cname_host:
@@ -4375,7 +4377,7 @@ def _print_basic_block(s, prof):
             for k in _order:
                 _loc, _names = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N), "region"), "city")}")
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N), 'region'), 'city')}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -5196,40 +5198,48 @@ _unlock_lock = threading.Lock()
 
 
 def get_unlock_type(domain, local_ip=None):
-    """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，精准区分原生解锁与 DNS 解锁。"""
+    """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
+    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
+    查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
+    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。"""
     sys_ns = _get_system_nameservers()[0]
-    cache_key = (domain, local_ip or "", sys_ns)
+    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)) else 1
+    cache_key = (domain, local_ip or "", sys_ns, qtype)
     with _unlock_lock:
         if cache_key in _unlock_cache:
             return _unlock_cache[cache_key]
 
-    sys_ips, sys_cnames = _dns_query_udp(domain, qtype=1, server=sys_ns, timeout=2.5, return_cnames=True)
-    pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames=True)
-    pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=1, server="8.8.8.8", timeout=2.5, return_cnames=True)
+    sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=sys_ns, timeout=2.5, return_cnames=True)
+    pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+    pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
 
     pub_ips = (pub_ips_1 or []) + (pub_ips_2 or [])
     pub_cnames = set((pub_cnames_1 or []) + (pub_cnames_2 or []))
 
     if not sys_ips or not pub_ips:
-        res = True if sys_ips else None
+        res = None
     elif sys_ns in ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "223.5.5.5", "119.29.29.29"):
         res = True
     else:
+        # IPv6 地址无点分段，前缀即全地址，重叠退化为精确匹配（偏保守）。
         sys_prefixes = {".".join(ip.split(".")[:2]) for ip in sys_ips if "." in ip}
         pub_prefixes = {".".join(ip.split(".")[:2]) for ip in pub_ips if "." in ip}
-        if sys_prefixes & pub_prefixes:
+        overlap = bool(sys_prefixes & pub_prefixes)
+        suffix = bool(sys_cnames and pub_cnames and any(
+            sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
+        ))
+        if overlap and suffix:
             res = True
+        elif overlap or suffix:
+            res = None
         elif pub_cnames and not sys_cnames:
             res = False
-        elif sys_cnames and pub_cnames and any(
-            sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
-        ):
-            res = True
         else:
             res = False
 
-    with _unlock_lock:
-        _unlock_cache[cache_key] = res
+    if res is not None:
+        with _unlock_lock:
+            _unlock_cache[cache_key] = res
     return res
 
 
@@ -6487,7 +6497,7 @@ DNSBL_LISTS = [
 
 
 def check_dnsbl(ip, max_lists=29):
-    """纯 Python 并发检测权威 DNSBL 黑名单，校验返回码为 127.0.0.x (过滤 127.255.255.x 拒查码)。"""
+    """纯 Python 并发检测权威 DNSBL 黑名单，校验返回码为 127.0.0.x；127.255.255.x 拒查码计 unknown，不进干净。"""
     ip_s = str(ip)
     rev = ".".join(reversed(ip_s.split(".")))
     lists = DNSBL_LISTS[:max_lists]
@@ -6509,6 +6519,8 @@ def check_dnsbl(ip, max_lists=29):
             for a_ip in ans:
                 if a_ip.startswith("127.0.") and not a_ip.startswith("127.255."):
                     return lst, True
+            if any(a_ip.startswith("127.255.") for a_ip in ans):
+                return lst, None
             return lst, False
         except Exception:
             return lst, None
