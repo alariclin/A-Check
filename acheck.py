@@ -5674,7 +5674,10 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
                     if time.time() >= stop:
                         break  # 停滞读在 stop 后才返回时不计入窗口字节
                     with lock:
-                        counter[0] += len(chunk)
+                        room = DL_CAP_BYTES - counter[0]
+                        if room <= 0:
+                            return
+                        counter[0] += min(len(chunk), room)
                     if counter[0] >= DL_CAP_BYTES:
                         return
             fails = 0
@@ -6477,25 +6480,33 @@ def get_system_info():
     return info
 
 
+def _unescape_mount_path(p):
+    """反转义 /proc/mounts 挂载名中的八进制转义（如 \\040 为空格）。"""
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), p)
+
+
 def _get_real_disk_tempdir():
-    """在 Linux 下避开 tmpfs 内存盘，确保 I/O 测试落在真实块设备上。"""
+    """在 Linux 下避开 tmpfs 内存盘，确保 I/O 测试落在真实块设备上；
+    挂载名按 /proc 规则反转义后比对；无可用真实盘时返回 None
+    （调用方跳过测试，不以内存盘充数）。"""
     cand_dirs = [tempfile.gettempdir(), "/var/tmp", os.getcwd()]
-    if os.path.exists("/proc/mounts"):
-        try:
-            tmpfs_mounts = set()
-            with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 3 and parts[2] in ("tmpfs", "ramfs", "devtmpfs"):
-                        tmpfs_mounts.add(parts[1])
-            for d in cand_dirs:
-                real_d = os.path.realpath(d)
-                if not any(real_d == m or real_d.startswith(m.rstrip("/") + "/") for m in tmpfs_mounts):
-                    if os.access(real_d, os.W_OK):
-                        return real_d
-        except Exception:
-            pass
-    return tempfile.gettempdir()
+    if not os.path.exists("/proc/mounts"):
+        return tempfile.gettempdir()
+    tmpfs_mounts = set()
+    try:
+        with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 3 and parts[2] in ("tmpfs", "ramfs", "devtmpfs"):
+                    tmpfs_mounts.add(_unescape_mount_path(parts[1]))
+    except Exception:
+        pass  # 解析失败时以已读到的部分集合继续，不再盲目回退
+    for d in cand_dirs:
+        real_d = os.path.realpath(d)
+        if not any(real_d == m or real_d.startswith(m.rstrip("/") + "/") for m in tmpfs_mounts):
+            if os.access(real_d, os.W_OK):
+                return real_d
+    return None
 
 
 def disk_io_test(size_mb=64):
@@ -6503,9 +6514,11 @@ def disk_io_test(size_mb=64):
     安全且真实的磁盘 I/O 测速:
       1. 自动清理可能由历史异常遗留的 .ipcheck_io_*.tmp 文件。
       2. 前置校验剩余磁盘空间 >= 512MB，不足则跳过，防止写满磁盘。
-      3. 避开 Linux tmpfs 内存盘，并在写入后刷除内核 Page Cache 测真实物理读速。
+      3. 避开 Linux tmpfs 内存盘，并在写入后尝试刷除内核 Page Cache（仅建议性，缓存读仍可能发生）。
     """
     target_dir = _get_real_disk_tempdir()
+    if target_dir is None:
+        return None
     try:
         for old_tmp in glob.glob(os.path.join(target_dir, ".ipcheck_io_*.tmp")):
             try:
@@ -6526,7 +6539,7 @@ def disk_io_test(size_mb=64):
             if sys.platform == "darwin":
                 try:
                     import fcntl
-                    fcntl.fcntl(fd, 48, 1)  # F_NOCACHE = 48
+                    fcntl.fcntl(fd, getattr(fcntl, "F_NOCACHE", 48), 1)  # F_NOCACHE
                 except Exception:
                     pass
             for _ in range(size_mb):
@@ -6546,7 +6559,7 @@ def disk_io_test(size_mb=64):
             if sys.platform == "darwin":
                 try:
                     import fcntl
-                    fcntl.fcntl(fd, 48, 1)
+                    fcntl.fcntl(fd, getattr(fcntl, "F_NOCACHE", 48), 1)
                 except Exception:
                     pass
             while f.read(1024 * 1024):
@@ -7143,7 +7156,10 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                 if time.time() >= stop:
                     break  # 停滞读在 stop 后才返回时不计入窗口字节
                 with lock:
-                    counter[0] += len(chunk)
+                    room = DL_CAP_BYTES - counter[0]
+                    if room <= 0:
+                        return
+                    counter[0] += min(len(chunk), room)
                 if counter[0] >= DL_CAP_BYTES:
                     return
             conn.close()
