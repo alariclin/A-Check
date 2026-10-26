@@ -7610,6 +7610,9 @@ _LOGO_LINES = [
 _LOGO_PALETTE = [26, 27, 32, 33, 39, 39, 39]  # 按字母: 纯蓝阶 (R=0, 同 A-BOX 标题配色)
 
 _banner_net_cache = None
+_banner_net_budget = 15  # 横幅网络信息整条任务总截止（秒；裁定未定量，我方取 15）
+_banner_net_started = [False]
+_banner_net_lock = threading.Lock()
 
 
 def _logo_spread(lines, target=76):
@@ -7715,20 +7718,26 @@ def _logo_render():
 
 
 def _banner_net_info():
-    """横幅网络信息 (进程内缓存, 只查一次): 出口地理(按界面语言本地化) + IPv6 出口地址。"""
+    """横幅网络信息 (进程内缓存, 只查一次): 出口地理(按界面语言本地化) + IPv6 出口地址。
+    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。"""
     global _banner_net_cache
     if _banner_net_cache is not None:
         return _banner_net_cache
+    _deadline = time.monotonic() + _banner_net_budget
+
+    def _rem():
+        return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "dns_ok": False}
     try:
         info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
                                                   socket.AF_UNSPEC,
-                                                  socket.SOCK_DGRAM))
+                                                  socket.SOCK_DGRAM,
+                                                  timeout=min(5, _rem())))
     except Exception:
         info["dns_ok"] = False
     try:
-        egress = get_egress_ip()
+        egress = get_egress_ip() if _rem() > 0 else None
         info["egress"] = egress
         if egress:
             _lang = {"zh": "zh-CN", "zh-TW": "zh-CN", "en": "en",
@@ -7738,7 +7747,7 @@ def _banner_net_info():
                     "http://ip-api.com/json/%s?lang=%s&fields=status,country,"
                     "city,org,isp,hosting" % (egress, _lang),
                     headers={"User-Agent": UA_BROWSER})
-                with urllib.request.urlopen(req, timeout=5) as r:
+                with urllib.request.urlopen(req, timeout=min(5, _rem())) as r:
                     d = json.loads(r.read(8192).decode("utf-8", errors="replace"))
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
@@ -7756,7 +7765,7 @@ def _banner_net_info():
                     req = urllib.request.Request(
                         (("https://ipwho.is/%s?lang=%s" % (egress, _ipwho_lang())) if _ipwho_lang() else ("https://ipwho.is/%s" % egress)),
                         headers={"User-Agent": UA_BROWSER})
-                    with urllib.request.urlopen(req, timeout=5) as r:
+                    with urllib.request.urlopen(req, timeout=min(5, _rem())) as r:
                         d = json.loads(r.read(8192).decode("utf-8",
                                                          errors="replace"))
                     conn = d.get("connection") or {}
@@ -7777,7 +7786,7 @@ def _banner_net_info():
     _v6addr = None
     for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
         try:
-            _cand = (_https_get_pinned6(_host, "/", timeout=3) or "").strip()
+            _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
             if _ip6.is_global:
                 _v6addr = str(_ip6)
@@ -7788,7 +7797,7 @@ def _banner_net_info():
         for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
             try:
                 req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
-                with urllib.request.urlopen(req, timeout=3) as r:
+                with urllib.request.urlopen(req, timeout=min(3, _rem())) as r:
                     _cand = r.read(128).decode("utf-8", errors="replace").strip()
                 _ip6 = ipaddress.IPv6Address(_cand)
                 if _ip6.is_global:
@@ -7799,7 +7808,7 @@ def _banner_net_info():
     if _v6addr is None:
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-            s6.settimeout(1.5)
+            s6.settimeout(min(1.5, _rem()))
             s6.connect(("2606:4700:4700::1111", 53))
             _local6 = s6.getsockname()[0]
             s6.close()
@@ -7811,6 +7820,21 @@ def _banner_net_info():
     info["ipv6"] = bool(_v6addr)
     _banner_net_cache = info
     return info
+
+
+def _banner_net_info_async():
+    """横幅网络信息（菜单先显示）：缓存命中即返回；未命中则起后台守护线程填充，
+    本次先返回占位（网络行显示未测），下次横幅即见缓存。"""
+    if _banner_net_cache is not None:
+        return _banner_net_cache
+    with _banner_net_lock:
+        if _banner_net_cache is not None:
+            return _banner_net_cache
+        if not _banner_net_started[0]:
+            _banner_net_started[0] = True
+            threading.Thread(target=_banner_net_info, daemon=True).start()
+    return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
+            "dns_ok": False}
 
 
 def _white(s):
@@ -7829,7 +7853,7 @@ def print_banner():
     for line in _logo_lines:
         print(_logo_pad + line)
     print(border)
-    net = _banner_net_info()
+    net = _banner_net_info_async()
     si = get_system_info()
     # 系统行
     os_name = si.get("os", "?")
@@ -8357,7 +8381,9 @@ def main():
         try:
             sys.stdin = open("CONIN$" if sys.platform == "win32" else "/dev/tty", "r", encoding="utf-8", errors="replace")
         except Exception:
-            run_active(json_mode=False)
+            print("[Info] No terminal available; interactive menu requires "
+                  "a TTY. Run with --active for a non-interactive "
+                  "self-check.", file=sys.stderr)
             return
     try:
         print_banner()
