@@ -93,6 +93,10 @@ STR = {
         "quit_hint": "(q 退出)",
         "prompt_ip": "请输入公网 IP (b 返回，q 退出): ",
         "invalid_ip": "无效的 IP 地址，请重新输入",
+        "invalid_input": "输入无效，请重新输入",
+        "invalid_proxy_format": "代理格式无效，应为 HOST:PORT",
+        "no_valid_nodes": "无有效节点",
+        "heuristic": "启发式",
         "ipv6_unsupported": "暂仅支持 IPv4 公网地址",
         "private_ip": "不支持私网/保留地址",
         "detecting_egress": "正在检测当前出口 IP...",
@@ -326,6 +330,10 @@ STR = {
         "quit_hint": "(q to quit)",
         "prompt_ip": "Enter public IP (b back, q quit): ",
         "invalid_ip": "Invalid IP address, try again",
+        "invalid_input": "Invalid input, try again",
+        "invalid_proxy_format": "Invalid proxy format, want HOST:PORT",
+        "no_valid_nodes": "No valid nodes",
+        "heuristic": "Heuristic",
         "ipv6_unsupported": "Only public IPv4 addresses are currently supported",
         "private_ip": "Private/reserved addresses not supported",
         "detecting_egress": "Detecting current egress IP...",
@@ -559,6 +567,10 @@ STR = {
         "quit_hint": "(q 退出)",
         "prompt_ip": "請輸入公網 IP (b 返回，q 退出): ",
         "invalid_ip": "無效的 IP 地址，請重新輸入",
+        "invalid_input": "輸入無效，請重新輸入",
+        "invalid_proxy_format": "代理格式無效，應為 HOST:PORT",
+        "no_valid_nodes": "無有效節點",
+        "heuristic": "啟發式",
         "ipv6_unsupported": "暫僅支援 IPv4 公網地址",
         "private_ip": "不支援私網/保留地址",
         "detecting_egress": "正在檢測當前出口 IP...",
@@ -792,6 +804,10 @@ STR = {
         "quit_hint": "(q 終了)",
         "prompt_ip": "パブリックIPを入力 (b 戻る，q 終了): ",
         "invalid_ip": "無効なIPアドレスです，再入力してください",
+        "invalid_input": "入力が無効です、再入力してください",
+        "invalid_proxy_format": "プロキシの形式が無効です、HOST:PORT で指定してください",
+        "no_valid_nodes": "有効なノードがありません",
+        "heuristic": "ヒューリスティック",
         "ipv6_unsupported": "現在IPv4パブリックアドレスのみサポートしています",
         "private_ip": "プライベート/予約済みアドレスはサポート外",
         "detecting_egress": "現在の出口IPを検出中...",
@@ -1025,6 +1041,10 @@ STR = {
         "quit_hint": "(q выход)",
         "prompt_ip": "Введите публичный IP (b назад, q выход): ",
         "invalid_ip": "Недействительный IP-адрес, введите снова",
+        "invalid_input": "Неверный ввод, введите снова",
+        "invalid_proxy_format": "Неверный формат прокси, ожидается HOST:PORT",
+        "no_valid_nodes": "Нет допустимых узлов",
+        "heuristic": "Эвристика",
         "ipv6_unsupported": "Поддерживаются только публичные адреса IPv4",
         "private_ip": "Частные/зарезервированные адреса не поддерживаются",
         "detecting_egress": "Определение текущего исходящего IP...",
@@ -1258,6 +1278,10 @@ STR = {
         "quit_hint": "(q خروج)",
         "prompt_ip": "IP عمومی وارد کنید (b بازگشت، q خروج): ",
         "invalid_ip": "آدرس IP نامعتبر است، دوباره وارد کنید",
+        "invalid_input": "ورودی نامعتبر است، دوباره وارد کنید",
+        "invalid_proxy_format": "قالب پروکسی نامعتبر است، HOST:PORT مورد انتظار است",
+        "no_valid_nodes": "گره معتبری وجود ندارد",
+        "heuristic": "ابتکاری",
         "ipv6_unsupported": "در حال حاضر فقط آدرس‌های عمومی IPv4 پشتیبانی می‌شوند",
         "private_ip": "آدرس‌های خصوصی/رزرو پشتیبانی نمی‌شوند",
         "detecting_egress": "در حال تشخیص IP خروجی فعلی...",
@@ -1634,29 +1658,55 @@ DL_CAP_BYTES = 200 * 1024 * 1024  # 测速单节点下载上限 (达量即停, �
 
 _cache = {}
 _cache_lock = threading.Lock()
+_inflight = {}
+_inflight_lock = threading.Lock()
 
 
-def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
-    if use_cache:
-        with _cache_lock:
-            if url in _cache:
-                return True, _cache[url]
-    h = {"User-Agent": UA_BROWSER}
-    if headers:
-        h.update(headers)
+def _per_key_lock(key):
+    """取 key 专属锁（singleflight）：同 key 的并发调用串行化，
+    后到者在锁内复查缓存，命中即返，不重复下载。注册表以 key 形状
+    区分命名空间：http_get 用 (url, 头元组)，威胁表用 ("threat", 名)。"""
+    with _inflight_lock:
+        lk = _inflight.get(key)
+        if lk is None:
+            lk = threading.Lock()
+            _inflight[key] = lk
+        return lk
+
+
+def _read_limited(resp, cap=1048576, timeout=10):
+    """带尺寸上限与全程时限的响应体读取：超限或超时抛错，调用方按失败处理。
+    单次 recv 仍受连接超时约束；时限在每次分块前检查，故最坏为时限 + 一次 recv 超时。"""
+    buf = []
+    total = 0
+    deadline = time.monotonic() + timeout
+    while True:
+        if time.monotonic() > deadline:
+            raise TimeoutError("response read deadline exceeded")
+        chunk = resp.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > cap:
+            raise ValueError("response exceeds size cap")
+        buf.append(chunk)
+    return b"".join(buf)
+
+
+def _http_fetch_uncached(url, h, timeout, retries):
+    """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。"""
     last_err = ""
     for _ in range(retries):
         try:
             req = urllib.request.Request(url, headers=h)
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = r.read().decode("utf-8", errors="replace")
-                if use_cache:
-                    with _cache_lock:
-                        _cache[url] = data
+                data = _read_limited(r, timeout=timeout).decode(
+                    "utf-8", errors="replace")
                 return True, data
         except urllib.error.HTTPError as e:
             try:
-                data = e.read().decode("utf-8", errors="replace")
+                data = _read_limited(e, timeout=timeout).decode(
+                    "utf-8", errors="replace")
             except Exception:
                 data = ""
             # 5xx/429 可重试
@@ -1671,6 +1721,28 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
     return False, last_err
 
 
+def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
+    h = {"User-Agent": UA_BROWSER}
+    if headers:
+        h.update(headers)
+    if not use_cache:
+        return _http_fetch_uncached(url, h, timeout, retries)
+    key = (url, tuple(sorted(h.items())))
+    with _cache_lock:
+        if key in _cache:
+            return True, _cache[key]
+    lk = _per_key_lock(key)
+    with lk:
+        with _cache_lock:
+            if key in _cache:
+                return True, _cache[key]
+        ok, data = _http_fetch_uncached(url, h, timeout, retries)
+        if ok:
+            with _cache_lock:
+                _cache[key] = data
+        return ok, data
+
+
 _threat_lists = {}
 _threat_lists_lock = threading.Lock()
 
@@ -1680,18 +1752,23 @@ def _get_threat_list(name, url, parser):
     with _threat_lists_lock:
         if name in _threat_lists:
             return _threat_lists[name]
-    ok, raw = http_get(url, timeout=12, retries=2, use_cache=True)
-    if not ok:
-        return None
-    try:
-        parsed = parser(raw)
-        if parsed is None:
-            return None
+    lk = _per_key_lock(("threat", name))
+    with lk:
         with _threat_lists_lock:
-            _threat_lists[name] = parsed
-        return parsed
-    except Exception:
-        return None
+            if name in _threat_lists:
+                return _threat_lists[name]
+        ok, raw = http_get(url, timeout=12, retries=2, use_cache=True)
+        if not ok:
+            return None
+        try:
+            parsed = parser(raw)
+            if parsed is None:
+                return None
+            with _threat_lists_lock:
+                _threat_lists[name] = parsed
+            return parsed
+        except Exception:
+            return None
 
 
 def validate_ip(s):
@@ -3845,7 +3922,7 @@ def run_passive(ip):
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
-                _addr = (json.loads(_rp.read().decode("utf-8", "replace"))
+                _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
                          .get("address") or {})
             if _addr.get("country"):
                 sources["coordgeo"] = {
@@ -4489,22 +4566,22 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         else:
             _dc0, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
             if _dc0:
-                type_sources.append(("Heuristic", T("dc")))
+                type_sources.append((T("heuristic"), T("dc")))
             elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-                type_sources.append(("Heuristic", T("residential")))
+                type_sources.append((T("heuristic"), T("residential")))
             else:
-                type_sources.append(("Heuristic", T("unknown")))
+                type_sources.append((T("heuristic"), T("unknown")))
     if wi.get("ok"):
         if wi.get("hosting"):
             type_sources.append(("ipwho.is", T("dc")))
         else:
             dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
             if dc:
-                type_sources.append(("Heuristic", T("dc")))
+                type_sources.append((T("heuristic"), T("dc")))
             elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
-                type_sources.append(("Heuristic", T("residential")))
+                type_sources.append((T("heuristic"), T("residential")))
             else:
-                type_sources.append(("Heuristic", T("unknown")))
+                type_sources.append((T("heuristic"), T("unknown")))
     il = s.get("iplocate", {})
     if il.get("ok"):
         if il.get("hosting") or il.get("asn_type") == "hosting":
@@ -4520,15 +4597,15 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         elif iq.get("mobile"):
             type_sources.append(("ipquery.io", T("unknown")))
         else:
-            type_sources.append(("Heuristic", T("residential")
+            type_sources.append((T("heuristic"), T("residential")
                                  if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
                                  else T("unknown")))
     if not wi.get("ok") and prof.get("ok"):
         dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if dc:
-            type_sources.append(("Heuristic", T("dc")))
+            type_sources.append((T("heuristic"), T("dc")))
         elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            type_sources.append(("Heuristic", T("residential")))
+            type_sources.append((T("heuristic"), T("residential")))
     if type_sources:
         print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in type_sources))
         cells = []
@@ -4775,7 +4852,7 @@ def run_passive6(ip):
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
-                _addr = (json.loads(_rp.read().decode("utf-8", "replace"))
+                _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
                          .get("address") or {})
             if _addr.get("country"):
                 sources["coordgeo"] = {
@@ -4838,11 +4915,11 @@ def print_report6(res, embedded=False):
         else:
             _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
             if _dc6:
-                _ts6.append(("Heuristic", T("dc")))
+                _ts6.append((T("heuristic"), T("dc")))
             elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-                _ts6.append(("Heuristic", T("residential")))
+                _ts6.append((T("heuristic"), T("residential")))
             else:
-                _ts6.append(("Heuristic", T("unknown")))
+                _ts6.append((T("heuristic"), T("unknown")))
     _wi6 = s.get("ipwhois", {})
     if _wi6.get("ok"):
         if _wi6.get("hosting"):
@@ -4850,11 +4927,11 @@ def print_report6(res, embedded=False):
         else:
             _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
             if _dc6:
-                _ts6.append(("Heuristic", T("dc")))
+                _ts6.append((T("heuristic"), T("dc")))
             elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
-                _ts6.append(("Heuristic", T("residential")))
+                _ts6.append((T("heuristic"), T("residential")))
             else:
-                _ts6.append(("Heuristic", T("unknown")))
+                _ts6.append((T("heuristic"), T("unknown")))
     _il6 = s.get("iplocate", {})
     if _il6.get("ok"):
         if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
@@ -4870,15 +4947,15 @@ def print_report6(res, embedded=False):
         elif _iq6.get("mobile"):
             _ts6.append(("ipquery.io", T("unknown")))
         else:
-            _ts6.append(("Heuristic", T("residential")
+            _ts6.append((T("heuristic"), T("residential")
                          if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
                          else T("unknown")))
     if not _wi6.get("ok") and prof.get("ok"):
         _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if _dc6:
-            _ts6.append(("Heuristic", T("dc")))
+            _ts6.append((T("heuristic"), T("dc")))
         elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            _ts6.append(("Heuristic", T("residential")))
+            _ts6.append((T("heuristic"), T("residential")))
     if _ts6:
         print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in _ts6))
         _cells6 = []
@@ -5177,31 +5254,43 @@ _FORCE_FAMILY = 0  # 主动分栈测试期间置 4/6, _active_get 据此钉住�
 _FORCE_STACK = None  # 自检范围覆盖: None=自动/询问, "4"/"6"=仅测该栈 (CLI 标志)
 
 
+_getaddrinfo_sem = threading.BoundedSemaphore(16)
+
+
 def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5):
     """带超时的 getaddrinfo: 标准库解析无超时参数, DNS 失联时会无限阻塞;
-    放守护线程里等, 超时按解析失败抛 OSError, 不让任何调用方挂死。"""
-    _box = {}
+    放守护线程里等, 超时按解析失败抛 OSError, 不让任何调用方挂死。
+    并发 bound: 最多 16 路同时解析 (信号量), 超量调用在同一 timeout
+    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。"""
+    _t0 = time.monotonic()
+    if not _getaddrinfo_sem.acquire(timeout=timeout):
+        raise OSError(f"DNS resolution concurrency limit reached: {host}")
+    try:
+        _box = {}
 
-    def _run():
-        try:
-            _box["r"] = socket.getaddrinfo(host, port, family, type)
-        except Exception as e:
-            _box["e"] = e
+        def _run():
+            try:
+                _box["r"] = socket.getaddrinfo(host, port, family, type)
+            except Exception as e:
+                _box["e"] = e
 
-    _t = threading.Thread(target=_run, daemon=True)
-    _t.start()
-    _t.join(timeout)
-    if _t.is_alive():
-        raise OSError(f"DNS resolution timed out: {host}")
-    if "e" in _box:
-        raise _box["e"]
-    return _box["r"]
+        _t = threading.Thread(target=_run, daemon=True)
+        _t.start()
+        _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
+        if _t.is_alive():
+            raise OSError(f"DNS resolution timed out: {host}")
+        if "e" in _box:
+            raise _box["e"]
+        return _box["r"]
+    finally:
+        _getaddrinfo_sem.release()
 
 
 def _pinned_connect(conn, family):
     infos = _getaddrinfo_timed(conn.host, conn.port, family)
     last = None
     for af, _st, _proto, _nm, sa in infos:
+        _s = None
         try:
             _s = socket.socket(af, socket.SOCK_STREAM)
             _s.settimeout(conn.timeout)
@@ -5211,6 +5300,11 @@ def _pinned_connect(conn, family):
         except OSError as e:
             last = e
             conn.sock = None
+            if _s is not None:
+                try:
+                    _s.close()
+                except Exception:
+                    pass
     if conn.sock is None:
         raise last if last is not None else OSError("no usable address")
     if conn._tunnel_host:
@@ -5844,7 +5938,7 @@ def test_dns_servers(timeout=3):
                 headers={"Accept": "application/dns-message", "User-Agent": UA_BROWSER},
             )
             with _pinned_opener(4).open(rq, timeout=timeout + 2) as rp:
-                d = rp.read()
+                d = _read_limited(rp, timeout=timeout + 2)
             rtt = round((time.time() - t0) * 1000, 1)
             if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
                 return {"name": name, "ip": url, "proto": "DoH", "ok": True, "rtt_ms": rtt}
@@ -7015,16 +7109,19 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
         ver, method = _sock_readn(s, 2)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
+        offered = (0x00, 0x02) if (username and password) else (0x00,)
+        if method == 0xFF:
+            raise OSError("proxy rejected all auth methods")
+        if method not in offered:
+            raise OSError("server selected unoffered auth method %#04x" % method)
         # 2. 用户名/密码认证 (RFC 1929)
         if method == 0x02:
-            u, p = username.encode()[:255], password.encode()[:255]
+            u, p = username.encode(), password.encode()
+            if len(u) > 255 or len(p) > 255:
+                raise OSError("username/password too long for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
             if _sock_readn(s, 2) != b"\x01\x00":
                 raise OSError("authentication failed")
-        elif method == 0xFF:
-            raise OSError("proxy rejected all auth methods")
-        elif method != 0x00:
-            raise OSError("unsupported auth method %#04x" % method)
         # 3. CONNECT 请求
         req = b"\x05\x01\x00"
         try:
@@ -7034,7 +7131,12 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                 req += b"\x04" + socket.inet_pton(socket.AF_INET6, dh)
             except OSError:
                 if rdns:
-                    h = dh.encode("idna")[:255]
+                    try:
+                        h = dh.encode("idna")
+                    except Exception as e:
+                        raise OSError("hostname idna encoding failed: %s" % e)
+                    if len(h) > 255:
+                        raise OSError("hostname too long for SOCKS5")
                     req += b"\x03" + bytes([len(h)]) + h
                 else:
                     req += b"\x01" + socket.inet_pton(
@@ -7143,14 +7245,22 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
                                 username=self._user, password=self._pwd,
                                 timeout=self.timeout, rdns=True)
-        ctx = ssl.create_default_context()
-        self.sock = ctx.wrap_socket(raw, server_hostname=self.host)
+        try:
+            self.sock = self._context.wrap_socket(raw,
+                                                  server_hostname=self.host)
+        except Exception:
+            try:
+                raw.close()
+            except Exception:
+                pass
+            raise
 
 
 def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
     """经代理下载计数 worker: 对指定地区端点循环拉流。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
+    conn = None
     while time.time() < stop and fails < 3:
         try:
             conn = _SocksHTTPS(host, ph, pp,
@@ -7171,13 +7281,20 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                 with lock:
                     room = DL_CAP_BYTES - counter[0]
                     if room <= 0:
+                        conn.close()
                         return
                     counter[0] += min(len(chunk), room)
                 if counter[0] >= DL_CAP_BYTES:
+                    conn.close()
                     return
             conn.close()
             fails = 0
         except Exception:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             fails += 1
             time.sleep(0.2)
 
@@ -7227,20 +7344,16 @@ def get_resolver_ips(probes=3, timeout=8):
     Akamai 权威 DNS 把递归解析器的出口 IP 作为 A 记录返回,
     即系统实际使用的 DNS 解析器出口 IP。返回去重后的 IP 列表。"""
     seen = []
-    old = socket.getdefaulttimeout()
-    socket.setdefaulttimeout(timeout)
-    try:
-        for _ in range(probes):
-            try:
-                infos = _getaddrinfo_timed("whoami.akamai.net", 80,
-                                           family=socket.AF_INET)
-                ip = infos[0][4][0]
-                if ip and ip not in seen:
-                    seen.append(ip)
-            except Exception:
-                continue
-    finally:
-        socket.setdefaulttimeout(old)
+    for _ in range(probes):
+        try:
+            infos = _getaddrinfo_timed("whoami.akamai.net", 80,
+                                       family=socket.AF_INET,
+                                       timeout=timeout)
+            ip = infos[0][4][0]
+            if ip and ip not in seen:
+                seen.append(ip)
+        except Exception:
+            continue
     return seen
 
 
@@ -7561,7 +7674,7 @@ def _print_batch_results(results):
         else:
             avg = jit = loss = "-"
         if nd["proto"] == "socks5":
-            hs = "OK" if r.get("socks5", {}).get("ok") else "✗"
+            hs = T("bn_ok") if r.get("socks5", {}).get("ok") else "✗"
         else:
             hs = "-"
         usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
@@ -7614,7 +7727,7 @@ def run_batch_nodes(json_mode=False):
         if nd:
             nodes.append(nd)
         elif not json_mode:
-            print(T("invalid_ip"))
+            print(T("invalid_input"))
     if not nodes:
         return None
     results = batch_node_test(nodes)
@@ -7962,7 +8075,8 @@ def check_update():
             "https://api.github.com/repos/alariclin/A-Check/releases/latest",
             headers={"User-Agent": "acheck/%s" % VERSION})
         with urllib.request.urlopen(req, timeout=8) as r:
-            tag = json.loads(r.read().decode("utf-8")).get("tag_name", "")
+            tag = json.loads(_read_limited(r, timeout=8).decode(
+                "utf-8")).get("tag_name", "")
     except Exception:
         tag = ""
     latest = tag.lstrip("v")
@@ -8027,13 +8141,15 @@ def run_tcpping_only():
                 th, tp_ = tinp.rsplit(":", 1)
                 tp_ = int(tp_)
         except Exception:
-            print(T("invalid_ip"))
+            print(T("invalid_input"))
             continue
         tp = tcp_ping_stats(th, tp_)
         if tp["ok"]:
             print("  " + T("diag_tcp_ok") % (tp["avg_ms"], tp["jitter_ms"],
                                              tp["loss_pct"]))
-            print("    min %s ms / max %s ms" % (tp["min_ms"], tp["max_ms"]))
+            print("    %s %s ms / %s %s ms" % (
+                _L("最小", "min", "最小", "минимальное", "کمینه"), tp["min_ms"],
+                _L("最大", "max", "最大", "максимальное", "بیشینه"), tp["max_ms"]))
         else:
             print(f"  {_c(C.red, T('diag_tcp_fail'))}")
 
@@ -8330,8 +8446,14 @@ def main():
     if ns.batch:
         _modes.append("--batch")
     if len(_modes) > 1:
-        print(f"[Warning] conflicting modes: running {_modes[0]} only, "
-              f"ignoring: {', '.join(_modes[1:])}", file=sys.stderr)
+        print(_L("警告：模式冲突，仅运行%s，忽略：%s",
+                   "Warning: conflicting modes, running %s only, ignoring: %s",
+                   "警告：モードが競合しています、%s のみ実行し、%s を無視します",
+                   "Предупреждение: конфликт режимов, выполняется только %s, "
+                   "игнорируется: %s",
+                   "هشدار: حالت‌های متناقض، فقط %s اجرا می‌شود، "
+                   "نادیده گرفته شد: %s")
+              % (_modes[0], ", ".join(_modes[1:])), file=sys.stderr)
 
     if ns.active:
         if ns.ip and not ns.json:
@@ -8357,7 +8479,7 @@ def main():
         except Exception:
             print(json.dumps({"error": "invalid --proxy format, want HOST:PORT"},
                              ensure_ascii=False) if ns.json
-                  else T("invalid_ip"))
+                  else T("invalid_proxy_format"))
             sys.exit(2)
         run_proxy_diag(_ph, _pt, username=ns.proxy_user,
                        password=ns.proxy_pass, json_mode=ns.json)
@@ -8371,7 +8493,7 @@ def main():
                 _nodes.append(_nd)
         if not _nodes:
             print(json.dumps({"error": "no valid nodes"}, ensure_ascii=False)
-                  if ns.json else T("invalid_ip"))
+                  if ns.json else T("no_valid_nodes"))
             sys.exit(2)
         _res = batch_node_test(_nodes)
         if ns.json:
@@ -8458,9 +8580,9 @@ def main():
                         print(f"  → {_names[LANG]}")
                         print_banner()
                     else:
-                        print(T("invalid_ip"))
+                        print(T("invalid_input"))
                 except ValueError:
-                    print(T("invalid_ip"))
+                    print(T("invalid_input"))
                 continue
             elif choice == "1":
                 run_active(json_mode=False)
@@ -8511,7 +8633,7 @@ def main():
                         else:
                             raise ValueError("bad format")
                     except Exception:
-                        print(T("invalid_ip"))
+                        print(T("invalid_proxy_format"))
                         continue
                     _u = input(T("prompt_proxy_user")).strip()
                     if _u:
