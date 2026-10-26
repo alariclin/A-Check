@@ -2530,7 +2530,7 @@ class ProxyCheck(Provider):
             return {
                 "ok": True,
                 "proxy": d.get("proxy", "") == "yes",
-                "vpn": d.get("vpn", "") == "yes",
+                "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
                 "type": d.get("type", ""),
                 "risk": int(d.get("risk") or 0),
                 "asn": _parse_asn(d.get("asn")),
@@ -3279,7 +3279,7 @@ SCORING_RULES = {
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
-    Shodan 已知高危漏洞 (每漏洞+5, 上限20) 或高危标签 (+15)
+    Shodan 已知高危漏洞 (每漏洞+5, 上限20)，高危标签另 +15（两项分别累计）
     Feodo C2 僵尸网络黑名单命中       +30
     EmergingThreats 被控主机命中      +25
     Spamhaus DROP 权威滥用名单命中    +25
@@ -3292,7 +3292,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    proxycheck/ipwho.is/freeipapi/ip-api.com 代理/VPN +40
+    proxycheck/ipwho.is/freeipapi/ip-api.com 代理 +40，VPN +40（分别累计）
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -3311,7 +3311,7 @@ SCORING_RULES = {
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
-    Shodan 已知高危漏洞 (每漏洞+5, 上限20) 或高危標籤 (+15)
+    Shodan 已知高危漏洞 (每漏洞+5, 上限20)，高危標籤另 +15（兩項分別累計）
     Feodo C2 殭屍網路黑名單命中       +30
     EmergingThreats 被控主機命中      +25
     Spamhaus DROP 權威濫用名單命中    +25
@@ -3324,7 +3324,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    proxycheck/ipwho.is/freeipapi/ip-api.com 代理/VPN +40
+    proxycheck/ipwho.is/freeipapi/ip-api.com 代理 +40，VPN +40（分別累計）
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -3343,7 +3343,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
-    Shodan vulnerabilities (+5 each, max 20) or threat tags (+15)
+    Shodan vulnerabilities (+5 each, max 20), threat tags +15 (accumulate separately)
     Feodo C2 botnet listed            +30
     EmergingThreats compromised IP    +25
     Spamhaus DROP listed              +25
@@ -3356,7 +3356,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
     No PTR record                     +5
   [Platform 0-100] DC/proxy traits (not malice)
     ISP/Org datacenter/hosting trait  +30
-    Proxy / VPN detected              +40
+    Proxy detected +40, VPN detected +40 (accumulate separately)
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
@@ -3376,7 +3376,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
-    Shodan 脆弱性 (+5/件, 最大20) または危険タグ (+15)
+    Shodan 脆弱性 (+5/件, 最大20)，危険タグは別途 +15（それぞれ加算）
     Feodo C2 ボットネット登録         +30
     EmergingThreats 侵害IP登録        +25
     Spamhaus DROP 登録                +25
@@ -3389,7 +3389,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
     PTR レコードなし                  +5
   [プラットフォーム互換性 0-100] DC/プロキシ属性
     データセンター/ホスティング属性   +30
-    プロキシ / VPN 検出               +40
+    プロキシ検出 +40、VPN 検出 +40（それぞれ加算）
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算、第三者スコアではない)
@@ -3408,7 +3408,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
-    Shodan уязвимости (+5 за каждую, макс. 20) или опасные теги (+15)
+    Shodan уязвимости (+5 за каждую, макс. 20), опасные теги +15 отдельно (суммируются)
     Feodo C2 ботнет                   +30
     EmergingThreats скомпрометирован  +25
     Spamhaus DROP регистрация         +25
@@ -3421,7 +3421,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
     Нет PTR-записи                    +5
   [Совместимость 0-100] Признаки ДЦ/прокси
     Признаки дата-центра / хостинга   +30
-    Обнаружен прокси / VPN            +40
+    Обнаружен прокси +40, VPN +40 (суммируются)
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
@@ -3440,7 +3440,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
-    Shodan آسیب‌پذیری‌ها (+5 هر مورد، حداکثر 20) یا تگ خطرناک (+15)
+    Shodan آسیب‌پذیری‌ها (+5 هر مورد، حداکثر 20)، تگ خطرناک +15 جداگانه (به‌صورت جداگانه جمع می‌شوند)
     Feodo C2 لیست سیاه بات‌نت          +30
     EmergingThreats آی‌پی آلوده        +25
     Spamhaus DROP ثبت‌شده             +25
@@ -3453,7 +3453,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
     نبود رکورد PTR                    +5
   [سازگاری پلتفرم 0-100] ویژگی دیتاسنتر/پروکسی
     ویژگی دیتاسنتر یا میزبانی         +30
-    شناسایی پروکسی / VPN              +40
+    شناسایی پروکسی +40، VPN +40 (هر دو جداگانه جمع می‌شوند)
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
@@ -4548,7 +4548,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             _NA, _NA, _NA, _NA, _NA]),
         ("ip-api.com", [
             _hit(ia, bool(ia.get("proxy"))),
-            _NA, _NA, _NA, _NA, _NA]),
+            _NA, _NA,
+            _hit(ia, bool(ia.get("hosting"))),
+            _NA, _NA]),
         ("iplocate.io", [
             _hit(il, bool(il.get("proxy"))),
             _hit(il, bool(il.get("vpn"))),
