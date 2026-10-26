@@ -264,6 +264,7 @@ STR = {
         "verdict_low": "● 轻微风险",
         "verdict_medium": "● 中等风险",
         "verdict_high": "● 高风险",
+        "verdict_insufficient": "● 证据不足",
         "purity": "纯净度",
         "purity_best": "极度纯净",
         "purity_good": "比较纯净",
@@ -278,6 +279,7 @@ STR = {
         "confidence": "置信度",
         "disclaimer": "说明: 被动查询仅反映公开情报，无证据≠无风险。\n机房 IP 的平台策略风险需单独评估。",
         "unlocked": "解锁",
+        "reachable": "可达",
         "blocked": "屏蔽",
         "failed": "失败",
         "native": "原生",
@@ -495,6 +497,7 @@ STR = {
         "verdict_low": "● Minor risk",
         "verdict_medium": "● Moderate risk",
         "verdict_high": "● High risk",
+        "verdict_insufficient": "● Insufficient evidence",
         "purity": "Purity",
         "purity_best": "Very clean",
         "purity_good": "Fairly clean",
@@ -509,6 +512,7 @@ STR = {
         "confidence": "Confidence",
         "disclaimer": "Note: passive queries reflect OSINT only; no evidence ≠ no risk.\nDC IP platform policy risk needs separate assessment.",
         "unlocked": "OK",
+        "reachable": "Reachable",
         "blocked": "Blocked",
         "failed": "Failed",
         "native": "Native",
@@ -726,6 +730,7 @@ STR = {
         "verdict_low": "● 輕微風險",
         "verdict_medium": "● 中等風險",
         "verdict_high": "● 高風險",
+        "verdict_insufficient": "● 證據不足",
         "purity": "純淨度",
         "purity_best": "極度純淨",
         "purity_good": "比較純淨",
@@ -740,6 +745,7 @@ STR = {
         "confidence": "置信度",
         "disclaimer": "說明: 被動查詢僅反映公開情報，無證據≠無風險。\n機房 IP 的平台策略風險需單獨評估。",
         "unlocked": "解鎖",
+        "reachable": "可達",
         "blocked": "屏蔽",
         "failed": "失敗",
         "native": "原生",
@@ -957,6 +963,7 @@ STR = {
         "verdict_low": "● 軽微なリスク",
         "verdict_medium": "● 中程度のリスク",
         "verdict_high": "● 高リスク",
+        "verdict_insufficient": "● 証拠不十分",
         "purity": "純度",
         "purity_best": "極めてクリーン",
         "purity_good": "比較的クリーン",
@@ -971,6 +978,7 @@ STR = {
         "confidence": "信頼度",
         "disclaimer": "注: パッシブクエリは公開情報のみを反映，証拠なし≠リスクなし。\nDC IPのプラットフォームポリシーリスクは別途評価が必要。",
         "unlocked": "利用可能",
+        "reachable": "到達可能",
         "blocked": "ブロック",
         "failed": "失敗",
         "native": "ネイティブ",
@@ -1188,6 +1196,7 @@ STR = {
         "verdict_low": "● Незначительный риск",
         "verdict_medium": "● Средний риск",
         "verdict_high": "● Высокий риск",
+        "verdict_insufficient": "● Недостаточно данных",
         "purity": "Чистота",
         "purity_best": "Очень чистая",
         "purity_good": "Довольно чистая",
@@ -1202,6 +1211,7 @@ STR = {
         "confidence": "Достоверность",
         "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски ДЦ IP оцениваются отдельно.",
         "unlocked": "Доступно",
+        "reachable": "Достижимо",
         "blocked": "Блок",
         "failed": "Ошибка",
         "native": "Нативный",
@@ -1419,6 +1429,7 @@ STR = {
         "verdict_low": "● ریسک جزئی",
         "verdict_medium": "● ریسک متوسط",
         "verdict_high": "● ریسک بالا",
+        "verdict_insufficient": "● شواهد ناکافی",
         "purity": "خلوص",
         "purity_best": "بسیار پاک",
         "purity_good": "نسبتاً پاک",
@@ -1433,6 +1444,7 @@ STR = {
         "confidence": "اطمینان",
         "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک سیاستی IP دیتاسنتر جداگانه ارزیابی شود.",
         "unlocked": "باز",
+        "reachable": "قابل دسترسی",
         "blocked": "مسدود",
         "failed": "ناموفق",
         "native": "بومی",
@@ -3776,7 +3788,9 @@ def run_passive(ip):
     core_ok = sum(1 for c_ok in core_checks if c_ok)
     confidence = min(100, int(round(completeness * 0.7 + (core_ok / len(core_checks)) * 30)))
 
-    if combined < 25:
+    if core_ok == 0 or completeness < 50:
+        verdict = T("verdict_insufficient")
+    elif combined < 25:
         verdict = T("verdict_clean")
     elif combined < 50:
         verdict = T("verdict_low")
@@ -3943,10 +3957,13 @@ def _print_streaming_inference(res):
     print(f"  {T('usage')}: {ip_type_lbl}")
 
     cc = (country or "").lower()
+    cc_code = (prof.get("country_code") or "").lower()
 
     def _cc_match(*tokens):
         for tk in tokens:
             tk_l = tk.lower()
+            if len(tk_l) == 2 and tk_l.isascii() and tk_l == cc_code:
+                return True
             if len(tk_l) <= 3 and tk_l.isascii():
                 if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
@@ -5314,7 +5331,7 @@ def test_netflix(local_ip=None):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
-        orig_tag = _L("自制", "Orig", "オリジナル", "Оригинал", "اصلی")
+        orig_tag = _L("自制?", "Orig?", "オリジナル?", "Оригинал?", "اصلی?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     return T("blocked"), "", None
@@ -5346,7 +5363,7 @@ def test_primevideo(local_ip=None):
             r'"territory"\s*:\s*"([A-Z]{2})"', body
         )
         region = f"[{m.group(1)}]" if m else ""
-        return T("unlocked"), region, get_unlock_type("www.primevideo.com", local_ip)
+        return T("reachable"), region, None
     return T("blocked"), "", None
 
 
@@ -5456,7 +5473,7 @@ def test_line(local_ip=None):
     if _is_challenge(code, body):
         return T("unknown"), "", None
     if code == 200:
-        return T("unlocked"), "", get_unlock_type("www.line.me", local_ip)
+        return T("reachable"), "", None
     return T("blocked"), "", None
 
 
@@ -5489,7 +5506,7 @@ def test_deepseek(local_ip=None):
     if _is_challenge(code, body):
         return T("unknown"), "", None
     if code == 200:
-        return T("unlocked"), "", get_unlock_type("www.deepseek.com", local_ip)
+        return T("reachable"), "", None
     return T("blocked"), "", None
 
 
@@ -5500,7 +5517,7 @@ def test_appletv(local_ip=None):
     if _is_challenge(code, body):
         return T("unknown"), "", None
     if code == 200:
-        return T("unlocked"), "", get_unlock_type("tv.apple.com", local_ip)
+        return T("reachable"), "", None
     return T("blocked"), "", None
 
 
