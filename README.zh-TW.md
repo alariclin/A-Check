@@ -105,24 +105,24 @@ Linux / VPS：
 curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
-Windows（PowerShell）：
+Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck; .\run.bat
 ```
 
 任意系統（單一檔案，需 Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN 鏡像——GitHub 直連困難的地區（如中國大陸）可用。單文件版，功能完整：**
 gh-proxy（大陸直連）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 也可以直接執行腳本本體（需 Python 3.8+）：
 
@@ -139,7 +139,7 @@ python3 acheck.py [IP] [選項]
 
 | 選項 | 說明 |
 |---|---|
-| `IPv4` | 被動查詢指定公網 IP |
+| `IP` | 被動查詢指定公網 IP（支援 IPv4/IPv6） |
 | `--active` | 主動模式：本機出口全量自檢 |
 | `--ipv4-only` | 配合 `--active`：只測 IPv4（跳過 IPv6） |
 | `--ipv6-only` | 配合 `--active`：只測 IPv6 |
@@ -172,7 +172,7 @@ python3 acheck.py [IP] [選項]
 
 ## 首次打開被系統攔截時
 
-- **macOS**：A-Check.app 未做蘋果開發者簽名，首次打開可能提示「來自身分不明的開發者」無法打開。右鍵點擊 `A-Check.app`（或 `run.command`）→「打開」→ 在彈窗裡再點一次「打開」即可，只需操作一次；也可以到「系統設定 → 隱私權與安全性」裡點「仍要打開」
+- **macOS**：A-Check.app 未做蘋果開發者簽名，首次打開可能提示「來自身分不明的開發者」無法打開。到「系統設定 → 隱私權與安全性」裡點「仍要打開」，只需操作一次；舊版 macOS（Sequoia 之前）也可右鍵點擊 `A-Check.app`（或 `run.command`）→「打開」→ 在彈窗裡再點一次「打開」
 - **Windows**：首次執行 `run.bat` 可能彈出 SmartScreen 提示，點「更多資訊」→「仍要執行」
 
 ## 授權

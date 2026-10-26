@@ -105,24 +105,24 @@ Linux / VPS:
 curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
-Windows (PowerShell):
+Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
 gh-proxy (mainland China direct):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 Or run the script directly (Python 3.8+):
 
@@ -139,7 +139,7 @@ python3 acheck.py [IP] [options]
 
 | Option | Description |
 |---|---|
-| `IPv4` | Passive lookup of a public IP |
+| `IP` | Passive lookup of a public IP (IPv4 or IPv6) |
 | `--active` | Active mode: full self-check of your egress |
 | `--ipv4-only` | With `--active`: IPv4 only (skip IPv6) |
 | `--ipv6-only` | With `--active`: IPv6 only |
@@ -172,7 +172,7 @@ Every factor and score is a multi-source vote; a single source's false positive 
 
 ## If the system blocks the first launch
 
-- **macOS**: A-Check.app is not signed with an Apple Developer certificate, so the first launch may be blocked ("unidentified developer"). Right-click `A-Check.app` (or `run.command`) → Open → confirm with Open again. Needed once only; you can also allow it under System Settings → Privacy & Security
+- **macOS**: A-Check.app is not signed with an Apple Developer certificate, so the first launch may be blocked ("unidentified developer"). Allow it under System Settings → Privacy & Security (needed once only). On older macOS versions (before Sequoia), you can also right-click `A-Check.app` (or `run.command`) → Open → confirm with Open again.
 - **Windows**: the first run of `run.bat` may trigger a SmartScreen prompt — click "More info" → "Run anyway"
 
 ## License
