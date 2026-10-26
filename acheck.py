@@ -89,6 +89,7 @@ STR = {
         "title": "IP 信誉检测",
         "prompt_ip": "请输入公网 IP (b 返回，q 退出): ",
         "invalid_ip": "无效的 IP 地址，请重新输入",
+        "upd_ahead": "本地版本高于最新发布 (v%s)",
         "ipapi_http_note": "注：ip-api 免费源仅支持明文 HTTP 查询",
         "invalid_input": "输入无效，请重新输入",
         "invalid_proxy_format": "代理格式无效，应为 HOST:PORT",
@@ -298,6 +299,7 @@ STR = {
         "title": "IP Reputation Check",
         "prompt_ip": "Enter public IP (b back, q quit): ",
         "invalid_ip": "Invalid IP address, try again",
+        "upd_ahead": "Local version is newer than the latest release (v%s)",
         "ipapi_http_note": "Note: the ip-api free source only supports plaintext HTTP queries",
         "invalid_input": "Invalid input, try again",
         "invalid_proxy_format": "Invalid proxy format, want HOST:PORT",
@@ -507,6 +509,7 @@ STR = {
         "title": "IP 信譽檢測",
         "prompt_ip": "請輸入公網 IP (b 返回，q 退出): ",
         "invalid_ip": "無效的 IP 地址，請重新輸入",
+        "upd_ahead": "本地版本高於最新發布 (v%s)",
         "ipapi_http_note": "註：ip-api 免費來源僅支援明文 HTTP 查詢",
         "invalid_input": "輸入無效，請重新輸入",
         "invalid_proxy_format": "代理格式無效，應為 HOST:PORT",
@@ -716,6 +719,7 @@ STR = {
         "title": "IPレピュテーションチェック",
         "prompt_ip": "パブリックIPを入力 (b 戻る，q 終了): ",
         "invalid_ip": "無効なIPアドレスです，再入力してください",
+        "upd_ahead": "ローカルバージョンが最新リリースより新しいです (v%s)",
         "ipapi_http_note": "注：ip-api 無料ソースは平文 HTTP クエリのみ対応",
         "invalid_input": "入力が無効です、再入力してください",
         "invalid_proxy_format": "プロキシの形式が無効です、HOST:PORT で指定してください",
@@ -925,6 +929,7 @@ STR = {
         "title": "Проверка репутации IP",
         "prompt_ip": "Введите публичный IP (b назад, q выход): ",
         "invalid_ip": "Недействительный IP-адрес, введите снова",
+        "upd_ahead": "Локальная версия новее последнего релиза (v%s)",
         "ipapi_http_note": "Примечание: бесплатный источник ip-api поддерживает только незашифрованные HTTP-запросы",
         "invalid_input": "Неверный ввод, введите снова",
         "invalid_proxy_format": "Неверный формат прокси, ожидается HOST:PORT",
@@ -1134,6 +1139,7 @@ STR = {
         "title": "بررسی اعتبار IP",
         "prompt_ip": "IP عمومی وارد کنید (b بازگشت، q خروج): ",
         "invalid_ip": "آدرس IP نامعتبر است، دوباره وارد کنید",
+        "upd_ahead": "نسخه محلی جدیدتر از آخرین انتشار است (v%s)",
         "ipapi_http_note": "توجه: منبع رایگان ip-api فقط از پرسمان‌های HTTP رمزنگاری‌نشده پشتیبانی می‌کند",
         "invalid_input": "ورودی نامعتبر است، دوباره وارد کنید",
         "invalid_proxy_format": "قالب پروکسی نامعتبر است، HOST:PORT مورد انتظار است",
@@ -1419,7 +1425,15 @@ def _use_color():
     return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
+def _strip_cc(s):
+    """剥离控制字符 (Cc 类，含 ESC/换行/DEL) 与完整 CSI 转义序列，
+    防源端文本注入终端转义或伪造行（只剥 ESC 会残留 "[2J" 字面噪音）。"""
+    s = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", str(s))
+    return "".join(ch for ch in s if unicodedata.category(ch) != "Cc")
+
+
 def _c(fn, s):
+    s = _strip_cc(s)
     return fn(s) if _use_color() else str(s)
 
 
@@ -1436,16 +1450,27 @@ def _disp_width(s):
 
 
 def _truncate_disp(s, max_width):
-    """按终端显示列宽安全截断字符串，防止中日韩双宽字符溢出折行。"""
+    """按终端显示列宽安全截断字符串，防止中日韩双宽字符溢出折行。
+    ANSI 转义序列原样透传、不计宽度、不被拦腰截断。"""
     w = 0
     out = []
-    for ch in str(s):
+    i = 0
+    s = str(s)
+    while i < len(s):
+        if s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
+            j = s.find("m", i + 2)
+            if j != -1:
+                out.append(s[i:j + 1])
+                i = j + 1
+                continue
+        ch = s[i]
         cw = 0 if unicodedata.combining(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
         if w + cw > max_width:
             out.append("...")
             break
         out.append(ch)
         w += cw
+        i += 1
     return "".join(out)
 
 
@@ -1464,7 +1489,7 @@ def _render_progress_locked(current, total, name=""):
     filled = int(bar_len * current / max(total, 1))
     bar = "█" * filled + "░" * (bar_len - filled)
     msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
-    _lim = max(40, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
+    _lim = max(10, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
     if _disp_width(msg) > _lim:
         msg = _truncate_disp(msg, _lim - 3)
     pad_spaces = " " * max(0, _lim - _disp_width(msg))
@@ -2207,6 +2232,8 @@ def _resolve_geo_online(jobs):
         name = (name or "").strip()
         if not name or len(name) < 3 or any(ch.isdigit() for ch in name):
             continue
+        if name.lower() == "none":
+            continue  # f-string 残留的 None 文本不进检索
         if not name.isascii():
             continue  # 已是本地化文本的不拿去英文库检索
         if name in _GEO_EXTRA[kind]:
@@ -2261,15 +2288,21 @@ def _loc_region(text):
 
 
 def _loc_city(text):
-    """城市名 -> 界面语言 (同上)。"""
+    """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。"""
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
-    if _GEO_EXTRA.get("lang") == LANG and t in _GEO_EXTRA["city"]:
-        return _GEO_EXTRA["city"][t]
-    en = _ANY_CITY2EN.get(t)
-    if en:
-        return _CITY_L10N.get(LANG, {}).get(en, text)
+    cands = [t]
+    folded = "".join(c for c in unicodedata.normalize("NFKD", t)
+                     if not unicodedata.combining(c))
+    if folded != t:
+        cands.append(folded)
+    for cand in cands:
+        if _GEO_EXTRA.get("lang") == LANG and cand in _GEO_EXTRA["city"]:
+            return _GEO_EXTRA["city"][cand]
+        en = _ANY_CITY2EN.get(cand)
+        if en:
+            return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
 
 
@@ -2335,13 +2368,13 @@ class IPWhoIs(Provider):
 
             return {
                 "ok": True,
-                "isp": conn.get("isp", ""),
-                "org": conn.get("org", ""),
+                "isp": conn.get("isp") or "",
+                "org": conn.get("org") or "",
                 "asn": _parse_asn(conn.get("asn")),
-                "country": d.get("country", ""),
-                "country_code": d.get("country_code", ""),
-                "region": d.get("region", ""),
-                "city": d.get("city", ""),
+                "country": d.get("country") or "",
+                "country_code": d.get("country_code") or "",
+                "region": d.get("region") or "",
+                "city": d.get("city") or "",
                 "latitude": d.get("latitude"),
                 "longitude": d.get("longitude"),
                 "timezone": (
@@ -2516,9 +2549,9 @@ class DBIP(Provider):
                 return {"ok": False, "err": str(d["error"])[:80]}
             return {
                 "ok": True,
-                "country": d.get("countryName", ""),
-                "state": d.get("stateProv", ""),
-                "city": d.get("city", ""),
+                "country": d.get("countryName") or "",
+                "state": d.get("stateProv") or "",
+                "city": d.get("city") or "",
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3050,7 +3083,7 @@ class RDAP(Provider):
                 break
         org = ""
         for e in d.get("entities") or []:
-            if "registrant" in (e.get("roles") or []) or e.get("handle"):
+            if "registrant" in (e.get("roles") or []):
                 org = e.get("handle", "")
                 if org:
                     break
@@ -3710,7 +3743,7 @@ def run_passive(ip):
         _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
-        print("\r" + " " * max(40, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+        print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
@@ -4672,7 +4705,7 @@ def run_passive6(ip):
             sources[k] = v
 
     if "--json" not in sys.argv:
-        print("\r" + " " * max(40, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+        print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
@@ -5828,7 +5861,7 @@ def test_dns_servers(timeout=3):
         for f in dot_futs:
             res["dot"].append(f.result())
     for k in res:
-        res[k].sort(key=lambda x: (not x["ok"], x["rtt_ms"] or 9999))
+        res[k].sort(key=lambda x: (not x["ok"], x["rtt_ms"] if x["rtt_ms"] is not None else float("inf")))
     return res
 
 
@@ -5888,13 +5921,13 @@ DNS_SERVERS_V6 = [
 # 公共解析器的 DoH IPv6 端点 (名称, IPv6 地址, DoH 主机名); 路径统一 /dns-query。
 # 仅收标准库 HTTP/1.1 可达者: Quad9/Mullvad 的 DoH 需 HTTP/2, 不收 (与 IPv4 侧删 Quad9-DoH 同理)。
 DNS_SERVERS_DOH6 = [
-    ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com"),
-    ("Google", "2001:4860:4860::8888", "dns.google"),
-    ("AdGuard", "2a10:50c0::ad1:ff", "dns.adguard-dns.com"),
-    ("NextDNS", "2a07:a8c1::", "dns.nextdns.io"),
-    ("ControlD", "2606:1a40::22", "freedns.controld.com"),
-    ("DNS.SB", "2a09::", "doh.dns.sb"),
-    ("OpenDNS", "2620:0:ccc::2", "doh.opendns.com"),
+    ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com", "/dns-query"),
+    ("Google", "2001:4860:4860::8888", "dns.google", "/dns-query"),
+    ("AdGuard", "2a10:50c0::ad1:ff", "dns.adguard-dns.com", "/dns-query"),
+    ("NextDNS", "2a07:a8c1::", "dns.nextdns.io", "/dns-query"),
+    ("ControlD", "2606:1a40::22", "freedns.controld.com", "/p0"),
+    ("DNS.SB", "2a09::", "doh.dns.sb", "/dns-query"),
+    ("OpenDNS", "2620:0:ccc::2", "doh.opendns.com", "/dns-query"),
 ]
 
 
@@ -5973,7 +6006,7 @@ def test_dns_servers6(timeout=3):
         return {"name": name, "ip": ip, "proto": "DoT853",
                 "ok": False, "rtt_ms": None}
 
-    def _th6(name, ip, host):
+    def _th6(name, ip, host, path="/dns-query"):
         sk = None
         ss = None
         try:
@@ -5982,7 +6015,7 @@ def test_dns_servers6(timeout=3):
             sk = socket.create_connection((ip, 443), timeout=max(timeout, 5))
             ss = ctx.wrap_socket(sk, server_hostname=host)
             req = (
-                f"POST /dns-query HTTP/1.1\r\nHost: {host}\r\n"
+                f"POST {path} HTTP/1.1\r\nHost: {host}\r\n"
                 "Accept: application/dns-message\r\n"
                 "Content-Type: application/dns-message\r\n"
                 f"Content-Length: {len(pkt)}\r\nConnection: close\r\n\r\n"
@@ -6019,7 +6052,7 @@ def test_dns_servers6(timeout=3):
     res = {"plain6": [], "doh6": [], "dot6": []}
     with ThreadPoolExecutor(max_workers=14) as ex:
         plain_futs = [ex.submit(_tp6, n, ip) for n, ip, _ in DNS_SERVERS_V6]
-        doh_futs = [ex.submit(_th6, n, ip, h) for n, ip, h in DNS_SERVERS_DOH6]
+        doh_futs = [ex.submit(_th6, n, ip, h, p) for n, ip, h, p in DNS_SERVERS_DOH6]
         dot_futs = [ex.submit(_tt6, n, ip, sni) for n, ip, sni in DNS_SERVERS_V6]
         for f in plain_futs:
             res["plain6"].append(f.result())
@@ -6028,7 +6061,7 @@ def test_dns_servers6(timeout=3):
         for f in dot_futs:
             res["dot6"].append(f.result())
     for k in res:
-        res[k].sort(key=lambda x: (not x["ok"], x["rtt_ms"] or 9999))
+        res[k].sort(key=lambda x: (not x["ok"], x["rtt_ms"] if x["rtt_ms"] is not None else float("inf")))
     return res
 
 
@@ -6474,7 +6507,7 @@ def disk_io_test(size_mb=64):
         return None
     try:
         block = os.urandom(1024 * 1024)
-        t0 = time.time()
+        t0 = time.perf_counter()
         with os.fdopen(fd, "wb") as f:
             fd = f.fileno()
             if sys.platform == "darwin":
@@ -6492,9 +6525,9 @@ def disk_io_test(size_mb=64):
                     os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
                 except Exception:
                     pass
-        write_time = max(0.001, time.time() - t0)
+        write_time = max(0.001, time.perf_counter() - t0)
 
-        t1 = time.time()
+        t1 = time.perf_counter()
         with open(tmp_path, "rb") as f:
             fd = f.fileno()
             if sys.platform == "darwin":
@@ -6505,7 +6538,7 @@ def disk_io_test(size_mb=64):
                     pass
             while f.read(1024 * 1024):
                 pass
-        read_time = max(0.001, time.time() - t1)
+        read_time = max(0.001, time.perf_counter() - t1)
 
         return {
             "write_mbs": round(size_mb / write_time, 1),
@@ -6533,8 +6566,8 @@ def print_system_info(si=None, io_res=None):
     if io_res is None:
         io_res = disk_io_test()
     if io_res:
-        w = f"{io_res['write_mbs']:.0f} MB/s"
-        rd = f"{io_res['read_mbs']:.0f} MB/s"
+        w = f"{io_res['write_mbs']:.0f} MiB/s"
+        rd = f"{io_res['read_mbs']:.0f} MiB/s"
         print(f"  {_c(C.dim, _pad(T('sys_io'), 10))}: {T('sys_write')} {_c(C.green, w)} / {T('sys_read')} {_c(C.green, rd)}")
     print()
 
@@ -6695,7 +6728,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
         }
 
         if not json_mode:
-            print("\r" + " " * max(40, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
             print(f"  {_c(C.bold, cat_name)}:")
             print("    " + "".join(_pad(n, 11) for n, _ in results))
             print("    " + "".join(_st(st) for _, (st, _, _) in results))
@@ -7704,7 +7737,7 @@ def _banner_net_info():
     def _rem():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "dns_ok": False}
+            "ipv6_verified": False, "dns_ok": False}
     try:
         info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
                                                   socket.AF_UNSPEC,
@@ -7730,7 +7763,7 @@ def _banner_net_info():
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
                 org = d.get("org") or d.get("isp") or ""
-                parts = [d.get("country") or "", d.get("city") or ""]
+                parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
                 if d.get("hosting") or is_datacenter_heuristic(org, org):
                     parts.append(T("dc"))
                 elif is_residential_isp(org, org):
@@ -7748,7 +7781,7 @@ def _banner_net_info():
                                                          errors="replace"))
                     conn = d.get("connection") or {}
                     org = conn.get("org") or conn.get("isp") or ""
-                    parts = [d.get("country") or "", d.get("city") or ""]
+                    parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
                     if is_datacenter_heuristic(org, org):
                         parts.append(T("dc"))
                     elif is_residential_isp(org, org):
@@ -7783,6 +7816,8 @@ def _banner_net_info():
                     break
             except Exception:
                 continue
+    if _v6addr is not None:
+        info["ipv6_verified"] = True
     if _v6addr is None:
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -7812,11 +7847,12 @@ def _banner_net_info_async():
             _banner_net_started[0] = True
             threading.Thread(target=_banner_net_info, daemon=True).start()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "dns_ok": False}
+            "ipv6_verified": False, "dns_ok": False}
 
 
 def _white(s):
-    """亮白色 (横幅数值), 无色环境返回原文。"""
+    """亮白色 (横幅数值), 无色环境返回原文；输入先剥控制字符。"""
+    s = _strip_cc(s)
     return "\033[97m%s\033[0m" % s if _use_color() else s
 
 
@@ -7862,7 +7898,7 @@ def print_banner():
     else:
         v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
-    v6 = _c(C.green, "●") if net["ipv6"] else _c(C.dim, "○")
+    v6 = _c(C.green, "●") if net["ipv6"] and net.get("ipv6_verified") else _c(C.dim, "○")
     if net.get("ipv6_addr"):
         v6t = " " + net["ipv6_addr"]
     elif net["ipv6"]:
@@ -7904,6 +7940,16 @@ def print_menu():
     print()
 
 
+def _parse_version(v):
+    """解析 x.y.z 式版本号为可比元组；无法解析返回 None。"""
+    parts = []
+    for piece in str(v).strip().split("."):
+        if not piece.isdigit():
+            return None
+        parts.append(int(piece))
+    return tuple(parts) if parts else None
+
+
 def check_update():
     """菜单 6: 对比 GitHub 最新 Release 与本地版本。"""
     try:
@@ -7918,10 +7964,21 @@ def check_update():
     latest = tag.lstrip("v")
     if not latest:
         print(f"  {_c(C.dim, T('upd_failed'))}")
-    elif latest == VERSION:
-        print(f"  {_c(C.green, T('upd_latest') % VERSION)}")
     else:
-        print(f"  {_c(C.yellow, T('upd_available') % (latest, VERSION))}")
+        lv = _parse_version(latest)
+        cv = _parse_version(VERSION)
+        if lv is None or cv is None:
+            print(f"  {_c(C.dim, T('upd_failed'))}")
+        else:
+            n = max(len(lv), len(cv))
+            lv += (0,) * (n - len(lv))
+            cv += (0,) * (n - len(cv))
+            if lv > cv:
+                print(f"  {_c(C.yellow, T('upd_available') % (latest, VERSION))}")
+            elif lv == cv:
+                print(f"  {_c(C.green, T('upd_latest') % VERSION)}")
+            else:
+                print(f"  {_c(C.dim, T('upd_ahead') % VERSION)}")
 
 
 def run_speed_only(json_mode=False):
