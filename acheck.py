@@ -6600,7 +6600,7 @@ DNSBL_LISTS = [
 ]
 
 
-def check_dnsbl(ip, max_lists=29):
+def check_dnsbl(ip, max_lists=29, json_mode=False):
     """纯 Python 并发检测权威 DNSBL 黑名单，校验返回码为 127.0.0.x；127.255.255.x 拒查码计 unknown，不进干净。"""
     ip_s = str(ip)
     rev = ".".join(reversed(ip_s.split(".")))
@@ -6610,7 +6610,7 @@ def check_dnsbl(ip, max_lists=29):
     bl = []
     done = [0]
     sys_ns = _get_system_nameservers()[0]
-    is_json = "--json" in sys.argv
+    is_json = json_mode or "--json" in sys.argv
 
     def _check(lst):
         qname = f"{rev}.{lst}"
@@ -6859,7 +6859,7 @@ def run_active(json_mode=False, stack=None):
         p25 = f_p25.result()
         mx_results = [f.result() for f in f_mxs]
 
-    total, clean, marked, bl = check_dnsbl(egress)
+    total, clean, marked, bl = check_dnsbl(egress, json_mode=json_mode)
 
     st_res = print_speed_section(json_mode=json_mode, gated=True)
 
@@ -7489,6 +7489,30 @@ def batch_node_test(nodes, ping_count=5):
     return results
 
 
+def _node_label(nd):
+    """批测表标签：含凭证的 socks5 节点掩盖账密，只显 host:port。"""
+    if nd["proto"] == "socks5" and (nd.get("user") is not None
+                                   or nd.get("pass") is not None):
+        host = nd["host"]
+        if ":" in host and not host.startswith("["):
+            host = "[%s]" % host
+        return ("socks5://***@%s:%s" % (host, nd["port"]))[:38]
+    return nd["raw"][:38]
+
+
+def _sanitize_batch_results(results):
+    """批测 JSON 脱敏副本：节点只留 host/port/proto，剔除 user/pass/raw。
+    原结果不动（吞吐实测仍需凭证）。"""
+    clean = []
+    for r in results:
+        nd = r["node"]
+        nr = dict(r)
+        nr["node"] = {"host": nd["host"], "port": nd["port"],
+                      "proto": nd["proto"]}
+        clean.append(nr)
+    return clean
+
+
 def _print_batch_results(results):
     """打印排名表, 最优节点绿色标出。"""
     print()
@@ -7499,7 +7523,7 @@ def _print_batch_results(results):
     best_marked = False
     for i, r in enumerate(results, 1):
         nd = r["node"]
-        label = nd["raw"][:38]
+        label = _node_label(nd)
         tcp = r["tcp"]
         if tcp.get("ok"):
             avg = "%.1fms" % tcp["avg_ms"]
@@ -8298,7 +8322,8 @@ def main():
             sys.exit(2)
         _res = batch_node_test(_nodes)
         if ns.json:
-            print(json.dumps({"batch": _res}, ensure_ascii=False))
+            print(json.dumps({"batch": _sanitize_batch_results(_res)},
+                             ensure_ascii=False))
         else:
             _print_batch_results(_res)
             _batch_best_throughput(_res)
@@ -8464,7 +8489,7 @@ def main():
             else:
                 continue
     except (KeyboardInterrupt, EOFError):
-        print(f"\n  {T('cancelled')}")
+        print(f"\n  {T('cancelled')}", file=sys.stderr)
         sys.exit(130)
 
 
@@ -8472,8 +8497,8 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n  {T('cancelled')}")
+        print(f"\n  {T('cancelled')}", file=sys.stderr)
         sys.exit(130)
     except EOFError:
-        print(f"\n  {T('cancelled')}")
+        print(f"\n  {T('cancelled')}", file=sys.stderr)
         sys.exit(130)
