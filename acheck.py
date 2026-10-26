@@ -2022,6 +2022,8 @@ class Urlscan(Provider):
             d = json.loads(raw)
             if "status" in d and int(d.get("status", 200)) >= 400:
                 return {"ok": False, "err": d.get("message", "API error")}
+            if "total" not in d:
+                return {"ok": False, "err": "missing total"}
             total = int(d.get("total", 0))
             return {"ok": True, "total": total, "ts": now_iso()}
         except Exception as e:
@@ -2042,6 +2044,8 @@ class RIPEstat(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw).get("data", {})
+            if not d:
+                return {"ok": False, "err": "empty data"}
             asns = d.get("asns", [])
             asn = asns[0].get("asn") if asns else None
             announced = d.get("announced", False)
@@ -5012,6 +5016,27 @@ def get_egress_ip():
     return None
 
 
+def _decode_chunked(body):
+    """严格解析 chunked 传输体：剥离块扩展、校验块后 CRLF、必须有终止零块。
+    任一不合规返回 None（调用方按失败处理，不用部分体冒充完整体）。"""
+    out = b""
+    rest = body
+    while True:
+        ln, sep, rest = rest.partition(b"\r\n")
+        if not sep:
+            return None
+        try:
+            sz = int((ln.split(b";", 1)[0]).strip() or b"0", 16)
+        except ValueError:
+            return None
+        if sz == 0:
+            return out
+        if len(rest) < sz + 2 or rest[sz:sz + 2] != b"\r\n":
+            return None
+        out += rest[:sz]
+        rest = rest[sz + 2:]
+
+
 def _https_get_pinned6(host, path, timeout=6):
     """显式 AF_INET6 解析 + 钉栈 HTTPS GET (SNI=host), 返回响应体文本或 None。
     某些解析环境 (如 AWS VPC resolver + glibc) 对纯 AAAA 域名在 AF_UNSPEC
@@ -5042,19 +5067,10 @@ def _https_get_pinned6(host, path, timeout=6):
             if b" 200 " not in head.split(b"\r\n", 1)[0]:
                 continue
             if b"chunked" in head.lower():
-                out = b""
-                rest = body
-                while True:
-                    ln, _, rest = rest.partition(b"\r\n")
-                    try:
-                        sz = int(ln.strip() or b"0", 16)
-                    except ValueError:
-                        break
-                    if sz == 0:
-                        break
-                    out += rest[:sz]
-                    rest = rest[sz + 2:]
-                body = out
+                dec = _decode_chunked(body)
+                if dec is None:
+                    continue
+                body = dec
             return body.decode("utf-8", errors="replace")
         except Exception:
             continue
@@ -5803,9 +5819,9 @@ def test_dns_servers(timeout=3):
             tid, pkt = _bq()
             fr = struct.pack(">H", len(pkt)) + pkt
             ctx = ssl.create_default_context()
+            t0 = time.time()
             sk = socket.create_connection((ip, 853), timeout=timeout)
             ss = ctx.wrap_socket(sk, server_hostname=sni)
-            t0 = time.time()
             ss.sendall(fr)
             len_bytes = ss.recv(2)
             if len(len_bytes) < 2:
@@ -6014,19 +6030,8 @@ def test_dns_servers6(timeout=3):
             head, _, body = raw.partition(b"\r\n\r\n")
             if b" 200 " in head.split(b"\r\n", 1)[0]:
                 if b"chunked" in head.lower():
-                    out = b""
-                    rest = body
-                    while True:
-                        ln, _, rest = rest.partition(b"\r\n")
-                        try:
-                            sz = int(ln.strip() or b"0", 16)
-                        except ValueError:
-                            break
-                        if sz == 0:
-                            break
-                        out += rest[:sz]
-                        rest = rest[sz + 2:]
-                    body = out
+                    dec = _decode_chunked(body)
+                    body = dec if dec is not None else b""
                 if _ok(body, tid):
                     return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
                             "ok": True, "rtt_ms": rtt}
@@ -6418,18 +6423,22 @@ def get_system_info():
                                 dmi_text += " " + f.read().lower()
                         except Exception:
                             pass
-                if any(
-                    k in dmi_text
-                    for k in (
-                        "kvm", "qemu", "vmware", "virtualbox", "xen", "hyper-v",
-                        "amazon ec2", "google", "digitalocean", "alibaba", "linode", "vultr", "hetzner", "oracle",
-                    )
-                ):
-                    virt = vm_label
-                elif os.path.exists("/proc/cpuinfo"):
+                hv_dmi = any(k in dmi_text for k in (
+                    "kvm", "qemu", "vmware", "virtualbox", "xen", "hyper-v",
+                ))
+                hv_cpu = False
+                if os.path.exists("/proc/cpuinfo"):
                     with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
-                        if "hypervisor" in f.read().lower():
-                            virt = vm_label
+                        hv_cpu = "hypervisor" in f.read().lower()
+                brand_dmi = any(k in dmi_text for k in (
+                    "amazon ec2", "google", "digitalocean", "alibaba",
+                    "linode", "vultr", "hetzner", "oracle",
+                ))
+                if hv_dmi or hv_cpu:
+                    virt = vm_label
+                elif brand_dmi:
+                    # 品牌 alone 不能定虚拟化：裸金属与虚拟机都可能 → 不确定
+                    virt = "?"
         info["virt"] = virt
     except Exception:
         info["virt"] = "?"
@@ -6765,6 +6774,11 @@ def run_active(json_mode=False, stack=None):
     egress = None
     if stack != "6":
         egress = get_egress_ip()
+        if not egress and stack == "auto":
+            # 纯 IPv6 主机：无 IPv4 出口时不直接失败，降级走 IPv6 全流程
+            egress6_try = get_egress_ip6()
+            if egress6_try:
+                return _run_active6(json_mode, egress6_try)
         if not egress:
             if json_mode:
                 print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
@@ -7087,6 +7101,9 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                          headers={"User-Agent": UA_BROWSER,
                                   "Connection": "close"})
             resp = conn.getresponse()
+            if resp.status < 200 or resp.status >= 300:
+                conn.close()
+                raise RuntimeError(f"HTTP {resp.status}")
             while time.time() < stop:
                 chunk = resp.read(256 * 1024)
                 if not chunk:
@@ -7235,13 +7252,13 @@ def tcp_ping_stats(host, port, count=10, timeout=3, family=0):
         except Exception:
             addrs = []
     t_all0 = time.perf_counter()
-    for _ in range(count):
+    for _try in range(count):
         t0 = time.perf_counter()
         try:
             if addrs is not None:
                 if not addrs:
                     continue
-                _af, _sa = addrs[len(samples) % len(addrs)]
+                _af, _sa = addrs[_try % len(addrs)]
                 s = socket.socket(_af, socket.SOCK_STREAM)
                 s.settimeout(timeout)
                 s.connect(_sa)
@@ -7291,11 +7308,6 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
         _note(_c(C.green, T("diag_socks5_ok") % sp["latency_ms"]))
     else:
         _note(_c(C.red, T("diag_socks5_fail") % sp.get("error", "?")))
-        if not json_mode:
-            print(f"  {_c(C.dim, T('diag_socks5_abort'))}")
-        if json_mode:
-            print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
-        return out
 
     # 2. 出口 IP (经代理)
     _note(T("diag_egress_testing"))
@@ -7402,6 +7414,8 @@ def _parse_node_line(line):
     try:
         if rest.startswith("["):
             hend = rest.index("]")
+            if hend + 1 >= len(rest) or rest[hend + 1] != ":":
+                return None
             host = rest[1:hend]
             port = int(rest[hend + 2:])
         else:
@@ -7893,6 +7907,8 @@ def run_tcpping_only():
         try:
             if tinp.startswith("["):
                 hend = tinp.index("]")
+                if hend + 1 >= len(tinp) or tinp[hend + 1] != ":":
+                    raise ValueError("missing ':' after ']'")
                 th, tp_ = tinp[1:hend], int(tinp[hend + 2:])
             else:
                 th, tp_ = tinp.rsplit(":", 1)
@@ -8204,6 +8220,8 @@ def main():
         try:
             if _pp.startswith("["):
                 _hend = _pp.index("]")
+                if _hend + 1 >= len(_pp) or _pp[_hend + 1] != ":":
+                    raise ValueError("missing ':' after ']'")
                 _ph, _pt = _pp[1:_hend], int(_pp[_hend + 2:])
             else:
                 _ph, _pt = _pp.rsplit(":", 1)
@@ -8352,6 +8370,8 @@ def main():
                         if pinp.startswith("["):
                             # [ipv6]:port
                             hend = pinp.index("]")
+                            if hend + 1 >= len(pinp) or pinp[hend + 1] != ":":
+                                raise ValueError("missing ':' after ']'")
                             phost = pinp[1:hend]
                             pport = int(pinp[hend + 2:])
                         elif pinp.count(":") == 1:
