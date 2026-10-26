@@ -1874,18 +1874,19 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     """
     发送标准 UDP 53 查询并解析返回记录:
       qtype=1 (A), qtype=5 (CNAME), qtype=12 (PTR), qtype=15 (MX), qtype=28 (AAAA)
-    包含 socket 异常安全关闭与截断报文 (TC=1) 越界保护。
+    校验：发送方地址、QR 位、TC 截断、问题段回显、按请求类型过滤答案。
     """
-    tid = random.randint(1, 65534)
-    header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
-    question = _encode_dns_name(domain) + struct.pack(">HH", qtype, 1)
-    pkt = header + question
     sock = None
     try:
+        domain_q = domain.encode("idna").decode("ascii")
+        tid = random.randint(1, 65534)
+        header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
+        question = _encode_dns_name(domain_q) + struct.pack(">HH", qtype, 1)
+        pkt = header + question
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.settimeout(timeout)
         sock.sendto(pkt, (server, 53))
-        data, _ = sock.recvfrom(2048)
+        data, addr = sock.recvfrom(2048)
     except Exception:
         return (None, []) if return_cnames else None
     finally:
@@ -1900,18 +1901,30 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     r_tid, flags, qdcount, ancount, _, _ = struct.unpack(">HHHHHH", data[:12])
     if r_tid != tid:
         return (None, []) if return_cnames else None
+    if not (flags & 0x8000):  # QR 位：必须是响应，不是查询回显
+        return (None, []) if return_cnames else None
+    if flags & 0x0200:  # TC 截断：不可信，不当“成功无记录”
+        return (None, []) if return_cnames else None
     rcode = flags & 0x000F
     if rcode == 3:  # NXDOMAIN
         return ([], []) if return_cnames else []
     if rcode != 0:
         return (None, []) if return_cnames else None
+    if addr[0] != server:  # 发送方必须是被查询的服务器
+        return (None, []) if return_cnames else None
 
+    # 问题段回显校验：qdcount 须为 1 且名/类型/类与请求一致
+    if qdcount != 1:
+        return (None, []) if return_cnames else None
     offset = 12
-    for _ in range(qdcount):
-        if offset >= len(data):
-            break
-        _, offset = _decode_dns_name(data, offset)
-        offset += 4
+    qname, offset = _decode_dns_name(data, offset)
+    if offset + 4 > len(data):
+        return (None, []) if return_cnames else None
+    qtype_r, qclass_r = struct.unpack(">HH", data[offset:offset + 4])
+    offset += 4
+    if (qname or "").lower().rstrip(".") != domain_q.lower().rstrip(".") \
+            or qtype_r != qtype or qclass_r != 1:
+        return (None, []) if return_cnames else None
 
     results = []
     cnames = []
@@ -1926,19 +1939,19 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         if offset + rdlength > len(data):
             break
         rdata = data[offset:offset + rdlength]
-        if rtype == 1 and rdlength == 4:  # A record
+        if rtype == 1 and rdlength == 4 and qtype == 1:  # A record
             results.append(socket.inet_ntoa(rdata))
-        elif rtype == 28 and rdlength == 16:  # AAAA record
+        elif rtype == 28 and rdlength == 16 and qtype == 28:  # AAAA record
             results.append(socket.inet_ntop(socket.AF_INET6, rdata))
         elif rtype == 5:  # CNAME record
             cname_host, _ = _decode_dns_name(data, offset)
             if cname_host:
                 cnames.append(cname_host.lower().rstrip("."))
-        elif rtype == 12:  # PTR record
+        elif rtype == 12 and qtype == 12:  # PTR record
             ptr_host, _ = _decode_dns_name(data, offset)
             if ptr_host:
                 results.append(ptr_host.rstrip("."))
-        elif rtype == 15 and rdlength >= 3:  # MX record
+        elif rtype == 15 and rdlength >= 3 and qtype == 15:  # MX record
             pref = struct.unpack(">H", rdata[:2])[0]
             mx_host, _ = _decode_dns_name(data, offset + 2)
             if mx_host:
@@ -5830,7 +5843,7 @@ def test_dns_servers(timeout=3):
                 url + "?dns=" + dp,
                 headers={"Accept": "application/dns-message", "User-Agent": UA_BROWSER},
             )
-            with urllib.request.urlopen(rq, timeout=timeout + 2) as rp:
+            with _pinned_opener(4).open(rq, timeout=timeout + 2) as rp:
                 d = rp.read()
             rtt = round((time.time() - t0) * 1000, 1)
             if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
@@ -5861,7 +5874,7 @@ def test_dns_servers(timeout=3):
                     break
                 d += chunk
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
+            if len(d) == rl and len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
                 return {"name": name, "ip": ip, "proto": "DoT853", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -6016,7 +6029,7 @@ def test_dns_servers6(timeout=3):
                     break
                 d += chunk
             rtt = round((time.time() - t0) * 1000, 1)
-            if _ok(d, tid):
+            if len(d) == rl and _ok(d, tid):
                 return {"name": name, "ip": ip, "proto": "DoT853",
                         "ok": True, "rtt_ms": rtt}
         except Exception:
