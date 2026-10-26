@@ -2444,7 +2444,8 @@ class SANSISC(Provider):
         try:
             d = json.loads(raw)
             ipinfo = d.get("ip") or {}
-            count = int(ipinfo.get("count") or 0)
+            cnt_raw = ipinfo.get("count")
+            count = int(cnt_raw) if cnt_raw not in (None, "") else None
             return {
                 "ok": True,
                 "attack_count": count,
@@ -3258,6 +3259,12 @@ def _build_unified_profile(s):
     region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or ""
     city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ""
 
+    _lat, _lon = None, None
+    for _src in (wi, wa, ai, gu, gj, il, iq, co, ti, ht):
+        _la, _lo = _src.get("latitude"), _src.get("longitude")
+        if _la is not None and _la != "" and _lo is not None and _lo != "":
+            _lat, _lon = _la, _lo
+            break
     return {
         "ok": bool(isp or org or country or asn),
         "isp": isp,
@@ -3267,8 +3274,8 @@ def _build_unified_profile(s):
         "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or "",
         "region": region,
         "city": city,
-        "latitude": wi.get("latitude") or wa.get("latitude") or ai.get("latitude") or gu.get("latitude") or gj.get("latitude") or il.get("latitude") or iq.get("latitude") or co.get("latitude") or ti.get("latitude") or ht.get("latitude"),
-        "longitude": wi.get("longitude") or wa.get("longitude") or ai.get("longitude") or gu.get("longitude") or gj.get("longitude") or il.get("longitude") or iq.get("longitude") or co.get("longitude") or ti.get("longitude") or ht.get("longitude"),
+        "latitude": _lat,
+        "longitude": _lon,
         "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or il.get("timezone") or iq.get("timezone") or co.get("timezone") or ti.get("timezone") or "",
     }
 
@@ -3478,7 +3485,7 @@ def score_threat(s):
         pts += add
         ev.append(f"SFS {f['frequency']} hits +{add}")
     si = s.get("sansisc", {})
-    if si.get("ok") and si.get("attack_count", 0) > 0:
+    if si.get("ok") and (si.get("attack_count") or 0) > 0:
         cnt = si["attack_count"]
         add = min(5 + cnt // 5, 25)
         pts += add
@@ -3602,15 +3609,24 @@ DATACENTER_KEYWORDS = (
 )
 
 
+def _term_in(term, text):
+    """词匹配：ASCII 词按词边界（防 dc/oci/tor/colo 类短词子串误伤），
+    非 ASCII 词（CJK 等无空格分词语言）按子串（空格分词不适用）。"""
+    if term.isascii():
+        return re.search(r"\b" + re.escape(term) + r"\b", text) is not None
+    return term in text
+
+
 def is_datacenter_heuristic(isp, org):
-    """优先匹配明确的机房/云厂商关键词，再判断家宽白名单，防止云厂商带 Telecom 字样被误判为家宽。"""
+    """家宽白名单优先于机房词；机房词与白名单均按词边界匹配（ASCII 词），
+    防止 oci/colo/cdn 类短词子串误伤无关组织名（如 Société、Colorado）。"""
     text = f"{isp} {org}".lower()
-    for pat in DATACENTER_KEYWORDS:
-        if pat in text:
-            return True, pat
     for w in RESIDENTIAL_ISPS:
-        if w in text:
+        if _term_in(w, text):
             return False, ""
+    for pat in DATACENTER_KEYWORDS:
+        if _term_in(pat, text):
+            return True, pat
     return False, ""
 
 
@@ -3620,7 +3636,7 @@ def is_residential_isp(isp, org):
         return False
     text = f"{isp} {org}".lower()
     for w in RESIDENTIAL_ISPS:
-        if w in text:
+        if _term_in(w, text):
             return True
     return False
 
@@ -3847,18 +3863,18 @@ def _type_block(t):
     prx_terms = (
         "vpn", "proxy", "tor", "代理", "プロキシ", "прокси", "پروکسی",
     )
-    if any(k in low for k in dc_terms):
+    if any(_term_in(k, low) for k in dc_terms):
         lbl = T("hosting") if "hosting" in low else T("dc")
         return _c(C.yellow, f" {lbl} "), lbl
-    if any(k in low for k in res_terms):
-        lbl = T("residential")
-        return _c(C.green, f" {lbl} "), lbl
-    if any(k in low for k in mob_terms):
+    if any(_term_in(k, low) for k in mob_terms):
         lbl = T("mobile")
         return _c(C.cyan, f" {lbl} "), lbl
-    if any(k in low for k in prx_terms):
+    if any(_term_in(k, low) for k in prx_terms):
         lbl = T("proxy")
         return _c(C.red, f" {lbl} "), lbl
+    if any(_term_in(k, low) for k in res_terms):
+        lbl = T("residential")
+        return _c(C.green, f" {lbl} "), lbl
     return _c(C.dim, f" {t} "), t
 
 
@@ -4418,22 +4434,22 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         else:
             _dc0, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
             if _dc0:
-                type_sources.append(("ip-api", T("dc")))
+                type_sources.append(("Heuristic", T("dc")))
             elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-                type_sources.append(("ip-api", T("residential")))
+                type_sources.append(("Heuristic", T("residential")))
             else:
-                type_sources.append(("ip-api", T("unknown")))
+                type_sources.append(("Heuristic", T("unknown")))
     if wi.get("ok"):
         if wi.get("hosting"):
             type_sources.append(("ipwho.is", T("dc")))
         else:
             dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
             if dc:
-                type_sources.append(("ipwho.is", T("dc")))
+                type_sources.append(("Heuristic", T("dc")))
             elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
-                type_sources.append(("ipwho.is", T("residential")))
+                type_sources.append(("Heuristic", T("residential")))
             else:
-                type_sources.append(("ipwho.is", T("unknown")))
+                type_sources.append(("Heuristic", T("unknown")))
     il = s.get("iplocate", {})
     if il.get("ok"):
         if il.get("hosting") or il.get("asn_type") == "hosting":
@@ -4449,7 +4465,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         elif iq.get("mobile"):
             type_sources.append(("ipquery.io", T("unknown")))
         else:
-            type_sources.append(("ipquery.io", T("residential")
+            type_sources.append(("Heuristic", T("residential")
                                  if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
                                  else T("unknown")))
     if not wi.get("ok") and prof.get("ok"):
@@ -4518,7 +4534,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         ("urlscan.io", [_NA, _NA, _NA, _NA, _NA,
                         _hit(us, us.get("total", 0) > 0)]),
         ("SANS ISC", [_NA, _NA, _NA, _NA, _NA,
-                      _hit(sa, bool(sa.get("attack_count")))]),
+                      _hit(sa, bool(sa.get("attack_count"))) if sa.get("attack_count") is not None else _Q]),
         ("Shodan", [_NA, _NA, _NA, _NA, _NA,
                     _hit(sh, bool(sh.get("vulns")))]),
         ("GreyNoise", [_NA, _NA, _NA, _NA, _NA,
@@ -4552,21 +4568,21 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             _hit(ia, bool(ia.get("hosting"))),
             _NA, _NA]),
         ("iplocate.io", [
-            _hit(il, bool(il.get("proxy"))),
-            _hit(il, bool(il.get("vpn"))),
-            _hit(il, bool(il.get("tor"))),
-            _hit(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting"),
+            _hit(il, bool(il.get("proxy"))) if il.get("proxy") is not None else _Q,
+            _hit(il, bool(il.get("vpn"))) if il.get("vpn") is not None else _Q,
+            _hit(il, bool(il.get("tor"))) if il.get("tor") is not None else _Q,
+            _hit(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting") if il.get("hosting") is not None or il.get("asn_type") is not None else _Q,
             _NA,
-            _hit(il, bool(il.get("is_abuser")))]),
+            _hit(il, bool(il.get("is_abuser"))) if il.get("is_abuser") is not None else _Q]),
         ("ipquery.io", [
-            _hit(iq, bool(iq.get("proxy"))),
-            _hit(iq, bool(iq.get("vpn"))),
-            _hit(iq, bool(iq.get("tor"))),
-            _hit(iq, bool(iq.get("datacenter"))),
+            _hit(iq, bool(iq.get("proxy"))) if iq.get("proxy") is not None else _Q,
+            _hit(iq, bool(iq.get("vpn"))) if iq.get("vpn") is not None else _Q,
+            _hit(iq, bool(iq.get("tor"))) if iq.get("tor") is not None else _Q,
+            _hit(iq, bool(iq.get("datacenter"))) if iq.get("datacenter") is not None else _Q,
             _NA, _NA]),
         ("2ip.io", [
             _NA, _NA, _NA,
-            _hit(ti, bool(ti.get("hosting"))),
+            _hit(ti, bool(ti.get("hosting"))) if ti.get("hosting") is not None else _Q,
             _NA, _NA]),
         ("X4BNet VPN", [
             _NA,
@@ -4767,11 +4783,11 @@ def print_report6(res, embedded=False):
         else:
             _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
             if _dc6:
-                _ts6.append(("ip-api", T("dc")))
+                _ts6.append(("Heuristic", T("dc")))
             elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-                _ts6.append(("ip-api", T("residential")))
+                _ts6.append(("Heuristic", T("residential")))
             else:
-                _ts6.append(("ip-api", T("unknown")))
+                _ts6.append(("Heuristic", T("unknown")))
     _wi6 = s.get("ipwhois", {})
     if _wi6.get("ok"):
         if _wi6.get("hosting"):
@@ -4779,11 +4795,11 @@ def print_report6(res, embedded=False):
         else:
             _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
             if _dc6:
-                _ts6.append(("ipwho.is", T("dc")))
+                _ts6.append(("Heuristic", T("dc")))
             elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
-                _ts6.append(("ipwho.is", T("residential")))
+                _ts6.append(("Heuristic", T("residential")))
             else:
-                _ts6.append(("ipwho.is", T("unknown")))
+                _ts6.append(("Heuristic", T("unknown")))
     _il6 = s.get("iplocate", {})
     if _il6.get("ok"):
         if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
@@ -4799,7 +4815,7 @@ def print_report6(res, embedded=False):
         elif _iq6.get("mobile"):
             _ts6.append(("ipquery.io", T("unknown")))
         else:
-            _ts6.append(("ipquery.io", T("residential")
+            _ts6.append(("Heuristic", T("residential")
                          if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
                          else T("unknown")))
     if not _wi6.get("ok") and prof.get("ok"):
