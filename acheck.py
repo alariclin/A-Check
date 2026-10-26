@@ -3754,6 +3754,7 @@ def run_passive(ip):
     avail_providers = [p for p in PROVIDERS if p.available()]
     total_p = len(avail_providers)
     done_cnt = [0]
+    progress_closed = [False]  # 采集超时后迟到进度不再打印
 
     def _query_one(p):
         try:
@@ -3763,7 +3764,8 @@ def run_passive(ip):
         try:
             with _progress_lock:
                 done_cnt[0] += 1
-                _render_progress_locked(done_cnt[0], total_p, p.name)
+                if not progress_closed[0]:
+                    _render_progress_locked(done_cnt[0], total_p, p.name)
         except Exception:
             pass
         return p.key, res
@@ -3776,12 +3778,13 @@ def run_passive(ip):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            pass
+            progress_closed[0] = True
         for _f, _p in _futs.items():
             if _p.key not in sources:
                 sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
+        progress_closed[0] = True
         _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
@@ -5668,6 +5671,8 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
                     chunk = r.read(256 * 1024)
                     if not chunk:
                         break
+                    if time.time() >= stop:
+                        break  # 停滞读在 stop 后才返回时不计入窗口字节
                     with lock:
                         counter[0] += len(chunk)
                     if counter[0] >= DL_CAP_BYTES:
@@ -5688,7 +5693,8 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
         _op = _pinned_opener(family) if family else None
         list(ex.map(lambda _: _dl_direct_worker(url, stop, counter, lock, opener=_op),
                     range(streams)))
-    elapsed = max(0.1, time.time() - t0)
+    # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
+    elapsed = max(0.1, min(time.time() - t0, duration or 1e9))
     if counter[0] == 0:
         return None, 0
     return round((counter[0] * 8 / 1e6) / elapsed, 2), counter[0]
@@ -7134,6 +7140,8 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                 chunk = resp.read(256 * 1024)
                 if not chunk:
                     break
+                if time.time() >= stop:
+                    break  # 停滞读在 stop 后才返回时不计入窗口字节
                 with lock:
                     counter[0] += len(chunk)
                 if counter[0] >= DL_CAP_BYTES:
@@ -7155,7 +7163,8 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
         list(ex.map(lambda _: _dl_proxy_worker(ph, pp, user, pwd, host, path,
                                                stop, counter, lock),
                     range(streams)))
-    elapsed = max(0.1, time.time() - t0)
+    # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
+    elapsed = max(0.1, min(time.time() - t0, duration or 1e9))
     if counter[0] == 0:
         return None
     return round((counter[0] * 8 / 1e6) / elapsed, 2)
@@ -8231,6 +8240,21 @@ def main():
         rule_txt = SCORING_RULES.get(LANG, SCORING_RULES["en"])
         print(rule_txt)
         return
+
+    # 模式冲突告警：按既有优先级链（active > speed > proxy > batch），
+    # 后者被静默丢弃时告警（--help/--explain 为元选项，不参与）。
+    _modes = []
+    if ns.active:
+        _modes.append("--active")
+    if ns.speed:
+        _modes.append("--speed")
+    if ns.proxy:
+        _modes.append("--proxy")
+    if ns.batch:
+        _modes.append("--batch")
+    if len(_modes) > 1:
+        print(f"[Warning] conflicting modes: running {_modes[0]} only, "
+              f"ignoring: {', '.join(_modes[1:])}", file=sys.stderr)
 
     if ns.active:
         if ns.ip and not ns.json:
