@@ -5273,6 +5273,8 @@ def test_tiktok(local_ip=None):
     code, body, _ = _active_get("https://www.tiktok.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "Access Denied" not in body:
         m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
@@ -5284,6 +5286,8 @@ def test_disney(local_ip=None):
     code, body, final_url = _active_get("https://www.disneyplus.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
     return T("blocked"), "", None
@@ -5294,6 +5298,8 @@ def test_netflix(local_ip=None):
     code, body, final_url = _active_get("https://www.netflix.com/title/70143836")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
@@ -5302,6 +5308,8 @@ def test_netflix(local_ip=None):
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
 
     code2, body2, final_url2 = _active_get("https://www.netflix.com/title/80018499")
+    if _is_challenge(code2, body2):
+        return T("unknown"), "", None
     if code2 == 200 and "Not Available" not in body2:
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
@@ -5316,6 +5324,8 @@ def test_youtube(local_ip=None):
     code, body, _ = _active_get("https://www.youtube.com/premium")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         if "YouTube Premium is not available in your country" in body:
             return T("blocked"), "", None
@@ -5329,6 +5339,8 @@ def test_primevideo(local_ip=None):
     code, body, _ = _active_get("https://www.primevideo.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r'"territory"\s*:\s*"([A-Z]{2})"', body
@@ -5342,6 +5354,8 @@ def test_reddit(local_ip=None):
     code, body, _ = _active_get("https://www.reddit.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "Blocked" not in body[:300]:
         return T("unlocked"), "", get_unlock_type("www.reddit.com", local_ip)
     return T("blocked"), "", None
@@ -5349,6 +5363,8 @@ def test_reddit(local_ip=None):
 
 def test_chatgpt(local_ip=None):
     code, body, _ = _active_get("https://chatgpt.com/cdn-cgi/trace")
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     loc = ""
     if code == 200 and "loc=" in body:
         m = re.search(r"loc=([A-Z]{2})", body)
@@ -5356,14 +5372,14 @@ def test_chatgpt(local_ip=None):
         if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
             return T("blocked"), f"[{loc}]", None
     api_code, api_body, _ = _active_get("https://api.openai.com/v1/models")
+    if _is_challenge(api_code, api_body):
+        return T("unknown"), "", None
     if api_code is None and code is None:
         return T("failed"), "", None
     if api_code in (200, 401):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
     if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
         return T("blocked"), f"[{loc}]" if loc else "", None
-    if loc and loc not in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
-        return T("unlocked"), f"[{loc}]", get_unlock_type("chatgpt.com", local_ip)
     return T("blocked"), "", None
 
 
@@ -5371,6 +5387,8 @@ def test_gemini(local_ip=None):
     code, body, final_url = _active_get("https://gemini.google.com/app")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
     return T("blocked"), "", None
@@ -5421,18 +5439,22 @@ def test_facebook(local_ip=None):
 
 
 def test_x(local_ip=None):
-    code, _, _ = _active_get("https://x.com/")
+    code, body, _ = _active_get("https://x.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code in (200, 302):
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
     return T("blocked"), "", None
 
 
 def test_line(local_ip=None):
-    code, _, _ = _active_get("https://www.line.me/")
+    code, body, _ = _active_get("https://www.line.me/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.line.me", local_ip)
     return T("blocked"), "", None
@@ -5450,27 +5472,33 @@ def test_whatsapp(local_ip=None):
 
 
 def test_github(local_ip=None):
-    code, _, _ = _active_get("https://github.com/")
+    code, body, _ = _active_get("https://github.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
     return T("blocked"), "", None
 
 
 def test_deepseek(local_ip=None):
-    code, _, _ = _active_get("https://www.deepseek.com/")
+    code, body, _ = _active_get("https://www.deepseek.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.deepseek.com", local_ip)
     return T("blocked"), "", None
 
 
 def test_appletv(local_ip=None):
-    code, _, _ = _active_get("https://tv.apple.com/")
+    code, body, _ = _active_get("https://tv.apple.com/")
     if code is None:
         return T("failed"), "", None
+    if _is_challenge(code, body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("tv.apple.com", local_ip)
     return T("blocked"), "", None
