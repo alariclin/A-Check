@@ -3860,7 +3860,7 @@ def score_platform(s):
     if dc:
         pts += 30
         ev.append(f"DC keyword '{pat}' +30")
-    elif (wi.get("ok") and wi.get("hosting")) or ("hosting" in pc_type or "business" in pc_type):
+    elif (wi.get("ok") and wi.get("hosting")) or ("hosting" in pc_type):
         pts += 30
         ev.append("Hosting/DC trait +30")
 
@@ -3877,7 +3877,7 @@ def score_platform(s):
     if is_vpn:
         pts += 40
         ev.append("VPN detected +40")
-    if (te.get("ok") and te.get("is_tor_exit")) or (wi.get("ok") and wi.get("tor")) or ("tor" in pc_type):
+    if (te.get("ok") and te.get("is_tor_exit")) or (wi.get("ok") and wi.get("tor")) or ("tor" in pc_type) or (pc.get("ok") and pc.get("tor")):
         pts += 30
         ev.append("Tor node +30")
     return min(pts, 100), ev
@@ -3919,6 +3919,20 @@ def _good_bar(v, width=30):
 # ============================================================
 # 被动检测主流程 (多线程并发 + 严格单调进度条 + 满分 100 置信度)
 # ============================================================
+def _verdict_label(combined, core_ok, completeness, malicious_listed):
+    """综合 verdict：显式恶意名单命中（feodo/et/spamhaus）不得判 clean——
+    分数权重稀释（feodo 30×0.4=12）不能掩盖名单事实；其余按原档位。"""
+    if core_ok == 0 or completeness < 50:
+        return T("verdict_insufficient")
+    if combined < 25 and not malicious_listed:
+        return T("verdict_clean")
+    if combined < 50:
+        return T("verdict_low")
+    if combined < 75:
+        return T("verdict_medium")
+    return T("verdict_high")
+
+
 def run_passive(ip):
     ip_s = str(ip)
     sources = {}
@@ -3987,16 +4001,10 @@ def run_passive(ip):
     core_ok = sum(1 for c_ok in core_checks if c_ok)
     confidence = min(100, int(round(completeness * 0.7 + (core_ok / len(core_checks)) * 30)))
 
-    if core_ok == 0 or completeness < 50:
-        verdict = T("verdict_insufficient")
-    elif combined < 25:
-        verdict = T("verdict_clean")
-    elif combined < 50:
-        verdict = T("verdict_low")
-    elif combined < 75:
-        verdict = T("verdict_medium")
-    else:
-        verdict = T("verdict_high")
+    _malicious_listed = any(
+        sources.get(k, {}).get("ok") and sources.get(k, {}).get("listed")
+        for k in ("feodo", "et_compromised", "spamhaus"))
+    verdict = _verdict_label(combined, core_ok, completeness, _malicious_listed)
 
     _prof = _build_unified_profile(sources)
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
@@ -4104,7 +4112,7 @@ def _print_streaming_inference(res):
     pc = s.get("proxycheck", {})
     wi = s.get("ipwhois", {})
     fp = s.get("freeipapi", {})
-    if pc.get("ok") and ("hosting" in str(pc.get("type", "")).lower() or "business" in str(pc.get("type", "")).lower()):
+    if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
     if wi.get("ok") and wi.get("hosting"):
         is_dc = True
@@ -4159,6 +4167,7 @@ def _print_streaming_inference(res):
 
     cc = (country or "").lower()
     cc_code = (prof.get("country_code") or "").lower()
+    _geo_known = bool(country.strip() or cc_code.strip())  # 无国家名与代码时防火墙判断无地理依据，avail 置信封顶 mid
 
     def _cc_match(*tokens):
         for tk in tokens:
@@ -4286,7 +4295,7 @@ def _print_streaming_inference(res):
                 return T("infer_block"), "mid"
             return T("infer_avail"), "mid"
         if is_res:
-            return T("infer_avail"), "high"
+            return T("infer_avail"), ("high" if _geo_known else "mid")
         return T("unknown"), "mid"
 
     def _infer_moderate(svc_name):
@@ -4301,7 +4310,7 @@ def _print_streaming_inference(res):
         if is_dc:
             return T("infer_avail"), "mid"
         if is_res:
-            return T("infer_avail"), "high"
+            return T("infer_avail"), ("high" if _geo_known else "mid")
         return T("unknown"), "mid"
 
     def _infer_ai(svc_name):
@@ -4316,7 +4325,7 @@ def _print_streaming_inference(res):
         if is_dc:
             return T("infer_avail"), "mid"
         if is_res:
-            return T("infer_avail"), "high"
+            return T("infer_avail"), ("high" if _geo_known else "mid")
         return T("unknown"), "mid"
 
     def _infer_lenient(svc_name):
@@ -4329,7 +4338,7 @@ def _print_streaming_inference(res):
         if is_tor or is_tor_exit or is_proxy or is_vpn:
             return T("infer_limit"), "mid"
         if is_dc or is_res:
-            return T("infer_avail"), "high"
+            return T("infer_avail"), ("high" if _geo_known else "mid")
         return T("unknown"), "mid"
 
     svc_map = {
@@ -4627,6 +4636,116 @@ def _print_basic_block(s, prof):
 
 
 
+def _factor_rows(s, wi_server, v6=False):
+    """v4/v6 共用因子行构造：每行 6 列 [proxy, vpn, tor, server, blacklist, malicious]。
+    单元格 True/False 为已判定，None 为未覆盖/未知（聚合时不计入分母）。
+    v6=True 时排除仅 IPv4 名单源（stopforumspam/feodo/et/tor_exit 等不跑 v6，恒未命中会伪造完整度）；
+    其余 13 行与 v4 同源（此前 v6 独立维护的 6 行漏了 iplocate/ipquery/2ip/X4BNet/IPsum/blocklist.de/OTX，
+    致 v6 因子百分比系统性偏低，如 X4BNet listed 时 VPN 因子误显 0%）。
+    Shodan 漏洞不计入恶意列（漏洞暴露≠恶意行为；漏洞证据仍在威胁分与信号区）。"""
+    def _h(d, cond):
+        if not d.get("ok"):
+            return None
+        return True if cond else False
+
+    sf = s.get("stopforumspam", {})
+    us = s.get("urlscan", {})
+    sa = s.get("sansisc", {})
+    sh = s.get("shodan_idb", {})
+    gn = s.get("greynoise", {})
+    fe = s.get("feodo", {})
+    et = s.get("et_compromised", {})
+    sp = s.get("spamhaus", {})
+    te = s.get("tor_exit", {})
+    pc = s.get("proxycheck", {})
+    wi = s.get("ipwhois", {})
+    fp = s.get("freeipapi", {})
+    ia = s.get("ipapi", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    ti = s.get("twoip", {})
+    xv = s.get("x4bvpn", {})
+    isum = s.get("ipsum", {})
+    bd = s.get("blocklistde", {})
+    ox = s.get("otx", {})
+    rows = [
+        ("StopForumSpam", [None, None, None, None,
+                           _h(sf, (sf.get("frequency") or 0) > 0), None]),
+        ("urlscan.io", [None, None, None, None, None,
+                        _h(us, (us.get("total") or 0) > 0)]),
+        ("SANS ISC", [None, None, None, None, None,
+                      None if sa.get("attack_count") is None else _h(sa, bool(sa.get("attack_count")))]),
+        ("Shodan", [None, None, None, None, None, None]),
+        ("GreyNoise", [None, None, None, None, None,
+                       _h(gn, gn.get("classification") == "malicious")]),
+        ("Feodo", [None, None, None, None,
+                   _h(fe, bool(fe.get("listed"))), None]),
+        ("EmergingThreats", [None, None, None, None,
+                             _h(et, bool(et.get("listed"))), None]),
+        ("Spamhaus DROP", [None, None, None, None,
+                           _h(sp, bool(sp.get("listed"))), None]),
+        ("Tor Exit", [None, None, _h(te, bool(te.get("is_tor_exit"))),
+                      None, None, None]),
+        ("proxycheck", [
+            _h(pc, bool(pc.get("proxy"))),
+            _h(pc, bool(pc.get("vpn"))),
+            _h(pc, "tor" in str(pc.get("type", "")).lower()),
+            _h(pc, "hosting" in str(pc.get("type", "")).lower()),
+            None, None]),
+        ("ipwho.is", [
+            wi.get("proxy") if wi.get("ok") else None,
+            wi.get("vpn") if wi.get("ok") else None,
+            wi.get("tor") if wi.get("ok") else None,
+            wi_server, None, None]),
+        ("freeipapi", [
+            None if fp.get("proxy") is None else _h(fp, bool(fp.get("proxy"))),
+            None, None, None, None, None]),
+        ("ip-api.com", [
+            _h(ia, bool(ia.get("proxy"))),
+            None, None,
+            _h(ia, bool(ia.get("hosting"))),
+            None, None]),
+        ("iplocate.io", [
+            None if il.get("proxy") is None else _h(il, bool(il.get("proxy"))),
+            None if il.get("vpn") is None else _h(il, bool(il.get("vpn"))),
+            None if il.get("tor") is None else _h(il, bool(il.get("tor"))),
+            None if (il.get("hosting") is None and il.get("asn_type") is None)
+            else _h(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting"),
+            None,
+            None if il.get("is_abuser") is None else _h(il, bool(il.get("is_abuser")))]),
+        ("ipquery.io", [
+            None if iq.get("proxy") is None else _h(iq, bool(iq.get("proxy"))),
+            None if iq.get("vpn") is None else _h(iq, bool(iq.get("vpn"))),
+            None if iq.get("tor") is None else _h(iq, bool(iq.get("tor"))),
+            None if iq.get("datacenter") is None else _h(iq, bool(iq.get("datacenter"))),
+            None, None]),
+        ("2ip.io", [
+            None, None, None,
+            None if ti.get("hosting") is None else _h(ti, bool(ti.get("hosting"))),
+            None, None]),
+        ("X4BNet VPN", [
+            None,
+            _h(xv, bool(xv.get("listed"))),
+            None, None, None, None]),
+        ("IPsum", [
+            None, None, None, None,
+            _h(isum, (isum.get("level") or 0) >= 2),
+            None]),
+        ("blocklist.de", [
+            None, None, None, None,
+            _h(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
+            None]),
+        ("OTX", [
+            None, None, None, None, None,
+            _h(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
+    ]
+    if v6:
+        _v4only = {"StopForumSpam", "urlscan.io", "SANS ISC", "GreyNoise",
+                   "Feodo", "EmergingThreats", "Tor Exit"}
+        rows = [r for r in rows if r[0] not in _v4only]
+    return rows
+
+
 def print_report(res, include_streaming_inference=True, sysinfo=None,
                  tail_completeness=True, dns_rec=False):
     _sec_begin()
@@ -4754,78 +4873,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         dc_w = True
     wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
 
-    _rows = [
-        ("StopForumSpam", [_NA, _NA, _NA, _NA,
-                           _hit(sf, (sf.get("frequency") or 0) > 0), _NA]),
-        ("urlscan.io", [_NA, _NA, _NA, _NA, _NA,
-                        _hit(us, us.get("total", 0) > 0)]),
-        ("SANS ISC", [_NA, _NA, _NA, _NA, _NA,
-                      _hit(sa, bool(sa.get("attack_count"))) if sa.get("attack_count") is not None else _Q]),
-        ("Shodan", [_NA, _NA, _NA, _NA, _NA,
-                    _hit(sh, bool(sh.get("vulns")))]),
-        ("GreyNoise", [_NA, _NA, _NA, _NA, _NA,
-                       _hit(gn, gn.get("classification") == "malicious")]),
-        ("Feodo", [_NA, _NA, _NA, _NA,
-                   _hit(fe, bool(fe.get("listed"))), _NA]),
-        ("EmergingThreats", [_NA, _NA, _NA, _NA,
-                             _hit(et, bool(et.get("listed"))), _NA]),
-        ("Spamhaus DROP", [_NA, _NA, _NA, _NA,
-                           _hit(sp, bool(sp.get("listed"))), _NA]),
-        ("Tor Exit", [_NA, _NA, _hit(te, bool(te.get("is_tor_exit"))),
-                      _NA, _NA, _NA]),
-        ("proxycheck", [
-            _hit(pc, bool(pc.get("proxy"))),
-            _hit(pc, bool(pc.get("vpn"))),
-            _hit(pc, "tor" in str(pc.get("type", "")).lower()),
-            _hit(pc, "hosting" in str(pc.get("type", "")).lower()
-                 or "business" in str(pc.get("type", "")).lower()),
-            _NA, _NA]),
-        ("ipwho.is", [
-            wi.get("proxy") if wi.get("ok") else _Q,
-            wi.get("vpn") if wi.get("ok") else _Q,
-            wi.get("tor") if wi.get("ok") else _Q,
-            wi_server, _NA, _NA]),
-        ("freeipapi", [
-            _hit(fp, bool(fp.get("proxy"))) if fp.get("proxy") is not None else _Q,
-            _NA, _NA, _NA, _NA, _NA]),
-        ("ip-api.com", [
-            _hit(ia, bool(ia.get("proxy"))),
-            _NA, _NA,
-            _hit(ia, bool(ia.get("hosting"))),
-            _NA, _NA]),
-        ("iplocate.io", [
-            _hit(il, bool(il.get("proxy"))) if il.get("proxy") is not None else _Q,
-            _hit(il, bool(il.get("vpn"))) if il.get("vpn") is not None else _Q,
-            _hit(il, bool(il.get("tor"))) if il.get("tor") is not None else _Q,
-            _hit(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting") if il.get("hosting") is not None or il.get("asn_type") is not None else _Q,
-            _NA,
-            _hit(il, bool(il.get("is_abuser"))) if il.get("is_abuser") is not None else _Q]),
-        ("ipquery.io", [
-            _hit(iq, bool(iq.get("proxy"))) if iq.get("proxy") is not None else _Q,
-            _hit(iq, bool(iq.get("vpn"))) if iq.get("vpn") is not None else _Q,
-            _hit(iq, bool(iq.get("tor"))) if iq.get("tor") is not None else _Q,
-            _hit(iq, bool(iq.get("datacenter"))) if iq.get("datacenter") is not None else _Q,
-            _NA, _NA]),
-        ("2ip.io", [
-            _NA, _NA, _NA,
-            _hit(ti, bool(ti.get("hosting"))) if ti.get("hosting") is not None else _Q,
-            _NA, _NA]),
-        ("X4BNet VPN", [
-            _NA,
-            _hit(xv, bool(xv.get("listed"))),
-            _NA, _NA, _NA, _NA]),
-        ("IPsum", [
-            _NA, _NA, _NA, _NA,
-            _hit(isum, (isum.get("level") or 0) >= 2),
-            _NA]),
-        ("blocklist.de", [
-            _NA, _NA, _NA, _NA,
-            _hit(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
-            _NA]),
-        ("OTX", [
-            _NA, _NA, _NA, _NA, _NA,
-            _hit(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
-    ]
+    _rows = _factor_rows(s, wi_server)
     # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
                 T("f_blacklist"), T("f_malicious")]
@@ -5081,32 +5129,7 @@ def print_report6(res, embedded=False):
     if wi.get("ok") and wi.get("hosting"):
         dc_w = True
     wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
-    _rows = [
-        ("proxycheck", [
-            _hit(pc, bool(pc.get("proxy"))),
-            _hit(pc, bool(pc.get("vpn"))),
-            _hit(pc, "tor" in str(pc.get("type", "")).lower()),
-            _hit(pc, "hosting" in str(pc.get("type", "")).lower()
-                 or "business" in str(pc.get("type", "")).lower()),
-            _NA, _NA]),
-        ("ipwho.is", [
-            wi.get("proxy") if wi.get("ok") else "?",
-            wi.get("vpn") if wi.get("ok") else "?",
-            wi.get("tor") if wi.get("ok") else "?",
-            wi_server, _NA, _NA]),
-        ("freeipapi", [
-            _hit(fp, bool(fp.get("proxy"))) if fp.get("proxy") is not None else "?",
-            _NA, _NA, _NA, _NA, _NA]),
-        ("ip-api.com", [
-            _hit(ia, bool(ia.get("proxy"))),
-            _NA, _NA,
-            _hit(ia, bool(ia.get("hosting"))),
-            _NA, _NA]),
-        ("Spamhaus DROP", [_NA, _NA, _NA, _NA,
-                           _hit(sp, bool(sp.get("listed"))), _NA]),
-        ("Shodan", [_NA, _NA, _NA, _NA, _NA,
-                    _hit(sh, bool(sh.get("vulns")))]),
-    ]
+    _rows = _factor_rows(s, wi_server, v6=True)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
                 T("f_blacklist"), T("f_malicious")]
     _lw = _bar_label_width()
@@ -5376,12 +5399,22 @@ CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", 
 
 def _is_challenge(code, body):
     """区分反爬/风控挑战与真实区域封锁"""
-    if code in (400, 403, 429) and body:
+    if code in (400, 403, 429, 503) and body:  # 503 须有标记才算挑战，裸 503 由落空分类判 unknown
         bl = body.lower()
         # 剥离 HTML 注释（re.S 兼容多行；(?:-->|$) 处理未闭合注释），避免注释中 captcha 等词误命中
         bl = re.sub(r"<!--.*?(?:-->|$)", "", bl, flags=re.S)[:4096]
         return any(m in bl for m in CHALLENGE_MARKERS)
     return False
+
+
+def _http_fallthrough(code):
+    """test_* 落空分支共用状态分类：5xx/429/网络错误不是地区封锁证据。
+    返回应判状态（T 值），无明确限制证据时返回 None（调用方再判 blocked）。"""
+    if code is None:
+        return T("failed")
+    if code == 429 or 500 <= code <= 599:
+        return T("unknown")
+    return None
 
 
 _FORCE_FAMILY = 0  # 主动分栈测试期间置 4/6, _active_get 据此钉住地址族
@@ -5559,9 +5592,9 @@ def get_unlock_type(domain, local_ip=None):
         elif overlap or suffix:
             res = None
         elif pub_cnames and not sys_cnames:
-            res = False
+            res = False  # 公共侧有 CNAME 链而系统侧无：可验证的改写证据，定 DNS 解锁
         else:
-            res = False
+            res = None  # 无重叠、无后缀、亦无单侧 CNAME：无正向解锁证据，不下确定结论
 
     if res is not None:
         with _unlock_lock:
@@ -5589,6 +5622,9 @@ def test_tiktok(local_ip=None):
         m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.tiktok.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5602,6 +5638,9 @@ def test_disney(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5635,6 +5674,9 @@ def test_netflix(local_ip=None):
         orig_tag = _L("自制?", "Orig?", "オリジナル?", "Оригинал?", "اصلی?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
+    _ft = _http_fallthrough(code2)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5652,6 +5694,9 @@ def test_youtube(local_ip=None):
         m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', body) or re.search(r'"GL"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.youtube.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5667,6 +5712,9 @@ def test_primevideo(local_ip=None):
         )
         region = f"[{m.group(1)}]" if m else ""
         return T("reachable"), region, None
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5676,8 +5724,11 @@ def test_reddit(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
-    if code == 200 and "Blocked" not in body[:300]:
+    if code == 200 and "Blocked" not in body[:4096]:
         return T("unlocked"), "", get_unlock_type("www.reddit.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5685,6 +5736,8 @@ def test_chatgpt(local_ip=None):
     code, body, _, _complete = _active_get("https://chatgpt.com/cdn-cgi/trace")
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code is None:
+        return T("failed"), "", None
     loc = ""
     if code == 200 and "loc=" in body:
         m = re.search(r"loc=([A-Z]{2})", body)
@@ -5700,6 +5753,9 @@ def test_chatgpt(local_ip=None):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
     if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
         return T("blocked"), f"[{loc}]" if loc else "", None
+    _ft = _http_fallthrough(api_code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5713,6 +5769,9 @@ def test_gemini(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5722,8 +5781,11 @@ def test_claude(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
-    if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:500].lower():
+    if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5737,6 +5799,9 @@ def test_grok(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "Access Denied" not in body:
         return T("unlocked"), "", get_unlock_type("grok.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5748,6 +5813,9 @@ def test_instagram(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5759,6 +5827,9 @@ def test_facebook(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5770,6 +5841,9 @@ def test_x(local_ip=None):
         return T("unknown"), "", None
     if code in (200, 302):
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5781,6 +5855,9 @@ def test_line(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5792,6 +5869,9 @@ def test_whatsapp(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5803,6 +5883,9 @@ def test_github(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5814,6 +5897,9 @@ def test_deepseek(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
@@ -5825,6 +5911,9 @@ def test_appletv(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
     return T("blocked"), "", None
 
 
