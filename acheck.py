@@ -275,8 +275,6 @@ STR = {
         "f_server": "服务器",
         "f_blacklist": "黑名单",
         "f_malicious": "恶意记录",
-        "yes": "是",
-        "no": "否",
         "none": "无",
         "cat_video": "视频",
         "cat_ai": "AI",
@@ -485,8 +483,6 @@ STR = {
         "f_server": "Hosting",
         "f_blacklist": "Blacklist",
         "f_malicious": "Malicious",
-        "yes": "Yes",
-        "no": "No",
         "none": "None",
         "cat_video": "Video",
         "cat_ai": "AI",
@@ -695,8 +691,6 @@ STR = {
         "f_server": "伺服器",
         "f_blacklist": "黑名單",
         "f_malicious": "惡意記錄",
-        "yes": "是",
-        "no": "否",
         "none": "無",
         "cat_video": "影片",
         "cat_ai": "AI",
@@ -905,8 +899,6 @@ STR = {
         "f_server": "サーバー",
         "f_blacklist": "ブラックリスト",
         "f_malicious": "悪意記録",
-        "yes": "はい",
-        "no": "いいえ",
         "none": "なし",
         "cat_video": "動画",
         "cat_ai": "AI",
@@ -1115,8 +1107,6 @@ STR = {
         "f_server": "Сервер",
         "f_blacklist": "Блоклист",
         "f_malicious": "Угрозы",
-        "yes": "Да",
-        "no": "Нет",
         "none": "Нет",
         "cat_video": "Видео",
         "cat_ai": "ИИ",
@@ -1325,8 +1315,6 @@ STR = {
         "f_server": "سرور",
         "f_blacklist": "لیست سیاه",
         "f_malicious": "سوابق مخرب",
-        "yes": "بله",
-        "no": "خیر",
         "none": "هیچ",
         "cat_video": "ویدیو",
         "cat_ai": "هوش مصنوعی",
@@ -4871,22 +4859,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
     _section(T("sec_matrix"))
 
-    def _cell(v):
-        if v is True:
-            return _c(C.red, T("yes"))
-        if v is False:
-            return _c(C.green, T("no"))
-        if v == "?":
-            return _c(C.dim, "?")
-        return _c(C.dim, T("none"))
-
     _NA = None
     _Q = "?"
-
-    def _hit(d, cond):
-        if not d.get("ok"):
-            return _Q
-        return True if cond else False
 
     sf = s.get("stopforumspam", {})
     us = s.get("urlscan", {})
@@ -5150,11 +5124,6 @@ def print_report6(res, embedded=False):
     # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
     _section(T("sec_matrix"))
     print(f"  {_c(C.dim, T('v6_prefix_note'))}")
-
-    def _hit(d, cond):
-        if not d.get("ok"):
-            return "?"
-        return True if cond else False
 
     _NA = None
     pc = s.get("proxycheck", {})
