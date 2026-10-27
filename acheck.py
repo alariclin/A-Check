@@ -1684,7 +1684,7 @@ def parse_any_ip(s):
         _mapped = ip.ipv4_mapped
         if _mapped is not None:
             ip = _mapped  # ::ffff:a.b.c.d 按内嵌 IPv4 处理, 走 v4 校验与数据源
-        elif ip.is_global and not ip.is_multicast:
+        elif ip.is_global and not ip.is_multicast and not ip.is_reserved:
             return ip, 6
         else:
             return None, "private_ip"
@@ -2496,7 +2496,7 @@ class SANSISC(Provider):
             return {
                 "ok": True,
                 "attack_count": count,
-                "last_seen": ipinfo.get("updated", ""),
+                "last_seen": ipinfo.get("maxdate", ""),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3128,17 +3128,30 @@ class RDAP(Provider):
                 cand = json.loads(raw)
             except Exception:
                 continue
-            if isinstance(cand, dict) and cand.get("name"):
+            if isinstance(cand, dict):
                 d = cand
                 break
         if d is None:
             return {"ok": False, "err": "no rdap record"}
         cidr = ""
+        try:
+            _ip_obj = ipaddress.ip_address(ip)
+        except Exception:
+            _ip_obj = None
         for c in d.get("cidr0_cidrs") or []:
             pfx = c.get("v4prefix") or c.get("v6prefix")
-            if pfx:
-                cidr = f"{pfx}/{c.get('length')}"
-                break
+            if not pfx:
+                continue
+            _cidr = f"{pfx}/{c.get('length')}"
+            if not cidr:
+                cidr = _cidr
+            if _ip_obj is not None:
+                try:
+                    if _ip_obj in ipaddress.ip_network(_cidr, strict=False):
+                        cidr = _cidr
+                        break
+                except Exception:
+                    pass
         org = ""
         for e in d.get("entities") or []:
             if "registrant" in (e.get("roles") or []):
@@ -3295,16 +3308,24 @@ def _build_unified_profile(s):
     ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
     rd = s.get("rdap", {}) if s.get("rdap", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ""
+    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ox.get("isp") or ""
     org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or rd.get("org") or rd.get("netname") or ""
-    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ""
+    _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ox.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
     except (ValueError, TypeError):
         asn = None
-    country = wi.get("country") or db.get("country") or fp.get("country") or ii.get("country") or pc.get("country") or wa.get("country") or ai.get("country") or gu.get("country") or gj.get("country") or il.get("country") or iq.get("country") or co.get("country") or ti.get("country") or ht.get("country") or ox.get("country") or ""
+    _country_src = None
+    country = ""
+    for _src in (wi, db, fp, ii, pc, wa, ai, gu, gj, il, iq, co, ti, ht, ox):
+        if _src.get("country"):
+            country, _country_src = _src["country"], _src
+            break
+    country_code = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    if not country_code:
+        country_code = wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or ""
     region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or ""
-    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ""
+    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ox.get("city") or ""
 
     _lat, _lon = None, None
     for _src in (wi, wa, ai, gu, gj, il, iq, co, ti, ht):
@@ -3313,12 +3334,12 @@ def _build_unified_profile(s):
             _lat, _lon = _la, _lo
             break
     return {
-        "ok": bool(isp or org or country or asn),
+        "ok": bool(isp or org or country or asn or country_code),
         "isp": isp,
         "org": org,
         "asn": _parse_asn(asn),
         "country": country,
-        "country_code": wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or "",
+        "country_code": country_code,
         "region": region,
         "city": city,
         "latitude": _lat,
@@ -6345,7 +6366,8 @@ _DNS_REASON_L = {
 }
 
 DNS_COUNTRY_MAP = {
-    "china": "cn", "cn": "cn", "中国": "cn", "china mainland": "cn", "چین": "cn",
+    "china": "cn", "cn": "cn", "中国": "cn", "中國": "cn", "china mainland": "cn", "چین": "cn",
+    "китай": "cn", "çin": "cn",
     "russia": "ru", "ru": "ru", "russian federation": "ru", "俄罗斯": "ru", "俄羅斯": "ru",
     "россия": "ru", "российская федерация": "ru", "ロシア": "ru", "ロシア連邦": "ru", "روسیه": "ru",
     "iran": "ir", "ir": "ir", "islamic republic of iran": "ir", "iran, islamic republic of": "ir", "iran (islamic republic of)": "ir", "伊朗": "ir",
