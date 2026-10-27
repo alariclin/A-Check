@@ -2070,14 +2070,18 @@ class StopForumSpam(Provider):
             d = json.loads(raw)
             if not d.get("success"):
                 return {"ok": False, "err": "query unsuccessful"}
-            ip_data = d.get("ip") or {}
+            ip_data = d.get("ip")
+            if not isinstance(ip_data, dict) or "appears" not in ip_data:
+                return {"ok": False, "err": "missing ip/appears field"}
             appears = int(ip_data.get("appears") or 0)
-            freq = int(ip_data.get("frequency") or 0) if appears else 0
+            # 阳性但缺 frequency：频次未知，不填零（填零会把“已举报”抹成“零举报”）；
+            # 消费者一律按 (frequency or 0) 取值，None 不得进比较。
+            freq = None if (appears and ip_data.get("frequency") is None) else int(ip_data.get("frequency") or 0)
             conf = float(ip_data.get("confidence") or 0.0)
             return {
                 "ok": True,
                 "frequency": freq,
-                "appears": freq,  # 旧字段兼容别名，计划弃用
+                "appears": appears,
                 "confidence": conf,
                 "last_seen": ip_data.get("lastseen", ""),
                 "ts": now_iso(),
@@ -2624,6 +2628,8 @@ class GreyNoise(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict) or "noise" not in d or "riot" not in d:
+                return {"ok": False, "err": "missing noise/riot field"}
             return {
                 "ok": True,
                 "noise": bool(d.get("noise")),
@@ -2674,12 +2680,14 @@ class ProxyCheck(Provider):
             if root.get("status") not in ("ok", "warning") or str(ip) not in root:
                 return {"ok": False, "err": root.get("message", f"status: {root.get('status')}")}
             d = root[str(ip)]
+            if not isinstance(d, dict) or not d:
+                return {"ok": False, "err": "empty ip object"}
             return {
                 "ok": True,
                 "proxy": d.get("proxy", "") == "yes",
                 "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
                 "type": d.get("type", ""),
-                "risk": int(d.get("risk") or 0),
+                "risk": (int(d["risk"]) if d.get("risk") is not None else None),
                 "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
                 "range": d.get("range", ""),
@@ -3003,24 +3011,27 @@ class SpamhausDROP(Provider):
                else "https://www.spamhaus.org/drop/dropv6.txt")
 
         def _parse(raw):
+            # 解析期即校验：只收与本地址同族的有效 CIDR，存 ip_network 对象
+            # （匹配期不再重解析，版本错配无从逃出）；零有效记录视为名单失败，
+            # 不以空集/垃圾集冒充“未命中”（_get_threat_list 遇 None 驱逐并返失败，
+            # 有效缓存不受未验证新内容覆盖）。
             nets = set()
             for line in raw.splitlines():
                 tok = line.split(";")[0].strip()
-                if "/" in tok:
-                    nets.add(tok)
-            return nets
+                if "/" not in tok:
+                    continue
+                try:
+                    net = ipaddress.ip_network(tok, strict=False)
+                except ValueError:
+                    continue
+                if net.version == addr.version:
+                    nets.add(net)
+            return nets or None
 
         lst = _get_threat_list(f"spamhaus{addr.version}", url, _parse)
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        listed = False
-        for cidr in lst:
-            try:
-                if addr in ipaddress.ip_network(cidr, strict=False):
-                    listed = True
-                    break
-            except ValueError:
-                continue
+        listed = any(addr in net for net in lst)
         return {"ok": True, "listed": listed, "ts": now_iso()}
 
 
@@ -3227,9 +3238,15 @@ class RDAP(Provider):
                 cand = json.loads(raw)
             except Exception:
                 continue
-            if isinstance(cand, dict):
-                d = cand
-                break
+            if not isinstance(cand, dict):
+                continue
+            _ents = cand.get("entities")
+            if _ents is not None and not isinstance(_ents, list):
+                continue
+            if not cand.get("name") and not cand.get("cidr0_cidrs"):
+                continue  # 空字典/无网络身份：不得截断回退
+            d = cand
+            break
         if d is None:
             return {"ok": False, "err": "no rdap record"}
         cidr = ""
@@ -3238,6 +3255,8 @@ class RDAP(Provider):
         except Exception:
             _ip_obj = None
         for c in d.get("cidr0_cidrs") or []:
+            if not isinstance(c, dict):
+                continue
             pfx = c.get("v4prefix") or c.get("v6prefix")
             if not pfx:
                 continue
@@ -3253,14 +3272,18 @@ class RDAP(Provider):
                     pass
         org = ""
         for e in d.get("entities") or []:
-            if "registrant" in (e.get("roles") or []):
-                org = e.get("handle", "")
-                if org:
+            if not isinstance(e, dict):
+                continue
+            _roles = e.get("roles")
+            if isinstance(_roles, list) and "registrant" in _roles:
+                _h = e.get("handle")
+                if isinstance(_h, str) and _h:
+                    org = _h
                     break
         return {
             "ok": True,
-            "netname": d.get("name", ""), "org": org,
-            "country": d.get("country", ""), "cidr": cidr,
+            "netname": (d.get("name") if isinstance(d.get("name"), str) else ""), "org": org,
+            "country": (d.get("country") if isinstance(d.get("country"), str) else ""), "cidr": cidr,
             "ts": now_iso(),
         }
 
@@ -3407,7 +3430,7 @@ def _build_unified_profile(s):
     ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
     rd = s.get("rdap", {}) if s.get("rdap", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ox.get("isp") or ""
+    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ox.get("isp") or gu.get("isp") or gj.get("isp") or co.get("isp") or ""
     org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or rd.get("org") or rd.get("netname") or ""
     _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ox.get("asn") or ""
     try:
@@ -3421,9 +3444,21 @@ def _build_unified_profile(s):
             country, _country_src = _src["country"], _src
             break
     country_code = (_country_src.get("country_code") or "") if _country_src is not None else ""
-    if not country_code:
+    if not country_code and country:
+        # 名码成组：代码须由已选国家名派生（_CC_EN 名→码表），或取自国家名一致的同源；
+        # 禁止从国家名不同的他源借码（如 ipguide 称 US 而 geojs 称 DE，借码会拼出 US 名 + DE 码）。
+        country_code = _CC_EN.get(country.strip().lower(), "")
+    if not country_code and country:
+        _cn = country.strip().lower()
+        for _cand in (wi, wa, gj, il, iq, co, ti):
+            if (_cand.get("country") or "").strip().lower() == _cn:
+                country_code = _cand.get("country_code") or ""
+                if country_code:
+                    break
+    if not country_code and not country:
+        # 未选出国家名时无拼接可言：单凭代码的源（country.is / RDAP）是唯一地理证据，沿旧链取值。
         country_code = wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or ""
-    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or ""
+    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or gj.get("region") or ""
     city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ox.get("city") or ""
 
     _lat, _lon = None, None
@@ -3647,7 +3682,7 @@ Scoring rules (v4.14.17 Keyless Public Edition):
 def score_threat(s):
     pts, ev = 0, []
     f = s.get("stopforumspam", {})
-    if f.get("ok") and f.get("frequency", 0) > 0:
+    if f.get("ok") and (f.get("frequency") or 0) > 0:
         add = min(f["frequency"] * 3, 25)
         pts += add
         ev.append(f"SFS {f['frequency']} hits +{add}")
@@ -3698,7 +3733,7 @@ def score_fraud(s):
         pts = sc["fraud_score"]
         ev.append(f"Scamalytics {pts}/100")
     pc = s.get("proxycheck", {})
-    if pc.get("ok") and pc.get("risk", 0) > 0:
+    if pc.get("ok") and (pc.get("risk") or 0) > 0:
         r_score = pc["risk"]
         if pc.get("tor") or (pc.get("type") or "").upper() == "TOR":
             eff = r_score
@@ -4107,7 +4142,7 @@ def _print_streaming_inference(res):
     high_fraud = sc_score >= 50
 
     sf = s.get("stopforumspam", {})
-    has_abuse = (sf.get("ok") and sf.get("frequency", 0) > 0)
+    has_abuse = (sf.get("ok") and (sf.get("frequency") or 0) > 0)
 
     print(f"  {T('location')}: {_loc_country_name(country) or '?'}")
     if is_proxy or is_vpn:
@@ -4721,7 +4756,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 
     _rows = [
         ("StopForumSpam", [_NA, _NA, _NA, _NA,
-                           _hit(sf, sf.get("frequency", 0) > 0), _NA]),
+                           _hit(sf, (sf.get("frequency") or 0) > 0), _NA]),
         ("urlscan.io", [_NA, _NA, _NA, _NA, _NA,
                         _hit(us, us.get("total", 0) > 0)]),
         ("SANS ISC", [_NA, _NA, _NA, _NA, _NA,
