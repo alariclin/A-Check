@@ -2000,6 +2000,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     cnames = []
     _cur = domain_q.lower().rstrip(".")
     _seen_chain = {_cur}
+    _chain_broken = False
     for _hop in range(16):
         _nxt = None
         for _okey, _rt, _rc, _rd, _off in records:
@@ -2008,13 +2009,23 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
                 if _tgt and _cend - _off <= len(_rd):
                     _nxt = _tgt.lower().rstrip(".")
                     break
-        if _nxt is None or _nxt in _seen_chain:
+        if _nxt is None:
+            break
+        if _nxt in _seen_chain:
+            _chain_broken = True
             break
         cnames.append(_nxt)
         allowed_owners.add(_nxt)
         _seen_chain.add(_nxt)
         _cur = _nxt
+    else:
+        # 16 跳用尽仍未终结：若当前目标仍有未跟随的 CNAME 记录，链被截断
+        _chain_broken = any(_okey == _cur and _rt == 5 and _rc == 1
+                            for _okey, _rt, _rc, _rd, _off in records)
+    if _chain_broken:
+        return (None, []) if return_cnames else None
     results = []
+    _target_failed = False
     for _okey, _rt, _rc, _rd, _off in records:
         if _rc != 1 or _okey not in allowed_owners:
             continue
@@ -2026,11 +2037,21 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             ptr_host, pend = _decode_dns_name(data, _off)
             if ptr_host and pend - _off <= len(_rd):
                 results.append(ptr_host.rstrip("."))
-        elif _rt == 15 and len(_rd) >= 3 and qtype == 15:  # MX record
+            else:
+                # 目标类型 RDATA 解码失败不是“无记录”，须走查询失败分支
+                _target_failed = True
+        elif _rt == 15 and qtype == 15:  # MX record
+            if len(_rd) < 3:
+                _target_failed = True
+                continue
             pref = struct.unpack(">H", _rd[:2])[0]
             mx_host, mend = _decode_dns_name(data, _off + 2)
             if mx_host and mend - (_off + 2) <= len(_rd) - 2:
                 results.append((pref, mx_host.rstrip(".")))
+            else:
+                _target_failed = True
+    if _target_failed:
+        return (None, []) if return_cnames else None
 
     if qtype == 15:
         results.sort(key=lambda x: x[0])
@@ -2217,9 +2238,13 @@ class PTRCheck(Provider):
             return {"ok": False, "err": "invalid ip"}
         rev_ip = _ip_obj.reverse_pointer
         _fwd_qtype = 28 if _ip_obj.version == 6 else 1
-        sys_ns = _get_system_nameservers()[0]
-        ptrs = _dns_query_udp(rev_ip, qtype=12, server=sys_ns, timeout=2.5)
-        if ptrs is None:
+        sys_ns_list = _get_system_nameservers()
+        ptrs = None
+        for _ns in sys_ns_list:
+            ptrs = _dns_query_udp(rev_ip, qtype=12, server=_ns, timeout=2.5)
+            if ptrs is not None:
+                break
+        if ptrs is None and "1.1.1.1" not in sys_ns_list:
             ptrs = _dns_query_udp(rev_ip, qtype=12, server="1.1.1.1", timeout=2.5)
         if ptrs is None:
             return {"ok": False, "err": "PTR query timeout"}
@@ -2230,12 +2255,20 @@ class PTRCheck(Provider):
         got_data = False
         any_failed = False
         for h in ptrs:
-            fwd_ips = _dns_query_udp(h, qtype=_fwd_qtype, server=sys_ns, timeout=2.5)
-            if fwd_ips is None or not fwd_ips:
-                fwd2 = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1", timeout=2.5)
-                if fwd2 is not None:
-                    fwd_ips = fwd2
-                # fwd2 为 None 时保留 sys_ns 原值（[] 是数据，None 是无数据）
+            fwd_ips = None
+            for _ns in sys_ns_list:
+                _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns, timeout=2.5)
+                if _r is None:
+                    continue
+                fwd_ips = _r
+                if _r:
+                    break
+            if (fwd_ips is None or not fwd_ips) and "1.1.1.1" not in sys_ns_list:
+                _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1", timeout=2.5)
+                if _r is not None:
+                    fwd_ips = _r
+                # 全部失败时 fwd_ips 仍为 None（后续 any_failed 分支处理）；[] 是数据，
+                # 无更好结果时保留，不被 None 覆盖
             if fwd_ips is None:
                 any_failed = True
                 continue
@@ -6318,25 +6351,60 @@ def _dns_test_ok(d, tid, qpkt):
         if qname_q is None or off_q + 4 > len(qpkt):
             return False
         qt_q, qc_q = struct.unpack(">HH", qpkt[off_q:off_q + 4])
-        # 答案段逐条边界校验（名 + 10 字节固定 + rdlength 在包内）
+        # 答案段逐条边界校验（名 + 10 字节固定 + rdlength 在包内），并收集答案
+        # 供“至少一条与查询名对应（允许经 CNAME 链关联）的 IN／查询类型记录”判定。
         _aoff = off + 4
+        _answers = []
         for _ in range(ancount):
             _an, _aoff = _decode_dns_name(d, _aoff)
             if _an is None or _aoff + 10 > len(d):
                 return False
+            _at, _ac = struct.unpack(">HH", d[_aoff:_aoff + 4])
             _rdlen = struct.unpack(">H", d[_aoff + 8:_aoff + 10])[0]
             if _aoff + 10 + _rdlen > len(d):
                 return False
+            _answers.append((_an.lower().rstrip("."), _at, _ac, _aoff + 10, _rdlen))
             _aoff += 10 + _rdlen
+        # CNAME 链：从查询名出发跟随 IN 类 CNAME 记录（16 跳上限、防环）
+        _owners = {(qname_q or "").lower().rstrip(".")}
+        _cmap = {}
+        for _oan, _oat, _oac, _oroff, _ordlen in _answers:
+            if _oat == 5 and _oac == 1:
+                _tgt, _tend = _decode_dns_name(d, _oroff)
+                if _tgt and _tend - _oroff <= _ordlen:
+                    _cmap[_oan] = _tgt.lower().rstrip(".")
+        _ccur = (qname_q or "").lower().rstrip(".")
+        for _ in range(16):
+            if _ccur not in _cmap or _cmap[_ccur] in _owners:
+                break
+            _owners.add(_cmap[_ccur])
+            _ccur = _cmap[_ccur]
+        _matched = False
+        for _oan, _oat, _oac, _oroff, _ordlen in _answers:
+            if _oan not in _owners or _oac != 1 or _oat != qt_q:
+                continue
+            if qt_q == 1:
+                _oklen = (_ordlen == 4)
+            elif qt_q == 28:
+                _oklen = (_ordlen == 16)
+            else:
+                _oklen = (_ordlen >= 1)
+            if _oklen:
+                _matched = True
+                break
+        if not _matched:
+            return False
     except Exception:
         return False
     return (qname or "").lower().rstrip(".") == (qname_q or "").lower().rstrip(".") \
         and qt == qt_q and qc == qc_q
 
 
-def _udp_recv_from(sock, ip, timeout):
+def _udp_recv_from(sock, ip, timeout, tid=None):
     """UDP 接收并验源：只接受来自 (ip, 53) 的报文；来自他源的报文继续等，
-    直至总超时耗尽返 None（避免冒名响应被当成目标服务器的答复）。"""
+    直至总超时耗尽返 None（避免冒名响应被当成目标服务器的答复）。
+    tid 给定时还须事务 ID 匹配，不匹配报文继续等（不重置总超时）；
+    tid 缺省时沿旧语义（只验源）。"""
     deadline = time.monotonic() + timeout
     while True:
         remain = deadline - time.monotonic()
@@ -6348,6 +6416,9 @@ def _udp_recv_from(sock, ip, timeout):
         except Exception:
             return None
         if addr[0] == ip and addr[1] == 53:
+            if tid is not None:
+                if len(d) < 2 or struct.unpack(">H", d[:2])[0] != tid:
+                    continue
             return d
 
 
@@ -6414,7 +6485,7 @@ def test_dns_servers(timeout=3):
             sk.settimeout(timeout)
             t0 = time.monotonic()
             sk.sendto(pkt, (ip, 53))
-            d = _udp_recv_from(sk, ip, timeout)
+            d = _udp_recv_from(sk, ip, timeout, tid)
             rtt = round((time.monotonic() - t0) * 1000, 1)
             if d is not None and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "UDP53", "ok": True, "rtt_ms": rtt}
@@ -6578,7 +6649,7 @@ def test_dns_servers6(timeout=3):
             sk.settimeout(timeout)
             t0 = time.monotonic()
             sk.sendto(pkt, (ip, 53))
-            d = _udp_recv_from(sk, ip, timeout)
+            d = _udp_recv_from(sk, ip, timeout, tid)
             rtt = round((time.monotonic() - t0) * 1000, 1)
             if d is not None and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "UDP53",
