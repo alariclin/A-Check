@@ -2451,17 +2451,16 @@ def _resolve_geo_online(jobs):
             continue  # f-string 残留的 None 文本不进检索
         if not name.isascii():
             continue  # 已是本地化文本的不拿去英文库检索
-        key = (name, ctx or "")
-        if key in _GEO_EXTRA[kind]:
+        if (name, ctx or "") in _GEO_EXTRA[kind]:
             continue
         any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
         table = _CITY_L10N if kind == "city" else _REGION_L10N
         en = any2en.get(name)
         if en and table.get(LANG, {}).get(en):
             continue  # 本地表已收录
-        if key in seen:
+        if (kind, name, ctx or "") in seen:
             continue
-        seen.add(key)
+        seen.add((kind, name, ctx or ""))
         todo.append((kind, name, ctx))
     todo = todo[:6]
 
@@ -2479,11 +2478,31 @@ def _resolve_geo_online(jobs):
 
 
 def _extra_sub(disp, kind):
-    """把在线兜底命中的地名替换进对比行整串。"""
+    """把在线兜底命中的地名替换进对比行整串。
+    同一变体有多个上下文候选时，只采用上下文成分出现在整串中的唯一候选；
+    无法消歧时不任意采用首项（该变体原样保留）。"""
     if _GEO_EXTRA.get("lang") != LANG:
         return disp
+    _by_variant = {}
     for (variant, _ctx), loc in _GEO_EXTRA[kind].items():
-        if variant and variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
+        _by_variant.setdefault(variant, []).append((_ctx, loc))
+    for variant, cands in _by_variant.items():
+        if not variant:
+            continue
+        if len(cands) == 1:
+            loc = cands[0][1]
+        else:
+            _disp_words = set(re.findall(r"[A-Za-z0-9]+", disp.lower()))
+            _variant_words = set(re.findall(r"[A-Za-z0-9]+", variant.lower()))
+            _winners = []
+            for _ctx, _loc in cands:
+                _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(_ctx or "").lower())) - _variant_words
+                if _ctx_words and _ctx_words <= _disp_words:
+                    _winners.append(_loc)
+            if len(_winners) != 1:
+                continue
+            loc = _winners[0]
+        if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
             m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
             if m:
                 disp = disp[:m.start()] + loc + disp[m.end():]
@@ -2528,15 +2547,32 @@ def _loc_city(text):
 
 
 def _loc_sub_in(disp, any2en, table):
-    """在对比行整串里按最长变体匹配替换一个地名 (州/省或城市)。"""
+    """在对比行整串里按最长变体匹配替换一个地名 (州/省或城市)。
+    ASCII 变体须词边界匹配（避免 London 命中 Londonderry），替换落在边界匹配处；
+    非 ASCII 变体沿现有子串语义。"""
     best = None
+    best_start = None
+    best_end = None
     for variant, en in any2en.items():
-        if variant in disp and (best is None or len(variant) > len(best[0])):
+        if not variant:
+            continue
+        if variant.isascii():
+            m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
+            if not m:
+                continue
+            start, end = m.start(), m.end()
+        else:
+            idx = disp.find(variant)
+            if idx < 0:
+                continue
+            start, end = idx, idx + len(variant)
+        if best is None or len(variant) > len(best[0]):
             best = (variant, en)
+            best_start, best_end = start, end
     if best:
         loc = table.get(LANG, {}).get(best[1])
         if loc and loc != best[0]:
-            return disp.replace(best[0], loc, 1)
+            return disp[:best_start] + loc + disp[best_end:]
     return disp
 
 
