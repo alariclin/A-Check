@@ -1532,16 +1532,43 @@ def _per_key_lock(key):
         return lk
 
 
+def _read_timed(resp, n, remain):
+    """限时单次读：守护线程中读 n 字节，主线程按 remain join；超时返 None
+    （调用方按窗口已尽处理，读错误照常抛出）。daemon 线程随响应关闭而结束，
+    不阻塞解释器退出。小块读本身约束不了 BufferedReader.read(n) 的等满阻塞
+    （A4a 已实测），故时限必须由 join 提供，而非仅靠缩小块尺寸。"""
+    if remain <= 0:
+        return None
+    box = {}
+
+    def _run():
+        try:
+            box["chunk"] = resp.read(n)
+        except Exception as e:
+            box["err"] = e
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(remain)
+    if t.is_alive():
+        return None
+    if "err" in box:
+        raise box["err"]
+    return box["chunk"]
+
+
 def _read_limited(resp, cap=1048576, timeout=10):
-    """带尺寸上限与全程时限的响应体读取：超限或超时抛错，调用方按失败处理。
-    单次 recv 仍受连接超时约束；时限在每次分块前检查，故最坏为时限 + 一次 recv 超时。"""
+    """带尺寸上限与全程硬时限的响应体读取：超限或超时抛错，调用方按失败处理。
+    时限为硬上限：每块读经限时单次读按剩余时间 join，超时即抛 TimeoutError。"""
     buf = []
     total = 0
     deadline = time.monotonic() + timeout
     while True:
-        if time.monotonic() > deadline:
+        remain = deadline - time.monotonic()
+        if remain <= 0:
             raise TimeoutError("response read deadline exceeded")
-        chunk = resp.read(65536)
+        chunk = _read_timed(resp, 65536, remain)
+        if chunk is None:
+            raise TimeoutError("response read deadline exceeded")
         if not chunk:
             break
         total += len(chunk)
@@ -5068,7 +5095,10 @@ def _https_get_pinned6(host, path, timeout=6):
                 f"User-Agent: {UA_BROWSER}\r\nAccept: */*\r\nConnection: close\r\n\r\n"
             ).encode())
             raw = b""
+            dl = time.monotonic() + timeout
             while len(raw) < 16384:
+                if time.monotonic() > dl:
+                    raise TimeoutError("pinned6 receive deadline")
                 chunk = ss.recv(4096)
                 if not chunk:
                     break
@@ -5669,15 +5699,22 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
     """直连下载计数 worker: 在 stop 前循环拉流累计字节 (urllib)。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
-    while time.time() < stop and fails < 3:
+    while time.monotonic() < stop and fails < 3:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": UA_TOOL})
             with (opener.open(req, timeout=10) if opener else urllib.request.urlopen(req, timeout=10)) as r:
-                while time.time() < stop:
-                    chunk = r.read(256 * 1024)
+                while time.monotonic() < stop:
+                    with lock:
+                        room = DL_CAP_BYTES - counter[0]
+                    if room <= 0:
+                        return
+                    chunk = _read_timed(r, min(32768, room),
+                                        max(0.0, stop - time.monotonic()))
+                    if chunk is None:
+                        break  # 窗口已尽，限时读未返回
                     if not chunk:
                         break
-                    if time.time() >= stop:
+                    if time.monotonic() >= stop:
                         break  # 停滞读在 stop 后才返回时不计入窗口字节
                     with lock:
                         room = DL_CAP_BYTES - counter[0]
@@ -5696,14 +5733,22 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
     """多连接并发下载测速 (直连), 返回 (Mbps 或 None, 下载字节数)。
     单节点下载量受 DL_CAP_BYTES 上限约束。"""
     counter, lock = [0], threading.Lock()
-    t0 = time.time()
+    t0 = time.monotonic()
     stop = t0 + duration
-    with ThreadPoolExecutor(max_workers=streams) as ex:
+    ex = ThreadPoolExecutor(max_workers=streams)
+    try:
         _op = _pinned_opener(family) if family else None
-        list(ex.map(lambda _: _dl_direct_worker(url, stop, counter, lock, opener=_op),
-                    range(streams)))
+        futs = [ex.submit(_dl_direct_worker, url, stop, counter, lock, _op)
+                for _ in range(streams)]
+        for f in futs:
+            try:
+                f.result(timeout=max(0.0, stop - time.monotonic()))
+            except Exception:
+                pass
+    finally:
+        ex.shutdown(wait=False)
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
-    elapsed = max(0.1, min(time.time() - t0, duration or 1e9))
+    elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if counter[0] == 0:
         return None, 0
     return round((counter[0] * 8 / 1e6) / elapsed, 2), counter[0]
@@ -5868,10 +5913,10 @@ def test_dns_servers(timeout=3):
             tid, pkt = _bq()
             sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sk.settimeout(timeout)
-            t0 = time.time()
+            t0 = time.monotonic()
             sk.sendto(pkt, (ip, 53))
             d = _udp_recv_from(sk, ip, timeout)
-            rtt = round((time.time() - t0) * 1000, 1)
+            rtt = round((time.monotonic() - t0) * 1000, 1)
             if d is not None and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "UDP53", "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -5888,14 +5933,14 @@ def test_dns_servers(timeout=3):
         try:
             tid, pkt = _bq()
             dp = base64.urlsafe_b64encode(pkt).decode("ascii").rstrip("=")
-            t0 = time.time()
+            t0 = time.monotonic()
             rq = urllib.request.Request(
                 url + "?dns=" + dp,
                 headers={"Accept": "application/dns-message", "User-Agent": UA_BROWSER},
             )
             with _pinned_opener(4).open(rq, timeout=timeout + 2) as rp:
                 d = _read_limited(rp, timeout=timeout + 2)
-            rtt = round((time.time() - t0) * 1000, 1)
+            rtt = round((time.monotonic() - t0) * 1000, 1)
             if _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": url, "proto": "DoH", "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -5909,21 +5954,29 @@ def test_dns_servers(timeout=3):
             tid, pkt = _bq()
             fr = struct.pack(">H", len(pkt)) + pkt
             ctx = ssl.create_default_context()
-            t0 = time.time()
+            t0 = time.monotonic()
             sk = socket.create_connection((ip, 853), timeout=timeout)
             ss = ctx.wrap_socket(sk, server_hostname=sni)
             ss.sendall(fr)
-            len_bytes = ss.recv(2)
-            if len(len_bytes) < 2:
-                return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
+            dl = time.monotonic() + timeout
+            len_bytes = b""
+            while len(len_bytes) < 2:
+                if time.monotonic() > dl:
+                    return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
+                chunk = ss.recv(2 - len(len_bytes))
+                if not chunk:
+                    return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
+                len_bytes += chunk
             rl = struct.unpack(">H", len_bytes)[0]
             d = b""
             while len(d) < rl:
+                if time.monotonic() > dl:
+                    return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
                 chunk = ss.recv(rl - len(d))
                 if not chunk:
                     break
                 d += chunk
-            rtt = round((time.time() - t0) * 1000, 1)
+            rtt = round((time.monotonic() - t0) * 1000, 1)
             if len(d) == rl and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "DoT853", "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -6034,10 +6087,10 @@ def test_dns_servers6(timeout=3):
             tid, pkt = _bq()
             sk = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
             sk.settimeout(timeout)
-            t0 = time.time()
+            t0 = time.monotonic()
             sk.sendto(pkt, (ip, 53))
             d = _udp_recv_from(sk, ip, timeout)
-            rtt = round((time.time() - t0) * 1000, 1)
+            rtt = round((time.monotonic() - t0) * 1000, 1)
             if d is not None and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "UDP53",
                         "ok": True, "rtt_ms": rtt}
@@ -6059,22 +6112,32 @@ def test_dns_servers6(timeout=3):
             tid, pkt = _bq()
             fr = struct.pack(">H", len(pkt)) + pkt
             ctx = ssl.create_default_context()
+            t0 = time.monotonic()
             sk = socket.create_connection((ip, 853), timeout=timeout)
             ss = ctx.wrap_socket(sk, server_hostname=sni)
-            t0 = time.time()
             ss.sendall(fr)
-            len_bytes = ss.recv(2)
-            if len(len_bytes) < 2:
-                return {"name": name, "ip": ip, "proto": "DoT853",
-                        "ok": False, "rtt_ms": None}
+            dl = time.monotonic() + timeout
+            len_bytes = b""
+            while len(len_bytes) < 2:
+                if time.monotonic() > dl:
+                    return {"name": name, "ip": ip, "proto": "DoT853",
+                            "ok": False, "rtt_ms": None}
+                chunk = ss.recv(2 - len(len_bytes))
+                if not chunk:
+                    return {"name": name, "ip": ip, "proto": "DoT853",
+                            "ok": False, "rtt_ms": None}
+                len_bytes += chunk
             rl = struct.unpack(">H", len_bytes)[0]
             d = b""
             while len(d) < rl:
+                if time.monotonic() > dl:
+                    return {"name": name, "ip": ip, "proto": "DoT853",
+                            "ok": False, "rtt_ms": None}
                 chunk = ss.recv(rl - len(d))
                 if not chunk:
                     break
                 d += chunk
-            rtt = round((time.time() - t0) * 1000, 1)
+            rtt = round((time.monotonic() - t0) * 1000, 1)
             if len(d) == rl and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "DoT853",
                         "ok": True, "rtt_ms": rtt}
@@ -6096,6 +6159,7 @@ def test_dns_servers6(timeout=3):
         try:
             tid, pkt = _bq()
             ctx = ssl.create_default_context()
+            t0 = time.monotonic()
             sk = socket.create_connection((ip, 443), timeout=max(timeout, 5))
             ss = ctx.wrap_socket(sk, server_hostname=host)
             req = (
@@ -6104,15 +6168,18 @@ def test_dns_servers6(timeout=3):
                 "Content-Type: application/dns-message\r\n"
                 f"Content-Length: {len(pkt)}\r\nConnection: close\r\n\r\n"
             ).encode() + pkt
-            t0 = time.time()
             ss.sendall(req)
+            dl = time.monotonic() + max(timeout, 5)
             raw = b""
             while True:
+                if time.monotonic() > dl or len(raw) > 1048576:
+                    return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                            "ok": False, "rtt_ms": None}
                 chunk = ss.recv(65536)
                 if not chunk:
                     break
                 raw += chunk
-            rtt = round((time.time() - t0) * 1000, 1)
+            rtt = round((time.monotonic() - t0) * 1000, 1)
             head, _, body = raw.partition(b"\r\n\r\n")
             if b" 200 " in head.split(b"\r\n", 1)[0]:
                 if b"chunked" in head.lower():
@@ -7212,7 +7279,7 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
     conn = None
-    while time.time() < stop and fails < 3:
+    while time.monotonic() < stop and fails < 3:
         try:
             conn = _SocksHTTPS(host, ph, pp,
                                username=user, password=pwd, timeout=10)
@@ -7223,11 +7290,19 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
             if resp.status < 200 or resp.status >= 300:
                 conn.close()
                 raise RuntimeError(f"HTTP {resp.status}")
-            while time.time() < stop:
-                chunk = resp.read(256 * 1024)
+            while time.monotonic() < stop:
+                with lock:
+                    room = DL_CAP_BYTES - counter[0]
+                if room <= 0:
+                    conn.close()
+                    return
+                chunk = _read_timed(resp, min(32768, room),
+                                    max(0.0, stop - time.monotonic()))
+                if chunk is None:
+                    break  # 窗口已尽，限时读未返回
                 if not chunk:
                     break
-                if time.time() >= stop:
+                if time.monotonic() >= stop:
                     break  # 停滞读在 stop 后才返回时不计入窗口字节
                 with lock:
                     room = DL_CAP_BYTES - counter[0]
@@ -7254,14 +7329,22 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
                            streams=3):
     """经 SOCKS5 对单个端点多连接下载测速, 返回 Mbps 或 None。"""
     counter, lock = [0], threading.Lock()
-    t0 = time.time()
+    t0 = time.monotonic()
     stop = t0 + duration
-    with ThreadPoolExecutor(max_workers=streams) as ex:
-        list(ex.map(lambda _: _dl_proxy_worker(ph, pp, user, pwd, host, path,
-                                               stop, counter, lock),
-                    range(streams)))
+    ex = ThreadPoolExecutor(max_workers=streams)
+    try:
+        futs = [ex.submit(_dl_proxy_worker, ph, pp, user, pwd, host, path,
+                          stop, counter, lock)
+                for _ in range(streams)]
+        for f in futs:
+            try:
+                f.result(timeout=max(0.0, stop - time.monotonic()))
+            except Exception:
+                pass
+    finally:
+        ex.shutdown(wait=False)
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
-    elapsed = max(0.1, min(time.time() - t0, duration or 1e9))
+    elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if counter[0] == 0:
         return None
     return round((counter[0] * 8 / 1e6) / elapsed, 2)
@@ -7822,13 +7905,14 @@ def _banner_net_info():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
-    try:
-        info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
-                                                  socket.AF_UNSPEC,
-                                                  socket.SOCK_DGRAM,
-                                                  timeout=min(5, _rem())))
-    except Exception:
-        info["dns_ok"] = False
+    if _rem() > 0:
+        try:
+            info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
+                                                      socket.AF_UNSPEC,
+                                                      socket.SOCK_DGRAM,
+                                                      timeout=min(5, _rem())))
+        except Exception:
+            info["dns_ok"] = False
     try:
         egress = get_egress_ip() if _rem() > 0 else None
         info["egress"] = egress
@@ -7843,7 +7927,10 @@ def _banner_net_info():
                     "city,org,isp,hosting" % (egress, _lang),
                     headers={"User-Agent": UA_BROWSER})
                 with urllib.request.urlopen(req, timeout=min(5, _rem())) as r:
-                    d = json.loads(r.read(8192).decode("utf-8", errors="replace"))
+                    raw = _read_timed(r, 8192, _rem())
+                    if raw is None:
+                        raise TimeoutError("banner geo read deadline")
+                    d = json.loads(raw.decode("utf-8", errors="replace"))
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
                 org = d.get("org") or d.get("isp") or ""
@@ -7857,12 +7944,17 @@ def _banner_net_info():
                 info["geo"] = " · ".join(p for p in parts if p)
             except Exception:
                 try:
+                    if _rem() <= 0:
+                        raise TimeoutError("banner budget exhausted")
                     req = urllib.request.Request(
                         (("https://ipwho.is/%s?lang=%s" % (egress, _ipwho_lang())) if _ipwho_lang() else ("https://ipwho.is/%s" % egress)),
                         headers={"User-Agent": UA_BROWSER})
                     with urllib.request.urlopen(req, timeout=min(5, _rem())) as r:
-                        d = json.loads(r.read(8192).decode("utf-8",
-                                                         errors="replace"))
+                        raw = _read_timed(r, 8192, _rem())
+                        if raw is None:
+                            raise TimeoutError("banner geo read deadline")
+                        d = json.loads(raw.decode("utf-8",
+                                                  errors="replace"))
                     conn = d.get("connection") or {}
                     org = conn.get("org") or conn.get("isp") or ""
                     parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
@@ -7880,6 +7972,8 @@ def _banner_net_info():
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
     _v6addr = None
     for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
+        if _rem() <= 0:
+            break
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
@@ -7890,10 +7984,15 @@ def _banner_net_info():
             continue
     if _v6addr is None:
         for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
+            if _rem() <= 0:
+                break
             try:
                 req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
                 with urllib.request.urlopen(req, timeout=min(3, _rem())) as r:
-                    _cand = r.read(128).decode("utf-8", errors="replace").strip()
+                    raw = _read_timed(r, 128, _rem())
+                    if raw is None:
+                        raise TimeoutError("banner v6 read deadline")
+                    _cand = raw.decode("utf-8", errors="replace").strip()
                 _ip6 = ipaddress.IPv6Address(_cand)
                 if _ip6.is_global:
                     _v6addr = str(_ip6)
@@ -7902,7 +8001,7 @@ def _banner_net_info():
                 continue
     if _v6addr is not None:
         info["ipv6_verified"] = True
-    if _v6addr is None:
+    if _v6addr is None and _rem() > 0:
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
             s6.settimeout(min(1.5, _rem()))
