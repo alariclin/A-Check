@@ -1623,8 +1623,14 @@ def _http_fetch_uncached(url, h, timeout, retries):
         try:
             req = urllib.request.Request(url, headers=h)
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = _read_limited(r, timeout=timeout).decode(
-                    "utf-8", errors="replace")
+                try:
+                    data = _read_limited(r, timeout=timeout).decode(
+                        "utf-8", errors="replace")
+                except Exception:
+                    # 异常 unwind 也会走 with 退出关响应：先 shutdown 唤醒 stuck 读者
+                    _resp_shutdown(r)
+                    raise
+                _resp_shutdown(r)
                 return True, data
         except urllib.error.HTTPError as e:
             try:
@@ -7169,6 +7175,8 @@ def get_system_info():
                         kb = int(line.split()[1])
                         info["mem"] = f"{kb // 1024 // 1024}GB" if kb >= 1048576 else f"{kb // 1024}MB"
                         break
+                else:
+                    info["mem"] = "?"  # 无 MemTotal 行：不留缺失键（打印侧直接索引会 KeyError）
         else:
             out = subprocess.run(
                 ["sysctl", "-n", "hw.memsize"],
@@ -9526,7 +9534,7 @@ def main():
             print("[Info] No terminal available; interactive menu requires "
                   "a TTY. Run with --active for a non-interactive "
                   "self-check.", file=sys.stderr)
-            return
+            sys.exit(2)  # 交互启动失败：非零退出（避开 130 中断码）
     try:
         print_banner()
         _menu_first = True
