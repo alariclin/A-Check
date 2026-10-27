@@ -2296,6 +2296,11 @@ def _wd_label(name, kind, context):
         return None
 
 
+def _join_nonempty(*parts, sep=" "):
+    """拼接地名/上下文：只取非空字段，缺失字段不留字面 'None'（R2-8.2）。"""
+    return sep.join(str(p).strip() for p in parts if p and str(p).strip())
+
+
 def _resolve_geo_online(jobs):
     """jobs: [(kind, name, context)]; 本地表未收录的 ASCII 地名并行查 Wikidata。"""
     if LANG == "en" or not jobs:
@@ -2311,19 +2316,17 @@ def _resolve_geo_online(jobs):
             continue  # f-string 残留的 None 文本不进检索
         if not name.isascii():
             continue  # 已是本地化文本的不拿去英文库检索
-        if name in _GEO_EXTRA[kind]:
+        key = (name, ctx or "")
+        if key in _GEO_EXTRA[kind]:
             continue
         any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
         table = _CITY_L10N if kind == "city" else _REGION_L10N
         en = any2en.get(name)
         if en and table.get(LANG, {}).get(en):
             continue  # 本地表已收录
-        if (kind, name) in seen:
-            if ctx and ctx.isascii():
-                todo = [(k, n, ctx if (k, n) == (kind, name) else c)
-                        for (k, n, c) in todo]
+        if key in seen:
             continue
-        seen.add((kind, name))
+        seen.add(key)
         todo.append((kind, name, ctx))
     todo = todo[:6]
 
@@ -2331,7 +2334,7 @@ def _resolve_geo_online(jobs):
         kind, name, ctx = job
         v = _wd_label(name, kind, ctx)
         if v:
-            _GEO_EXTRA[kind][name] = v
+            _GEO_EXTRA[kind][(name, ctx or "")] = v
             any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
             any2en[v] = any2en.get(name, name)
 
@@ -2344,8 +2347,12 @@ def _extra_sub(disp, kind):
     """把在线兜底命中的地名替换进对比行整串。"""
     if _GEO_EXTRA.get("lang") != LANG:
         return disp
-    for variant, loc in _GEO_EXTRA[kind].items():
-        if variant in disp:
+    for (variant, _ctx), loc in _GEO_EXTRA[kind].items():
+        if variant and variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
+            m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
+            if m:
+                disp = disp[:m.start()] + loc + disp[m.end():]
+        elif variant in disp:
             disp = disp.replace(variant, loc, 1)
     return disp
 
@@ -2354,8 +2361,10 @@ def _loc_region(text):
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
-    if _GEO_EXTRA.get("lang") == LANG and t in _GEO_EXTRA["region"]:
-        return _GEO_EXTRA["region"][t]
+    if _GEO_EXTRA.get("lang") == LANG:
+        for (n, _ctx), v in _GEO_EXTRA["region"].items():
+            if n == t:
+                return v
     en = _ANY_REGION2EN.get(t)
     if en:
         return _REGION_L10N.get(LANG, {}).get(en, text)
@@ -2373,8 +2382,10 @@ def _loc_city(text):
     if folded != t:
         cands.append(folded)
     for cand in cands:
-        if _GEO_EXTRA.get("lang") == LANG and cand in _GEO_EXTRA["city"]:
-            return _GEO_EXTRA["city"][cand]
+        if _GEO_EXTRA.get("lang") == LANG:
+            for (n, _ctx), v in _GEO_EXTRA["city"].items():
+                if n == cand:
+                    return v
         en = _ANY_CITY2EN.get(cand)
         if en:
             return _CITY_L10N.get(LANG, {}).get(en, text)
@@ -4318,65 +4329,65 @@ def _print_basic_block(s, prof):
         if _rd.get("ok") and _rd.get("cidr"):
             print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, _rd['cidr'])}")
 
-    # 地理位置组: 国旗排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
+    # 地理位置组: 国家码徽章排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
     locs = []
     if wi.get("ok"):
-        locs.append(("ipwho.is", f"{wi.get('country')} {wi.get('region')} {wi.get('city')}".strip(),
+        locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
                      wi.get("country"), wi.get("city")))
     if ii.get("ok") and (ii.get("country") or ii.get("city")):
-        locs.append(("ipinfo.io", f"{ii.get('country')} {ii.get('region')} {ii.get('city')}".strip(),
+        locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
                      ii.get("country"), ii.get("city")))
     if db.get("ok"):
-        locs.append(("DB-IP", f"{db.get('country')} {db.get('state')} {db.get('city')}".strip(),
+        locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
                      db.get("country"), db.get("city")))
     if pc.get("ok") and (pc.get("country") or pc.get("city")):
-        locs.append(("proxycheck", f"{pc.get('country')} {pc.get('city')}".strip(),
+        locs.append(("proxycheck", _join_nonempty(pc.get("country"), pc.get("city")),
                      pc.get("country"), pc.get("city")))
     fp = s.get("freeipapi", {})
     if fp.get("ok") and (fp.get("country") or fp.get("city")):
-        locs.append(("freeipapi", f"{fp.get('country')} {fp.get('city')}".strip(),
+        locs.append(("freeipapi", _join_nonempty(fp.get("country"), fp.get("city")),
                      fp.get("country"), fp.get("city")))
     wap = s.get("ipwhoisapp", {})
     if wap.get("ok") and (wap.get("country") or wap.get("city")):
-        locs.append(("ipwhois.app", f"{wap.get('country')} {wap.get('region')} {wap.get('city')}".strip(),
+        locs.append(("ipwhois.app", _join_nonempty(wap.get("country"), wap.get("region"), wap.get("city")),
                      wap.get("country"), wap.get("city")))
     ais = s.get("ipapiis", {})
     if ais.get("ok") and (ais.get("country") or ais.get("city")):
-        locs.append(("ipapi.is", f"{ais.get('country')} {ais.get('region')} {ais.get('city')}".strip(),
+        locs.append(("ipapi.is", _join_nonempty(ais.get("country"), ais.get("region"), ais.get("city")),
                      ais.get("country"), ais.get("city")))
     igd = s.get("ipguide", {})
     if igd.get("ok") and (igd.get("country") or igd.get("city")):
-        locs.append(("ip.guide", f"{igd.get('country')} {igd.get('city')}".strip(),
+        locs.append(("ip.guide", _join_nonempty(igd.get("country"), igd.get("city")),
                      igd.get("country"), igd.get("city")))
     ilc = s.get("iplocate", {})
     if ilc.get("ok") and (ilc.get("country") or ilc.get("city")):
-        locs.append(("iplocate.io", f"{ilc.get('country')} {ilc.get('region')} {ilc.get('city')}".strip(),
+        locs.append(("iplocate.io", _join_nonempty(ilc.get("country"), ilc.get("region"), ilc.get("city")),
                      ilc.get("country"), ilc.get("city")))
     iqc = s.get("ipquery", {})
     if iqc.get("ok") and (iqc.get("country") or iqc.get("city")):
-        locs.append(("ipquery.io", f"{iqc.get('country')} {iqc.get('region')} {iqc.get('city')}".strip(),
+        locs.append(("ipquery.io", _join_nonempty(iqc.get("country"), iqc.get("region"), iqc.get("city")),
                      iqc.get("country"), iqc.get("city")))
     coc = s.get("ipapico", {})
     if coc.get("ok") and (coc.get("country") or coc.get("city")):
-        locs.append(("ipapi.co", f"{coc.get('country')} {coc.get('region')} {coc.get('city')}".strip(),
+        locs.append(("ipapi.co", _join_nonempty(coc.get("country"), coc.get("region"), coc.get("city")),
                      coc.get("country"), coc.get("city")))
     tic = s.get("twoip", {})
     if tic.get("ok") and (tic.get("country") or tic.get("city")):
-        locs.append(("2ip.io", f"{tic.get('country')} {tic.get('region')} {tic.get('city')}".strip(),
+        locs.append(("2ip.io", _join_nonempty(tic.get("country"), tic.get("region"), tic.get("city")),
                      tic.get("country"), tic.get("city")))
     gjs = s.get("geojs", {})
     if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
-        locs.append(("GeoJS", f"{gjs.get('country')} {gjs.get('region')} {gjs.get('city')}".strip(),
+        locs.append(("GeoJS", _join_nonempty(gjs.get("country"), gjs.get("region"), gjs.get("city")),
                      gjs.get("country"), gjs.get("city")))
     _gjobs = []
     if prof.get("city"):
         _gjobs.append(("city", prof["city"],
-                       f"{prof.get('city')}, {_ANY_REGION2EN.get(str(prof.get('region') or '').strip(), prof.get('region'))}"))
+                       _join_nonempty(prof.get("city"), _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")), sep=", ")))
     if prof.get("region"):
         _gjobs.append(("region", prof["region"],
-                       f"{prof.get('region')}, {prof.get('country')}"))
+                       _join_nonempty(prof.get("region"), prof.get("country"), sep=", ")))
     for _nm, _loc, _co, _ci in locs:
         _mid = _loc
         if _co and _mid.startswith(_co):
@@ -4385,7 +4396,7 @@ def _print_basic_block(s, prof):
             _mid = _mid[:-len(_ci)].strip()
         if _ci:
             _gjobs.append(("city", _ci,
-                           f"{_ci}, {_ANY_REGION2EN.get(_mid, _mid)}"))
+                           _join_nonempty(_ci, _ANY_REGION2EN.get(_mid, _mid), sep=", ")))
         if _mid:
             _gjobs.append(("region", _mid, _loc))
     _resolve_geo_online(_gjobs)
@@ -4435,11 +4446,16 @@ def _print_basic_block(s, prof):
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
             return " ".join(txt.split())
 
-        # 求同存异: 相同 (国家, 城市) 合并为一行, 不同位置逐行对齐列出
+        # 求同存异: 相同 (国家, 行政区, 城市) 合并为一行, 不同位置逐行对齐列出
         _groups = {}
         _order = []
         for name, loc, co, ci in locs:
-            k = (_norm(co), _norm(ci))
+            _mid = loc
+            if co and _mid.startswith(co):
+                _mid = _mid[len(co):].strip()
+            if ci and _mid.endswith(ci):
+                _mid = _mid[:-len(ci)].strip()
+            k = (_norm(co), _norm(_mid), _norm(ci))
             if k not in _groups:
                 _groups[k] = (loc, [])
                 _order.append(k)
