@@ -5424,13 +5424,20 @@ _opener_noredir = urllib.request.build_opener(_NoRedirect)
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
 
 
+def _body_is_challenge(body):
+    """正文是否含挑战标记（与状态码无关；供 200 分支复用）。"""
+    if not body:
+        return False
+    bl = body.lower()
+    # 剥离 HTML 注释（re.S 兼容多行；(?:-->|$) 处理未闭合注释），避免注释中 captcha 等词误命中
+    bl = re.sub(r"<!--.*?(?:-->|$)", "", bl, flags=re.S)[:4096]
+    return any(m in bl for m in CHALLENGE_MARKERS)
+
+
 def _is_challenge(code, body):
     """区分反爬/风控挑战与真实区域封锁"""
-    if code in (400, 403, 429, 503) and body:  # 503 须有标记才算挑战，裸 503 由落空分类判 unknown
-        bl = body.lower()
-        # 剥离 HTML 注释（re.S 兼容多行；(?:-->|$) 处理未闭合注释），避免注释中 captcha 等词误命中
-        bl = re.sub(r"<!--.*?(?:-->|$)", "", bl, flags=re.S)[:4096]
-        return any(m in bl for m in CHALLENGE_MARKERS)
+    if code in (400, 403, 429, 503):  # 503 须有标记才算挑战，裸 503 由落空分类判 unknown
+        return _body_is_challenge(body)
     return False
 
 
@@ -5679,6 +5686,8 @@ def test_tiktok(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200 and not complete and "Access Denied" not in body:
         return T("unknown"), "", None
     if code == 200 and "Access Denied" not in body:
@@ -5697,6 +5706,8 @@ def test_disney(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200 and not complete and "not available" not in body.lower():
         return T("unknown"), "", None
     if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
@@ -5714,6 +5725,8 @@ def test_netflix(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200 and not complete and "Not Available" not in body:
         return T("unknown"), "", None  # 首探针证据不完整即判 unknown，不落入次探针
     if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
@@ -5727,6 +5740,8 @@ def test_netflix(local_ip=None):
     if code2 is None:
         return T("failed"), "", None
     if _is_challenge(code2, body2):
+        return T("unknown"), "", None
+    if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
     if code2 == 200 and not complete2 and "Not Available" not in body2:
         return T("unknown"), "", None
@@ -5748,6 +5763,8 @@ def test_youtube(local_ip=None):
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         if not complete and "YouTube Premium is not available in your country" not in body:
@@ -5787,6 +5804,8 @@ def test_reddit(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200 and "Blocked" not in body[:4096]:
         return T("unlocked"), "", get_unlock_type("www.reddit.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -5810,6 +5829,8 @@ def test_chatgpt(local_ip=None):
     api_code, api_body, _, _api_complete = _active_get("https://api.openai.com/v1/models")
     if _is_challenge(api_code, api_body):
         return T("unknown"), "", None
+    if api_code in (200, 401) and _body_is_challenge(api_body):
+        return T("unknown"), "", None
     if api_code is None:
         return T("failed"), "", None
     if api_code in (200, 401):
@@ -5828,6 +5849,8 @@ def test_gemini(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200 and not complete and "isn't currently supported" not in body.lower():
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
@@ -5844,6 +5867,8 @@ def test_claude(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
     _ft = _http_fallthrough(code)
@@ -5857,6 +5882,8 @@ def test_grok(local_ip=None):
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200 and not complete and "Access Denied" not in body:
         return T("unknown"), "", None
@@ -5874,6 +5901,8 @@ def test_instagram(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -5888,6 +5917,8 @@ def test_facebook(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -5901,6 +5932,8 @@ def test_x(local_ip=None):
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code in (200, 302):
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
@@ -5930,6 +5963,8 @@ def test_whatsapp(local_ip=None):
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -5943,6 +5978,8 @@ def test_github(local_ip=None):
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
