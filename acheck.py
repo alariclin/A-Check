@@ -9256,6 +9256,13 @@ def main():
                    "نادیده گرفته شد: %s")
               % (_modes[0], ", ".join(_modes[1:])), file=sys.stderr)
 
+    _ip_ignored_tpl = _L("※ %s 模式忽略指定的 IP 参数",
+                         "Note: %s mode ignores the specified IP argument.",
+                         "※ %s モードは指定した IP 引数を無視します。",
+                         "※ Режим %s игнорирует указанный IP.",
+                         "※ حالت %s آرگومان IP را نادیده میگیرد。",
+                         "※ %s 模式忽略指定的 IP 參數")
+
     if ns.active:
         if ns.ip and not ns.json:
             print(_c(C.yellow, T("active_ip_ignored")))
@@ -9263,6 +9270,8 @@ def main():
         return
 
     if ns.speed:
+        if ns.ip and not ns.json:
+            print(_c(C.yellow, _ip_ignored_tpl % "--speed"))
         run_speed_only(json_mode=ns.json)
         return
 
@@ -9284,6 +9293,8 @@ def main():
                              ensure_ascii=False) if ns.json
                   else T("invalid_proxy_format"))
             sys.exit(2)
+        if ns.ip and not ns.json:
+            print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
         run_proxy_diag(_ph, _pt, username=ns.proxy_user,
                        password=ns.proxy_pass, json_mode=ns.json)
         return
@@ -9299,6 +9310,8 @@ def main():
             print(json.dumps({"error": "no valid nodes"}, ensure_ascii=False)
                   if ns.json else T("no_valid_nodes"))
             sys.exit(2)
+        if ns.ip and not ns.json:
+            print(_c(C.yellow, _ip_ignored_tpl % "--batch"))
         _res = batch_node_test(_nodes)
         if ns.json:
             print(json.dumps({"batch": _sanitize_batch_results(_res)},
