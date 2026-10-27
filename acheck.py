@@ -2150,10 +2150,24 @@ class PTRCheck(Provider):
         if not ptrs:
             return {"ok": True, "ptr": None, "fcrdns": False, "ts": now_iso()}
         host = ptrs[0]
-        fwd_ips = _dns_query_udp(host, qtype=1, server=sys_ns, timeout=2.5)
-        if not fwd_ips:
-            fwd_ips = _dns_query_udp(host, qtype=1, server="1.1.1.1", timeout=2.5) or []
-        fcrdns = str(ip) in fwd_ips
+        fcrdns = False
+        got_data = False
+        for h in ptrs:
+            fwd_ips = _dns_query_udp(h, qtype=1, server=sys_ns, timeout=2.5)
+            if fwd_ips is None or not fwd_ips:
+                fwd2 = _dns_query_udp(h, qtype=1, server="1.1.1.1", timeout=2.5)
+                if fwd2 is not None:
+                    fwd_ips = fwd2
+                # fwd2 为 None 时保留 sys_ns 原值（[] 是数据，None 是无数据）
+            if fwd_ips is None:
+                continue
+            got_data = True
+            if str(ip) in fwd_ips:
+                fcrdns = True
+                host = h  # 回指成功的 PTR 为主显示
+                break
+        if not got_data:
+            return {"ok": False, "err": "forward query timeout"}
         return {"ok": True, "ptr": host, "fcrdns": fcrdns, "ts": now_iso()}
 
 
@@ -4015,9 +4029,11 @@ def _print_streaming_inference(res):
         pc.get("vpn") if pc.get("ok") else None,
         wi.get("vpn") if wi.get("ok") else None,
     )
+    is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
         or (bool(wi.get("tor")) if wi.get("ok") else False)
+        or bool(is_tor_exit)
     )
 
     sc = s.get("scamalytics", {})
@@ -4533,7 +4549,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     if sysinfo:
         print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (严禁篡改第三方原始判断)
+    # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
     _section(T("sec_type"), sub=True)
     type_sources = []
     pc = s.get("proxycheck", {})
@@ -4567,7 +4583,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         if il.get("hosting") or il.get("asn_type") == "hosting":
             type_sources.append(("iplocate.io", T("dc")))
         elif il.get("asn_type") == "isp":
-            type_sources.append(("iplocate.io", T("residential")))
+            type_sources.append((T("heuristic"), T("residential")))
         else:
             type_sources.append(("iplocate.io", T("unknown")))
     iq = s.get("ipquery", {})
@@ -4580,7 +4596,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             type_sources.append((T("heuristic"), T("residential")
                                  if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
                                  else T("unknown")))
-    if not wi.get("ok") and prof.get("ok"):
+    if not wi.get("ok") and prof.get("ok") and not (ia.get("ok") and not ia.get("hosting")):
         dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if dc:
             type_sources.append((T("heuristic"), T("dc")))
@@ -4882,7 +4898,7 @@ def print_report6(res, embedded=False):
 
     _print_basic_block(s, prof)
 
-    # [1.5] 类型属性 (与 v4 同构: 逐源原始判断, 不篡改)
+    # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
     _section(T("sec_type"), sub=True)
     _ts6 = []
     _pc6 = s.get("proxycheck", {})
@@ -4917,7 +4933,7 @@ def print_report6(res, embedded=False):
         if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
             _ts6.append(("iplocate.io", T("dc")))
         elif _il6.get("asn_type") == "isp":
-            _ts6.append(("iplocate.io", T("residential")))
+            _ts6.append((T("heuristic"), T("residential")))
         else:
             _ts6.append(("iplocate.io", T("unknown")))
     _iq6 = s.get("ipquery", {})
@@ -4930,7 +4946,7 @@ def print_report6(res, embedded=False):
             _ts6.append((T("heuristic"), T("residential")
                          if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
                          else T("unknown")))
-    if not _wi6.get("ok") and prof.get("ok"):
+    if not _wi6.get("ok") and prof.get("ok") and not (_ia6.get("ok") and not _ia6.get("hosting")):
         _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if _dc6:
             _ts6.append((T("heuristic"), T("dc")))
@@ -5452,6 +5468,8 @@ def test_netflix(local_ip=None):
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
 
     code2, body2, final_url2 = _active_get("https://www.netflix.com/title/80018499")
+    if code2 is None:
+        return T("failed"), "", None
     if _is_challenge(code2, body2):
         return T("unknown"), "", None
     if code2 == 200 and "Not Available" not in body2:
@@ -5518,7 +5536,7 @@ def test_chatgpt(local_ip=None):
     api_code, api_body, _ = _active_get("https://api.openai.com/v1/models")
     if _is_challenge(api_code, api_body):
         return T("unknown"), "", None
-    if api_code is None and code is None:
+    if api_code is None:
         return T("failed"), "", None
     if api_code in (200, 401):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
