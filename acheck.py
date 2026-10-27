@@ -5704,7 +5704,8 @@ _unlock_lock = threading.Lock()
 
 def get_unlock_type(domain, local_ip=None):
     """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
-    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
+    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论；
+    单侧 CNAME 差异已降为 None，见下）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
     缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。"""
     sys_ns = _get_system_nameservers()[0]
@@ -5738,7 +5739,8 @@ def get_unlock_type(domain, local_ip=None):
         elif overlap or suffix:
             res = None
         elif pub_cnames and not sys_cnames:
-            res = False  # 公共侧有 CNAME 链而系统侧无：可验证的改写证据，定 DNS 解锁
+            res = None  # 单侧 CNAME 差异仅为弱信号（公共侧 CNAME 也可来自 CDN/解析差异），
+            # 不足以定 DNS 解锁：降为不可判定（且 None 不缓存，见下）
         else:
             res = None  # 无重叠、无后缀、亦无单侧 CNAME：无正向解锁证据，不下确定结论
 
@@ -7877,11 +7879,18 @@ def _sock_readn(s, n):
     return d
 
 
-def _sock_readline(s, limit=512):
+def _sock_readline(s, limit=512, deadline=None):
     """限长读一行（至 CRLF）：超限/EOF 即返已读内容，调用方验完整性
-    （状态行无 CRLF 即非合法响应，不得当成功）。socket 超时即限时。"""
+    （状态行无 CRLF 即非合法响应，不得当成功）。socket 超时即限时。
+    deadline 给定时为单调时钟总截止：每次 recv 前按剩余重设超时，耗尽即抛
+    socket.timeout（调用方按失败处理）；缺省时沿旧语义（不动 socket 超时）。"""
     out = b""
     while len(out) < limit:
+        if deadline is not None:
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                raise socket.timeout("read deadline exceeded")
+            s.settimeout(remain)
         c = s.recv(1)
         if not c:
             break
@@ -7891,20 +7900,28 @@ def _sock_readline(s, limit=512):
     return out
 
 
-def _probe_body_empty(s):
-    """200 兼容校验：读头块至空行，要求显式 Content-Length: 0；
-    无 CL / 分块 / 头超限皆不认（无法验证空体）。"""
+def _probe_body_empty(s, deadline=None):
+    """200 兼容校验：读满头块至空行，要求显式 Content-Length: 0；
+    无 CL / 分块 / 冲突 CL / 头块不完整（EOF 或超 32 行）皆不认（无法验证空体）。"""
     try:
+        _cl_values = []
+        _chunked = False
         for _ in range(32):
-            ln = _sock_readline(s)
-            if ln in (b"\r\n", b""):
-                return False  # 空行前未见 CL（或 EOF）：无法验证
+            ln = _sock_readline(s, deadline=deadline)
+            if ln == b"\r\n":
+                break  # 头块完整：据收集到的 CL/chunked 判定
+            if ln == b"":
+                return False  # EOF：头块不完整，无法验证
             if ln.lower().startswith(b"transfer-encoding:") \
                     and b"chunked" in ln.lower():
-                return False
+                _chunked = True
             if ln.lower().startswith(b"content-length:"):
-                return ln.split(b":", 1)[1].strip() == b"0"
-        return False
+                _cl_values.append(ln.split(b":", 1)[1].strip())
+        else:
+            return False  # 32 行未见空行：头块不完整
+        if _chunked or not _cl_values:
+            return False
+        return all(v == b"0" for v in _cl_values)
     except OSError:
         return False
 
@@ -8004,13 +8021,14 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
                   b"User-Agent: A-Check/%s\r\n\r\n" % VERSION.encode())
         # 严格验状态行：协议版本 + 三位状态码（子串匹配会把 b"garbage200xx" 当成功）。
         # /generate_204 优先 204；200 兼容须另验预期内容（此处为空体：CL=0）。
-        line = _sock_readline(s)
+        _deadline = time.monotonic() + timeout
+        line = _sock_readline(s, deadline=_deadline)
         m = re.match(rb"HTTP/\d\.\d (\d{3})(?:[ \t].*)?\r\n$", line)
         ok = False
         if m and m.group(1) == b"204":
             ok = True
         elif m and m.group(1) == b"200":
-            ok = _probe_body_empty(s)
+            ok = _probe_body_empty(s, deadline=_deadline)
         return {"ok": ok, "latency_ms": round(hs_ms, 1),
                 "handshake_ms": round(hs_ms, 1),
                 "total_ms": round((time.perf_counter() - t0) * 1000, 1),
@@ -8039,8 +8057,13 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
                         b"Connection: close\r\n\r\n")
             raw = b""
             eof = False
+            _deadline = time.monotonic() + timeout
             while True:
+                remain = _deadline - time.monotonic()
+                if remain <= 0:
+                    break  # 总截止耗尽：以已收数据验完整性（不完整即后随截断判失败）
                 try:
+                    tls.settimeout(remain)
                     c = tls.recv(4096)
                 except Exception:
                     break  # recv 异常 ≠ 干净 EOF；关闭定界体随后以 not eof 判失败
