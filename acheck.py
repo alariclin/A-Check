@@ -1645,6 +1645,16 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
         return ok, data
 
 
+def _http_cache_evict(url, headers=None):
+    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。"""
+    h = {"User-Agent": UA_BROWSER}
+    if headers:
+        h.update(headers)
+    key = (url, tuple(sorted(h.items())))
+    with _cache_lock:
+        _cache.pop(key, None)
+
+
 _threat_lists = {}
 _threat_lists_lock = threading.Lock()
 
@@ -1665,11 +1675,13 @@ def _get_threat_list(name, url, parser):
         try:
             parsed = parser(raw)
             if parsed is None:
+                _http_cache_evict(url)
                 return None
             with _threat_lists_lock:
                 _threat_lists[name] = parsed
             return parsed
         except Exception:
+            _http_cache_evict(url)
             return None
 
 
@@ -5125,6 +5137,7 @@ def get_egress_ip():
 
 def _decode_chunked(body):
     """严格解析 chunked 传输体：剥离块扩展、校验块后 CRLF、必须有终止零块。
+    尺寸须为纯十六进制（空/符号/0x 前缀一律拒）；终止零块后须有 trailer 空行。
     任一不合规返回 None（调用方按失败处理，不用部分体冒充完整体）。"""
     out = b""
     rest = body
@@ -5132,16 +5145,46 @@ def _decode_chunked(body):
         ln, sep, rest = rest.partition(b"\r\n")
         if not sep:
             return None
-        try:
-            sz = int((ln.split(b";", 1)[0]).strip() or b"0", 16)
-        except ValueError:
+        token = ln.split(b";", 1)[0].strip()
+        if not re.fullmatch(rb"[0-9a-fA-F]+", token):
             return None
+        sz = int(token, 16)
         if sz == 0:
-            return out
+            # trailer 头可有可无，但须以空行终结，且空行后无残余
+            if re.fullmatch(rb"(?:[^\r\n]*\r\n)*\r\n", rest):
+                return out
+            return None
         if len(rest) < sz + 2 or rest[sz:sz + 2] != b"\r\n":
             return None
         out += rest[:sz]
         rest = rest[sz + 2:]
+
+
+def _http_status_ok(head):
+    """首行第二 token 是否为 200（防 '403 ... returned 200 OK' 类子串误判）。"""
+    toks = head.split(b"\r\n", 1)[0].split()
+    return len(toks) >= 2 and toks[1] == b"200"
+
+
+def _http_te_chunked(head):
+    """仅当 Transfer-Encoding 字段含 chunked token 时为真（不扫全头）。"""
+    for ln in head.split(b"\r\n")[1:]:
+        if ln.lower().startswith(b"transfer-encoding:"):
+            for tok in ln.split(b":", 1)[1].split(b","):
+                if tok.strip().lower() == b"chunked":
+                    return True
+    return False
+
+
+def _http_content_length(head):
+    """Content-Length 整数；缺失返 None；非法返 False（调用方按失败处理）。"""
+    for ln in head.split(b"\r\n")[1:]:
+        if ln.lower().startswith(b"content-length:"):
+            try:
+                return int(ln.split(b":", 1)[1].strip())
+            except ValueError:
+                return False
+    return None
 
 
 def _https_get_pinned6(host, path, timeout=6):
@@ -5174,13 +5217,19 @@ def _https_get_pinned6(host, path, timeout=6):
                     break
                 raw += chunk
             head, _, body = raw.partition(b"\r\n\r\n")
-            if b" 200 " not in head.split(b"\r\n", 1)[0]:
+            if not _http_status_ok(head):
                 continue
-            if b"chunked" in head.lower():
+            if _http_te_chunked(head):
                 dec = _decode_chunked(body)
                 if dec is None:
                     continue
                 body = dec
+            else:
+                cl = _http_content_length(head)
+                if cl is False or (cl is not None and len(body) < cl):
+                    continue
+                if cl is not None:
+                    body = body[:cl]
             return body.decode("utf-8", errors="replace")
         except Exception:
             continue
@@ -5322,7 +5371,7 @@ def _pinned_opener(family, follow_redirects=True):
         def connect(self):
             _pinned_connect(self, fam)
             self.sock = self._context.wrap_socket(
-                self.sock, server_hostname=self.host)
+                self.sock, server_hostname=self._tunnel_host or self.host)
 
     class _HH(urllib.request.HTTPHandler):
         def http_open(self, req):
@@ -6253,8 +6302,8 @@ def test_dns_servers6(timeout=3):
                 raw += chunk
             rtt = round((time.monotonic() - t0) * 1000, 1)
             head, _, body = raw.partition(b"\r\n\r\n")
-            if b" 200 " in head.split(b"\r\n", 1)[0]:
-                if b"chunked" in head.lower():
+            if _http_status_ok(head):
+                if _http_te_chunked(head):
                     dec = _decode_chunked(body)
                     body = dec if dec is not None else b""
                 if _dns_test_ok(body, tid, pkt):
@@ -7308,8 +7357,21 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
                 raw += c
                 if len(raw) > 65536:
                     break
-            body = raw.split(b"\r\n\r\n", 1)[-1].decode(
-                "utf-8", errors="replace").strip()
+            head, sep, body_b = raw.partition(b"\r\n\r\n")
+            if not sep:
+                return None, "invalid response: no header terminator"
+            if _http_te_chunked(head):
+                dec = _decode_chunked(body_b)
+                if dec is None:
+                    return None, "invalid response: bad chunked body"
+                body_b = dec
+            else:
+                cl = _http_content_length(head)
+                if cl is False or (cl is not None and len(body_b) < cl):
+                    return None, "invalid response: truncated body"
+                if cl is not None:
+                    body_b = body_b[:cl]
+            body = body_b.decode("utf-8", errors="replace").strip()
             ip = body.splitlines()[0].strip() if body else ""
             if ip and validate_ip(ip):
                 return str(ip), None
@@ -7695,6 +7757,8 @@ def _parse_node_line(line):
                 user, pwd = auth.split(":", 1)
             else:
                 user = auth
+    if "://" in rest:
+        return None  # 非 socks5 方案（如 socks5h://）一律拒，防账密落入 host/标签
     try:
         if rest.startswith("["):
             hend = rest.index("]")
@@ -7756,7 +7820,10 @@ def _sanitize_batch_results(results):
     for r in results:
         nd = r["node"]
         nr = dict(r)
-        nr["node"] = {"host": nd["host"], "port": nd["port"],
+        host = nd["host"]
+        if "@" in host or "://" in host:
+            host = "***"  # 纵深掩盖：解析层漏网的含账密 host 不进 JSON
+        nr["node"] = {"host": host, "port": nd["port"],
                       "proto": nd["proto"]}
         clean.append(nr)
     return clean
