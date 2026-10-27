@@ -1401,7 +1401,7 @@ class C:
 
 
 def _ru_plural(n, one, few, many):
-    """俄语数量屈折：1 → one；2–4 → few；其余 → many（含 11–14 例外）；小数时 one 降为 few（1.5 года、5.5 лет）。"""
+    """俄语数量屈折：1 → one；2–4 → few；其余 → many（含 11–14 例外）；小数一律属格单数（1.5 года、5.5 года）。"""
     try:
         v = float(n)
     except (TypeError, ValueError):
@@ -1413,7 +1413,7 @@ def _ru_plural(n, one, few, many):
         form = few
     else:
         form = many
-    if v != i and (form == one or i == 0):
+    if v != i:
         form = few
     return form
 
@@ -1438,12 +1438,17 @@ def _c(fn, s):
     return fn(s) if _use_color() else str(s)
 
 
+def _is_zero_width(ch):
+    """零宽字符谓词（_disp_width 与 _truncate_disp 共用，避免两处口径不一）。"""
+    return bool(unicodedata.combining(ch)) or unicodedata.category(ch) in ("Mn", "Me", "Cf")
+
+
 def _disp_width(s):
     """精确计算终端可见字符显示列宽 (兼容中日韩双宽与俄语/波斯语单宽字符)。"""
     clean = re.sub(r"\033\[[0-9;]*m", "", str(s))
     w = 0
     for ch in clean:
-        if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+        if _is_zero_width(ch):
             continue
         eaw = unicodedata.east_asian_width(ch)
         w += 2 if eaw in ("W", "F") else 1
@@ -1452,22 +1457,34 @@ def _disp_width(s):
 
 def _truncate_disp(s, max_width):
     """按终端显示列宽安全截断字符串，防止中日韩双宽字符溢出折行。
-    ANSI 转义序列原样透传、不计宽度、不被拦腰截断。"""
+    ANSI 转义序列原样透传、不计宽度、不被拦腰截断；截断时若有未闭合 SGR 补复位。"""
     w = 0
     out = []
     i = 0
     s = str(s)
+    sgr_open = False
     while i < len(s):
         if s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
-            j = s.find("m", i + 2)
-            if j != -1:
-                out.append(s[i:j + 1])
+            j = i + 2
+            while j < len(s) and not (0x40 <= ord(s[j]) <= 0x7E):
+                j += 1
+            if j < len(s):
+                seq = s[i:j + 1]
+                out.append(seq)
+                if seq.endswith("m"):
+                    try:
+                        _is_reset = all(p == "" or int(p) == 0 for p in seq[2:-1].split(";"))
+                    except ValueError:
+                        _is_reset = False
+                    sgr_open = not _is_reset
                 i = j + 1
                 continue
         ch = s[i]
-        cw = 0 if unicodedata.combining(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
+        cw = 0 if _is_zero_width(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
         if w + cw > max_width:
             out.append("...")
+            if sgr_open:
+                out.append("\x1b[0m")
             break
         out.append(ch)
         w += cw
@@ -7837,6 +7854,9 @@ def _logo_spread(lines, target=76):
     for i, g in enumerate(groups):
         if i == len(groups) - 1:
             a = rem
+        elif rem <= len(groups) - 1 - i:
+            # 预算不足：前 rem 组各 1、其余 0（不强制每组 ≥1）
+            a = 1 if rem > 0 else 0
         else:
             a = max(1, round(add * len(g) / total_gap))
             a = min(a, rem - (len(groups) - 1 - i))
