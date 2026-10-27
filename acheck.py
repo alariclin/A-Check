@@ -1640,16 +1640,25 @@ def _http_fetch_uncached(url, h, timeout, retries):
                 return True, data
         except urllib.error.HTTPError as e:
             try:
-                data = _read_limited(e, timeout=timeout).decode(
-                    "utf-8", errors="replace")
-            except Exception:
-                data = ""
-            # 5xx/429 可重试
-            if e.code >= 500 or e.code == 429:
-                last_err = f"HTTP {e.code}: {data[:120]}"
-                time.sleep(0.5)
-                continue
-            return False, f"HTTP {e.code}: {data[:200]}"
+                try:
+                    data = _read_limited(e, timeout=timeout).decode(
+                        "utf-8", errors="replace")
+                except Exception:
+                    data = ""
+                # 5xx/429 可重试
+                if e.code >= 500 or e.code == 429:
+                    last_err = f"HTTP {e.code}: {data[:120]}"
+                    time.sleep(0.5)
+                    continue
+                return False, f"HTTP {e.code}: {data[:200]}"
+            finally:
+                # 读走 _read_timed 守护线程：先 shutdown 唤醒 stuck 读者再关，
+                # 否则 close() 会等读者（B5 实测），重试/返回皆被拖住
+                _resp_shutdown(e)
+                try:
+                    e.close()
+                except Exception:
+                    pass
         except Exception as e:
             last_err = str(e)[:120]
             time.sleep(0.3)
@@ -5618,13 +5627,19 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), _resp_complete(raw, getattr(r, "headers", None))
     except urllib.error.HTTPError as e:
         try:
-            raw = e.read(16385)
-            body = raw[:16384].decode("utf-8", errors="replace")
-            complete = _resp_complete(raw, getattr(e, "headers", None))
-        except http.client.IncompleteRead as e2:
-            body, complete = e2.partial[:16384].decode("utf-8", errors="replace"), False
-        except Exception:
-            body, complete = "", False
+            try:
+                raw = e.read(16385)
+                body = raw[:16384].decode("utf-8", errors="replace")
+                complete = _resp_complete(raw, getattr(e, "headers", None))
+            except http.client.IncompleteRead as e2:
+                body, complete = e2.partial[:16384].decode("utf-8", errors="replace"), False
+            except Exception:
+                body, complete = "", False
+        finally:
+            try:
+                e.close()
+            except Exception:
+                pass
         loc = e.headers.get("Location", "") if e.headers else ""
         return e.code, body, loc, complete
     except Exception as e:
@@ -9258,9 +9273,9 @@ def main():
         _modes.append("--active")
     if ns.speed:
         _modes.append("--speed")
-    if ns.proxy:
+    if ns.proxy is not None:
         _modes.append("--proxy")
-    if ns.batch:
+    if ns.batch is not None:
         _modes.append("--batch")
     if len(_modes) > 1:
         print(_L("警告：模式冲突，仅运行%s，忽略：%s",
@@ -9282,9 +9297,11 @@ def main():
         run_speed_only(json_mode=ns.json)
         return
 
-    if ns.proxy:
+    if ns.proxy is not None:
         _pp = ns.proxy.strip()
         try:
+            if not _pp:
+                raise ValueError("empty --proxy")
             if _pp.startswith("["):
                 _hend = _pp.index("]")
                 if _hend + 1 >= len(_pp) or _pp[_hend + 1] != ":":
@@ -9302,12 +9319,13 @@ def main():
                        password=ns.proxy_pass, json_mode=ns.json)
         return
 
-    if ns.batch:
+    if ns.batch is not None:
         _nodes = []
-        for _spec in ns.batch.split(","):
-            _nd = _parse_node_line(_spec)
-            if _nd:
-                _nodes.append(_nd)
+        if ns.batch.strip():
+            for _spec in ns.batch.split(","):
+                _nd = _parse_node_line(_spec)
+                if _nd:
+                    _nodes.append(_nd)
         if not _nodes:
             print(json.dumps({"error": "no valid nodes"}, ensure_ascii=False)
                   if ns.json else T("no_valid_nodes"))
