@@ -1681,8 +1681,25 @@ def now_iso():
 # 纯 Python DNS 协议解析器 (支持 A / CNAME / PTR / MX，全平台兼容)
 # ============================================================
 def _encode_dns_name(domain):
+    """编码 DNS 查询名：标签 1–63 字节、整名 wire ≤255（文本形 ≤253），违例抛错。
+
+    调用方只传 IDNA/纯 ASCII（1819 处已 IDNA 编码，余者皆字面 ASCII），
+    故此处非 ASCII 不再静默丢弃，改为严格抛错、由调用方 try 接 None。
+    """
     parts = domain.strip(".").split(".")
-    return b"".join(bytes([len(p)]) + p.encode("ascii", errors="ignore") for p in parts if p) + b"\x00"
+    out = []
+    total = 1  # 结尾零字节
+    for p in parts:
+        if not p:
+            continue
+        enc = p.encode("ascii")  # 非 ASCII 抛 UnicodeEncodeError（ValueError 子类）
+        if not 1 <= len(enc) <= 63:
+            raise ValueError("DNS label length out of range")
+        total += 1 + len(enc)
+        if total > 255:
+            raise ValueError("DNS name too long")
+        out.append(bytes([len(enc)]) + enc)
+    return b"".join(out) + b"\x00"
 
 
 def _decode_dns_name(pkt, offset):
@@ -1809,7 +1826,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     """
     发送标准 UDP 53 查询并解析返回记录:
       qtype=1 (A), qtype=5 (CNAME), qtype=12 (PTR), qtype=15 (MX), qtype=28 (AAAA)
-    校验：发送方地址、QR 位、TC 截断、问题段回显、按请求类型过滤答案。
+    校验：发送方地址与端口、QR 位、TC 截断、问题段回显（对所有 rcode 一律先验，
+    NXDOMAIN 亦然）、答案 owner 与 CLASS、答案完整性、名称型 RDATA 落在 rdlength 内。
     """
     sock = None
     try:
@@ -1840,15 +1858,10 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     if flags & 0x0200:  # TC 截断：不可信，不当“成功无记录”
         return (None, []) if return_cnames else None
-    rcode = flags & 0x000F
-    if rcode == 3:  # NXDOMAIN
-        return ([], []) if return_cnames else []
-    if rcode != 0:
-        return (None, []) if return_cnames else None
-    if addr[0] != server:  # 发送方必须是被查询的服务器
+    if addr[0] != server or addr[1] != 53:  # 发送方必须是被查询的服务器:53
         return (None, []) if return_cnames else None
 
-    # 问题段回显校验：qdcount 须为 1 且名/类型/类与请求一致
+    # 问题段回显校验：qdcount 须为 1 且名/类型/类与请求一致（NXDOMAIN 亦先验）
     if qdcount != 1:
         return (None, []) if return_cnames else None
     offset = 12
@@ -1861,41 +1874,58 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             or qtype_r != qtype or qclass_r != 1:
         return (None, []) if return_cnames else None
 
+    rcode = flags & 0x000F
+    if rcode == 3:  # NXDOMAIN（发送方与问题段已验）
+        return ([], []) if return_cnames else []
+    if rcode != 0:
+        return (None, []) if return_cnames else None
+
     results = []
     cnames = []
+    allowed_owners = {domain_q.lower().rstrip(".")}
+    parsed = 0
     for _ in range(ancount):
         if offset >= len(data):
             break
-        _, offset = _decode_dns_name(data, offset)
+        owner, offset = _decode_dns_name(data, offset)
         if offset + 10 > len(data):
             break
-        rtype, _, _, rdlength = struct.unpack(">HHIH", data[offset:offset + 10])
+        rtype, rclass, _, rdlength = struct.unpack(">HHIH", data[offset:offset + 10])
         offset += 10
         if offset + rdlength > len(data):
             break
         rdata = data[offset:offset + rdlength]
-        if rtype == 1 and rdlength == 4 and qtype == 1:  # A record
-            results.append(socket.inet_ntoa(rdata))
-        elif rtype == 28 and rdlength == 16 and qtype == 28:  # AAAA record
-            results.append(socket.inet_ntop(socket.AF_INET6, rdata))
-        elif rtype == 5:  # CNAME record
-            cname_host, _ = _decode_dns_name(data, offset)
-            if cname_host:
-                cnames.append(cname_host.lower().rstrip("."))
-        elif rtype == 12 and qtype == 12:  # PTR record
-            ptr_host, _ = _decode_dns_name(data, offset)
-            if ptr_host:
-                results.append(ptr_host.rstrip("."))
-        elif rtype == 15 and rdlength >= 3 and qtype == 15:  # MX record
-            pref = struct.unpack(">H", rdata[:2])[0]
-            mx_host, _ = _decode_dns_name(data, offset + 2)
-            if mx_host:
-                results.append((pref, mx_host.rstrip(".")))
+        owner_key = (owner or "").lower().rstrip(".")
+        if rclass == 1 and owner_key in allowed_owners:
+            if rtype == 1 and rdlength == 4 and qtype == 1:  # A record
+                results.append(socket.inet_ntoa(rdata))
+            elif rtype == 28 and rdlength == 16 and qtype == 28:  # AAAA record
+                results.append(socket.inet_ntop(socket.AF_INET6, rdata))
+            elif rtype == 5:  # CNAME record
+                cname_host, cend = _decode_dns_name(data, offset)
+                if cname_host and cend - offset <= rdlength:
+                    cname_key = cname_host.lower().rstrip(".")
+                    cnames.append(cname_key)
+                    allowed_owners.add(cname_key)
+            elif rtype == 12 and qtype == 12:  # PTR record
+                ptr_host, pend = _decode_dns_name(data, offset)
+                if ptr_host and pend - offset <= rdlength:
+                    results.append(ptr_host.rstrip("."))
+            elif rtype == 15 and rdlength >= 3 and qtype == 15:  # MX record
+                pref = struct.unpack(">H", rdata[:2])[0]
+                mx_host, mend = _decode_dns_name(data, offset + 2)
+                if mx_host and mend - (offset + 2) <= rdlength - 2:
+                    results.append((pref, mx_host.rstrip(".")))
         offset += rdlength
+        parsed += 1
+    if parsed < ancount:  # 答案未读满：截断报文不当成功（含空答案）
+        return (None, []) if return_cnames else None
 
     if qtype == 15:
         results.sort(key=lambda x: x[0])
         results = [h for _, h in results]
+    if qtype == 5 and not return_cnames:  # CNAME 查询默认即返回目标（与文档一致）
+        return cnames
     return (results, cnames) if return_cnames else results
 
 
