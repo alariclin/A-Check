@@ -1554,8 +1554,10 @@ def _per_key_lock(key):
 
 def _read_timed(resp, n, remain):
     """限时单次读：守护线程中读 n 字节，主线程按 remain join；超时返 None
-    （调用方按窗口已尽处理，读错误照常抛出）。daemon 线程随响应关闭而结束，
-    不阻塞解释器退出。小块读本身约束不了 BufferedReader.read(n) 的等满阻塞
+    （调用方按窗口已尽处理，读错误照常抛出）。注意：超时后守护读线程仍阻塞在
+    read() 里（直至数据/EOF/socket shutdown），且响应 close() 会等它——“随响应
+    关闭而结束”不成立；调用方在关闭响应前须先 _resp_shutdown() 唤醒它，否则
+    close() 本身超窗滞留。小块读本身约束不了 BufferedReader.read(n) 的等满阻塞
     （A4a 已实测），故时限必须由 join 提供，而非仅靠缩小块尺寸。"""
     if remain <= 0:
         return None
@@ -1574,6 +1576,34 @@ def _read_timed(resp, n, remain):
     if "err" in box:
         raise box["err"]
     return box["chunk"]
+
+
+def _resp_socket(r):
+    """取响应底层 socket：urllib addinfourl → HTTPResponse → BufferedReader →
+    SocketIO → socket（BufferedReader 层走 .raw 而非 .fp），层级取不到返 None。"""
+    cur = r
+    for _ in range(4):
+        if isinstance(cur, socket.socket):
+            return cur
+        nxt = getattr(cur, "fp", None)
+        if nxt is None:
+            nxt = getattr(cur, "raw", None)
+        if nxt is None:
+            break
+        cur = nxt
+    return getattr(cur, "_sock", None)
+
+
+def _resp_shutdown(r):
+    """唤醒 _read_timed 遗留的守护读线程：shutdown 使阻塞中的 readinto 返回，
+    否则响应 close() 会等它（直连 worker 在 close() 上超窗滞留，measure 的
+    窗口后清理亦会被拖住）。失败静默。"""
+    s = _resp_socket(r)
+    if s is not None:
+        try:
+            s.shutdown(socket.SHUT_RDWR)
+        except Exception:
+            pass
 
 
 def _read_limited(resp, cap=1048576, timeout=10):
@@ -5331,8 +5361,10 @@ def _https_get_pinned6(host, path, timeout=6):
             eof = False
             dl = time.monotonic() + timeout
             while len(raw) < 16384:
-                if time.monotonic() > dl:
+                _rem = dl - time.monotonic()
+                if _rem <= 0:
                     raise TimeoutError("pinned6 receive deadline")
+                ss.settimeout(_rem)
                 chunk = ss.recv(4096)
                 if not chunk:
                     eof = True
@@ -5354,6 +5386,8 @@ def _https_get_pinned6(host, path, timeout=6):
                     continue  # 关闭定界且未见 EOF 即超限：前缀不完整，不得当成功
                 if cl is not None:
                     body = body[:cl]
+            if time.monotonic() > dl:
+                continue  # 限额退出路径亦须复核 dl：迟到数据不得当成功
             return body.decode("utf-8", errors="replace")
         except Exception:
             continue
@@ -5501,7 +5535,8 @@ def _pinned_connect(conn, family):
 
 
 def _pinned_opener(family, follow_redirects=True):
-    """构建把连接钉死在单一地址族的 opener (SNI/Host 保持原域名)。"""
+    """构建把连接钉死在单一地址族的 opener (SNI/Host 保持原域名)。
+    显式禁代理：直连测量不受环境代理变量改道。"""
     fam = socket.AF_INET6 if family == 6 else socket.AF_INET
 
     class _HC(http.client.HTTPConnection):
@@ -5522,7 +5557,7 @@ def _pinned_opener(family, follow_redirects=True):
         def https_open(self, req):
             return self.do_open(_HSC, req, context=self._context)
 
-    handlers = [_HH(), _HSH()]
+    handlers = [urllib.request.ProxyHandler({}), _HH(), _HSH()]
     if not follow_redirects:
         handlers.append(_NoRedirect())
     return urllib.request.build_opener(*handlers)
@@ -6062,14 +6097,25 @@ SPEED6_ENDPOINTS = [
 ]
 
 
-def _dl_direct_worker(url, stop, counter, lock, opener=None):
+def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None):
     """直连下载计数 worker: 在 stop 前循环拉流累计字节 (urllib)。
-    单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
+    单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。
+    打开阶段超时按窗口剩余封顶（固定 10s 会拖过窗口），窗口后禁发新请求；
+    已打开的响应登记入 registry，供 measure 在窗口尽时统一关闭。"""
     fails = 0
     while time.monotonic() < stop and fails < 3:
+        _resp = None
         try:
+            _rem = stop - time.monotonic()
+            if _rem <= 0:
+                break
             req = urllib.request.Request(url, headers={"User-Agent": UA_TOOL})
-            with (opener.open(req, timeout=10) if opener else urllib.request.urlopen(req, timeout=10)) as r:
+            _to = min(10, _rem)
+            with (opener.open(req, timeout=_to) if opener else urllib.request.urlopen(req, timeout=_to)) as r:
+                _resp = r
+                if registry is not None:
+                    with lock:
+                        registry.add(r)
                 while time.monotonic() < stop:
                     with lock:
                         room = DL_CAP_BYTES - counter[0]
@@ -6090,8 +6136,15 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None):
                         counter[0] += min(len(chunk), room)
                     if counter[0] >= DL_CAP_BYTES:
                         return
+                _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
+            if registry is not None and _resp is not None:
+                with lock:
+                    registry.discard(_resp)
             fails = 0
         except Exception:
+            if registry is not None and _resp is not None:
+                with lock:
+                    registry.discard(_resp)
             fails += 1
             time.sleep(0.2)
 
@@ -6100,12 +6153,16 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
     """多连接并发下载测速 (直连), 返回 (Mbps 或 None, 下载字节数)。
     单节点下载量受 DL_CAP_BYTES 上限约束。"""
     counter, lock = [0], threading.Lock()
+    registry = set()
     t0 = time.monotonic()
     stop = t0 + duration
     ex = ThreadPoolExecutor(max_workers=streams)
     try:
-        _op = _pinned_opener(family) if family else None
-        futs = [ex.submit(_dl_direct_worker, url, stop, counter, lock, _op)
+        # 直连恒用显式禁代理 opener：family=0 不再走默认 opener（读环境代理变量），
+        # 与地址族选择脱钩；family 非 0 时 _pinned_opener 内亦已禁代理。
+        _op = _pinned_opener(family) if family else urllib.request.build_opener(
+            urllib.request.ProxyHandler({}))
+        futs = [ex.submit(_dl_direct_worker, url, stop, counter, lock, _op, registry)
                 for _ in range(streams)]
         for f in futs:
             try:
@@ -6113,6 +6170,14 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
             except Exception:
                 pass
     finally:
+        # 窗口已尽：关掉在途连接，阻断旧地区下载与下一地区重叠（跨地区干扰）。
+        with lock:
+            _left = list(registry)
+        for _r in _left:
+            try:
+                _r.close()
+            except Exception:
+                pass
         ex.shutdown(wait=False)
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
     elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
@@ -6274,11 +6339,42 @@ def _connect_host(host, port, timeout):
         raise OSError("DNS resolution failed: %s" % host)
     last_err = None
     for _fam, _typ, _proto, _canon, sa in infos:
+        sock = None
         try:
-            return socket.create_connection(sa, timeout=timeout)
+            # create_connection 只收 (host, port) 二元组，IPv6 四元组 sa 会解包
+            # ValueError；按 fam/typ/proto 建 socket + connect(sa)，scope 信息亦保留。
+            sock = socket.socket(_fam, _typ, _proto)
+            sock.settimeout(timeout)
+            sock.connect(sa)
+            return sock
         except Exception as e:
             last_err = e
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
     raise OSError("connect failed: %s" % host) from last_err
+
+
+def _recv_exact(ss, n, dl):
+    """在 dl 前从 ss 读满 n 字节：每次 recv 前按剩余时间设超时，
+    超时/对端关闭/剩余耗尽返 None（调用方按失败处理，不用迟到数据冒充成功）。
+    替代“recv 前查 dl、socket 用全额超时”的旧模式（单次 recv 可拖到近 2× timeout）。"""
+    d = b""
+    while len(d) < n:
+        rem = dl - time.monotonic()
+        if rem <= 0:
+            return None
+        ss.settimeout(rem)
+        try:
+            chunk = ss.recv(n - len(d))
+        except OSError:
+            return None
+        if not chunk:
+            return None
+        d += chunk
+    return d
 
 
 def test_dns_servers(timeout=3):
@@ -6341,25 +6437,15 @@ def test_dns_servers(timeout=3):
             ss = ctx.wrap_socket(sk, server_hostname=sni)
             ss.sendall(fr)
             dl = time.monotonic() + timeout
-            len_bytes = b""
-            while len(len_bytes) < 2:
-                if time.monotonic() > dl:
-                    return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
-                chunk = ss.recv(2 - len(len_bytes))
-                if not chunk:
-                    return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
-                len_bytes += chunk
+            len_bytes = _recv_exact(ss, 2, dl)
+            if len_bytes is None:
+                return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
             rl = struct.unpack(">H", len_bytes)[0]
-            d = b""
-            while len(d) < rl:
-                if time.monotonic() > dl:
-                    return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
-                chunk = ss.recv(rl - len(d))
-                if not chunk:
-                    break
-                d += chunk
+            d = _recv_exact(ss, rl, dl)
+            if d is None:
+                return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
             rtt = round((time.monotonic() - t0) * 1000, 1)
-            if len(d) == rl and _dns_test_ok(d, tid, pkt):
+            if _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "DoT853", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -6499,28 +6585,15 @@ def test_dns_servers6(timeout=3):
             ss = ctx.wrap_socket(sk, server_hostname=sni)
             ss.sendall(fr)
             dl = time.monotonic() + timeout
-            len_bytes = b""
-            while len(len_bytes) < 2:
-                if time.monotonic() > dl:
-                    return {"name": name, "ip": ip, "proto": "DoT853",
-                            "ok": False, "rtt_ms": None}
-                chunk = ss.recv(2 - len(len_bytes))
-                if not chunk:
-                    return {"name": name, "ip": ip, "proto": "DoT853",
-                            "ok": False, "rtt_ms": None}
-                len_bytes += chunk
+            len_bytes = _recv_exact(ss, 2, dl)
+            if len_bytes is None:
+                return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
             rl = struct.unpack(">H", len_bytes)[0]
-            d = b""
-            while len(d) < rl:
-                if time.monotonic() > dl:
-                    return {"name": name, "ip": ip, "proto": "DoT853",
-                            "ok": False, "rtt_ms": None}
-                chunk = ss.recv(rl - len(d))
-                if not chunk:
-                    break
-                d += chunk
+            d = _recv_exact(ss, rl, dl)
+            if d is None:
+                return {"name": name, "ip": ip, "proto": "DoT853", "ok": False, "rtt_ms": None}
             rtt = round((time.monotonic() - t0) * 1000, 1)
-            if len(d) == rl and _dns_test_ok(d, tid, pkt):
+            if _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "DoT853",
                         "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -6552,24 +6625,79 @@ def test_dns_servers6(timeout=3):
             ).encode() + pkt
             ss.sendall(req)
             dl = time.monotonic() + max(timeout, 5)
+            # 增量解析：头完整后按定界（chunked / Content-Length / 关闭定界）取体，
+            # 完整即停，不等 EOF（慢关/不关不再膨胀 RTT 或误判失败）；长度不足或
+            # 分块未结束拒成功；每次 recv 前按剩余时间设超时，成功前复核 dl。
+            head = None
+            head_end = 0
+            body = b""
+            complete = False
+            closed = False
             raw = b""
-            while True:
-                if time.monotonic() > dl or len(raw) > 1048576:
+            while not complete:
+                rem = dl - time.monotonic()
+                if rem <= 0 or len(raw) > 1048576:
                     return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
                             "ok": False, "rtt_ms": None}
-                chunk = ss.recv(65536)
+                ss.settimeout(rem)
+                try:
+                    chunk = ss.recv(65536)
+                except OSError:
+                    return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                            "ok": False, "rtt_ms": None}
                 if not chunk:
+                    closed = True
                     break
                 raw += chunk
-            rtt = round((time.monotonic() - t0) * 1000, 1)
-            head, _, body = raw.partition(b"\r\n\r\n")
-            if _http_status_ok(head):
+                if head is None:
+                    _sep = raw.find(b"\r\n\r\n")
+                    if _sep < 0:
+                        continue
+                    head = raw[:_sep]
+                    head_end = _sep + 4
+                body = raw[head_end:]
+                if _http_te_chunked(head):
+                    if _decode_chunked(body) is not None:
+                        complete = True
+                else:
+                    cl = _http_content_length(head)
+                    if cl is False:
+                        return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                                "ok": False, "rtt_ms": None}
+                    if cl is not None and len(body) >= cl:
+                        body = body[:cl]
+                        complete = True
+                    # cl is None：关闭定界，须等 EOF（closed 分支处理）
+            if closed:
+                if head is None:
+                    return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                            "ok": False, "rtt_ms": None}
                 if _http_te_chunked(head):
                     dec = _decode_chunked(body)
-                    body = dec if dec is not None else b""
-                if _dns_test_ok(body, tid, pkt):
-                    return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
-                            "ok": True, "rtt_ms": rtt}
+                    if dec is None:
+                        return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                                "ok": False, "rtt_ms": None}
+                    body = dec
+                else:
+                    cl = _http_content_length(head)
+                    if cl is False:
+                        return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                                "ok": False, "rtt_ms": None}
+                    if cl is not None:
+                        if len(body) < cl:
+                            return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                                    "ok": False, "rtt_ms": None}
+                        body = body[:cl]
+                    # cl is None：关闭定界，EOF 即完整
+            elif _http_te_chunked(head):
+                body = _decode_chunked(body)
+            if time.monotonic() > dl:
+                return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                        "ok": False, "rtt_ms": None}
+            rtt = round((time.monotonic() - t0) * 1000, 1)
+            if _http_status_ok(head) and _dns_test_ok(body, tid, pkt):
+                return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
+                        "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
         finally:
@@ -7541,6 +7669,38 @@ def _sock_readn(s, n):
     return d
 
 
+def _sock_readline(s, limit=512):
+    """限长读一行（至 CRLF）：超限/EOF 即返已读内容，调用方验完整性
+    （状态行无 CRLF 即非合法响应，不得当成功）。socket 超时即限时。"""
+    out = b""
+    while len(out) < limit:
+        c = s.recv(1)
+        if not c:
+            break
+        out += c
+        if out.endswith(b"\r\n"):
+            break
+    return out
+
+
+def _probe_body_empty(s):
+    """200 兼容校验：读头块至空行，要求显式 Content-Length: 0；
+    无 CL / 分块 / 头超限皆不认（无法验证空体）。"""
+    try:
+        for _ in range(32):
+            ln = _sock_readline(s)
+            if ln in (b"\r\n", b""):
+                return False  # 空行前未见 CL（或 EOF）：无法验证
+            if ln.lower().startswith(b"transfer-encoding:") \
+                    and b"chunked" in ln.lower():
+                return False
+            if ln.lower().startswith(b"content-length:"):
+                return ln.split(b":", 1)[1].strip() == b"0"
+        return False
+    except OSError:
+        return False
+
+
 def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                    timeout=8, rdns=True):
     """SOCKS5 CONNECT (RFC 1928/1929)。返回 (socket, 握手延迟 ms)。
@@ -7585,8 +7745,18 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                         raise OSError("hostname too long for SOCKS5")
                     req += b"\x03" + bytes([len(h)]) + h
                 else:
-                    req += b"\x01" + socket.inet_pton(
-                        socket.AF_INET, socket.gethostbyname(dh))
+                    # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
+                    # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP（单地址尝试，
+                    # 多地址重试须重建 SOCKS 会话，不在此展开）。
+                    _infos = socket.getaddrinfo(dh, dp, socket.AF_UNSPEC,
+                                                socket.SOCK_STREAM)
+                    if not _infos:
+                        raise OSError("DNS resolution failed: %s" % dh)
+                    _fam0, _, _, _, _sa0 = _infos[0]
+                    if _fam0 == socket.AF_INET6:
+                        req += b"\x04" + socket.inet_pton(socket.AF_INET6, _sa0[0])
+                    else:
+                        req += b"\x01" + socket.inet_pton(socket.AF_INET, _sa0[0])
         s.sendall(req + struct.pack(">H", dp))
         # 4. 解析响应
         ver, rep, _ = _sock_readn(s, 3)
@@ -7624,12 +7794,19 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         s.sendall(b"GET /generate_204 HTTP/1.1\r\n"
                   b"Host: clients3.google.com\r\n"
                   b"User-Agent: A-Check/%s\r\n\r\n" % VERSION.encode())
-        data = _sock_readn(s, 12)
-        ok = b"204" in data or b"200" in data
+        # 严格验状态行：协议版本 + 三位状态码（子串匹配会把 b"garbage200xx" 当成功）。
+        # /generate_204 优先 204；200 兼容须另验预期内容（此处为空体：CL=0）。
+        line = _sock_readline(s)
+        m = re.match(rb"HTTP/\d\.\d (\d{3})(?:[ \t].*)?\r\n$", line)
+        ok = False
+        if m and m.group(1) == b"204":
+            ok = True
+        elif m and m.group(1) == b"200":
+            ok = _probe_body_empty(s)
         return {"ok": ok, "latency_ms": round(hs_ms, 1),
                 "handshake_ms": round(hs_ms, 1),
                 "total_ms": round((time.perf_counter() - t0) * 1000, 1),
-                "error": None if ok else "unexpected response: %r" % data[:12]}
+                "error": None if ok else "unexpected response: %r" % line[:80]}
     except Exception as e:
         return {"ok": False, "error": str(e),
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
@@ -7721,15 +7898,23 @@ class _SocksHTTPS(http.client.HTTPSConnection):
             raise
 
 
-def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
+def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
+                       registry=None):
     """经代理下载计数 worker: 对指定地区端点循环拉流。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
     conn = None
     while time.monotonic() < stop and fails < 3:
         try:
+            _rem = stop - time.monotonic()
+            if _rem <= 0:
+                break
             conn = _SocksHTTPS(host, ph, pp,
-                               username=user, password=pwd, timeout=10)
+                               username=user, password=pwd,
+                               timeout=min(10, _rem))
+            if registry is not None:
+                with lock:
+                    registry.add(conn)
             conn.request("GET", path,
                          headers={"User-Agent": UA_BROWSER,
                                   "Connection": "close"})
@@ -7761,8 +7946,14 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock):
                     conn.close()
                     return
             conn.close()
+            if registry is not None:
+                with lock:
+                    registry.discard(conn)
             fails = 0
         except Exception:
+            if registry is not None and conn is not None:
+                with lock:
+                    registry.discard(conn)
             if conn is not None:
                 try:
                     conn.close()
@@ -7776,12 +7967,13 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
                            streams=3):
     """经 SOCKS5 对单个端点多连接下载测速, 返回 Mbps 或 None。"""
     counter, lock = [0], threading.Lock()
+    registry = set()
     t0 = time.monotonic()
     stop = t0 + duration
     ex = ThreadPoolExecutor(max_workers=streams)
     try:
         futs = [ex.submit(_dl_proxy_worker, ph, pp, user, pwd, host, path,
-                          stop, counter, lock)
+                          stop, counter, lock, registry)
                 for _ in range(streams)]
         for f in futs:
             try:
@@ -7789,6 +7981,14 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
             except Exception:
                 pass
     finally:
+        # 窗口已尽：关掉在途连接，阻断旧地区下载与下一地区重叠（跨地区干扰）。
+        with lock:
+            _left = list(registry)
+        for _r in _left:
+            try:
+                _r.close()
+            except Exception:
+                pass
         ex.shutdown(wait=False)
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
     elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
@@ -8085,6 +8285,8 @@ def _parse_node_line(line):
         return None
     if not host or not (0 < port < 65536):
         return None
+    if "@" in host:
+        return None  # 非 socks5 解析后 host 仍含 @：裸 userinfo 账密不得落入 host/标签
     return {"host": host, "port": port, "proto": proto,
             "user": user, "pass": pwd, "raw": s}
 
@@ -8115,14 +8317,17 @@ def batch_node_test(nodes, ping_count=5):
 
 
 def _node_label(nd):
-    """批测表标签：含凭证的 socks5 节点掩盖账密，只显 host:port。"""
+    """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
+    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。"""
+    host = nd["host"]
+    if ":" in host and not host.startswith("["):
+        host = "[%s]" % host
     if nd["proto"] == "socks5" and (nd.get("user") is not None
                                    or nd.get("pass") is not None):
-        host = nd["host"]
-        if ":" in host and not host.startswith("["):
-            host = "[%s]" % host
         return ("socks5://***@%s:%s" % (host, nd["port"]))[:38]
-    return nd["raw"][:38]
+    if nd["proto"] == "socks5":
+        return ("socks5://%s:%s" % (host, nd["port"]))[:38]
+    return ("%s:%s" % (host, nd["port"]))[:38]
 
 
 def _sanitize_batch_results(results):
