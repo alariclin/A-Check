@@ -7018,7 +7018,11 @@ def get_system_info():
 
             ms = MS()
             ms.dwLength = ctypes.sizeof(MS)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
+            k32 = ctypes.windll.kernel32
+            k32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(MS)]
+            k32.GlobalMemoryStatusEx.restype = ctypes.c_bool
+            if not k32.GlobalMemoryStatusEx(ctypes.byref(ms)):
+                raise OSError("GlobalMemoryStatusEx failed")
             b = ms.ullTotalPhys
             info["mem"] = f"{b // 1024**3}GB"
         elif os.path.exists("/proc/meminfo"):
@@ -7048,42 +7052,58 @@ def get_system_info():
 
     # 虚拟化
     try:
-        virt = T("virt_phys")
+        virt = "?"
         vm_label = T("virt_vm")
         ct_label = T("virt_container")
         if is_win:
             o = ""
+            probed = False
             try:
                 out = subprocess.run(
                     ["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).Model"],
                     capture_output=True, text=True, timeout=8,
                 )
-                o = out.stdout.lower()
+                if out.returncode == 0 and out.stdout.strip():
+                    o = out.stdout.lower()
+                    probed = True
             except Exception:
                 pass
-            if not o:
+            if not probed:
                 try:
                     out = subprocess.run(
                         ["wmic", "computersystem", "get", "model"],
                         capture_output=True, text=True, timeout=6,
                     )
-                    o = out.stdout.lower()
+                    if out.returncode == 0 and out.stdout.strip():
+                        o = out.stdout.lower()
+                        probed = True
                 except Exception:
                     pass
-            if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu")):
-                virt = vm_label
+            if probed:
+                if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu")):
+                    virt = vm_label
+                else:
+                    virt = T("virt_phys")
+            # 全败或输出无效时 virt 保持 "?"（探测失败 ≠ 确认物理机）
         elif sys.platform == "darwin":
             out = subprocess.run(
                 ["sysctl", "-n", "kern.hv_vmm_present"],
                 capture_output=True, text=True, timeout=5,
             )
-            if out.stdout.strip() == "1":
-                virt = vm_label
+            if out.returncode == 0:
+                _v = out.stdout.strip()
+                if _v == "1":
+                    virt = vm_label
+                elif _v == "0":
+                    virt = T("virt_phys")
+                # 非 0/1 输出不可识别 → 保持 "?"
+            # returncode 非零 → 保持 "?"
         else:
             if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
                 virt = ct_label
             else:
                 dmi_text = ""
+                dmi_read = False
                 for dmi_p in (
                     "/sys/class/dmi/id/product_name",
                     "/sys/class/dmi/id/sys_vendor",
@@ -7093,15 +7113,18 @@ def get_system_info():
                         try:
                             with open(dmi_p, encoding="utf-8", errors="replace") as f:
                                 dmi_text += " " + f.read().lower()
+                            dmi_read = True
                         except Exception:
                             pass
                 hv_dmi = any(k in dmi_text for k in (
                     "kvm", "qemu", "vmware", "virtualbox", "xen", "hyper-v",
                 ))
                 hv_cpu = False
+                cpu_read = False
                 if os.path.exists("/proc/cpuinfo"):
                     with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
                         hv_cpu = "hypervisor" in f.read().lower()
+                    cpu_read = True
                 brand_dmi = any(k in dmi_text for k in (
                     "amazon ec2", "google", "digitalocean", "alibaba",
                     "linode", "vultr", "hetzner", "oracle",
@@ -7111,6 +7134,10 @@ def get_system_info():
                 elif brand_dmi:
                     # 品牌 alone 不能定虚拟化：裸金属与虚拟机都可能 → 不确定
                     virt = "?"
+                elif dmi_read or cpu_read:
+                    # 探测成功且无虚拟化信号 → 物理机（沿既有解释）
+                    virt = T("virt_phys")
+                # 任一来源均不可读 → 保持 "?"（全败 ≠ 确认物理机）
         info["virt"] = virt
     except Exception:
         info["virt"] = "?"
@@ -7122,17 +7149,53 @@ def _unescape_mount_path(p):
     return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), p)
 
 
+def _overlay_backing_ft(opts, mounts):
+    """解析 overlay 挂载选项的 upperdir 链，返回最终后端文件系统类型；
+    任一环无法确认（无 upperdir、无归属挂载、成环/超深）返 None。
+    mounts 为 (挂载点, 类型, 选项) 三元组；归属判定与主循环同款最长匹配
+    （同长后来者胜）。"""
+    seen = set()
+    cur_opts = opts
+    for _ in range(4):
+        upper = None
+        for item in cur_opts.split(","):
+            if item.startswith("upperdir="):
+                upper = _unescape_mount_path(item[len("upperdir="):])
+                break
+        if not upper or upper in seen:
+            return None
+        seen.add(upper)
+        best_ft = best_opts = None
+        best_len = -1
+        for mp, ft, o in mounts:
+            if upper == mp or upper.startswith(mp + "/" if mp != "/" else "/"):
+                if len(mp) >= best_len:
+                    best_len, best_ft, best_opts = len(mp), ft, o
+        if best_ft is None:
+            return None
+        if best_ft != "overlay":
+            return best_ft
+        cur_opts = best_opts
+    return None
+
+
 def _get_real_disk_tempdir():
     """在 Linux 下避开 tmpfs 内存盘，确保 I/O 测试落在真实块设备上；
     挂载名按 /proc 规则反转义后比对；无可用真实盘时返回 None
     （调用方跳过测试，不以内存盘充数）。
     判定取最长匹配挂载点（嵌套挂载以最深生效者定夺）；Linux 下 /proc 不可读
-    即返 None（不以部分集合或内存盘充数）；非 Linux 沿旧行为返 gettempdir。"""
+    即返 None（不以部分集合或内存盘充数）；非 Linux 沿旧行为返 gettempdir。
+    overlay 挂载沿 upperdir 链解析真实后端（见 _overlay_backing_ft），
+    后端为内存盘或无法确认时不信任该候选；
+    gettempdir 本身抛 OSError（如全部候选不可用）时返 None，不向调用方逃逸。"""
     if not sys.platform.startswith("linux"):
-        return tempfile.gettempdir()
+        try:
+            return tempfile.gettempdir()
+        except OSError:
+            return None
     if not os.path.exists("/proc/mounts"):
         return None
-    mounts = []  # (挂载点, 文件系统类型)
+    mounts = []  # (挂载点, 文件系统类型, 挂载选项)
     try:
         with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -7141,22 +7204,32 @@ def _get_real_disk_tempdir():
                     mp = _unescape_mount_path(parts[1])
                     if len(mp) > 1:
                         mp = mp.rstrip("/")
-                    mounts.append((mp, parts[2]))
+                    mounts.append((mp, parts[2],
+                                   parts[3] if len(parts) >= 4 else ""))
     except Exception:
         return None  # Linux 下 /proc 不可读 → 跳过，不以部分集合充数
     try:
         _cwd = os.getcwd()
     except Exception:
         _cwd = None  # 工作目录被删时以后备候选继续，不抛错
-    cand_dirs = [tempfile.gettempdir(), "/var/tmp"] + ([_cwd] if _cwd else [])
+    try:
+        _tmp = tempfile.gettempdir()
+    except OSError:
+        return None  # 全部候选不可用时 gettempdir 抛 FileNotFoundError，不逃逸
+    cand_dirs = [_tmp, "/var/tmp"] + ([_cwd] if _cwd else [])
     for d in cand_dirs:
         real_d = os.path.realpath(d)
-        best_ft = None
+        best_ft = best_opts = None
         best_len = -1
-        for mp, ft in mounts:
+        for mp, ft, opts in mounts:
             if real_d == mp or real_d.startswith(mp + "/" if mp != "/" else "/"):
                 if len(mp) >= best_len:  # 同长后来者胜（后挂载遮蔽先挂载）
-                    best_len, best_ft = len(mp), ft
+                    best_len, best_ft, best_opts = len(mp), ft, opts
+        if best_ft == "overlay":
+            _backing = _overlay_backing_ft(best_opts, mounts)
+            if _backing in ("tmpfs", "ramfs", "devtmpfs", None):
+                continue
+            best_ft = _backing
         if best_ft in ("tmpfs", "ramfs", "devtmpfs"):
             continue
         if os.access(real_d, os.W_OK):
