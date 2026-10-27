@@ -3339,6 +3339,9 @@ class RDAP(Provider):
             _ents = cand.get("entities")
             if _ents is not None and not isinstance(_ents, list):
                 continue
+            _c0 = cand.get("cidr0_cidrs")
+            if _c0 is not None and not isinstance(_c0, list):
+                continue  # cidr0_cidrs 非 list/None：候选无效，试下一基地
             if not cand.get("name") and not cand.get("cidr0_cidrs"):
                 continue  # 空字典/无网络身份：不得截断回退
             d = cand
@@ -3357,6 +3360,10 @@ class RDAP(Provider):
             if not pfx:
                 continue
             _cidr = f"{pfx}/{c.get('length')}"
+            try:
+                ipaddress.ip_network(_cidr, strict=False)
+            except Exception:
+                continue  # 未通过 ip_network 校验的 CIDR 不保存（缺 length 时为 ".../None"）
             if not cidr:
                 cidr = _cidr
             if _ip_obj is not None:
