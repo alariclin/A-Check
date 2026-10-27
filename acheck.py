@@ -1540,7 +1540,10 @@ _inflight_lock = threading.Lock()
 def _per_key_lock(key):
     """取 key 专属锁（singleflight）：同 key 的并发调用串行化，
     后到者在锁内复查缓存，命中即返，不重复下载。注册表以 key 形状
-    区分命名空间：http_get 用 (url, 头元组)，威胁表用 ("threat", 名)。"""
+    区分命名空间：http_get 用 (url, 头元组)，威胁表用 ("threat", 名)。
+    有界性：键空间限于本进程实际发起的不同 URL（头元组已规范化）与威胁表名，
+    单次 CLI 进程内有限；锁不删除是刻意的——删除等待中的锁会破坏 singleflight，
+    注册表随进程结束而释放（不做引用计数 pruning，避免触碰正确性敏感的锁删除）。"""
     with _inflight_lock:
         lk = _inflight.get(key)
         if lk is None:
@@ -1812,7 +1815,7 @@ def _get_system_nameservers():
                             pass
                 elif in_dns:
                     cand = line.strip()
-                    if not cand or (":" in cand and not cand[0].isdigit()):
+                    if not cand:
                         in_dns = False
                         continue
                     try:
@@ -3733,9 +3736,12 @@ DATACENTER_KEYWORDS = (
 
 def _term_in(term, text):
     """词匹配：ASCII 词按词边界（防 dc/oci/tor/colo 类短词子串误伤），
-    非 ASCII 词（CJK 等无空格分词语言）按子串（空格分词不适用）。"""
+    非 ASCII 词（CJK 等无空格分词语言）按子串（空格分词不适用）。
+    边界用 (?<![a-z0-9])...(?![a-z0-9]) 而不用 \\b：\\b 要求词字符与非词字符
+    交界，尾字符本身就是非词字符的词（如 lg u+ 的 +）在串尾/空格前永无交界，
+    导致永不匹配；lookaround 只禁相邻字母数字，与短词保护等价。"""
     if term.isascii():
-        return re.search(r"\b" + re.escape(term) + r"\b", text) is not None
+        return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", text) is not None
     return term in text
 
 
@@ -3866,17 +3872,20 @@ def run_passive(ip):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            progress_closed[0] = True
+            with _progress_lock:
+                progress_closed[0] = True
         for _f, _p in _futs.items():
             if _p.key not in sources:
                 sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        progress_closed[0] = True
+        with _progress_lock:
+            progress_closed[0] = True
         _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
-        print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+        with _progress_lock:
+            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
@@ -4083,7 +4092,7 @@ def _print_streaming_inference(res):
                 if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
             else:
-                if tk_l in cc:
+                if _term_in(tk_l, cc):
                     return True
         return False
 
@@ -5388,7 +5397,11 @@ def _pinned_opener(family, follow_redirects=True):
 
 
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
-    """返回 (status_code|None, body|err, final_url_or_location)。"""
+    """返回 (status_code|None, body|err, final_url_or_location, complete)。
+    complete: 是否读到响应体结尾（EOF/长度相符）；16KiB 截断时为 False。
+    调用方以“限制串不存在”判解锁时，不完整且未见限制串须判 unknown，
+    不得以截断后的前 16KiB 无限制串冒充解锁；恰 16384 字节的体仍判完整
+    （多读 1 字节探 EOF 区分，不以 len==16384 一律判截断）。"""
     h = {
         "User-Agent": UA_BROWSER,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -5407,17 +5420,19 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     try:
         req = urllib.request.Request(url, headers=h)
         with opener.open(req, timeout=timeout) as r:
-            body = r.read(16384).decode("utf-8", errors="replace")
-            return r.status, body, r.geturl()
+            raw = r.read(16385)  # 多读 1 字节探 EOF：恰 16384 字节的体仍判完整
+            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), len(raw) <= 16384
     except urllib.error.HTTPError as e:
         try:
-            body = e.read(16384).decode("utf-8", errors="replace")
+            raw = e.read(16385)
+            body = raw[:16384].decode("utf-8", errors="replace")
+            complete = len(raw) <= 16384
         except Exception:
-            body = ""
+            body, complete = "", False
         loc = e.headers.get("Location", "") if e.headers else ""
-        return e.code, body, loc
+        return e.code, body, loc, complete
     except Exception as e:
-        return None, str(e)[:100], ""
+        return None, str(e)[:100], "", False
 
 
 _unlock_cache = {}
@@ -5479,10 +5494,12 @@ def _unlock_label(v):
 
 
 def test_tiktok(local_ip=None):
-    code, body, _ = _active_get("https://www.tiktok.com/")
+    code, body, _, complete = _active_get("https://www.tiktok.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and not complete and "Access Denied" not in body:
         return T("unknown"), "", None
     if code == 200 and "Access Denied" not in body:
         m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
@@ -5492,10 +5509,12 @@ def test_tiktok(local_ip=None):
 
 
 def test_disney(local_ip=None):
-    code, body, final_url = _active_get("https://www.disneyplus.com/")
+    code, body, final_url, complete = _active_get("https://www.disneyplus.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and not complete and "not available" not in body.lower():
         return T("unknown"), "", None
     if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
@@ -5504,11 +5523,13 @@ def test_disney(local_ip=None):
 
 def test_netflix(local_ip=None):
     # 70143836 为经典非自制剧 (Breaking Bad)，80018499 为自制剧 (Test Patterns)
-    code, body, final_url = _active_get("https://www.netflix.com/title/70143836")
+    code, body, final_url, complete = _active_get("https://www.netflix.com/title/70143836")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
+    if code == 200 and not complete and "Not Available" not in body:
+        return T("unknown"), "", None  # 首探针证据不完整即判 unknown，不落入次探针
     if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
@@ -5516,10 +5537,12 @@ def test_netflix(local_ip=None):
         region = f"[{m.group(1).upper()}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
 
-    code2, body2, final_url2 = _active_get("https://www.netflix.com/title/80018499")
+    code2, body2, final_url2, complete2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
         return T("failed"), "", None
     if _is_challenge(code2, body2):
+        return T("unknown"), "", None
+    if code2 == 200 and not complete2 and "Not Available" not in body2:
         return T("unknown"), "", None
     if code2 == 200 and "Not Available" not in body2:
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
@@ -5532,12 +5555,14 @@ def test_netflix(local_ip=None):
 
 
 def test_youtube(local_ip=None):
-    code, body, _ = _active_get("https://www.youtube.com/premium")
+    code, body, _, complete = _active_get("https://www.youtube.com/premium")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
         return T("unknown"), "", None
     if code == 200:
+        if not complete and "YouTube Premium is not available in your country" not in body:
+            return T("unknown"), "", None
         if "YouTube Premium is not available in your country" in body:
             return T("blocked"), "", None
         m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', body) or re.search(r'"GL"\s*:\s*"([A-Z]{2})"', body)
@@ -5547,7 +5572,7 @@ def test_youtube(local_ip=None):
 
 
 def test_primevideo(local_ip=None):
-    code, body, _ = _active_get("https://www.primevideo.com/")
+    code, body, _, _complete = _active_get("https://www.primevideo.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5562,7 +5587,7 @@ def test_primevideo(local_ip=None):
 
 
 def test_reddit(local_ip=None):
-    code, body, _ = _active_get("https://www.reddit.com/")
+    code, body, _, _complete = _active_get("https://www.reddit.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5573,7 +5598,7 @@ def test_reddit(local_ip=None):
 
 
 def test_chatgpt(local_ip=None):
-    code, body, _ = _active_get("https://chatgpt.com/cdn-cgi/trace")
+    code, body, _, _complete = _active_get("https://chatgpt.com/cdn-cgi/trace")
     if _is_challenge(code, body):
         return T("unknown"), "", None
     loc = ""
@@ -5582,7 +5607,7 @@ def test_chatgpt(local_ip=None):
         loc = m.group(1) if m else ""
         if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
             return T("blocked"), f"[{loc}]", None
-    api_code, api_body, _ = _active_get("https://api.openai.com/v1/models")
+    api_code, api_body, _, _api_complete = _active_get("https://api.openai.com/v1/models")
     if _is_challenge(api_code, api_body):
         return T("unknown"), "", None
     if api_code is None:
@@ -5595,10 +5620,12 @@ def test_chatgpt(local_ip=None):
 
 
 def test_gemini(local_ip=None):
-    code, body, final_url = _active_get("https://gemini.google.com/app")
+    code, body, final_url, complete = _active_get("https://gemini.google.com/app")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and not complete and "isn't currently supported" not in body.lower():
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
@@ -5606,7 +5633,7 @@ def test_gemini(local_ip=None):
 
 
 def test_claude(local_ip=None):
-    code, body, final_url = _active_get("https://claude.ai/login")
+    code, body, final_url, _complete = _active_get("https://claude.ai/login")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5617,10 +5644,12 @@ def test_claude(local_ip=None):
 
 
 def test_grok(local_ip=None):
-    code, body, _ = _active_get("https://grok.com/")
+    code, body, _, complete = _active_get("https://grok.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
+        return T("unknown"), "", None
+    if code == 200 and not complete and "Access Denied" not in body:
         return T("unknown"), "", None
     if code == 200 and "Access Denied" not in body:
         return T("unlocked"), "", get_unlock_type("grok.com", local_ip)
@@ -5628,7 +5657,7 @@ def test_grok(local_ip=None):
 
 
 def test_instagram(local_ip=None):
-    code, body, _ = _active_get("https://www.instagram.com/")
+    code, body, _, _complete = _active_get("https://www.instagram.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5639,7 +5668,7 @@ def test_instagram(local_ip=None):
 
 
 def test_facebook(local_ip=None):
-    code, body, _ = _active_get("https://www.facebook.com/")
+    code, body, _, _complete = _active_get("https://www.facebook.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5650,7 +5679,7 @@ def test_facebook(local_ip=None):
 
 
 def test_x(local_ip=None):
-    code, body, _ = _active_get("https://x.com/")
+    code, body, _, _complete = _active_get("https://x.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5661,7 +5690,7 @@ def test_x(local_ip=None):
 
 
 def test_line(local_ip=None):
-    code, body, _ = _active_get("https://www.line.me/")
+    code, body, _, _complete = _active_get("https://www.line.me/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5672,7 +5701,7 @@ def test_line(local_ip=None):
 
 
 def test_whatsapp(local_ip=None):
-    code, body, _ = _active_get("https://www.whatsapp.com/")
+    code, body, _, _complete = _active_get("https://www.whatsapp.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5683,7 +5712,7 @@ def test_whatsapp(local_ip=None):
 
 
 def test_github(local_ip=None):
-    code, body, _ = _active_get("https://github.com/")
+    code, body, _, _complete = _active_get("https://github.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5694,7 +5723,7 @@ def test_github(local_ip=None):
 
 
 def test_deepseek(local_ip=None):
-    code, body, _ = _active_get("https://www.deepseek.com/")
+    code, body, _, _complete = _active_get("https://www.deepseek.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5705,7 +5734,7 @@ def test_deepseek(local_ip=None):
 
 
 def test_appletv(local_ip=None):
-    code, body, _ = _active_get("https://tv.apple.com/")
+    code, body, _, _complete = _active_get("https://tv.apple.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -7586,8 +7615,8 @@ def _ip_asn_org(ip, timeout=8):
 
 def dns_leak_check(egress_ip=None, timeout=8, require_egress=False):
     """DNS 出口一致性检测: 对比系统解析器 IP 与出口 IP 的 ASN/归属。
-    返回 (asn_mismatch: bool|None, detail: dict)。三态判定: 任一侧 ASN 查不到
-    时返回 None (未知); 任一解析器 ASN ≠ 出口 ASN 即判 mismatch=True。
+    返回 (asn_mismatch: bool|None, detail: dict)。三态判定（已知不一致优先）:
+    任一解析器 ASN ≠ 出口 ASN 即判 mismatch=True；仅当无不一致且有未知时返 None。
     注意口径: mismatch 只说明解析器与出口不在同一 ASN（隧道内自设公共 DNS
     也会如此），不等于证实泄漏；反之 ASN 相同也不等于证明无泄漏。
     require_egress=True 时 egress_ip 为空直接判未知, 不回退直连出口
@@ -7633,31 +7662,31 @@ def tcp_ping_stats(host, port, count=10, timeout=3, family=0):
     零 root, 跨平台。"""
     import statistics
     samples = []
-    addrs = None
-    if family:
-        try:
+    try:
+        if family:
             _infos = _getaddrinfo_timed(host, port, socket.AF_INET6 if family == 6 else socket.AF_INET)
-            addrs = [(af, sa) for af, _t, _p, _n, sa in _infos]
-        except Exception:
-            addrs = []
+        else:
+            _infos = _getaddrinfo_timed(host, port)  # 默认分支亦先解析，样本只含 connect
+        addrs = [(af, sa) for af, _t, _p, _n, sa in _infos]
+    except Exception:
+        addrs = []
     t_all0 = time.perf_counter()
     for _try in range(count):
+        if not addrs:
+            continue
+        _af, _sa = addrs[_try % len(addrs)]
+        s = None
         t0 = time.perf_counter()
         try:
-            if addrs is not None:
-                if not addrs:
-                    continue
-                _af, _sa = addrs[_try % len(addrs)]
-                s = socket.socket(_af, socket.SOCK_STREAM)
-                s.settimeout(timeout)
-                s.connect(_sa)
-                s.close()
-            else:
-                s = socket.create_connection((host, port), timeout=timeout)
-                s.close()
+            s = socket.socket(_af, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect(_sa)
             samples.append((time.perf_counter() - t0) * 1000)
         except Exception:
             pass
+        finally:
+            if s is not None:
+                s.close()
     total_ms = (time.perf_counter() - t_all0) * 1000
     ok_n = len(samples)
     loss = round((count - ok_n) / count * 100, 1) if count else 100.0
@@ -8313,7 +8342,7 @@ def _parse_version(v):
     """解析 x.y.z 式版本号为可比元组；无法解析返回 None。"""
     parts = []
     for piece in str(v).strip().split("."):
-        if not piece.isdigit():
+        if not piece.isascii() or not piece.isdigit():
             return None
         parts.append(int(piece))
     return tuple(parts) if parts else None
@@ -8640,7 +8669,7 @@ def main():
     global LANG, _FORCE_STACK, _NO_SPEED
     _init_console()
 
-    parser = _CLIArgumentParser(prog="acheck.py", add_help=False)
+    parser = _CLIArgumentParser(prog="acheck.py", add_help=False, allow_abbrev=False)
     parser.add_argument("-h", "--help", action="store_true", dest="help")
     parser.add_argument("--active", action="store_true")
     parser.add_argument("--ipv4-only", action="store_true", dest="ipv4_only")
@@ -8680,7 +8709,7 @@ def main():
     _NO_SPEED = bool(ns.no_speed)
 
     if ns.ipv4_only and ns.ipv6_only:
-        if "--json" in sys.argv:
+        if ns.json:
             print(json.dumps({"error": "--ipv4-only and --ipv6-only conflict"}, ensure_ascii=False))
         else:
             print("[Error] --ipv4-only and --ipv6-only cannot be used together", file=sys.stderr)
@@ -8897,7 +8926,7 @@ def main():
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
-                    _u = input(T("prompt_proxy_user")).strip()
+                    _u = input(T("prompt_proxy_user"))
                     if _u:
                         puser = _u
                         import getpass
