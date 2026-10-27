@@ -6736,81 +6736,104 @@ def _unescape_mount_path(p):
 def _get_real_disk_tempdir():
     """在 Linux 下避开 tmpfs 内存盘，确保 I/O 测试落在真实块设备上；
     挂载名按 /proc 规则反转义后比对；无可用真实盘时返回 None
-    （调用方跳过测试，不以内存盘充数）。"""
-    cand_dirs = [tempfile.gettempdir(), "/var/tmp", os.getcwd()]
-    if not os.path.exists("/proc/mounts"):
+    （调用方跳过测试，不以内存盘充数）。
+    判定取最长匹配挂载点（嵌套挂载以最深生效者定夺）；Linux 下 /proc 不可读
+    即返 None（不以部分集合或内存盘充数）；非 Linux 沿旧行为返 gettempdir。"""
+    if not sys.platform.startswith("linux"):
         return tempfile.gettempdir()
-    tmpfs_mounts = set()
+    if not os.path.exists("/proc/mounts"):
+        return None
+    mounts = []  # (挂载点, 文件系统类型)
     try:
         with open("/proc/mounts", encoding="utf-8", errors="replace") as f:
             for line in f:
                 parts = line.split()
-                if len(parts) >= 3 and parts[2] in ("tmpfs", "ramfs", "devtmpfs"):
-                    tmpfs_mounts.add(_unescape_mount_path(parts[1]))
+                if len(parts) >= 3:
+                    mp = _unescape_mount_path(parts[1])
+                    if len(mp) > 1:
+                        mp = mp.rstrip("/")
+                    mounts.append((mp, parts[2]))
     except Exception:
-        pass  # 解析失败时以已读到的部分集合继续，不再盲目回退
+        return None  # Linux 下 /proc 不可读 → 跳过，不以部分集合充数
+    try:
+        _cwd = os.getcwd()
+    except Exception:
+        _cwd = None  # 工作目录被删时以后备候选继续，不抛错
+    cand_dirs = [tempfile.gettempdir(), "/var/tmp"] + ([_cwd] if _cwd else [])
     for d in cand_dirs:
         real_d = os.path.realpath(d)
-        if not any(real_d == m or real_d.startswith(m.rstrip("/") + "/") for m in tmpfs_mounts):
-            if os.access(real_d, os.W_OK):
-                return real_d
+        best_ft = None
+        best_len = -1
+        for mp, ft in mounts:
+            if real_d == mp or real_d.startswith(mp + "/" if mp != "/" else "/"):
+                if len(mp) >= best_len:  # 同长后来者胜（后挂载遮蔽先挂载）
+                    best_len, best_ft = len(mp), ft
+        if best_ft in ("tmpfs", "ramfs", "devtmpfs"):
+            continue
+        if os.access(real_d, os.W_OK):
+            return real_d
     return None
 
 
 def disk_io_test(size_mb=64):
     """
     安全且真实的磁盘 I/O 测速:
-      1. 以 mkstemp（O_EXCL）创建不可预测临时文件，不跟随符号链接；仅清理本次创建的文件。
-      2. 前置校验剩余磁盘空间 >= 512MB，不足则跳过，防止写满磁盘。
+      1. 以 mkstemp（O_EXCL）创建不可预测临时文件，不跟随符号链接；写后经同一 fd 回读
+         （不按名重开）；清理前核 inode 一致，不一致不删他人文件。
+      2. 前置校验剩余磁盘空间 >= max(512MB, size_mb + 64MB)，不足则跳过，防止写满磁盘。
       3. 避开 Linux tmpfs 内存盘，并在写入后尝试刷除内核 Page Cache（仅建议性，缓存读仍可能发生）。
     """
     target_dir = _get_real_disk_tempdir()
     if target_dir is None:
         return None
     try:
-        if shutil.disk_usage(target_dir).free < 512 * 1024 * 1024:
+        # 门限含实际写入量：free 须 >= max(512MB, size_mb + 64MB 裕量)
+        if shutil.disk_usage(target_dir).free < max(
+                512 * 1024 * 1024, (size_mb + 64) * 1024 * 1024):
             return None
     except Exception:
         return None
 
     try:
+        block = os.urandom(1024 * 1024)  # mkstemp 之前：此时尚无 fd 可漏
+    except Exception:
+        return None
+    try:
         fd, tmp_path = tempfile.mkstemp(prefix=".ipcheck_io_", suffix=".tmp",
                                         dir=target_dir)
     except Exception:
         return None
+    f = None
     try:
-        block = os.urandom(1024 * 1024)
+        f = os.fdopen(fd, "w+b")
+        if sys.platform == "darwin":
+            try:
+                import fcntl
+                fcntl.fcntl(f.fileno(), getattr(fcntl, "F_NOCACHE", 48), 1)  # F_NOCACHE
+            except Exception:
+                pass
         t0 = time.perf_counter()
-        with os.fdopen(fd, "wb") as f:
-            fd = f.fileno()
-            if sys.platform == "darwin":
-                try:
-                    import fcntl
-                    fcntl.fcntl(fd, getattr(fcntl, "F_NOCACHE", 48), 1)  # F_NOCACHE
-                except Exception:
-                    pass
-            for _ in range(size_mb):
-                f.write(block)
-            f.flush()
-            os.fsync(fd)
-            if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
-                try:
-                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-                except Exception:
-                    pass
+        for _ in range(size_mb):
+            f.write(block)
+        f.flush()
+        os.fsync(f.fileno())
+        if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
+            try:
+                os.posix_fadvise(f.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
+            except Exception:
+                pass
         write_time = max(0.001, time.perf_counter() - t0)
 
-        t1 = time.perf_counter()
-        with open(tmp_path, "rb") as f:
-            fd = f.fileno()
-            if sys.platform == "darwin":
-                try:
-                    import fcntl
-                    fcntl.fcntl(fd, getattr(fcntl, "F_NOCACHE", 48), 1)
-                except Exception:
-                    pass
-            while f.read(1024 * 1024):
+        f.seek(0)  # 经同一 fd 回读，不按名重开（杜绝换链竞态与 /dev/zero 挂起）
+        if sys.platform == "darwin":
+            try:
+                import fcntl
+                fcntl.fcntl(f.fileno(), getattr(fcntl, "F_NOCACHE", 48), 1)
+            except Exception:
                 pass
+        t1 = time.perf_counter()
+        while f.read(1024 * 1024):
+            pass
         read_time = max(0.001, time.perf_counter() - t1)
 
         return {
@@ -6820,9 +6843,29 @@ def disk_io_test(size_mb=64):
     except Exception:
         return None
     finally:
-        if os.path.exists(tmp_path):
+        live_fd = None
+        if f is not None:
             try:
-                os.unlink(tmp_path)
+                live_fd = f.fileno()
+            except Exception:
+                live_fd = None
+        elif fd is not None:
+            live_fd = fd
+        if live_fd is not None:
+            try:
+                # unlink 前核 inode 一致：名下文件被换则不删他人文件
+                if os.path.lexists(tmp_path) and os.stat(tmp_path).st_ino == os.fstat(live_fd).st_ino:
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+        elif fd is not None:
+            try:
+                os.close(fd)
             except Exception:
                 pass
 
