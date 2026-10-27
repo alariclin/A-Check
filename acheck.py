@@ -1762,10 +1762,14 @@ def _encode_dns_name(domain):
 
 
 def _decode_dns_name(pkt, offset):
+    """解码 DNS 名：沿合法标签/指针路径到达零字节终止符才成功；
+    指针循环、标签越界、报文结束仍无终止符均返 (None, offset)（调用方
+    据此丢弃该记录或判查询失败，不以部分标签冒充有效记录）。"""
     labels = []
     jumped = False
     orig_offset = offset
     seen = set()
+    terminated = False
     while offset < len(pkt):
         if offset in seen:
             break
@@ -1773,6 +1777,7 @@ def _decode_dns_name(pkt, offset):
         length = pkt[offset]
         if length == 0:
             offset += 1
+            terminated = True
             break
         if (length & 0xC0) == 0xC0:
             if offset + 1 >= len(pkt):
@@ -1788,6 +1793,8 @@ def _decode_dns_name(pkt, offset):
                 break
             labels.append(pkt[offset:offset + length].decode("ascii", errors="replace"))
             offset += length
+    if not terminated:
+        return None, (orig_offset if jumped else offset)
     return ".".join(labels), (orig_offset if jumped else offset)
 
 
@@ -1939,14 +1946,14 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     if rcode != 0:
         return (None, []) if return_cnames else None
 
-    results = []
-    cnames = []
-    allowed_owners = {domain_q.lower().rstrip(".")}
+    records = []
     parsed = 0
     for _ in range(ancount):
         if offset >= len(data):
             break
         owner, offset = _decode_dns_name(data, offset)
+        if owner is None:
+            break  # 属主名畸形：无法定位固定段与 rdlength，只能整包判败
         if offset + 10 > len(data):
             break
         rtype, rclass, _, rdlength = struct.unpack(">HHIH", data[offset:offset + 10])
@@ -1954,31 +1961,49 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         if offset + rdlength > len(data):
             break
         rdata = data[offset:offset + rdlength]
-        owner_key = (owner or "").lower().rstrip(".")
-        if rclass == 1 and owner_key in allowed_owners:
-            if rtype == 1 and rdlength == 4 and qtype == 1:  # A record
-                results.append(socket.inet_ntoa(rdata))
-            elif rtype == 28 and rdlength == 16 and qtype == 28:  # AAAA record
-                results.append(socket.inet_ntop(socket.AF_INET6, rdata))
-            elif rtype == 5:  # CNAME record
-                cname_host, cend = _decode_dns_name(data, offset)
-                if cname_host and cend - offset <= rdlength:
-                    cname_key = cname_host.lower().rstrip(".")
-                    cnames.append(cname_key)
-                    allowed_owners.add(cname_key)
-            elif rtype == 12 and qtype == 12:  # PTR record
-                ptr_host, pend = _decode_dns_name(data, offset)
-                if ptr_host and pend - offset <= rdlength:
-                    results.append(ptr_host.rstrip("."))
-            elif rtype == 15 and rdlength >= 3 and qtype == 15:  # MX record
-                pref = struct.unpack(">H", rdata[:2])[0]
-                mx_host, mend = _decode_dns_name(data, offset + 2)
-                if mx_host and mend - (offset + 2) <= rdlength - 2:
-                    results.append((pref, mx_host.rstrip(".")))
+        records.append((owner.lower().rstrip("."), rtype, rclass, rdata, offset))
         offset += rdlength
         parsed += 1
     if parsed < ancount:  # 答案未读满：截断报文不当成功（含空答案）
         return (None, []) if return_cnames else None
+
+    # 二遍：先从查询名走 CNAME 链（环/链长守卫），再收集合法 owner 的目标记录。
+    # 单遍扫描会丢 CNAME 之前出现的目标记录（答案顺序不保证），故不依赖扫描顺序。
+    allowed_owners = {domain_q.lower().rstrip(".")}
+    cnames = []
+    _cur = domain_q.lower().rstrip(".")
+    _seen_chain = {_cur}
+    for _hop in range(16):
+        _nxt = None
+        for _okey, _rt, _rc, _rd, _off in records:
+            if _okey == _cur and _rt == 5 and _rc == 1:
+                _tgt, _cend = _decode_dns_name(data, _off)
+                if _tgt and _cend - _off <= len(_rd):
+                    _nxt = _tgt.lower().rstrip(".")
+                    break
+        if _nxt is None or _nxt in _seen_chain:
+            break
+        cnames.append(_nxt)
+        allowed_owners.add(_nxt)
+        _seen_chain.add(_nxt)
+        _cur = _nxt
+    results = []
+    for _okey, _rt, _rc, _rd, _off in records:
+        if _rc != 1 or _okey not in allowed_owners:
+            continue
+        if _rt == 1 and len(_rd) == 4 and qtype == 1:  # A record
+            results.append(socket.inet_ntoa(_rd))
+        elif _rt == 28 and len(_rd) == 16 and qtype == 28:  # AAAA record
+            results.append(socket.inet_ntop(socket.AF_INET6, _rd))
+        elif _rt == 12 and qtype == 12:  # PTR record
+            ptr_host, pend = _decode_dns_name(data, _off)
+            if ptr_host and pend - _off <= len(_rd):
+                results.append(ptr_host.rstrip("."))
+        elif _rt == 15 and len(_rd) >= 3 and qtype == 15:  # MX record
+            pref = struct.unpack(">H", _rd[:2])[0]
+            mx_host, mend = _decode_dns_name(data, _off + 2)
+            if mx_host and mend - (_off + 2) <= len(_rd) - 2:
+                results.append((pref, mx_host.rstrip(".")))
 
     if qtype == 15:
         results.sort(key=lambda x: x[0])
@@ -2155,7 +2180,12 @@ class PTRCheck(Provider):
     name = "PTR/FCrDNS"
 
     def check(self, ip):
-        rev_ip = ".".join(reversed(str(ip).split("."))) + ".in-addr.arpa"
+        try:
+            _ip_obj = ipaddress.ip_address(str(ip))
+        except ValueError:
+            return {"ok": False, "err": "invalid ip"}
+        rev_ip = _ip_obj.reverse_pointer
+        _fwd_qtype = 28 if _ip_obj.version == 6 else 1
         sys_ns = _get_system_nameservers()[0]
         ptrs = _dns_query_udp(rev_ip, qtype=12, server=sys_ns, timeout=2.5)
         if ptrs is None:
@@ -2167,22 +2197,34 @@ class PTRCheck(Provider):
         host = ptrs[0]
         fcrdns = False
         got_data = False
+        any_failed = False
         for h in ptrs:
-            fwd_ips = _dns_query_udp(h, qtype=1, server=sys_ns, timeout=2.5)
+            fwd_ips = _dns_query_udp(h, qtype=_fwd_qtype, server=sys_ns, timeout=2.5)
             if fwd_ips is None or not fwd_ips:
-                fwd2 = _dns_query_udp(h, qtype=1, server="1.1.1.1", timeout=2.5)
+                fwd2 = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1", timeout=2.5)
                 if fwd2 is not None:
                     fwd_ips = fwd2
                 # fwd2 为 None 时保留 sys_ns 原值（[] 是数据，None 是无数据）
             if fwd_ips is None:
+                any_failed = True
                 continue
             got_data = True
-            if str(ip) in fwd_ips:
+            _match = False
+            for _f in fwd_ips:
+                try:
+                    if ipaddress.ip_address(_f) == _ip_obj:
+                        _match = True
+                        break
+                except ValueError:
+                    continue
+            if _match:
                 fcrdns = True
                 host = h  # 回指成功的 PTR 为主显示
                 break
         if not got_data:
             return {"ok": False, "err": "forward query timeout"}
+        if not fcrdns and any_failed:
+            return {"ok": False, "err": "partial forward query failure"}
         return {"ok": True, "ptr": host, "fcrdns": fcrdns, "ts": now_iso()}
 
 
@@ -5322,6 +5364,7 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
     _t0 = time.monotonic()
     if not _getaddrinfo_sem.acquire(timeout=timeout):
         raise OSError(f"DNS resolution concurrency limit reached: {host}")
+    _started = False
     try:
         _box = {}
 
@@ -5330,9 +5373,14 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
                 _box["r"] = socket.getaddrinfo(host, port, family, type)
             except Exception as e:
                 _box["e"] = e
+            finally:
+                # 信号量由实际持有解析任务的线程归还：join 超时不代表任务结束，
+                # 调用方提前归还会让上限只约束已返回调用、不约束存活线程。
+                _getaddrinfo_sem.release()
 
         _t = threading.Thread(target=_run, daemon=True)
         _t.start()
+        _started = True
         _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
         if _t.is_alive():
             raise OSError(f"DNS resolution timed out: {host}")
@@ -5340,7 +5388,8 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
             raise _box["e"]
         return _box["r"]
     finally:
-        _getaddrinfo_sem.release()
+        if not _started:
+            _getaddrinfo_sem.release()
 
 
 def _pinned_connect(conn, family):
@@ -5995,21 +6044,36 @@ DNS_SERVERS_DOT = [
 def _dns_test_ok(d, tid, qpkt):
     """DNS 测试路径 (UDP53/DoT/DoH) 的响应判定：长度、事务 ID、QR、RCODE、
     问题段 (名/类型/类与查询一致，名比对不区分大小写与末尾点) 全验；
-    查询原样回送、QR=0 的截断/伪造响应一律判败。"""
+    查询原样回送、QR=0 的截断/伪造响应一律判败；TC 截断、无答案、
+    答案段越界一律判败。"""
     if d is None or len(d) < 12:
         return False
-    r_tid, flags, qdcount, _, _, _ = struct.unpack(">HHHHHH", d[:12])
+    r_tid, flags, qdcount, ancount, _, _ = struct.unpack(">HHHHHH", d[:12])
     if r_tid != tid or not (flags & 0x8000) or (flags & 0x0F) != 0 or qdcount != 1:
+        return False
+    if flags & 0x0200:  # TC 截断：不可信
+        return False
+    if ancount < 1:  # 无答案：对 google.com A 测试查询不是成功解析证明
         return False
     try:
         qname, off = _decode_dns_name(d, 12)
-        if off + 4 > len(d):
+        if qname is None or off + 4 > len(d):
             return False
         qt, qc = struct.unpack(">HH", d[off:off + 4])
         qname_q, off_q = _decode_dns_name(qpkt, 12)
-        if off_q + 4 > len(qpkt):
+        if qname_q is None or off_q + 4 > len(qpkt):
             return False
         qt_q, qc_q = struct.unpack(">HH", qpkt[off_q:off_q + 4])
+        # 答案段逐条边界校验（名 + 10 字节固定 + rdlength 在包内）
+        _aoff = off + 4
+        for _ in range(ancount):
+            _an, _aoff = _decode_dns_name(d, _aoff)
+            if _an is None or _aoff + 10 > len(d):
+                return False
+            _rdlen = struct.unpack(">H", d[_aoff + 8:_aoff + 10])[0]
+            if _aoff + 10 + _rdlen > len(d):
+                return False
+            _aoff += 10 + _rdlen
     except Exception:
         return False
     return (qname or "").lower().rstrip(".") == (qname_q or "").lower().rstrip(".") \
@@ -6952,12 +7016,14 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
                 ans = _dns_query_udp(qname, qtype=1, server="1.1.1.1", timeout=2.5)
             if ans is None:
                 return lst, None
+            if not ans:
+                return lst, False  # 空应答（NXDOMAIN/无记录）= 未列入
             for a_ip in ans:
                 if re.match(r"^127\.0\.0\.\d+$", a_ip):
                     return lst, True
             if any(a_ip.startswith("127.255.") for a_ip in ans):
                 return lst, None
-            return lst, False
+            return lst, None  # 非空但无可识别码（劫持/拦截/误配）= 未知，不计 clean
         except Exception:
             return lst, None
         finally:
