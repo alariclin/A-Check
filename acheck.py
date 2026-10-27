@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 IP 信誉检测 v4.14.17 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
