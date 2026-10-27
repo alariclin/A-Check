@@ -5299,9 +5299,9 @@ def get_unlock_type(domain, local_ip=None):
     elif sys_ns in ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "223.5.5.5", "119.29.29.29"):
         res = True
     else:
-        # IPv6 地址无点分段，前缀即全地址，重叠退化为精确匹配（偏保守）。
-        sys_prefixes = {".".join(ip.split(".")[:2]) for ip in sys_ips if "." in ip}
-        pub_prefixes = {".".join(ip.split(".")[:2]) for ip in pub_ips if "." in ip}
+        # IPv4 取前两段作 /16 前缀；IPv6 无点分段，前缀即全地址，重叠退化为精确匹配（偏保守）。
+        sys_prefixes = {(".".join(ip.split(".")[:2]) if "." in ip else ip) for ip in sys_ips}
+        pub_prefixes = {(".".join(ip.split(".")[:2]) if "." in ip else ip) for ip in pub_ips}
         overlap = bool(sys_prefixes & pub_prefixes)
         suffix = bool(sys_cnames and pub_cnames and any(
             sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
@@ -5572,7 +5572,7 @@ def check_mail_port25():
     ]
     for host, port in targets:
         try:
-            socket.create_connection((host, port), timeout=4).close()
+            _connect_host(host, port, 4).close()
             return True
         except Exception:
             continue
@@ -5595,7 +5595,7 @@ def check_mx_port25(domain, timeout=4):
             mxs = default_mx.get(domain, [domain])
         for mx in mxs[:2]:
             try:
-                socket.create_connection((mx.rstrip("."), 25), timeout=timeout).close()
+                _connect_host(mx.rstrip("."), 25, timeout).close()
                 return True
             except Exception:
                 continue
@@ -5797,6 +5797,63 @@ DNS_SERVERS_DOT = [
 ]
 
 
+def _dns_test_ok(d, tid, qpkt):
+    """DNS 测试路径 (UDP53/DoT/DoH) 的响应判定：长度、事务 ID、QR、RCODE、
+    问题段 (名/类型/类与查询一致，名比对不区分大小写与末尾点) 全验；
+    查询原样回送、QR=0 的截断/伪造响应一律判败。"""
+    if d is None or len(d) < 12:
+        return False
+    r_tid, flags, qdcount, _, _, _ = struct.unpack(">HHHHHH", d[:12])
+    if r_tid != tid or not (flags & 0x8000) or (flags & 0x0F) != 0 or qdcount != 1:
+        return False
+    try:
+        qname, off = _decode_dns_name(d, 12)
+        if off + 4 > len(d):
+            return False
+        qt, qc = struct.unpack(">HH", d[off:off + 4])
+        qname_q, off_q = _decode_dns_name(qpkt, 12)
+        if off_q + 4 > len(qpkt):
+            return False
+        qt_q, qc_q = struct.unpack(">HH", qpkt[off_q:off_q + 4])
+    except Exception:
+        return False
+    return (qname or "").lower().rstrip(".") == (qname_q or "").lower().rstrip(".") \
+        and qt == qt_q and qc == qc_q
+
+
+def _udp_recv_from(sock, ip, timeout):
+    """UDP 接收并验源：只接受来自 (ip, 53) 的报文；来自他源的报文继续等，
+    直至总超时耗尽返 None（避免冒名响应被当成目标服务器的答复）。"""
+    deadline = time.monotonic() + timeout
+    while True:
+        remain = deadline - time.monotonic()
+        if remain <= 0:
+            return None
+        try:
+            sock.settimeout(remain)
+            d, addr = sock.recvfrom(512)
+        except Exception:
+            return None
+        if addr[0] == ip and addr[1] == 53:
+            return d
+
+
+def _connect_host(host, port, timeout):
+    """经限时解析后连接：解析走 _getaddrinfo_timed（受 timeout 约束），
+    再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。"""
+    infos = _getaddrinfo_timed(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM,
+                               timeout=timeout)
+    if not infos:
+        raise OSError("DNS resolution failed: %s" % host)
+    last_err = None
+    for _fam, _typ, _proto, _canon, sa in infos:
+        try:
+            return socket.create_connection(sa, timeout=timeout)
+        except Exception as e:
+            last_err = e
+    raise OSError("connect failed: %s" % host) from last_err
+
+
 def test_dns_servers(timeout=3):
     """测试全品类公共 DNS (传统 UDP53 / DoH / DoT)。"""
     def _bq():
@@ -5813,9 +5870,9 @@ def test_dns_servers(timeout=3):
             sk.settimeout(timeout)
             t0 = time.time()
             sk.sendto(pkt, (ip, 53))
-            d, _ = sk.recvfrom(512)
+            d = _udp_recv_from(sk, ip, timeout)
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
+            if d is not None and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "UDP53", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -5839,7 +5896,7 @@ def test_dns_servers(timeout=3):
             with _pinned_opener(4).open(rq, timeout=timeout + 2) as rp:
                 d = _read_limited(rp, timeout=timeout + 2)
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
+            if _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": url, "proto": "DoH", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -5867,7 +5924,7 @@ def test_dns_servers(timeout=3):
                     break
                 d += chunk
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) == rl and len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid and (d[3] & 0x0F) == 0:
+            if len(d) == rl and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "DoT853", "ok": True, "rtt_ms": rtt}
         except Exception:
             pass
@@ -5949,7 +6006,7 @@ DNS_SERVERS_V6 = [
 ]
 
 
-# 公共解析器的 DoH IPv6 端点 (名称, IPv6 地址, DoH 主机名); 路径统一 /dns-query。
+# 公共解析器的 DoH IPv6 端点 (名称, IPv6 地址, DoH 主机名, 路径); ControlD 例外 /p0。
 # 仅收标准库 HTTP/1.1 可达者: Quad9/Mullvad 的 DoH 需 HTTP/2, 不收 (与 IPv4 侧删 Quad9-DoH 同理)。
 DNS_SERVERS_DOH6 = [
     ("Cloudflare", "2606:4700:4700::1111", "cloudflare-dns.com", "/dns-query"),
@@ -5963,17 +6020,13 @@ DNS_SERVERS_DOH6 = [
 
 
 def test_dns_servers6(timeout=3):
-    """IPv6 通道 DNS 测试: 对公共解析器的 IPv6 地址钉栈测 UDP53 与 DoT853,
+    """IPv6 通道 DNS 测试: 对公共解析器的 IPv6 地址钉栈测 UDP53 / DoT853 / DoH,
     报文与判定与 test_dns_servers 相同, 仅传输走 IPv6。"""
     def _bq():
         tid = random.randint(1, 65534)
         hdr = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
         qn = _encode_dns_name("google.com")
         return tid, hdr + qn + struct.pack(">HH", 1, 1)
-
-    def _ok(d, tid):
-        return len(d) >= 12 and struct.unpack(">H", d[:2])[0] == tid \
-            and (d[3] & 0x0F) == 0
 
     def _tp6(name, ip):
         sk = None
@@ -5983,9 +6036,9 @@ def test_dns_servers6(timeout=3):
             sk.settimeout(timeout)
             t0 = time.time()
             sk.sendto(pkt, (ip, 53))
-            d, _ = sk.recvfrom(512)
+            d = _udp_recv_from(sk, ip, timeout)
             rtt = round((time.time() - t0) * 1000, 1)
-            if _ok(d, tid):
+            if d is not None and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "UDP53",
                         "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -6022,7 +6075,7 @@ def test_dns_servers6(timeout=3):
                     break
                 d += chunk
             rtt = round((time.time() - t0) * 1000, 1)
-            if len(d) == rl and _ok(d, tid):
+            if len(d) == rl and _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": ip, "proto": "DoT853",
                         "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -6065,7 +6118,7 @@ def test_dns_servers6(timeout=3):
                 if b"chunked" in head.lower():
                     dec = _decode_chunked(body)
                     body = dec if dec is not None else b""
-                if _ok(body, tid):
+                if _dns_test_ok(body, tid, pkt):
                     return {"name": f"{name}-DoH", "ip": ip, "proto": "DoH",
                             "ok": True, "rtt_ms": rtt}
         except Exception:
@@ -6639,7 +6692,7 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
             if ans is None:
                 return lst, None
             for a_ip in ans:
-                if a_ip.startswith("127.0.") and not a_ip.startswith("127.255."):
+                if re.match(r"^127\.0\.0\.\d+$", a_ip):
                     return lst, True
             if any(a_ip.startswith("127.255.") for a_ip in ans):
                 return lst, None
