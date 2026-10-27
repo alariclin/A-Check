@@ -5218,7 +5218,10 @@ def print_report6(res, embedded=False):
     print(f"\n{_c(C.dim, T('disclaimer'))}")
 
 
-def get_egress_ip():
+def get_egress_ip(budget=None):
+    """出口 IPv4（多源轮询）。budget 为总预算秒数时，每源超时取 min(6, 剩余)，
+    预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。"""
+    _dl = time.monotonic() + budget if budget is not None else None
     sources = [
         "https://api4.ipify.org?format=json",
         "https://4.ipw.cn/api/ip/myip?json",
@@ -5227,10 +5230,17 @@ def get_egress_ip():
         "https://ipinfo.io/json",
     ]
     for url in sources:
+        if _dl is not None:
+            _rem = _dl - time.monotonic()
+            if _rem <= 0:
+                break
+            _to = min(6, _rem)
+        else:
+            _to = 6
         try:
             _ua = {"User-Agent": "A-Check/4.14.17 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
-            with urllib.request.urlopen(req, timeout=6) as r:
+            with urllib.request.urlopen(req, timeout=_to) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
                 if raw.startswith("{"):
                     d = json.loads(raw)
@@ -5289,10 +5299,11 @@ def _http_content_length(head):
     """Content-Length 整数；缺失返 None；非法返 False（调用方按失败处理）。"""
     for ln in head.split(b"\r\n")[1:]:
         if ln.lower().startswith(b"content-length:"):
-            try:
-                return int(ln.split(b":", 1)[1].strip())
-            except ValueError:
+            v = ln.split(b":", 1)[1].strip()
+            # 仅纯 ASCII 十进制合法：int() 会放行 "-1"/"+5"/"1_0"，负数随后 body[:cl] 截尾
+            if not v.isascii() or not v.isdigit():
                 return False
+            return int(v)
     return None
 
 
@@ -5317,12 +5328,14 @@ def _https_get_pinned6(host, path, timeout=6):
                 f"User-Agent: {UA_BROWSER}\r\nAccept: */*\r\nConnection: close\r\n\r\n"
             ).encode())
             raw = b""
+            eof = False
             dl = time.monotonic() + timeout
             while len(raw) < 16384:
                 if time.monotonic() > dl:
                     raise TimeoutError("pinned6 receive deadline")
                 chunk = ss.recv(4096)
                 if not chunk:
+                    eof = True
                     break
                 raw += chunk
             head, _, body = raw.partition(b"\r\n\r\n")
@@ -5337,6 +5350,8 @@ def _https_get_pinned6(host, path, timeout=6):
                 cl = _http_content_length(head)
                 if cl is False or (cl is not None and len(body) < cl):
                     continue
+                if cl is None and not eof:
+                    continue  # 关闭定界且未见 EOF 即超限：前缀不完整，不得当成功
                 if cl is not None:
                     body = body[:cl]
             return body.decode("utf-8", errors="replace")
@@ -5513,9 +5528,32 @@ def _pinned_opener(family, follow_redirects=True):
     return urllib.request.build_opener(*handlers)
 
 
+def _resp_complete(raw, headers):
+    """响应体完整性（_active_get 成功/HTTPError 两路径共用）：
+    CL 在场且合法时须 len(raw) == CL——read(amt) 短读不抛错，声明 1000 只到 20 字节
+    的干净 FIN 也会返回 20 字节，单凭 len<=16384 会误标 complete；
+    CL > 16384 时恒不完整（16385 字节探针无法区分“恰 16385”与“更长”）；
+    CL 缺失时沿用 EOF 探针（len(raw) <= 16384 即读到结尾）；CL 非法时不完整。"""
+    cl = None
+    if headers is not None:
+        try:
+            v = headers.get("Content-Length")
+        except Exception:
+            v = None
+        if v is not None:
+            v = str(v).strip()
+            cl = int(v) if (v.isascii() and v.isdigit()) else False
+    if cl is False or (cl is not None and cl > 16384):
+        return False
+    if cl is not None:
+        return len(raw) == cl
+    return len(raw) <= 16384
+
+
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location, complete)。
     complete: 是否读到响应体结尾（EOF/长度相符）；16KiB 截断时为 False。
+    CL 在场时须 len==CL（CL>16384 恒不完整）；IncompleteRead 的 partial 计不完整。
     调用方以“限制串不存在”判解锁时，不完整且未见限制串须判 unknown，
     不得以截断后的前 16KiB 无限制串冒充解锁；恰 16384 字节的体仍判完整
     （多读 1 字节探 EOF 区分，不以 len==16384 一律判截断）。"""
@@ -5537,13 +5575,19 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     try:
         req = urllib.request.Request(url, headers=h)
         with opener.open(req, timeout=timeout) as r:
-            raw = r.read(16385)  # 多读 1 字节探 EOF：恰 16384 字节的体仍判完整
-            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), len(raw) <= 16384
+            try:
+                raw = r.read(16385)  # 多读 1 字节探 EOF：恰 16384 字节的体仍判完整
+            except http.client.IncompleteRead as e:
+                raw = e.partial
+                return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), False
+            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), _resp_complete(raw, getattr(r, "headers", None))
     except urllib.error.HTTPError as e:
         try:
             raw = e.read(16385)
             body = raw[:16384].decode("utf-8", errors="replace")
-            complete = len(raw) <= 16384
+            complete = _resp_complete(raw, getattr(e, "headers", None))
+        except http.client.IncompleteRead as e2:
+            body, complete = e2.partial[:16384].decode("utf-8", errors="replace"), False
         except Exception:
             body, complete = "", False
         loc = e.headers.get("Location", "") if e.headers else ""
@@ -7609,12 +7653,14 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
             tls.sendall(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\n"
                         b"Connection: close\r\n\r\n")
             raw = b""
+            eof = False
             while True:
                 try:
                     c = tls.recv(4096)
                 except Exception:
-                    break
+                    break  # recv 异常 ≠ 干净 EOF；关闭定界体随后以 not eof 判失败
                 if not c:
+                    eof = True
                     break
                 raw += c
                 if len(raw) > 65536:
@@ -7622,6 +7668,8 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
             head, sep, body_b = raw.partition(b"\r\n\r\n")
             if not sep:
                 return None, "invalid response: no header terminator"
+            if not _http_status_ok(head):
+                return None, "invalid response: unexpected status"
             if _http_te_chunked(head):
                 dec = _decode_chunked(body_b)
                 if dec is None:
@@ -7631,6 +7679,8 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
                 cl = _http_content_length(head)
                 if cl is False or (cl is not None and len(body_b) < cl):
                     return None, "invalid response: truncated body"
+                if cl is None and not eof:
+                    return None, "invalid response: truncated body (no EOF)"
                 if cl is not None:
                     body_b = body_b[:cl]
             body = body_b.decode("utf-8", errors="replace").strip()
@@ -8319,7 +8369,7 @@ def _banner_net_info():
         except Exception:
             info["dns_ok"] = False
     try:
-        egress = get_egress_ip() if _rem() > 0 else None
+        egress = get_egress_ip(budget=_rem()) if _rem() > 0 else None
         info["egress"] = egress
         if egress:
             _lang = {"zh": "zh-CN", "zh-TW": "zh-CN", "en": "en",
@@ -8388,12 +8438,20 @@ def _banner_net_info():
         except Exception:
             continue
     if _v6addr is None:
+        # 回退：显式禁代理 opener + AAAA 预解析——默认 opener 会读环境代理，
+        # 代理的 v6 出口曾被误标为本机已验证；两主机均为 v6-only，预解析到 AAAA
+        # 才尝试，成功即证明本机 v6 传输（TLS 主机名与证书验证仍由 urlopen 负责）。
+        _no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
             if _rem() <= 0:
                 break
             try:
+                _host6 = _u.split("://", 1)[1].split("/", 1)[0]
+                if not _getaddrinfo_timed(_host6, 443, socket.AF_INET6,
+                                          socket.SOCK_STREAM, timeout=min(3, _rem())):
+                    continue
                 req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
-                with urllib.request.urlopen(req, timeout=min(3, _rem())) as r:
+                with _no_proxy.open(req, timeout=min(3, _rem())) as r:
                     raw = _read_timed(r, 128, _rem())
                     if raw is None:
                         raise TimeoutError("banner v6 read deadline")
