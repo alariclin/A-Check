@@ -5506,6 +5506,30 @@ _opener_noredir = urllib.request.build_opener(_NoRedirect)
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
 
 
+def _lower_headers(h):
+    """响应头 -> 小写键 dict（缺失/异常时返 {}）。"""
+    if not h:
+        return {}
+    try:
+        return {str(k).lower(): v for k, v in h.items()}
+    except Exception:
+        return {}
+
+
+def _headers_is_challenge(headers):
+    """响应头是否标明挑战页（Cloudflare cf-mitigated: challenge，与状态码无关）。"""
+    if not headers:
+        return False
+    try:
+        items = headers.items()
+    except Exception:
+        return False
+    for k, v in items:
+        if str(k).lower() == "cf-mitigated" and str(v).strip().lower() == "challenge":
+            return True
+    return False
+
+
 def _body_is_challenge(body):
     """正文是否含挑战标记（与状态码无关；供 200 分支复用）。"""
     if not body:
@@ -5516,8 +5540,14 @@ def _body_is_challenge(body):
     return any(m in bl for m in CHALLENGE_MARKERS)
 
 
-def _is_challenge(code, body):
-    """区分反爬/风控挑战与真实区域封锁"""
+def _is_challenge(code, body, headers=None):
+    """区分反爬/风控挑战与真实区域封锁
+
+    头信号优先且与状态码无关：cf-mitigated: challenge 即挑战页；
+    无头信号时沿旧语义（门码 + 正文标记）。
+    """
+    if _headers_is_challenge(headers):
+        return True
     if code in (400, 403, 429, 503):  # 503 须有标记才算挑战，裸 503 由落空分类判 unknown
         return _body_is_challenge(body)
     return False
@@ -5653,7 +5683,8 @@ def _resp_complete(raw, headers):
 
 
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
-    """返回 (status_code|None, body|err, final_url_or_location, complete)。
+    """返回 (status_code|None, body|err, final_url_or_location, complete, headers_dict)。
+    headers_dict: 响应头小写键 dict（无头/异常时 {}），供挑战判定查 cf-mitigated。
     complete: 是否读到响应体结尾（EOF/长度相符）；16KiB 截断时为 False。
     CL 在场时须 len==CL（CL>16384 恒不完整）；IncompleteRead 的 partial 计不完整。
     调用方以“限制串不存在”判解锁时，不完整且未见限制串须判 unknown，
@@ -5681,8 +5712,8 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                 raw = r.read(16385)  # 多读 1 字节探 EOF：恰 16384 字节的体仍判完整
             except http.client.IncompleteRead as e:
                 raw = e.partial
-                return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), False
-            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), _resp_complete(raw, getattr(r, "headers", None))
+                return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), False, _lower_headers(getattr(r, "headers", None))
+            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), _resp_complete(raw, getattr(r, "headers", None)), _lower_headers(getattr(r, "headers", None))
     except urllib.error.HTTPError as e:
         try:
             try:
@@ -5699,9 +5730,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             except Exception:
                 pass
         loc = e.headers.get("Location", "") if e.headers else ""
-        return e.code, body, loc, complete
+        return e.code, body, loc, complete, _lower_headers(getattr(e, "headers", None))
     except Exception as e:
-        return None, str(e)[:100], "", False
+        return None, str(e)[:100], "", False, {}
 
 
 _unlock_cache = {}
@@ -5765,10 +5796,10 @@ def _unlock_label(v):
 
 
 def test_tiktok(local_ip=None):
-    code, body, _, complete = _active_get("https://www.tiktok.com/")
+    code, body, _, complete, hdrs = _active_get("https://www.tiktok.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5785,10 +5816,10 @@ def test_tiktok(local_ip=None):
 
 
 def test_disney(local_ip=None):
-    code, body, final_url, complete = _active_get("https://www.disneyplus.com/")
+    code, body, final_url, complete, hdrs = _active_get("https://www.disneyplus.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5804,10 +5835,10 @@ def test_disney(local_ip=None):
 
 def test_netflix(local_ip=None):
     # 70143836 为经典非自制剧 (Breaking Bad)，80018499 为自制剧 (Test Patterns)
-    code, body, final_url, complete = _active_get("https://www.netflix.com/title/70143836")
+    code, body, final_url, complete, hdrs = _active_get("https://www.netflix.com/title/70143836")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5820,10 +5851,10 @@ def test_netflix(local_ip=None):
         region = f"[{m.group(1).upper()}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
 
-    code2, body2, final_url2, complete2 = _active_get("https://www.netflix.com/title/80018499")
+    code2, body2, final_url2, complete2, hdrs2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
         return T("failed"), "", None
-    if _is_challenge(code2, body2):
+    if _is_challenge(code2, body2, hdrs2):
         return T("unknown"), "", None
     if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
@@ -5843,10 +5874,10 @@ def test_netflix(local_ip=None):
 
 
 def test_youtube(local_ip=None):
-    code, body, _, complete = _active_get("https://www.youtube.com/premium")
+    code, body, _, complete, hdrs = _active_get("https://www.youtube.com/premium")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5865,7 +5896,7 @@ def test_youtube(local_ip=None):
 
 
 def test_primevideo(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.primevideo.com/")
+    code, body, _, _complete, hdrs = _active_get("https://www.primevideo.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -5883,10 +5914,10 @@ def test_primevideo(local_ip=None):
 
 
 def test_reddit(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.reddit.com/")
+    code, body, _, _complete, hdrs = _active_get("https://www.reddit.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5899,8 +5930,8 @@ def test_reddit(local_ip=None):
 
 
 def test_chatgpt(local_ip=None):
-    code, body, _, _complete = _active_get("https://chatgpt.com/cdn-cgi/trace")
-    if _is_challenge(code, body):
+    code, body, _, _complete, hdrs = _active_get("https://chatgpt.com/cdn-cgi/trace")
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code is None:
         return T("failed"), "", None
@@ -5910,8 +5941,8 @@ def test_chatgpt(local_ip=None):
         loc = m.group(1) if m else ""
         if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
             return T("blocked"), f"[{loc}]", None
-    api_code, api_body, _, _api_complete = _active_get("https://api.openai.com/v1/models")
-    if _is_challenge(api_code, api_body):
+    api_code, api_body, _, _api_complete, api_hdrs = _active_get("https://api.openai.com/v1/models")
+    if _is_challenge(api_code, api_body, api_hdrs):
         return T("unknown"), "", None
     if api_code in (200, 401) and _body_is_challenge(api_body):
         return T("unknown"), "", None
@@ -5928,10 +5959,10 @@ def test_chatgpt(local_ip=None):
 
 
 def test_gemini(local_ip=None):
-    code, body, final_url, complete = _active_get("https://gemini.google.com/app")
+    code, body, final_url, complete, hdrs = _active_get("https://gemini.google.com/app")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5946,10 +5977,10 @@ def test_gemini(local_ip=None):
 
 
 def test_claude(local_ip=None):
-    code, body, final_url, _complete = _active_get("https://claude.ai/login")
+    code, body, final_url, _complete, hdrs = _active_get("https://claude.ai/login")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5962,10 +5993,10 @@ def test_claude(local_ip=None):
 
 
 def test_grok(local_ip=None):
-    code, body, _, complete = _active_get("https://grok.com/")
+    code, body, _, complete, hdrs = _active_get("https://grok.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5980,10 +6011,10 @@ def test_grok(local_ip=None):
 
 
 def test_instagram(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.instagram.com/")
+    code, body, _, _complete, hdrs = _active_get("https://www.instagram.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -5996,10 +6027,10 @@ def test_instagram(local_ip=None):
 
 
 def test_facebook(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.facebook.com/")
+    code, body, _, _complete, hdrs = _active_get("https://www.facebook.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -6012,10 +6043,10 @@ def test_facebook(local_ip=None):
 
 
 def test_x(local_ip=None):
-    code, body, _, _complete = _active_get("https://x.com/")
+    code, body, _, _complete, hdrs = _active_get("https://x.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -6028,7 +6059,7 @@ def test_x(local_ip=None):
 
 
 def test_line(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.line.me/")
+    code, body, _, _complete, hdrs = _active_get("https://www.line.me/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -6042,10 +6073,10 @@ def test_line(local_ip=None):
 
 
 def test_whatsapp(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.whatsapp.com/")
+    code, body, _, _complete, hdrs = _active_get("https://www.whatsapp.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -6058,10 +6089,10 @@ def test_whatsapp(local_ip=None):
 
 
 def test_github(local_ip=None):
-    code, body, _, _complete = _active_get("https://github.com/")
+    code, body, _, _complete, hdrs = _active_get("https://github.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
@@ -6074,7 +6105,7 @@ def test_github(local_ip=None):
 
 
 def test_deepseek(local_ip=None):
-    code, body, _, _complete = _active_get("https://www.deepseek.com/")
+    code, body, _, _complete, hdrs = _active_get("https://www.deepseek.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
@@ -6088,7 +6119,7 @@ def test_deepseek(local_ip=None):
 
 
 def test_appletv(local_ip=None):
-    code, body, _, _complete = _active_get("https://tv.apple.com/")
+    code, body, _, _complete, hdrs = _active_get("https://tv.apple.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body):
