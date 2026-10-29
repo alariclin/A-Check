@@ -6095,11 +6095,15 @@ def get_unlock_type(domain, local_ip=None):
         # 前缀一律经 ipaddress 归一化：v4 /24、v6 /64（禁用字符串 split 切前缀；
         # 压缩格式 IPv6 直接切会把空串当段）。v4 由现行 /16 收紧至 /24。
         def _pfx(_ip):
+            # 按实际地址族定粒度：点分判断会把 ::ffff:192.0.2.1 这类点分嵌入
+            # IPv6 误送 IPv4 解析，失败后原串与对端 /64 归一化结果永不重叠，
+            # 把“不可判定”变成错误的确定 False（F22）。
             try:
-                if "." in _ip:
-                    return str(ipaddress.IPv4Network((_ip, 24),
+                _a = ipaddress.ip_address(_ip)
+                if isinstance(_a, ipaddress.IPv4Address):
+                    return str(ipaddress.IPv4Network((_a, 24),
                                                      strict=False).network_address)
-                return str(ipaddress.IPv6Network((_ip, 64),
+                return str(ipaddress.IPv6Network((_a, 64),
                                                  strict=False).network_address)
             except Exception:
                 return _ip
@@ -6280,7 +6284,9 @@ def test_chatgpt(local_ip=None):
     # code is None 在上游已返 failed，不与 unknown 混淆。
     if code != 200 or not _complete or "loc=" not in body:
         return T("unknown"), "", None
-    m = re.search(r"loc=([A-Z]{2})", body)
+    # loc 须为独立字段：前视排除 xloc= 这类子串、后视排除 loc=USA 这类
+    # 超长码（trace 体为 key=value 行格式；F23）。
+    m = re.search(r"(?<![A-Za-z])loc=([A-Z]{2})(?![A-Z])", body)
     if not m:
         return T("unknown"), "", None
     loc = m.group(1)
