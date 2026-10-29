@@ -6666,6 +6666,10 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                         with lock:
                             room = DL_CAP_BYTES - counter[0]
                             if room <= 0:
+                                # 已持锁内直接退登记（锁非重入，不可再加锁）；
+                                # 否则 return 跳过块后 discard，响应滞留 registry。
+                                if registry is not None:
+                                    registry.discard(r)
                                 return
                             _take = min(32768, room)
                             counter[0] += _take
@@ -6691,6 +6695,9 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                                     and cap_box[0] is None):
                                 cap_box[0] = time.monotonic()
                         if counter[0] >= DL_CAP_BYTES:
+                            if registry is not None:
+                                with lock:
+                                    registry.discard(r)
                             return
                 finally:
                     _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
@@ -8569,22 +8576,27 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
     s = socket.create_connection((ph, pp), timeout=timeout)
     try:
         s.settimeout(timeout)
-        # 1. 问候
-        s.sendall(b"\x05\x02\x00\x02" if username is not None
+        # 1. 问候（RFC 1929 字段长 1..255：任一为空即无有效账密，只提供 0x00；
+        # 旧版仅 username 非 None 即协商 0x02，password=None 时 PLEN=0、
+        # username="" 时 ULEN=0，严格服务端拒认，旧版仅 0x00 时反可成功，属回归）
+        _has_auth = bool(username) and bool(password)
+        s.sendall(b"\x05\x02\x00\x02" if _has_auth
                   else b"\x05\x01\x00")
         ver, method = _sock_readn(s, 2)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
-        offered = (0x00, 0x02) if username is not None else (0x00,)
+        offered = (0x00, 0x02) if _has_auth else (0x00,)
         if method == 0xFF:
             raise OSError("proxy rejected all auth methods")
         if method not in offered:
             raise OSError("server selected unoffered auth method %#04x" % method)
         # 2. 用户名/密码认证 (RFC 1929)
         if method == 0x02:
-            u, p = username.encode(), (password or "").encode()
+            u, p = username.encode(), password.encode()
             if len(u) > 255 or len(p) > 255:
                 raise OSError("username/password too long for SOCKS5")
+            if len(u) < 1 or len(p) < 1:
+                raise OSError("username/password empty for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
             if _sock_readn(s, 2) != b"\x01\x00":
                 raise OSError("authentication failed")
