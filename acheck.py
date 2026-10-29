@@ -3567,13 +3567,52 @@ def _build_unified_profile(s):
     if not country_code and not country:
         # 未选出国家名时无拼接可言：单凭代码的源（country.is / RDAP）是唯一地理证据，沿旧链取值。
         country_code = wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or ""
-    region = wi.get("region") or ii.get("region") or db.get("state") or wa.get("region") or ai.get("region") or il.get("region") or iq.get("region") or co.get("region") or ti.get("region") or ht.get("region") or gj.get("region") or ""
-    city = wi.get("city") or ii.get("city") or db.get("city") or pc.get("city") or fp.get("city") or wa.get("city") or ai.get("city") or gu.get("city") or gj.get("city") or il.get("city") or iq.get("city") or co.get("city") or ti.get("city") or ht.get("city") or ox.get("city") or ""
+    # CONF-7.1: region/city/经纬度/时区只取与已选国家一致的来源；
+    # 来源国家无法确定（既无 country 名又无 country_code）时宁可留空，
+    # 不跨国家拼接。country 字段形态不统一（名或 ISO 码），故名、码双通道比对。
+    # 未选出国家名时（country 为空）无国家可言，沿旧链取首个非空值。
+    _sel_name = country.strip().lower()
+    _sel_code = (country_code.strip().lower() or _CC_EN.get(_sel_name, "")
+                 or (_sel_name if len(_sel_name) == 2 else ""))
 
+    def _same_country(_src):
+        if not _sel_name:
+            return True
+        _sc = (_src.get("country") or "").strip().lower()
+        _scc = (_src.get("country_code") or "").strip().lower()
+        if _sc and _sc == _sel_name:
+            return True
+        if _scc and _sel_code and _scc == _sel_code:
+            return True
+        if _sc and len(_sc) == 2 and _sel_code and _sc == _sel_code:
+            return True
+        return False
+
+    def _first_consistent(_pairs):
+        for _src, _v in _pairs:
+            if _v and _same_country(_src):
+                return _v
+        return ""
+
+    region = _first_consistent([(wi, wi.get("region")), (ii, ii.get("region")),
+                                (db, db.get("state")), (wa, wa.get("region")),
+                                (ai, ai.get("region")), (il, il.get("region")),
+                                (iq, iq.get("region")), (co, co.get("region")),
+                                (ti, ti.get("region")), (ht, ht.get("region")),
+                                (gj, gj.get("region"))])
+    city = _first_consistent([(wi, wi.get("city")), (ii, ii.get("city")),
+                              (db, db.get("city")), (pc, pc.get("city")),
+                              (fp, fp.get("city")), (wa, wa.get("city")),
+                              (ai, ai.get("city")), (gu, gu.get("city")),
+                              (gj, gj.get("city")), (il, il.get("city")),
+                              (iq, iq.get("city")), (co, co.get("city")),
+                              (ti, ti.get("city")), (ht, ht.get("city")),
+                              (ox, ox.get("city"))])
     _lat, _lon = None, None
     for _src in (wi, wa, ai, gu, gj, il, iq, co, ti, ht):
         _la, _lo = _src.get("latitude"), _src.get("longitude")
-        if _la is not None and _la != "" and _lo is not None and _lo != "":
+        if (_la is not None and _la != "" and _lo is not None and _lo != ""
+                and _same_country(_src)):
             _lat, _lon = _la, _lo
             break
     return {
@@ -3587,7 +3626,7 @@ def _build_unified_profile(s):
         "city": city,
         "latitude": _lat,
         "longitude": _lon,
-        "timezone": wi.get("timezone") or wa.get("timezone") or ai.get("timezone") or gu.get("timezone") or gj.get("timezone") or il.get("timezone") or iq.get("timezone") or co.get("timezone") or ti.get("timezone") or "",
+        "timezone": _first_consistent([(wi, wi.get("timezone")), (wa, wa.get("timezone")), (ai, ai.get("timezone")), (gu, gu.get("timezone")), (gj, gj.get("timezone")), (il, il.get("timezone")), (iq, iq.get("timezone")), (co, co.get("timezone")), (ti, ti.get("timezone"))]),
     }
 
 
