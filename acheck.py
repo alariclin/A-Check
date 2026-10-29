@@ -2215,7 +2215,7 @@ class RIPEstat(Provider):
                                 st = tl.get("starttime", "")
                                 if st and (earliest is None or st < earliest):
                                     earliest = st
-                                fp = tl.get("full_peers_seeing", 0)
+                                fp = tl.get("full_peers_seeing", 0) or 0
                                 if fp > max_peers:
                                     max_peers = int(fp)
                     if earliest:
@@ -3704,7 +3704,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    proxycheck/ipwho.is/freeipapi/ip-api.com 代理 +40，VPN +40（分别累计）
+    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定，分别累计；单源独标不扣分）
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -3736,7 +3736,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    proxycheck/ipwho.is/freeipapi/ip-api.com 代理 +40，VPN +40（分別累計）
+    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定，分別累計；單源獨標不扣分）
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -3768,7 +3768,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     No PTR record                     +5
   [Platform 0-100] DC/proxy traits (not malice)
     ISP/Org datacenter/hosting trait  +30
-    Proxy detected +40, VPN detected +40 (accumulate separately)
+    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; accumulate separately; a single source alone does not deduct)
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
@@ -3801,7 +3801,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     PTR レコードなし                  +5
   [プラットフォーム互換性 0-100] DC/プロキシ属性 (非悪意スコア)
     データセンター/ホスティング属性   +30
-    プロキシ検出 +40、VPN 検出 +40（それぞれ加算）
+    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決、それぞれ加算、単独ソースのみでは減点なし）
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算、第三者スコアではない)
@@ -3833,7 +3833,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     Нет PTR-записи                    +5
   [Совместимость 0-100] Признаки ДЦ/прокси (не оценка вредоносности)
     Признаки дата-центра / хостинга   +30
-    Обнаружен прокси +40, VPN +40 (суммируются)
+    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; суммируются; один источник не штрафуется)
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
@@ -3865,7 +3865,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     نبود رکورد PTR                    +5
   [سازگاری پلتفرم 0-100] ویژگی دیتاسنتر/پروکسی (امتیاز مخرب نیست)
     ویژگی دیتاسنتر یا میزبانی         +30
-    شناسایی پروکسی +40، VPN +40 (هر دو جداگانه جمع می‌شوند)
+    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هر دو جداگانه جمع می‌شوند؛ یک منبع به‌تنهایی کسر نمی‌شود)
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
@@ -4056,6 +4056,9 @@ def score_platform(s):
     pc = s.get("proxycheck", {})
     fp = s.get("freeipapi", {})
     ia = s.get("ipapi", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    xv = s.get("x4bvpn", {})
     te = s.get("tor_exit", {})
 
     dc, pat = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
@@ -4067,13 +4070,37 @@ def score_platform(s):
         pts += 30
         ev.append("Hosting/DC trait +30")
 
-    is_prx = (
-        (pc.get("ok") and pc.get("proxy"))
-        or (wi.get("ok") and wi.get("proxy"))
-        or (fp.get("ok") and fp.get("proxy") is True)
-        or (ia.get("ok") and ia.get("proxy") is True)
+    def _consensus(*vals):
+        # 与 _print_streaming_inference 同口径：True 票多于 False 票才成立；
+        # 单源独标不扣分（与推断一致，非矛盾）。
+        return (sum(1 for v in vals if v is True)
+                > sum(1 for v in vals if v is False))
+
+    def _p(d):
+        # _factor_rows 口径：源不可用计 None；fp/il/iq 字段缺失计 None，
+        # 其余源缺失字段计 False。
+        if not d.get("ok"):
+            return None
+        return d.get("proxy")
+
+    def _v(d):
+        if not d.get("ok"):
+            return None
+        return d.get("vpn")
+
+    is_prx = _consensus(
+        _p(pc), _p(wi),
+        None if (not fp.get("ok") or fp.get("proxy") is None) else bool(fp.get("proxy")),
+        _p(ia),
+        None if (not il.get("ok") or il.get("proxy") is None) else bool(il.get("proxy")),
+        None if (not iq.get("ok") or iq.get("proxy") is None) else bool(iq.get("proxy")),
     )
-    is_vpn = (pc.get("ok") and pc.get("vpn")) or (wi.get("ok") and wi.get("vpn"))
+    is_vpn = _consensus(
+        _v(pc), _v(wi),
+        None if (not il.get("ok") or il.get("vpn") is None) else bool(il.get("vpn")),
+        None if (not iq.get("ok") or iq.get("vpn") is None) else bool(iq.get("vpn")),
+        None if not xv.get("ok") else bool(xv.get("listed")),
+    )
     if is_prx:
         pts += 40
         ev.append("Proxy detected +40")
@@ -4317,10 +4344,17 @@ def _print_streaming_inference(res):
 
     pc = s.get("proxycheck", {})
     wi = s.get("ipwhois", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    xv = s.get("x4bvpn", {})
     fp = s.get("freeipapi", {})
     if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
     if wi.get("ok") and wi.get("hosting"):
+        is_dc = True
+    if il.get("ok") and (il.get("hosting") or il.get("asn_type") == "hosting"):
+        is_dc = True
+    if iq.get("ok") and iq.get("datacenter"):
         is_dc = True
 
     ia = s.get("ipapi", {})
@@ -4336,10 +4370,15 @@ def _print_streaming_inference(res):
         wi.get("proxy") if wi.get("ok") else None,
         fp.get("proxy") if fp.get("ok") else None,
         ia.get("proxy") if ia.get("ok") else None,
+        il.get("proxy") if il.get("ok") else None,
+        iq.get("proxy") if iq.get("ok") else None,
     )
     is_vpn = _consensus(
         pc.get("vpn") if pc.get("ok") else None,
         wi.get("vpn") if wi.get("ok") else None,
+        il.get("vpn") if il.get("ok") else None,
+        iq.get("vpn") if iq.get("ok") else None,
+        xv.get("listed") if xv.get("ok") else None,
     )
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
@@ -4376,10 +4415,16 @@ def _print_streaming_inference(res):
     _geo_known = bool(country.strip() or cc_code.strip())  # 无国家名与代码时防火墙判断无地理依据，avail 置信封顶 mid
 
     def _cc_match(*tokens):
+        # 2 字母 ASCII 词条是代码槽位：与 cc_code 精确比对，错配时直接跳过，
+        # 绝不落入名匹配——否则码形 country（如 "CN"）配错 cc_code（如 "US"）
+        # 时，正则会在 "cn" 全串上命中，误判为中国。
+        # 2 字母非 ASCII（如「中国」）不是代码，仍走原名匹配分支。
         for tk in tokens:
             tk_l = tk.lower()
             if len(tk_l) == 2 and tk_l.isascii() and tk_l == cc_code:
                 return True
+            if len(tk_l) == 2 and tk_l.isascii():
+                continue
             if len(tk_l) <= 3 and tk_l.isascii():
                 if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
@@ -5559,7 +5604,9 @@ def _https_get_pinned6(host, path, timeout=6):
                     eof = True
                     break
                 raw += chunk
-            head, _, body = raw.partition(b"\r\n\r\n")
+            head, sep, body = raw.partition(b"\r\n\r\n")
+            if not sep:
+                continue  # 无头体分隔符：首行不可信，不得当成功
             if not _http_status_ok(head):
                 continue
             if _http_te_chunked(head):
@@ -5616,7 +5663,7 @@ def get_egress_ip6():
                 ip = raw.splitlines()[0].strip() if raw else ""
             if ip:
                 _p = ipaddress.ip_address(str(ip).strip())
-                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
+                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global and not _p.is_reserved:
                     return str(_p)
         except Exception:
             continue
@@ -8014,7 +8061,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
 
 
 def _run_active6(json_mode, egress6):
-    """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速"""
+    """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速 + 系统/磁盘/25 端口/DNSBL"""
     res6 = run_passive6(egress6)
     dns6_res = test_dns_servers6()
     if not json_mode:
@@ -8024,10 +8071,52 @@ def _run_active6(json_mode, egress6):
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
     speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
+    si6 = get_system_info()
+    io6 = disk_io_test()
+    mx_domains6 = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_p25_6 = ex.submit(check_mail_port25)
+        f_mxs_6 = [ex.submit(check_mx_port25, dom) for _, dom in mx_domains6]
+        p25_6 = f_p25_6.result()
+        mx6_results = [f.result() for f in f_mxs_6]
+    dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
+    if not json_mode:
+        _section(T("sec_mail"))
+        if p25_6:
+            print(f"  {T('port25')}: {_c(C.green, T('normal'))}")
+        else:
+            print(f"  {T('port25')}: {_c(C.red, T('abnormal'))}")
+        mx6_ok = sum(1 for r in mx6_results if r is True)
+        if mx6_ok == len(mx_domains6):
+            print(f"  {T('mx_port25')}: {_c(C.green, T('normal'))}")
+        elif mx6_ok == 0:
+            print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
+        else:
+            print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx6_ok}/{len(mx_domains6)}')}")
+        _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
+        print(
+            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_c(C.cyan, str(dnsbl6_total))}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_c(C.green, str(dnsbl6_clean))}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}"
+        )
+        for b in dnsbl6_bl[:10]:
+            print(f"    {_c(C.red, '- ' + b)}")
     out = {"ip": egress6, "ipv6": True,
            "active": {"egress_ipv6": egress6, "ipv6_report": res6,
                       "streaming_ipv6": streaming6, "speed_ipv6": speed6,
-                      "dns_ipv6": dns6_res}}
+                      "dns_ipv6": dns6_res,
+                      "system": si6,
+                      "disk_io": io6,
+                      "mail": {
+                          "outbound_port25": p25_6,
+                          "mx_port25": {name: r for (name, _), r in zip(mx_domains6, mx6_results)},
+                      },
+                      "dnsbl_ipv6": {
+                          "valid": dnsbl6_total,
+                          "clean": dnsbl6_clean,
+                          "listed": dnsbl6_marked,
+                          "hit_lists": dnsbl6_bl,
+                      }}}
     if json_mode:
         print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
     return out
@@ -8178,6 +8267,18 @@ def run_active(json_mode=False, stack=None):
             _section(T("sec_stream") + " (IPv6)")
         streaming6_json = _run_streaming_table(egress6, json_mode=json_mode, family=6)
         speed6_res = print_speed_section(json_mode=json_mode, family=6, gated=True)
+        dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
+        if not json_mode:
+            _eff6 = _c(C.cyan, str(dnsbl6_total))
+            _ok6 = _c(C.green, str(dnsbl6_clean))
+            _bl6 = _c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))
+            print(
+                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_eff6}  "
+                f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_ok6}  "
+                f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl6}"
+            )
+            for b in dnsbl6_bl[:10]:
+                print(f"    {_c(C.red, '- ' + b)}")
 
     if not json_mode:
         _print_completeness(res)
@@ -8205,6 +8306,12 @@ def run_active(json_mode=False, stack=None):
         res["active"]["streaming_ipv6"] = streaming6_json
         res["active"]["speed_ipv6"] = speed6_res
         res["active"]["dns_ipv6"] = dns6_res
+        res["active"]["dnsbl_ipv6"] = {
+            "valid": dnsbl6_total,
+            "clean": dnsbl6_clean,
+            "listed": dnsbl6_marked,
+            "hit_lists": dnsbl6_bl,
+        }
 
     if json_mode:
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
@@ -8666,7 +8773,7 @@ def get_resolver_ips(probes=3, timeout=8):
                                        family=socket.AF_INET,
                                        timeout=timeout)
             ip = infos[0][4][0]
-            if ip and ip not in seen:
+            if ip and validate_ip(ip) is not None and ip not in seen:
                 seen.append(ip)
         except Exception:
             continue
@@ -8682,6 +8789,8 @@ def _ip_asn_org(ip, timeout=8):
             headers={"User-Agent": UA_BROWSER})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
+        if d.get("success") is False:
+            return None, None, None
         conn = d.get("connection") or {}
         return conn.get("asn"), conn.get("org"), d.get("country")
     except Exception:
@@ -9330,7 +9439,7 @@ def _banner_net_info():
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
-            if _ip6.is_global and not _ip6.is_multicast:
+            if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
                 _v6addr = str(_ip6)
                 break
         except Exception:
@@ -9358,7 +9467,7 @@ def _banner_net_info():
                     finally:
                         _resp_shutdown(r)
                 _ip6 = ipaddress.IPv6Address(_cand)
-                if _ip6.is_global and not _ip6.is_multicast:
+                if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
                     _v6addr = str(_ip6)
                     break
             except Exception:
@@ -9366,16 +9475,22 @@ def _banner_net_info():
     if _v6addr is not None:
         info["ipv6_verified"] = True
     if _v6addr is None and _rem() > 0:
+        s6 = None
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
             s6.settimeout(min(1.5, _rem()))
             s6.connect(("2606:4700:4700::1111", 53))
             _local6 = s6.getsockname()[0]
-            s6.close()
-            if ipaddress.IPv6Address(_local6).is_global:
+            if ipaddress.IPv6Address(_local6).is_global and not ipaddress.IPv6Address(_local6).is_reserved:
                 _v6addr = _local6
         except Exception:
             pass
+        finally:
+            if s6 is not None:
+                try:
+                    s6.close()
+                except Exception:
+                    pass
     info["ipv6_addr"] = _v6addr
     info["ipv6"] = bool(_v6addr)
     _banner_net_cache = info
