@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.17-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.18-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,32 +97,32 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
-Windows（PowerShell）：
+Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck; .\run.bat
 ```
 
 任意系统（单文件，需 Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN 镜像——GitHub 直连困难的地区（如中国大陆）可用。单文件版，功能完整：**
 gh-proxy（大陆直连）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 也可以直接运行脚本本体（需 Python 3.8+）：
 
@@ -139,7 +139,7 @@ python3 acheck.py [IP] [选项]
 
 | 选项 | 说明 |
 |---|---|
-| `IPv4` | 被动查询指定公网 IP |
+| `IP` | 被动查询指定公网 IP（支持 IPv4/IPv6） |
 | `--active` | 主动模式：本机出口全量自检 |
 | `--ipv4-only` | 配合 `--active`：只测 IPv4（跳过 IPv6） |
 | `--ipv6-only` | 配合 `--active`：只测 IPv6 |
@@ -172,7 +172,7 @@ python3 acheck.py [IP] [选项]
 
 ## 首次打开被系统拦截时
 
-- **macOS**：A-Check.app 未做苹果开发者签名，首次打开可能提示「来自身份不明的开发者」无法打开。右键点击 `A-Check.app`（或 `run.command`）→「打开」→ 在弹窗里再点一次「打开」即可，只需操作一次；也可以到「系统设置 → 隐私与安全性」里点「仍要打开」
+- **macOS**：A-Check.app 未做苹果开发者签名，首次打开可能提示「来自身份不明的开发者」无法打开。到「系统设置 → 隐私与安全性」里点「仍要打开」，只需操作一次；旧版 macOS（Sequoia 之前）也可右键点击 `A-Check.app`（或 `run.command`）→「打开」→ 在弹窗里再点一次「打开」
 - **Windows**：首次运行 `run.bat` 可能弹出 SmartScreen 提示，点「更多信息」→「仍要运行」
 
 ## 许可

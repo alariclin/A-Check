@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.17-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.18-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,32 +97,32 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
-Windows (PowerShell):
+Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **آینهٔ CDN — برای مناطقی که دسترسی مستقیم به GitHub دشوار است (مانند چین). نسخهٔ تک‌فایل، با امکانات کامل:**
 gh-proxy (دسترسی مستقیم از چین):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 یا اسکریپت را مستقیم اجرا کنید (Python 3.8+ لازم است):
 
@@ -139,7 +139,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 | گزینه | توضیح |
 |---|---|
-| `IPv4` | استعلام غیرفعال یک IP عمومی |
+| `IP` | استعلام غیرفعال یک IP عمومی (IPv4 یا IPv6) |
 | `--active` | حالت فعال: خودآزمایی کامل خروجی |
 | `--ipv4-only` | همراه `--active`: فقط IPv4 (بدون IPv6) |
 | `--ipv6-only` | همراه `--active`: فقط IPv6 |
@@ -172,7 +172,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 ## اگر سیستم جلوی نخستین اجرا را گرفت
 
-- **macOS**: ‏A-Check.app امضای Apple Developer ندارد، پس نخستین اجرا ممکن است مسدود شود («توسعه‌دهنده ناشناس»). روی `A-Check.app` (یا `run.command`) راست‌کلیک کنید ← «Open» ← در پنجره تأیید دوباره «Open» را بزنید. فقط یک بار لازم است؛ از «System Settings ← Privacy & Security» هم می‌توانید اجازه دهید
+- **macOS**: ‏A-Check.app امضای Apple Developer ندارد، پس نخستین اجرا ممکن است مسدود شود («توسعه‌دهنده ناشناس»). از «System Settings ← Privacy & Security» اجازه دهید؛ فقط یک بار لازم است. در نسخه‌های قدیمی‌تر macOS (پیش از Sequoia) هم می‌توانید روی `A-Check.app` (یا `run.command`) راست‌کلیک کنید ← «Open» ← در پنجره تأیید دوباره «Open» را بزنید.
 - **Windows**: نخستین اجرای `run.bat` ممکن است هشدار SmartScreen بدهد — «More info» و سپس «Run anyway» را بزنید
 
 ## مجوز

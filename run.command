@@ -2,7 +2,7 @@
 # A-Check - macOS 双击运行
 # 首次运行如被 Gatekeeper 拦截：右键 → 打开 → 仍要打开
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 
 PY=""
 for cand in python3 python; do
@@ -20,4 +20,4 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-exec "$PY" "./acheck.py" "$@"
+exec "$PY" "$PWD/acheck.py" "$@"

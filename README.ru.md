@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.17-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.18-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,32 +97,32 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
-Windows (PowerShell):
+Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **Зеркало CDN — для регионов, где GitHub труднодоступен (например, материковый Китай). Один файл, полный функционал:**
 gh-proxy (прямой доступ из Китая):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 Или запустите скрипт напрямую (нужен Python 3.8+):
 
@@ -139,7 +139,7 @@ python3 acheck.py [IP] [опции]
 
 | Опция | Описание |
 |---|---|
-| `IPv4` | Пассивный запрос публичного IP |
+| `IP` | Пассивный запрос публичного IP (IPv4 или IPv6) |
 | `--active` | Активный режим: полная самопроверка исходящего IP |
 | `--ipv4-only` | С `--active`: только IPv4 (без IPv6) |
 | `--ipv6-only` | С `--active`: только IPv6 |
@@ -172,7 +172,7 @@ python3 acheck.py [IP] [опции]
 
 ## Если система блокирует первый запуск
 
-- **macOS**: у A-Check.app нет подписи Apple Developer, поэтому первый запуск может быть заблокирован («разработчик не установлен»). Щёлкните правой кнопкой по `A-Check.app` (или `run.command`) → «Открыть» → подтвердите ещё раз кнопкой «Открыть». Требуется только один раз; также можно разрешить в «Системные настройки → Конфиденциальность и безопасность»
+- **macOS**: у A-Check.app нет подписи Apple Developer, поэтому первый запуск может быть заблокирован («разработчик не установлен»). Разрешите в «Системные настройки → Конфиденциальность и безопасность» (требуется только один раз). На старых версиях macOS (до Sequoia) можно также щёлкнуть правой кнопкой по `A-Check.app` (или `run.command`) → «Открыть» → подтвердить ещё раз кнопкой «Открыть».
 - **Windows**: при первом запуске `run.bat` может появиться SmartScreen — нажмите «Подробнее» → «Выполнить в любом случае»
 
 ## Лицензия

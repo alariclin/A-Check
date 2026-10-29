@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.17-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.18-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,32 +97,32 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-mac-app.zip -o acheck-app.zip && unzip -qo acheck-app.zip && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-linux.zip -o acheck.zip && unzip -qo acheck.zip && cd acheck-linux && bash run.sh
 ```
 
-Windows（PowerShell）：
+Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.17/A-Check-v4.14.17-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.18/A-Check-v4.14.18-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN ミラー：GitHub へ直接つながりにくい地域（中国本土など）向け。単一ファイル版、機能は同一です：**
 gh-proxy（中国本土から直接）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@main/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.18/acheck.py -o acheck.py && python3 acheck.py
 ```
 スクリプトを直接実行することもできます（Python 3.8+）：
 
@@ -139,7 +139,7 @@ python3 acheck.py [IP] [オプション]
 
 | オプション | 説明 |
 |---|---|
-| `IPv4` | 指定した公開 IP をパッシブ照会 |
+| `IP` | 指定した公開 IP をパッシブ照会（IPv4/IPv6 対応） |
 | `--active` | アクティブモード：自機出口の全量セルフチェック |
 | `--ipv4-only` | `--active` と併用：IPv4 のみ測定（IPv6 をスキップ） |
 | `--ipv6-only` | `--active` と併用：IPv6 のみ測定 |
@@ -172,7 +172,7 @@ python3 acheck.py [IP] [オプション]
 
 ## 初回起動がブロックされたら
 
-- **macOS**：A-Check.app は Apple Developer 署名がないため、初回起動時に「開発元を確認できないため開けない」と表示される場合があります。`A-Check.app`（または `run.command`）を右クリック →「開く」→ 確認ダイアログでもう一度「開く」を押してください。必要なのは初回のみです。「システム設定 → プライバシーとセキュリティ」から許可することもできます
+- **macOS**：A-Check.app は Apple Developer 署名がないため、初回起動時に「開発元を確認できないため開けない」と表示される場合があります。「システム設定 → プライバシーとセキュリティ」から許可してください。必要なのは初回のみです。古い macOS（Sequoia より前）では、`A-Check.app`（または `run.command`）を右クリック →「開く」→ 確認ダイアログでもう一度「開く」でも開けます
 - **Windows**：`run.bat` の初回実行時に SmartScreen が表示される場合があります。「詳細情報」→「実行」を選んでください
 
 ## ライセンス
