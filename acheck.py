@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.18 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.19 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -54,7 +54,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.18"
+VERSION = "4.14.19"
 
 
 def _init_console():
@@ -1568,10 +1568,18 @@ def _read_timed(resp, n, remain):
 
 def _resp_socket(r):
     """取响应底层 socket：urllib addinfourl → HTTPResponse → BufferedReader →
-    SocketIO → socket（BufferedReader 层走 .raw 而非 .fp），层级取不到返 None。"""
+    SocketIO → socket（BufferedReader 层走 .raw 而非 .fp），层级取不到返 None。
+    双兼容（§0-II-b）：HTTPConnection 先取 .sock，再走响应层遍历。
+    socket.socket 被桩替换为非 type 时退化为遍历（旧夹具桩场景，见 b2）。"""
+    _cls = getattr(socket, "socket", None)
+    if not isinstance(_cls, type):
+        _cls = None
+    s = getattr(r, "sock", None)
+    if _cls is not None and isinstance(s, _cls):
+        return s
     cur = r
     for _ in range(4):
-        if isinstance(cur, socket.socket):
+        if _cls is not None and isinstance(cur, _cls):
             return cur
         nxt = getattr(cur, "fp", None)
         if nxt is None:
@@ -1586,7 +1594,10 @@ def _resp_shutdown(r):
     """唤醒 _read_timed 遗留的守护读线程：shutdown 使阻塞中的 readinto 返回，
     否则响应 close() 会等它（直连 worker 在 close() 上超窗滞留，measure 的
     窗口后清理亦会被拖住）。失败静默。"""
-    s = _resp_socket(r)
+    try:
+        s = _resp_socket(r)
+    except Exception:
+        return
     if s is not None:
         try:
             s.shutdown(socket.SHUT_RDWR)
@@ -1921,6 +1932,11 @@ def _get_system_nameservers():
     return ns or ["1.1.1.1", "8.8.8.8"]
 
 
+# Null MX 标记：域名明确声明不收邮件时置位（_dns_query_udp 的 MX 支），
+# 显示层据此给出“不收邮件”说明；mx_results 本身保持 bool/None，JSON 结构不变。
+_MX_NULL = {}
+
+
 def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames=False):
     """
     发送标准 UDP 53 查询并解析返回记录:
@@ -2032,6 +2048,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     results = []
     _target_failed = False
+    _null_mx = False
     for _okey, _rt, _rc, _rd, _off in records:
         if _rc != 1 or _okey not in allowed_owners:
             continue
@@ -2050,6 +2067,12 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             if len(_rd) < 3:
                 _target_failed = True
                 continue
+            if len(_rd) == 3 and _rd[2] == 0:
+                # Null MX：RDATA 仅偏好值 + 根标签——明确不收邮件，不是查询失败，
+                # 不置 _target_failed、不 append；混有真实 MX 时以真实记录为准
+                # （文末仅当 results 为空才置标记）。
+                _null_mx = True
+                continue
             pref = struct.unpack(">H", _rd[:2])[0]
             mx_host, mend = _decode_dns_name(data, _off + 2)
             if mx_host and mend - (_off + 2) <= len(_rd) - 2:
@@ -2059,6 +2082,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     if _target_failed:
         return (None, []) if return_cnames else None
 
+    if qtype == 15 and _null_mx and not results:
+        _MX_NULL[domain] = True
     if qtype == 15:
         results.sort(key=lambda x: x[0])
         results = [h for _, h in results]
@@ -2204,7 +2229,7 @@ class RIPEstat(Provider):
                                 st = tl.get("starttime", "")
                                 if st and (earliest is None or st < earliest):
                                     earliest = st
-                                fp = tl.get("full_peers_seeing", 0)
+                                fp = tl.get("full_peers_seeing", 0) or 0
                                 if fp > max_peers:
                                     max_peers = int(fp)
                     if earliest:
@@ -2525,9 +2550,10 @@ def _loc_region(text):
         return text
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
-        for (n, _ctx), v in _GEO_EXTRA["region"].items():
-            if n == t:
-                return v
+        _matches = [v for (n, _ctx), v in _GEO_EXTRA["region"].items() if n == t]
+        if len(_matches) == 1:
+            return _matches[0]
+        # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
     if en:
         return _REGION_L10N.get(LANG, {}).get(en, text)
@@ -2546,9 +2572,10 @@ def _loc_city(text):
         cands.append(folded)
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
-            for (n, _ctx), v in _GEO_EXTRA["city"].items():
-                if n == cand:
-                    return v
+            _matches = [v for (n, _ctx), v in _GEO_EXTRA["city"].items() if n == cand]
+            if len(_matches) == 1:
+                return _matches[0]
+            # 多候选：不盲取首项，退静态表/原文（落到下行静态查表）
         en = _ANY_CITY2EN.get(cand)
         if en:
             return _CITY_L10N.get(LANG, {}).get(en, text)
@@ -2575,13 +2602,17 @@ def _loc_sub_in(disp, any2en, table):
             if idx < 0:
                 continue
             start, end = idx, idx + len(variant)
+        # 不可译候选（无静态表项，或译文等于自身即已本地化名）不得遮蔽
+        # 其余可译名：选 best 时直接跳过，取最长可译项。
+        loc = table.get(LANG, {}).get(en)
+        if not loc or loc == variant:
+            continue
         if best is None or len(variant) > len(best[0]):
             best = (variant, en)
             best_start, best_end = start, end
     if best:
         loc = table.get(LANG, {}).get(best[1])
-        if loc and loc != best[0]:
-            return disp[:best_start] + loc + disp[best_end:]
+        return disp[:best_start] + loc + disp[best_end:]
     return disp
 
 
@@ -2665,7 +2696,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.18 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.19 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2787,12 +2818,17 @@ class ProxyCheck(Provider):
             d = root[str(ip)]
             if not isinstance(d, dict) or not d:
                 return {"ok": False, "err": "empty ip object"}
+            try:
+                _risk = int(d["risk"]) if d.get("risk") is not None else None
+            except (TypeError, ValueError):
+                _risk = None
             return {
                 "ok": True,
                 "proxy": d.get("proxy", "") == "yes",
                 "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
                 "type": d.get("type", ""),
-                "risk": (int(d["risk"]) if d.get("risk") is not None else None),
+                "tor": d.get("tor", "") == "yes",
+                "risk": _risk,
                 "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
                 "range": d.get("range", ""),
@@ -2817,6 +2853,8 @@ class DBIP(Provider):
             d = json.loads(raw)
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
+            if not d.get("countryName"):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "country": d.get("countryName") or "",
@@ -2848,6 +2886,8 @@ class FreeIPAPI(Provider):
                 asn_val = str(raw_asn)
             else:
                 asn_val = ""
+            if not d.get("countryName"):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "proxy": d.get("isProxy"),
@@ -2927,11 +2967,17 @@ class EmergingThreats(Provider):
 
     def check(self, ip):
         def _parse(raw):
-            return {
-                line.strip()
-                for line in raw.splitlines()
-                if line.strip() and not line.startswith("#")
-            }
+            out = set()
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    ipaddress.ip_address(line)
+                except ValueError:
+                    continue
+                out.add(line)
+            return out or None
 
         lst = _get_threat_list(
             "et_compromised",
@@ -2950,7 +2996,17 @@ class TorExitNodes(Provider):
 
     def check(self, ip):
         def _parse(raw):
-            return {l.strip() for l in raw.splitlines() if l.strip() and not l.startswith("#")}
+            out = set()
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    ipaddress.ip_address(line)
+                except ValueError:
+                    continue
+                out.add(line)
+            return out or None
 
         lst = _get_threat_list(
             "tor_exit",
@@ -3007,8 +3063,12 @@ class IPApiIs(Provider):
             d = json.loads(raw)
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
-            asn_raw = str(d.get("asn") or "")
+            if not d.get("country"):
+                return {"ok": False, "err": "empty country"}
+            asn_raw = str(d.get("asn") or "").strip()
             company = d.get("company") or ""
+            if not isinstance(company, str):
+                company = ""
             return {
                 "ok": True,
                 "isp": company,
@@ -3042,6 +3102,8 @@ class IPGuide(Provider):
             net = d.get("network") or {}
             asys = net.get("autonomous_system") or {}
             loc = d.get("location") or {}
+            if not (d.get("location") or {}).get("country"):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "isp": asys.get("organization") or asys.get("name") or "",
@@ -3076,6 +3138,8 @@ class GeoJS(Provider):
             d = json.loads(raw)
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
+            if not d.get("country"):
+                return {"ok": False, "err": "empty country"}
 
             def _f(v):
                 try:
@@ -3435,7 +3499,7 @@ class IPsum(Provider):
                         out[parts[0]] = int(parts[1])
                     except ValueError:
                         pass
-            return out
+            return out or None
 
         lst = _get_threat_list(
             "ipsum",
@@ -3463,7 +3527,7 @@ class X4BNetVPN(Provider):
                     nets.append(ipaddress.ip_network(line, strict=False))
                 except ValueError:
                     pass
-            return nets
+            return nets or None
 
         try:
             addr = ipaddress.ip_address(ip)
@@ -3574,6 +3638,9 @@ def _build_unified_profile(s):
             country, _country_src = _src["country"], _src
             break
     country_code = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    _ct = country.strip()
+    if not country_code and len(_ct) == 2 and _ct.isalpha() and _ct.isascii():
+        country_code = _ct.upper()
     if not country_code and country:
         # 名码成组：代码须由已选国家名派生（_CC_EN 名→码表），或取自国家名一致的同源；
         # 禁止从国家名不同的他源借码（如 ipguide 称 US 而 geojs 称 DE，借码会拼出 US 名 + DE 码）。
@@ -3606,6 +3673,8 @@ def _build_unified_profile(s):
         if _scc and _sel_code and _scc == _sel_code:
             return True
         if _sc and len(_sc) == 2 and _sel_code and _sc == _sel_code:
+            return True
+        if _sc and _sel_code and _CC_EN.get(_sc, "").lower() == _sel_code:
             return True
         return False
 
@@ -3653,7 +3722,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.18 免 Key 公开版):
+评分规则 (v4.14.19 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3670,7 +3739,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    proxycheck/ipwho.is/freeipapi/ip-api.com 代理 +40，VPN +40（分别累计）
+    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定，分别累计；单源独标不扣分）
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -3685,7 +3754,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.18 免 Key 公開版):
+評分規則 (v4.14.19 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3702,7 +3771,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    proxycheck/ipwho.is/freeipapi/ip-api.com 代理 +40，VPN +40（分別累計）
+    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定，分別累計；單源獨標不扣分）
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -3717,7 +3786,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.18 Keyless Public Edition):
+Scoring rules (v4.14.19 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3734,7 +3803,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     No PTR record                     +5
   [Platform 0-100] DC/proxy traits (not malice)
     ISP/Org datacenter/hosting trait  +30
-    Proxy detected +40, VPN detected +40 (accumulate separately)
+    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; accumulate separately; a single source alone does not deduct)
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
@@ -3750,7 +3819,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.18 キー不要公開版):
+スコアリングルール (v4.14.19 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3767,7 +3836,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     PTR レコードなし                  +5
   [プラットフォーム互換性 0-100] DC/プロキシ属性 (非悪意スコア)
     データセンター/ホスティング属性   +30
-    プロキシ検出 +40、VPN 検出 +40（それぞれ加算）
+    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決、それぞれ加算、単独ソースのみでは減点なし）
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算、第三者スコアではない)
@@ -3782,7 +3851,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.18 Публичная версия без ключей):
+Правила оценки (v4.14.19 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3799,7 +3868,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     Нет PTR-записи                    +5
   [Совместимость 0-100] Признаки ДЦ/прокси (не оценка вредоносности)
     Признаки дата-центра / хостинга   +30
-    Обнаружен прокси +40, VPN +40 (суммируются)
+    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; суммируются; один источник не штрафуется)
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
@@ -3814,7 +3883,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.18):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.19):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3831,7 +3900,7 @@ Scoring rules (v4.14.18 Keyless Public Edition):
     نبود رکورد PTR                    +5
   [سازگاری پلتفرم 0-100] ویژگی دیتاسنتر/پروکسی (امتیاز مخرب نیست)
     ویژگی دیتاسنتر یا میزبانی         +30
-    شناسایی پروکسی +40، VPN +40 (هر دو جداگانه جمع می‌شوند)
+    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هر دو جداگانه جمع می‌شوند؛ یک منبع به‌تنهایی کسر نمی‌شود)
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
@@ -4022,6 +4091,9 @@ def score_platform(s):
     pc = s.get("proxycheck", {})
     fp = s.get("freeipapi", {})
     ia = s.get("ipapi", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    xv = s.get("x4bvpn", {})
     te = s.get("tor_exit", {})
 
     dc, pat = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
@@ -4033,13 +4105,37 @@ def score_platform(s):
         pts += 30
         ev.append("Hosting/DC trait +30")
 
-    is_prx = (
-        (pc.get("ok") and pc.get("proxy"))
-        or (wi.get("ok") and wi.get("proxy"))
-        or (fp.get("ok") and fp.get("proxy") is True)
-        or (ia.get("ok") and ia.get("proxy") is True)
+    def _consensus(*vals):
+        # 与 _print_streaming_inference 同口径：True 票多于 False 票才成立；
+        # 单源独标不扣分（与推断一致，非矛盾）。
+        return (sum(1 for v in vals if v is True)
+                > sum(1 for v in vals if v is False))
+
+    def _p(d):
+        # _factor_rows 口径：源不可用计 None；fp/il/iq 字段缺失计 None，
+        # 其余源缺失字段计 False。
+        if not d.get("ok"):
+            return None
+        return d.get("proxy")
+
+    def _v(d):
+        if not d.get("ok"):
+            return None
+        return d.get("vpn")
+
+    is_prx = _consensus(
+        _p(pc), _p(wi),
+        None if (not fp.get("ok") or fp.get("proxy") is None) else bool(fp.get("proxy")),
+        _p(ia),
+        None if (not il.get("ok") or il.get("proxy") is None) else bool(il.get("proxy")),
+        None if (not iq.get("ok") or iq.get("proxy") is None) else bool(iq.get("proxy")),
     )
-    is_vpn = (pc.get("ok") and pc.get("vpn")) or (wi.get("ok") and wi.get("vpn"))
+    is_vpn = _consensus(
+        _v(pc), _v(wi),
+        None if (not il.get("ok") or il.get("vpn") is None) else bool(il.get("vpn")),
+        None if (not iq.get("ok") or iq.get("vpn") is None) else bool(iq.get("vpn")),
+        None if not xv.get("ok") else bool(xv.get("listed")),
+    )
     if is_prx:
         pts += 40
         ev.append("Proxy detected +40")
@@ -4183,8 +4279,11 @@ def run_passive(ip):
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
-                _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                         .get("address") or {})
+                try:
+                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
+                             .get("address") or {})
+                finally:
+                    _resp_shutdown(_rp)
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -4280,10 +4379,17 @@ def _print_streaming_inference(res):
 
     pc = s.get("proxycheck", {})
     wi = s.get("ipwhois", {})
+    il = s.get("iplocate", {})
+    iq = s.get("ipquery", {})
+    xv = s.get("x4bvpn", {})
     fp = s.get("freeipapi", {})
     if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
     if wi.get("ok") and wi.get("hosting"):
+        is_dc = True
+    if il.get("ok") and (il.get("hosting") or il.get("asn_type") == "hosting"):
+        is_dc = True
+    if iq.get("ok") and iq.get("datacenter"):
         is_dc = True
 
     ia = s.get("ipapi", {})
@@ -4299,10 +4405,15 @@ def _print_streaming_inference(res):
         wi.get("proxy") if wi.get("ok") else None,
         fp.get("proxy") if fp.get("ok") else None,
         ia.get("proxy") if ia.get("ok") else None,
+        il.get("proxy") if il.get("ok") else None,
+        iq.get("proxy") if iq.get("ok") else None,
     )
     is_vpn = _consensus(
         pc.get("vpn") if pc.get("ok") else None,
         wi.get("vpn") if wi.get("ok") else None,
+        il.get("vpn") if il.get("ok") else None,
+        iq.get("vpn") if iq.get("ok") else None,
+        xv.get("listed") if xv.get("ok") else None,
     )
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
@@ -4339,10 +4450,16 @@ def _print_streaming_inference(res):
     _geo_known = bool(country.strip() or cc_code.strip())  # 无国家名与代码时防火墙判断无地理依据，avail 置信封顶 mid
 
     def _cc_match(*tokens):
+        # 2 字母 ASCII 词条是代码槽位：与 cc_code 精确比对，错配时直接跳过，
+        # 绝不落入名匹配——否则码形 country（如 "CN"）配错 cc_code（如 "US"）
+        # 时，正则会在 "cn" 全串上命中，误判为中国。
+        # 2 字母非 ASCII（如「中国」）不是代码，仍走原名匹配分支。
         for tk in tokens:
             tk_l = tk.lower()
             if len(tk_l) == 2 and tk_l.isascii() and tk_l == cc_code:
                 return True
+            if len(tk_l) == 2 and tk_l.isascii():
+                continue
             if len(tk_l) <= 3 and tk_l.isascii():
                 if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
@@ -4625,13 +4742,13 @@ def _print_basic_block(s, prof):
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
     locs = []
-    if wi.get("ok"):
+    if wi.get("ok") and (wi.get("country") or wi.get("city")):
         locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
                      wi.get("country"), wi.get("city")))
     if ii.get("ok") and (ii.get("country") or ii.get("city")):
         locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
                      ii.get("country"), ii.get("city")))
-    if db.get("ok"):
+    if db.get("ok") and (db.get("country") or db.get("city")):
         locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
                      db.get("country"), db.get("city")))
     if pc.get("ok") and (pc.get("country") or pc.get("city")):
@@ -4698,7 +4815,7 @@ def _print_basic_block(s, prof):
                "germany": "de", "france": "fr", "japan": "jp",
                "south korea": "kr", "korea": "kr", "singapore": "sg",
                "india": "in", "brazil": "br", "russia": "ru",
-               "united kingdom": "uk", "netherlands": "nl",
+               "united kingdom": "gb", "uk": "gb", "netherlands": "nl",
                "switzerland": "ch", "sweden": "se", "norway": "no",
                "finland": "fi", "denmark": "dk", "austria": "at",
                "belgium": "be", "ireland": "ie", "poland": "pl",
@@ -4722,8 +4839,18 @@ def _print_basic_block(s, prof):
                 _ANY2CODE[_nm] = _cd
                 _ANY2CODE[_nm.lower()] = _cd
 
-        def _norm(txt):
+        def _norm(txt, _country=False):
             _t0 = str(txt or "").strip()
+            if _country:
+                if _t0 in _ANY2CODE:
+                    return _ANY2CODE[_t0].lower()
+                _tl = _t0.lower()
+                if _tl in _ANY2CODE:
+                    return _ANY2CODE[_tl].lower()
+                if _tl in _CC_EN:
+                    return _CC_EN[_tl].lower()
+                if _tl in _CC:
+                    return _CC[_tl]
             if _t0 in _ANY_CITY2EN:
                 return _ANY_CITY2EN[_t0].lower()
             if _t0 in _ANY_REGION2EN:
@@ -4735,6 +4862,8 @@ def _print_basic_block(s, prof):
                 return _ANY2CODE[txt].lower()
             if txt in _CC:
                 return _CC[txt]
+            if txt in _CC_EN:
+                return _CC_EN[txt].lower()
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
             return " ".join(txt.split())
 
@@ -4747,9 +4876,9 @@ def _print_basic_block(s, prof):
                 _mid = _mid[len(co):].strip()
             if ci and _mid.endswith(ci):
                 _mid = _mid[:-len(ci)].strip()
-            k = (_norm(co), _norm(_mid), _norm(ci))
+            k = (_norm(co, True), _norm(_mid), _norm(ci))
             if k not in _groups:
-                _groups[k] = (loc, [])
+                _groups[k] = (loc, [], co, _mid, ci)
                 _order.append(k)
             _groups[k][1].append(name)
         _order.sort(key=lambda k: -len(_groups[k][1]))
@@ -4792,9 +4921,14 @@ def _print_basic_block(s, prof):
         if locs:
             _lbl = T("sec_loc")
             for k in _order:
-                _loc, _names = _groups[k]
+                _loc, _names, _f_co, _f_mid, _f_ci = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N), 'region'), 'city')}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                # F3-C 分字段翻译：region/city 按字段各自翻译后再拼串，
+                # 不再对整串做 region 轮→city 轮替换（Victoria 类城市名
+                # 不再被 region 表误译为州名）。
+                _disp = _join_nonempty(_loc_country_name(_f_co),
+                                       _loc_region(_f_mid), _loc_city(_f_ci))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_disp, 'region'), 'city')}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -5115,6 +5249,7 @@ def run_passive6(ip):
     avail = [p for p in PROVIDERS if p.key in V6_PROVIDER_KEYS and p.available()]
     total_p = len(avail)
     done_cnt = [0]
+    progress_closed = [False]  # 采集超时后迟到进度不再打印（与 run_passive 同口径）
 
     def _query_one(p):
         try:
@@ -5124,17 +5259,34 @@ def run_passive6(ip):
         try:
             with _progress_lock:
                 done_cnt[0] += 1
-                _render_progress_locked(done_cnt[0], total_p, p.name)
+                if not progress_closed[0]:
+                    _render_progress_locked(done_cnt[0], total_p, p.name)
         except Exception:
             pass
         return p.key, res
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        for k, v in ex.map(_query_one, avail):
-            sources[k] = v
+    _ex = ThreadPoolExecutor(max_workers=10)
+    try:
+        _futs = {_ex.submit(_query_one, p): p for p in avail}
+        try:
+            for _f in as_completed(_futs, timeout=30):
+                _k, _v = _f.result()
+                sources[_k] = _v
+        except _CFTimeoutError:
+            with _progress_lock:
+                progress_closed[0] = True
+        for _f, _p in _futs.items():
+            if _p.key not in sources:
+                sources[_p.key] = {"ok": False, "err": "timeout"}
+                _f.cancel()
+    finally:
+        with _progress_lock:
+            progress_closed[0] = True
+        _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
-        print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+        with _progress_lock:
+            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
@@ -5149,8 +5301,11 @@ def run_passive6(ip):
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
-                _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                         .get("address") or {})
+                try:
+                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
+                             .get("address") or {})
+                finally:
+                    _resp_shutdown(_rp)
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -5163,6 +5318,19 @@ def run_passive6(ip):
     r_pts, r_ev = score_reputation(sources)
     p_pts, p_ev = score_platform(sources)
     combined6 = round(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
+
+    # 与 run_passive 同口径：核心源权重 + 置信度 + 综合 verdict；
+    # v6 排除 feodo/et（仅 IPv4 名单），恶意名单事实只取 spamhaus。
+    _core_checks6 = [
+        bool(sources.get("ipwhois", {}).get("ok") or sources.get("ipinfo", {}).get("ok")),
+        bool(sources.get("scamalytics", {}).get("ok")),
+        bool(sources.get("proxycheck", {}).get("ok")),
+        bool(sources.get("ripestat", {}).get("ok")),
+    ]
+    _core_ok6 = sum(1 for c_ok in _core_checks6 if c_ok)
+    _confidence6 = min(100, int(round(completeness * 0.7 + (_core_ok6 / len(_core_checks6)) * 30)))
+    _malicious6 = bool(sources.get("spamhaus", {}).get("ok") and sources.get("spamhaus", {}).get("listed"))
+    _verdict6 = _verdict_label(combined6, _core_ok6, completeness, _malicious6)
 
     return {
         "ip": ip_s,
@@ -5181,7 +5349,9 @@ def run_passive6(ip):
             "ok": ok_count,
             "total": total,
             "failed": failed,
+            "confidence": _confidence6,
         },
+        "verdict": _verdict6,
         "ts": now_iso(),
     }
 
@@ -5388,7 +5558,7 @@ def get_egress_ip(budget=None):
         else:
             _to = 6
         try:
-            _ua = {"User-Agent": "A-Check/4.14.18 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.19 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=_to) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5490,7 +5660,9 @@ def _https_get_pinned6(host, path, timeout=6):
                     eof = True
                     break
                 raw += chunk
-            head, _, body = raw.partition(b"\r\n\r\n")
+            head, sep, body = raw.partition(b"\r\n\r\n")
+            if not sep:
+                continue  # 无头体分隔符：首行不可信，不得当成功
             if not _http_status_ok(head):
                 continue
             if _http_te_chunked(head):
@@ -5547,7 +5719,7 @@ def get_egress_ip6():
                 ip = raw.splitlines()[0].strip() if raw else ""
             if ip:
                 _p = ipaddress.ip_address(str(ip).strip())
-                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global:
+                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global and not _p.is_reserved:
                     return str(_p)
         except Exception:
             continue
@@ -5667,7 +5839,9 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
 
 
 def _pinned_connect(conn, family):
-    infos = _getaddrinfo_timed(conn.host, conn.port, family)
+    # 透传连接超时（None 时守默认 5 秒：_getaddrinfo_timed 的 join 算术不接受 None）
+    infos = _getaddrinfo_timed(conn.host, conn.port, family,
+                               timeout=conn.timeout if conn.timeout is not None else 5)
     last = None
     for af, _st, _proto, _nm, sa in infos:
         _s = None
@@ -5688,7 +5862,15 @@ def _pinned_connect(conn, family):
     if conn.sock is None:
         raise last if last is not None else OSError("no usable address")
     if conn._tunnel_host:
-        conn._tunnel()
+        try:
+            conn._tunnel()
+        except Exception:
+            try:
+                conn.sock.close()
+            except Exception:
+                pass
+            conn.sock = None
+            raise
 
 
 def _pinned_opener(family, follow_redirects=True):
@@ -5703,8 +5885,17 @@ def _pinned_opener(family, follow_redirects=True):
     class _HSC(http.client.HTTPSConnection):
         def connect(self):
             _pinned_connect(self, fam)
-            self.sock = self._context.wrap_socket(
-                self.sock, server_hostname=self._tunnel_host or self.host)
+            try:
+                self.sock = self._context.wrap_socket(
+                    self.sock, server_hostname=self._tunnel_host or self.host)
+            except Exception:
+                # 对照 _SocksHTTPS：wrap 失败时关原 TCP socket 后重抛
+                try:
+                    self.sock.close()
+                except Exception:
+                    pass
+                self.sock = None
+                raise
 
     class _HH(urllib.request.HTTPHandler):
         def http_open(self, req):
@@ -5801,8 +5992,9 @@ _unlock_lock = threading.Lock()
 
 def get_unlock_type(domain, local_ip=None):
     """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
-    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论；
-    单侧 CNAME 差异已降为 None，见下）。
+    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
+    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
+    前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
     缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。"""
     sys_ns = _get_system_nameservers()[0]
@@ -5824,22 +6016,31 @@ def get_unlock_type(domain, local_ip=None):
     elif sys_ns in ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "223.5.5.5", "119.29.29.29"):
         res = True
     else:
-        # IPv4 取前两段作 /16 前缀；IPv6 无点分段，前缀即全地址，重叠退化为精确匹配（偏保守）。
-        sys_prefixes = {(".".join(ip.split(".")[:2]) if "." in ip else ip) for ip in sys_ips}
-        pub_prefixes = {(".".join(ip.split(".")[:2]) if "." in ip else ip) for ip in pub_ips}
+        # 前缀一律经 ipaddress 归一化：v4 /24、v6 /64（禁用字符串 split 切前缀；
+        # 压缩格式 IPv6 直接切会把空串当段）。v4 由现行 /16 收紧至 /24。
+        def _pfx(_ip):
+            try:
+                if "." in _ip:
+                    return str(ipaddress.IPv4Network((_ip, 24),
+                                                     strict=False).network_address)
+                return str(ipaddress.IPv6Network((_ip, 64),
+                                                 strict=False).network_address)
+            except Exception:
+                return _ip
+        sys_prefixes = {_pfx(ip) for ip in sys_ips}
+        pub_prefixes = {_pfx(ip) for ip in pub_ips}
         overlap = bool(sys_prefixes & pub_prefixes)
         suffix = bool(sys_cnames and pub_cnames and any(
             sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
         ))
-        if overlap and suffix:
+        # 真值表（§0-4/§0-II-a，字面执行）：overlap→True；仅 suffix→None（保守，无法区分合法多 PoP
+        # 与保留官方 CNAME 的 DNS 解锁）；余者→False（双方有效、无重叠、无同后缀）。
+        if overlap:
             res = True
-        elif overlap or suffix:
+        elif suffix:
             res = None
-        elif pub_cnames and not sys_cnames:
-            res = None  # 单侧 CNAME 差异仅为弱信号（公共侧 CNAME 也可来自 CDN/解析差异），
-            # 不足以定 DNS 解锁：降为不可判定（且 None 不缓存，见下）
         else:
-            res = None  # 无重叠、无后缀、亦无单侧 CNAME：无正向解锁证据，不下确定结论
+            res = False
 
     if res is not None:
         with _unlock_lock:
@@ -5924,7 +6125,7 @@ def test_netflix(local_ip=None):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
-        orig_tag = _L("自制?", "Orig?", "オリジナル?", "Оригинал?", "اصلی?")
+        orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     _ft = _http_fallthrough(code2)
@@ -5959,7 +6160,9 @@ def test_primevideo(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://www.primevideo.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
@@ -5997,12 +6200,16 @@ def test_chatgpt(local_ip=None):
         return T("unknown"), "", None
     if code is None:
         return T("failed"), "", None
-    loc = ""
-    if code == 200 and "loc=" in body:
-        m = re.search(r"loc=([A-Z]{2})", body)
-        loc = m.group(1) if m else ""
-        if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
-            return T("blocked"), f"[{loc}]", None
+    # 首探针门：非 200、截断、无 loc=、loc 无有效码一律 unknown，绝不进次探针；
+    # code is None 在上游已返 failed，不与 unknown 混淆。
+    if code != 200 or not _complete or "loc=" not in body:
+        return T("unknown"), "", None
+    m = re.search(r"loc=([A-Z]{2})", body)
+    if not m:
+        return T("unknown"), "", None
+    loc = m.group(1)
+    if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
+        return T("blocked"), f"[{loc}]", None
     api_code, api_body, _, _api_complete, api_hdrs = _active_get("https://api.openai.com/v1/models")
     if _is_challenge(api_code, api_body, api_hdrs):
         return T("unknown"), "", None
@@ -6128,7 +6335,9 @@ def test_line(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://www.line.me/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -6174,7 +6383,9 @@ def test_deepseek(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://www.deepseek.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -6188,7 +6399,9 @@ def test_appletv(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://tv.apple.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -6198,7 +6411,7 @@ def test_appletv(local_ip=None):
     return T("blocked"), "", None
 
 
-def check_mail_port25():
+def check_mail_port25(family=socket.AF_UNSPEC):
     """连接真实监听 25 端口的权威 MX 服务器，而非 Web A 记录。"""
     targets = [
         ("gmail-smtp-in.l.google.com", 25),
@@ -6206,21 +6419,21 @@ def check_mail_port25():
     ]
     for host, port in targets:
         try:
-            _connect_host(host, port, 4).close()
+            _connect_host(host, port, 4, family).close()
             return True
         except Exception:
             continue
     return False
 
 
-def check_mx_port25(domain, timeout=4):
+def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
     """纯 Python 查询域名 MX 记录并测试 25 端口连通性 (无需 nslookup)。"""
     try:
         sys_ns = _get_system_nameservers()[0]
         mxs = _dns_query_udp(domain, qtype=15, server=sys_ns, timeout=2.5)
-        if not mxs:
+        if mxs is None:
             mxs = _dns_query_udp(domain, qtype=15, server="1.1.1.1", timeout=2.5)
-        if not mxs:
+        if mxs is None:
             default_mx = {
                 "gmail.com": ["gmail-smtp-in.l.google.com"],
                 "outlook.com": ["outlook-com.olc.protection.outlook.com"],
@@ -6229,7 +6442,7 @@ def check_mx_port25(domain, timeout=4):
             mxs = default_mx.get(domain, [domain])
         for mx in mxs[:2]:
             try:
-                _connect_host(mx.rstrip("."), 25, timeout).close()
+                _connect_host(mx.rstrip("."), 25, timeout, family).close()
                 return True
             except Exception:
                 continue
@@ -6363,42 +6576,44 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                 break  # 打开阶段已触及窗口截止，放弃本轮
             with _r as r:
                 _resp = r
-                if registry is not None:
-                    with lock:
-                        registry.add(r)
-                while time.monotonic() < stop:
-                    # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计；
-                    # 旧“锁外读、锁内重算”会使多流同读一室时超读且漏计。
-                    with lock:
-                        room = DL_CAP_BYTES - counter[0]
-                        if room <= 0:
+                try:
+                    if registry is not None:
+                        with lock:
+                            registry.add(r)
+                    while time.monotonic() < stop:
+                        # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计；
+                        # 旧“锁外读、锁内重算”会使多流同读一室时超读且漏计。
+                        with lock:
+                            room = DL_CAP_BYTES - counter[0]
+                            if room <= 0:
+                                return
+                            _take = min(32768, room)
+                            counter[0] += _take
+                        try:
+                            chunk = _read_timed(r, _take,
+                                                max(0.0, stop - time.monotonic()))
+                        except Exception:
+                            with lock:
+                                counter[0] -= _take
+                            raise
+                        if chunk is None or not chunk:
+                            with lock:
+                                counter[0] -= _take
+                            break  # 窗口已尽未返回，或 EOF：归还预留
+                        if time.monotonic() >= stop:
+                            with lock:
+                                counter[0] -= _take
+                            break  # 停滞读在 stop 后才返回时不计入窗口字节
+                        with lock:
+                            counter[0] += min(len(chunk), _take) - _take
+                            # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
+                            if (counter[0] >= DL_CAP_BYTES and cap_box is not None
+                                    and cap_box[0] is None):
+                                cap_box[0] = time.monotonic()
+                        if counter[0] >= DL_CAP_BYTES:
                             return
-                        _take = min(32768, room)
-                        counter[0] += _take
-                    try:
-                        chunk = _read_timed(r, _take,
-                                            max(0.0, stop - time.monotonic()))
-                    except Exception:
-                        with lock:
-                            counter[0] -= _take
-                        raise
-                    if chunk is None or not chunk:
-                        with lock:
-                            counter[0] -= _take
-                        break  # 窗口已尽未返回，或 EOF：归还预留
-                    if time.monotonic() >= stop:
-                        with lock:
-                            counter[0] -= _take
-                        break  # 停滞读在 stop 后才返回时不计入窗口字节
-                    with lock:
-                        counter[0] += min(len(chunk), _take) - _take
-                        # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
-                        if (counter[0] >= DL_CAP_BYTES and cap_box is not None
-                                and cap_box[0] is None):
-                            cap_box[0] = time.monotonic()
-                    if counter[0] >= DL_CAP_BYTES:
-                        return
-                _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
+                finally:
+                    _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
             if registry is not None and _resp is not None:
                 with lock:
                     registry.discard(_resp)
@@ -6640,10 +6855,11 @@ def _udp_recv_from(sock, ip, timeout, tid=None):
             return d
 
 
-def _connect_host(host, port, timeout):
+def _connect_host(host, port, timeout, family=socket.AF_UNSPEC):
     """经限时解析后连接：解析走 _getaddrinfo_timed（受 timeout 约束），
-    再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。"""
-    infos = _getaddrinfo_timed(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM,
+    再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。
+    family 钉地址族（默认 AF_UNSPEC 不变；邮件检测按当前栈传）。"""
+    infos = _getaddrinfo_timed(host, port, family, socket.SOCK_STREAM,
                                timeout=timeout)
     if not infos:
         raise OSError("DNS resolution failed: %s" % host)
@@ -6727,7 +6943,10 @@ def test_dns_servers(timeout=3):
                 headers={"Accept": "application/dns-message", "User-Agent": UA_BROWSER},
             )
             with _pinned_opener(4).open(rq, timeout=timeout + 2) as rp:
-                d = _read_limited(rp, timeout=timeout + 2)
+                try:
+                    d = _read_limited(rp, timeout=timeout + 2)
+                finally:
+                    _resp_shutdown(rp)
             rtt = round((time.monotonic() - t0) * 1000, 1)
             if _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": url, "proto": "DoH", "ok": True, "rtt_ms": rtt}
@@ -7432,7 +7651,8 @@ def get_system_info():
                     if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google")):
                         virt = vm_label
                     else:
-                        virt = "?"
+                        # 与 macOS/Linux 对齐：探测成功且无虚拟化信号 → 物理机
+                        virt = T("virt_phys")
             # 全败或输出无效时 virt 保持 "?"（探测失败 ≠ 确认物理机）
         elif sys.platform == "darwin":
             out = subprocess.run(
@@ -7869,6 +8089,8 @@ def _run_streaming_table_impl(egress, json_mode=False):
     def _st(s):
         if s == T("unlocked"):
             return _c(C.green, _pad(s, 11))
+        if s == T("reachable"):
+            return _c(C.cyan, _pad(s, 11))
         if s == T("blocked"):
             return _c(C.red, _pad(s, 11))
         return _c(C.dim, _pad(s, 11))
@@ -7920,7 +8142,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
 
 
 def _run_active6(json_mode, egress6):
-    """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速"""
+    """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速 + 系统/磁盘/25 端口/DNSBL"""
     res6 = run_passive6(egress6)
     dns6_res = test_dns_servers6()
     if not json_mode:
@@ -7930,10 +8152,52 @@ def _run_active6(json_mode, egress6):
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
     speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
+    si6 = get_system_info()
+    io6 = disk_io_test()
+    mx_domains6 = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_p25_6 = ex.submit(check_mail_port25, family=socket.AF_INET6)
+        f_mxs_6 = [ex.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
+        p25_6 = f_p25_6.result()
+        mx6_results = [f.result() for f in f_mxs_6]
+    dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
+    if not json_mode:
+        _section(T("sec_mail"))
+        if p25_6:
+            print(f"  {T('port25')}: {_c(C.green, T('normal'))}")
+        else:
+            print(f"  {T('port25')}: {_c(C.red, T('abnormal'))}")
+        mx6_ok = sum(1 for r in mx6_results if r is True)
+        if mx6_ok == len(mx_domains6):
+            print(f"  {T('mx_port25')}: {_c(C.green, T('normal'))}")
+        elif mx6_ok == 0:
+            print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
+        else:
+            print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx6_ok}/{len(mx_domains6)}')}")
+        _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
+        print(
+            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_c(C.cyan, str(dnsbl6_total))}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_c(C.green, str(dnsbl6_clean))}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}"
+        )
+        for b in dnsbl6_bl[:10]:
+            print(f"    {_c(C.red, '- ' + b)}")
     out = {"ip": egress6, "ipv6": True,
            "active": {"egress_ipv6": egress6, "ipv6_report": res6,
                       "streaming_ipv6": streaming6, "speed_ipv6": speed6,
-                      "dns_ipv6": dns6_res}}
+                      "dns_ipv6": dns6_res,
+                      "system": si6,
+                      "disk_io": io6,
+                      "mail": {
+                          "outbound_port25": p25_6,
+                          "mx_port25": {name: r for (name, _), r in zip(mx_domains6, mx6_results)},
+                      },
+                      "dnsbl_ipv6": {
+                          "valid": dnsbl6_total,
+                          "clean": dnsbl6_clean,
+                          "listed": dnsbl6_marked,
+                          "hit_lists": dnsbl6_bl,
+                      }}}
     if json_mode:
         print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
     return out
@@ -8018,9 +8282,10 @@ def run_active(json_mode=False, stack=None):
     else:
         dns_res = test_dns_servers()
     mx_domains = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
+    _mail_family = socket.AF_INET if stack == "4" else socket.AF_UNSPEC
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25 = ex.submit(check_mail_port25)
-        f_mxs = [ex.submit(check_mx_port25, dom) for _, dom in mx_domains]
+        f_p25 = ex.submit(check_mail_port25, family=_mail_family)
+        f_mxs = [ex.submit(check_mx_port25, dom, family=_mail_family) for _, dom in mx_domains]
         p25 = f_p25.result()
         mx_results = [f.result() for f in f_mxs]
 
@@ -8047,6 +8312,9 @@ def run_active(json_mode=False, stack=None):
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx_ok}/{mx_total}')}")
+        for _mx_name, _mx_dom in mx_domains:
+            if _MX_NULL.get(_mx_dom):
+                print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name + ')')}")
 
         _dnsbl_lbl = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
         _eff = _c(C.cyan, str(total))
@@ -8084,6 +8352,18 @@ def run_active(json_mode=False, stack=None):
             _section(T("sec_stream") + " (IPv6)")
         streaming6_json = _run_streaming_table(egress6, json_mode=json_mode, family=6)
         speed6_res = print_speed_section(json_mode=json_mode, family=6, gated=True)
+        dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
+        if not json_mode:
+            _eff6 = _c(C.cyan, str(dnsbl6_total))
+            _ok6 = _c(C.green, str(dnsbl6_clean))
+            _bl6 = _c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))
+            print(
+                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_eff6}  "
+                f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_ok6}  "
+                f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl6}"
+            )
+            for b in dnsbl6_bl[:10]:
+                print(f"    {_c(C.red, '- ' + b)}")
 
     if not json_mode:
         _print_completeness(res)
@@ -8111,6 +8391,12 @@ def run_active(json_mode=False, stack=None):
         res["active"]["streaming_ipv6"] = streaming6_json
         res["active"]["speed_ipv6"] = speed6_res
         res["active"]["dns_ipv6"] = dns6_res
+        res["active"]["dnsbl_ipv6"] = {
+            "valid": dnsbl6_total,
+            "clean": dnsbl6_clean,
+            "listed": dnsbl6_marked,
+            "hit_lists": dnsbl6_bl,
+        }
 
     if json_mode:
         print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
@@ -8201,19 +8487,19 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
     try:
         s.settimeout(timeout)
         # 1. 问候
-        s.sendall(b"\x05\x02\x00\x02" if (username and password)
+        s.sendall(b"\x05\x02\x00\x02" if username is not None
                   else b"\x05\x01\x00")
         ver, method = _sock_readn(s, 2)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
-        offered = (0x00, 0x02) if (username and password) else (0x00,)
+        offered = (0x00, 0x02) if username is not None else (0x00,)
         if method == 0xFF:
             raise OSError("proxy rejected all auth methods")
         if method not in offered:
             raise OSError("server selected unoffered auth method %#04x" % method)
         # 2. 用户名/密码认证 (RFC 1929)
         if method == 0x02:
-            u, p = username.encode(), password.encode()
+            u, p = username.encode(), (password or "").encode()
             if len(u) > 255 or len(p) > 255:
                 raise OSError("username/password too long for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
@@ -8239,8 +8525,7 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                     # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
                     # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP（单地址尝试，
                     # 多地址重试须重建 SOCKS 会话，不在此展开）。
-                    _infos = socket.getaddrinfo(dh, dp, socket.AF_UNSPEC,
-                                                socket.SOCK_STREAM)
+                    _infos = _getaddrinfo_timed(dh, dp, timeout=timeout)
                     if not _infos:
                         raise OSError("DNS resolution failed: %s" % dh)
                     _fam0, _, _, _, _sa0 = _infos[0]
@@ -8401,7 +8686,28 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
     conn = None
+
+    def _cleanup(_conn, _resp):
+        # §0-II-b 双登记双清理：resp 侧先 shutdown 唤醒遗留读线程再 close；
+        # conn.close() 在 sock 已空时为空操作，无害；建连阶段被强杀时 conn 侧仍能关。
+        if _resp is not None:
+            _resp_shutdown(_resp)
+            try:
+                _resp.close()
+            except Exception:
+                pass
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+        if registry is not None:
+            with lock:
+                registry.discard(_conn)
+                registry.discard(_resp)
+
     while time.monotonic() < stop and fails < 3:
+        resp = None
         try:
             _rem = stop - time.monotonic()
             if _rem <= 0:
@@ -8413,11 +8719,23 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                 with lock:
                     registry.add(conn)
             conn.request("GET", path,
-                         headers={"User-Agent": UA_BROWSER,
+                         headers={"User-Agent": UA_TOOL,
                                   "Connection": "close"})
+            _rem2 = stop - time.monotonic()
+            if _rem2 <= 0:
+                _cleanup(conn, None)
+                break
+            try:
+                if conn.sock is not None:
+                    conn.sock.settimeout(min(10, _rem2))
+            except Exception:
+                pass
             resp = conn.getresponse()
+            if registry is not None:
+                with lock:
+                    registry.add(resp)
             if resp.status < 200 or resp.status >= 300:
-                conn.close()
+                _cleanup(conn, resp)
                 raise RuntimeError(f"HTTP {resp.status}")
             while time.monotonic() < stop:
                 # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计。
@@ -8429,7 +8747,7 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                         _take = min(32768, room)
                         counter[0] += _take
                 if _take <= 0:
-                    conn.close()
+                    _cleanup(conn, resp)
                     return
                 try:
                     chunk = _read_timed(resp, _take,
@@ -8453,22 +8771,12 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                             and cap_box[0] is None):
                         cap_box[0] = time.monotonic()
                 if counter[0] >= DL_CAP_BYTES:
-                    conn.close()
+                    _cleanup(conn, resp)
                     return
-            conn.close()
-            if registry is not None:
-                with lock:
-                    registry.discard(conn)
+            _cleanup(conn, resp)
             fails = 0
         except Exception:
-            if registry is not None and conn is not None:
-                with lock:
-                    registry.discard(conn)
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+            _cleanup(conn, resp)
             fails += 1
             time.sleep(0.2)
 
@@ -8550,7 +8858,7 @@ def get_resolver_ips(probes=3, timeout=8):
                                        family=socket.AF_INET,
                                        timeout=timeout)
             ip = infos[0][4][0]
-            if ip and ip not in seen:
+            if ip and validate_ip(ip) is not None and ip not in seen:
                 seen.append(ip)
         except Exception:
             continue
@@ -8566,6 +8874,8 @@ def _ip_asn_org(ip, timeout=8):
             headers={"User-Agent": UA_BROWSER})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
+        if d.get("success") is False:
+            return None, None, None
         conn = d.get("connection") or {}
         return conn.get("asn"), conn.get("org"), d.get("country")
     except Exception:
@@ -8703,9 +9013,9 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
         try:
             res = run_passive(eip)
             out["egress_reputation"] = {
-                "risk_level": res.get("risk_level"),
-                "threat_score": res.get("threat_score"),
-                "fraud_score": res.get("fraud_score"),
+                "risk_level": res.get("verdict"),
+                "threat_score": res.get("scores", {}).get("threat", (None,))[0],
+                "fraud_score": res.get("scores", {}).get("fraud", (None,))[0],
             }
             if not json_mode:
                 print_report(res)
@@ -8800,6 +9110,8 @@ def _parse_node_line(line):
         else:
             host, _p = rest.rsplit(":", 1)
             port = int(_p)
+            if ":" in host:
+                return None  # 裸 IPv6 须用 [v6]:port，rsplit 误切拒绝
     except Exception:
         return None
     if not host or not (0 < port < 65536):
@@ -9127,7 +9439,8 @@ def _banner_net_info():
     def _rem():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False}
+            "ipv6_verified": False, "dns_ok": False,
+            "geo_country": "", "geo_city": "", "geo_net": "", "geo_org": ""}
     if _rem() > 0:
         try:
             info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
@@ -9153,21 +9466,26 @@ def _banner_net_info():
                 if r is None:
                     raise TimeoutError("banner geo open deadline")
                 with r:
-                    raw = _read_timed(r, 8192, _rem())
-                    if raw is None:
-                        raise TimeoutError("banner geo read deadline")
-                    d = json.loads(raw.decode("utf-8", errors="replace"))
+                    try:
+                        raw = _read_timed(r, 8192, _rem())
+                        if raw is None:
+                            raise TimeoutError("banner geo read deadline")
+                        d = json.loads(raw.decode("utf-8", errors="replace"))
+                    finally:
+                        _resp_shutdown(r)
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
-                org = d.get("org") or d.get("isp") or ""
-                parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
-                if d.get("hosting") or is_datacenter_heuristic(org, org):
-                    parts.append(T("dc"))
+                org = (d.get("org") or d.get("isp") or "").strip()
+                # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
+                info["geo_country"] = d.get("country") or ""
+                info["geo_city"] = d.get("city") or ""
+                if d.get("hosting") or is_datacenter_heuristic(org, org)[0]:
+                    info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
-                    parts.append(T("residential"))
-                if org:
-                    parts.append(org)
-                info["geo"] = " · ".join(p for p in parts if p)
+                    info["geo_net"] = "residential"
+                else:
+                    info["geo_net"] = ""
+                info["geo_org"] = org
             except Exception:
                 try:
                     if _rem() <= 0:
@@ -9179,21 +9497,25 @@ def _banner_net_info():
                     if r is None:
                         raise TimeoutError("banner geo open deadline")
                     with r:
-                        raw = _read_timed(r, 8192, _rem())
-                        if raw is None:
-                            raise TimeoutError("banner geo read deadline")
-                        d = json.loads(raw.decode("utf-8",
-                                                  errors="replace"))
+                        try:
+                            raw = _read_timed(r, 8192, _rem())
+                            if raw is None:
+                                raise TimeoutError("banner geo read deadline")
+                            d = json.loads(raw.decode("utf-8",
+                                                      errors="replace"))
+                        finally:
+                            _resp_shutdown(r)
                     conn = d.get("connection") or {}
-                    org = conn.get("org") or conn.get("isp") or ""
-                    parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
-                    if is_datacenter_heuristic(org, org):
-                        parts.append(T("dc"))
+                    org = (conn.get("org") or conn.get("isp") or "").strip()
+                    info["geo_country"] = d.get("country") or ""
+                    info["geo_city"] = d.get("city") or ""
+                    if is_datacenter_heuristic(org, org)[0]:
+                        info["geo_net"] = "dc"
                     elif is_residential_isp(org, org):
-                        parts.append(T("residential"))
-                    if org:
-                        parts.append(org)
-                    info["geo"] = " · ".join(p for p in parts if p)
+                        info["geo_net"] = "residential"
+                    else:
+                        info["geo_net"] = ""
+                    info["geo_org"] = org
                 except Exception:
                     pass
     except Exception:
@@ -9206,7 +9528,7 @@ def _banner_net_info():
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
-            if _ip6.is_global and not _ip6.is_multicast:
+            if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
                 _v6addr = str(_ip6)
                 break
         except Exception:
@@ -9226,12 +9548,15 @@ def _banner_net_info():
                     continue
                 req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
                 with _no_proxy.open(req, timeout=min(3, _rem())) as r:
-                    raw = _read_timed(r, 128, _rem())
-                    if raw is None:
-                        raise TimeoutError("banner v6 read deadline")
-                    _cand = raw.decode("utf-8", errors="replace").strip()
+                    try:
+                        raw = _read_timed(r, 128, _rem())
+                        if raw is None:
+                            raise TimeoutError("banner v6 read deadline")
+                        _cand = raw.decode("utf-8", errors="replace").strip()
+                    finally:
+                        _resp_shutdown(r)
                 _ip6 = ipaddress.IPv6Address(_cand)
-                if _ip6.is_global and not _ip6.is_multicast:
+                if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
                     _v6addr = str(_ip6)
                     break
             except Exception:
@@ -9239,20 +9564,41 @@ def _banner_net_info():
     if _v6addr is not None:
         info["ipv6_verified"] = True
     if _v6addr is None and _rem() > 0:
+        s6 = None
         try:
             s6 = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
             s6.settimeout(min(1.5, _rem()))
             s6.connect(("2606:4700:4700::1111", 53))
             _local6 = s6.getsockname()[0]
-            s6.close()
-            if ipaddress.IPv6Address(_local6).is_global:
+            if ipaddress.IPv6Address(_local6).is_global and not ipaddress.IPv6Address(_local6).is_reserved:
                 _v6addr = _local6
         except Exception:
             pass
+        finally:
+            if s6 is not None:
+                try:
+                    s6.close()
+                except Exception:
+                    pass
     info["ipv6_addr"] = _v6addr
     info["ipv6"] = bool(_v6addr)
     _banner_net_cache = info
     return info
+
+
+def _banner_geo_text(net):
+    """横幅地理行渲染时本地化：缓存只存原始字段，文本按当前 LANG 即时拼出；
+    切语言无需失效缓存、无需重起线程（#24，不走 started 回退）。"""
+    if "geo_country" in net or "geo_city" in net:
+        parts = [_loc_country_name(net.get("geo_country") or ""), net.get("geo_city") or ""]
+        if net.get("geo_net") == "dc":
+            parts.append(T("dc"))
+        elif net.get("geo_net") == "residential":
+            parts.append(T("residential"))
+        if net.get("geo_org"):
+            parts.append(net["geo_org"])
+        return " · ".join(p for p in parts if p)
+    return net.get("geo", "")
 
 
 def _banner_net_info_async():
@@ -9313,8 +9659,9 @@ def print_banner():
                              T("sys_disk"), si.get("disk", "?")))))
     # 网络行
     if net["egress"]:
+        _geo_txt = _banner_geo_text(net)
         v4 = "%s %s" % (_c(C.green, "●"),
-                        _white(net["egress"] + ((" " + net["geo"]) if net["geo"] else "")))
+                        _white(net["egress"] + ((" " + _geo_txt) if _geo_txt else "")))
     else:
         v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
@@ -9380,8 +9727,11 @@ def check_update():
             "https://api.github.com/repos/alariclin/A-Check/releases/latest",
             headers={"User-Agent": "acheck/%s" % VERSION})
         with urllib.request.urlopen(req, timeout=8) as r:
-            tag = json.loads(_read_limited(r, timeout=8).decode(
-                "utf-8")).get("tag_name", "")
+            try:
+                tag = json.loads(_read_limited(r, timeout=8).decode(
+                    "utf-8")).get("tag_name", "")
+            finally:
+                _resp_shutdown(r)
     except Exception:
         tag = ""
     if not isinstance(tag, str):
@@ -9458,6 +9808,10 @@ def run_tcpping_only():
             else:
                 th, tp_ = tinp.rsplit(":", 1)
                 tp_ = int(tp_)
+                if ":" in th:
+                    raise ValueError("bare IPv6 needs brackets")
+            if not th or not (0 < tp_ < 65536):
+                raise ValueError("bad host/port")
         except Exception:
             print(T("invalid_input"))
             continue
@@ -9805,6 +10159,10 @@ def main():
             else:
                 _ph, _pt = _pp.rsplit(":", 1)
                 _pt = int(_pt)
+                if ":" in _ph:
+                    raise ValueError("bare IPv6 needs brackets")
+            if not _ph or not (0 < _pt < 65536):
+                raise ValueError("bad host/port")
         except Exception:
             print(json.dumps({"error": "invalid --proxy format, want HOST:PORT"},
                              ensure_ascii=False) if ns.json
@@ -9966,6 +10324,8 @@ def main():
                             pport = int(_pp)
                         else:
                             raise ValueError("bad format")
+                        if not phost or not (0 < pport < 65536):
+                            raise ValueError("bad host/port")
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
