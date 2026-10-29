@@ -7262,6 +7262,18 @@ def print_speed_section(json_mode=False, family=0, gated=False):
     return rows
 
 
+def _cgroup_shows_container():
+    """cgroup 路径含容器运行时标记即判容器；读不到/无标记返 False。"""
+    try:
+        if not os.path.exists("/proc/self/cgroup"):
+            return False
+        with open("/proc/self/cgroup", encoding="utf-8", errors="replace") as f:
+            _cg = f.read().lower()
+        return any(k in _cg for k in ("docker", "kubepods", "lxc", "libpod", "containerd"))
+    except Exception:
+        return False
+
+
 def get_system_info():
     """跨平台获取系统信息：CPU/内存/磁盘/系统/虚拟化 (兼容 Windows 11 24H2+, ARM64, 容器)。"""
     info = {}
@@ -7374,7 +7386,32 @@ def get_system_info():
                 if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu")):
                     virt = vm_label
                 else:
-                    virt = T("virt_phys")
+                    # CONF-13a.1：未命中关键词 ≠ 确认物理机（EC2 实例型号串即实例类型
+                    # 本就不含关键词）；补读 Manufacturer 第二信号，仍无信号时保留 "?"。
+                    mfr = ""
+                    try:
+                        out2 = subprocess.run(
+                            ["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_ComputerSystem).Manufacturer"],
+                            capture_output=True, text=True, timeout=8,
+                        )
+                        if out2.returncode == 0 and out2.stdout.strip():
+                            mfr = out2.stdout.lower()
+                    except Exception:
+                        pass
+                    if not mfr:
+                        try:
+                            out2 = subprocess.run(
+                                ["wmic", "computersystem", "get", "manufacturer"],
+                                capture_output=True, text=True, timeout=6,
+                            )
+                            if out2.returncode == 0 and out2.stdout.strip():
+                                mfr = out2.stdout.lower()
+                        except Exception:
+                            pass
+                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google")):
+                        virt = vm_label
+                    else:
+                        virt = "?"
             # 全败或输出无效时 virt 保持 "?"（探测失败 ≠ 确认物理机）
         elif sys.platform == "darwin":
             out = subprocess.run(
@@ -7390,7 +7427,12 @@ def get_system_info():
                 # 非 0/1 输出不可识别 → 保持 "?"
             # returncode 非零 → 保持 "?"
         else:
-            if os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv"):
+            # CONF-13a.2：先定容器再谈虚拟化。旧版只查两文件，systemd-nspawn
+            # 等容器会漏网并落入宿主机 DMI/CPU 判断（透出宿主信息致误判）。
+            if (os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+                    or os.path.exists("/run/systemd/container")
+                    or bool(os.environ.get("container"))
+                    or _cgroup_shows_container()):
                 virt = ct_label
             else:
                 dmi_text = ""
@@ -7451,7 +7493,9 @@ def _overlay_backing_ft(opts, mounts):
         upper = None
         for item in cur_opts.split(","):
             if item.startswith("upperdir="):
-                upper = _unescape_mount_path(item[len("upperdir="):])
+                # CONF-13b1.2：upperdir 须先 realpath 再与挂载点匹配（主循环对候选
+                # 先 realpath；只反转义会使经符号链接的 upperdir 误配磁盘挂载点）。
+                upper = os.path.realpath(_unescape_mount_path(item[len("upperdir="):]))
                 break
         if not upper or upper in seen:
             return None
@@ -7521,9 +7565,13 @@ def _get_real_disk_tempdir():
             if _backing in ("tmpfs", "ramfs", "devtmpfs", None):
                 continue
             best_ft = _backing
+        if best_ft is None:
+            continue  # CONF-13b1.1：无归属挂载 = 无法确认，不信任该候选
         if best_ft in ("tmpfs", "ramfs", "devtmpfs"):
             continue
-        if os.access(real_d, os.W_OK):
+        # CONF-13b1.3：只验写权限会选中不可用目录（非目录、缺搜索权限）且无后备；
+        # 验收加目录类型与写 + 搜索双验，不可用则继续试下一候选。
+        if os.path.isdir(real_d) and os.access(real_d, os.W_OK | os.X_OK):
             return real_d
     return None
 
@@ -7531,7 +7579,7 @@ def _get_real_disk_tempdir():
 def disk_io_test(size_mb=64):
     """
     安全且真实的磁盘 I/O 测速:
-      1. 以 mkstemp（O_EXCL）创建不可预测临时文件，不跟随符号链接；写后经同一 fd 回读
+      1. 以 mkstemp（O_EXCL）创建不可预测临时文件，不跟随符号链接，文件建在 0700 私有目录内（CONF-13b2a.1）；写后经同一 fd 回读
          （不按名重开）；清理前核 inode 一致，不一致不删他人文件。
       2. 前置校验剩余磁盘空间 >= max(512MB, size_mb + 64MB)，不足则跳过，防止写满磁盘。
       3. 避开 Linux tmpfs 内存盘，并在写入后尝试刷除内核 Page Cache（仅建议性，缓存读仍可能发生）。
@@ -7551,10 +7599,23 @@ def disk_io_test(size_mb=64):
         block = os.urandom(1024 * 1024)  # mkstemp 之前：此时尚无 fd 可漏
     except Exception:
         return None
+    # CONF-13b2a.1：临时文件建在 0700 私有目录内再按名删除：攻击者既看不到
+    # 目录内容、也猜不到目录名，stat-unlink 窗口内的路径替换失去落脚点；
+    # 私有目录建失败时退回目标目录直建（行为不变）。
+    _privdir = None
     try:
+        try:
+            _privdir = tempfile.mkdtemp(prefix=".ipcheck_io_", dir=target_dir)
+        except Exception:
+            _privdir = None
         fd, tmp_path = tempfile.mkstemp(prefix=".ipcheck_io_", suffix=".tmp",
-                                        dir=target_dir)
+                                        dir=_privdir or target_dir)
     except Exception:
+        if _privdir:
+            try:
+                os.rmdir(_privdir)
+            except Exception:
+                pass
         return None
     f = None
     try:
@@ -7609,6 +7670,11 @@ def disk_io_test(size_mb=64):
                 # unlink 前核 inode 一致：名下文件被换则不删他人文件
                 if os.path.lexists(tmp_path) and os.stat(tmp_path).st_ino == os.fstat(live_fd).st_ino:
                     os.unlink(tmp_path)
+            except Exception:
+                pass
+        if _privdir:
+            try:
+                os.rmdir(_privdir)
             except Exception:
                 pass
         if f is not None:
