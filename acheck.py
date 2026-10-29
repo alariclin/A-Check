@@ -9685,13 +9685,22 @@ def _banner_geo_text(net):
     """横幅地理行渲染时本地化：缓存只存原始字段，文本按当前 LANG 即时拼出；
     切语言无需失效缓存、无需重起线程（#24，不走 started 回退）。"""
     if "geo_country" in net or "geo_city" in net:
-        parts = [_loc_country_name(net.get("geo_country") or ""), net.get("geo_city") or ""]
+        # 渲染边界校验：缓存原始字段不校验类型，非字符串一律视为空串丢弃
+        # （字符串原样通过；否则 join 在此抛 TypeError 且调用点无保护，菜单崩溃；
+        # fallback 的 geo 字段恒为 join 产物字符串，不动）。
+        _cc = net.get("geo_country")
+        _cc = _cc if isinstance(_cc, str) else ""
+        _ct = net.get("geo_city")
+        _ct = _ct if isinstance(_ct, str) else ""
+        _og = net.get("geo_org")
+        _og = _og if isinstance(_og, str) else ""
+        parts = [_loc_country_name(_cc), _ct]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
             parts.append(T("residential"))
-        if net.get("geo_org"):
-            parts.append(net["geo_org"])
+        if _og:
+            parts.append(_og)
         return " · ".join(p for p in parts if p)
     return net.get("geo", "")
 
