@@ -1568,10 +1568,18 @@ def _read_timed(resp, n, remain):
 
 def _resp_socket(r):
     """取响应底层 socket：urllib addinfourl → HTTPResponse → BufferedReader →
-    SocketIO → socket（BufferedReader 层走 .raw 而非 .fp），层级取不到返 None。"""
+    SocketIO → socket（BufferedReader 层走 .raw 而非 .fp），层级取不到返 None。
+    双兼容（§0-II-b）：HTTPConnection 先取 .sock，再走响应层遍历。
+    socket.socket 被桩替换为非 type 时退化为遍历（旧夹具桩场景，见 b2）。"""
+    _cls = getattr(socket, "socket", None)
+    if not isinstance(_cls, type):
+        _cls = None
+    s = getattr(r, "sock", None)
+    if _cls is not None and isinstance(s, _cls):
+        return s
     cur = r
     for _ in range(4):
-        if isinstance(cur, socket.socket):
+        if _cls is not None and isinstance(cur, _cls):
             return cur
         nxt = getattr(cur, "fp", None)
         if nxt is None:
@@ -1586,7 +1594,10 @@ def _resp_shutdown(r):
     """唤醒 _read_timed 遗留的守护读线程：shutdown 使阻塞中的 readinto 返回，
     否则响应 close() 会等它（直连 worker 在 close() 上超窗滞留，measure 的
     窗口后清理亦会被拖住）。失败静默。"""
-    s = _resp_socket(r)
+    try:
+        s = _resp_socket(r)
+    except Exception:
+        return
     if s is not None:
         try:
             s.shutdown(socket.SHUT_RDWR)
@@ -5801,8 +5812,9 @@ _unlock_lock = threading.Lock()
 
 def get_unlock_type(domain, local_ip=None):
     """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
-    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论；
-    单侧 CNAME 差异已降为 None，见下）。
+    三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
+    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
+    前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
     缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。"""
     sys_ns = _get_system_nameservers()[0]
@@ -5824,22 +5836,31 @@ def get_unlock_type(domain, local_ip=None):
     elif sys_ns in ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "223.5.5.5", "119.29.29.29"):
         res = True
     else:
-        # IPv4 取前两段作 /16 前缀；IPv6 无点分段，前缀即全地址，重叠退化为精确匹配（偏保守）。
-        sys_prefixes = {(".".join(ip.split(".")[:2]) if "." in ip else ip) for ip in sys_ips}
-        pub_prefixes = {(".".join(ip.split(".")[:2]) if "." in ip else ip) for ip in pub_ips}
+        # 前缀一律经 ipaddress 归一化：v4 /24、v6 /64（禁用字符串 split 切前缀；
+        # 压缩格式 IPv6 直接切会把空串当段）。v4 由现行 /16 收紧至 /24。
+        def _pfx(_ip):
+            try:
+                if "." in _ip:
+                    return str(ipaddress.IPv4Network((_ip, 24),
+                                                     strict=False).network_address)
+                return str(ipaddress.IPv6Network((_ip, 64),
+                                                 strict=False).network_address)
+            except Exception:
+                return _ip
+        sys_prefixes = {_pfx(ip) for ip in sys_ips}
+        pub_prefixes = {_pfx(ip) for ip in pub_ips}
         overlap = bool(sys_prefixes & pub_prefixes)
         suffix = bool(sys_cnames and pub_cnames and any(
             sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
         ))
-        if overlap and suffix:
+        # 真值表（§0-4/§0-II-a，字面执行）：overlap→True；仅 suffix→None（保守，无法区分合法多 PoP
+        # 与保留官方 CNAME 的 DNS 解锁）；余者→False（双方有效、无重叠、无同后缀）。
+        if overlap:
             res = True
-        elif overlap or suffix:
+        elif suffix:
             res = None
-        elif pub_cnames and not sys_cnames:
-            res = None  # 单侧 CNAME 差异仅为弱信号（公共侧 CNAME 也可来自 CDN/解析差异），
-            # 不足以定 DNS 解锁：降为不可判定（且 None 不缓存，见下）
         else:
-            res = None  # 无重叠、无后缀、亦无单侧 CNAME：无正向解锁证据，不下确定结论
+            res = False
 
     if res is not None:
         with _unlock_lock:
@@ -8401,7 +8422,28 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
     conn = None
+
+    def _cleanup(_conn, _resp):
+        # §0-II-b 双登记双清理：resp 侧先 shutdown 唤醒遗留读线程再 close；
+        # conn.close() 在 sock 已空时为空操作，无害；建连阶段被强杀时 conn 侧仍能关。
+        if _resp is not None:
+            _resp_shutdown(_resp)
+            try:
+                _resp.close()
+            except Exception:
+                pass
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+        if registry is not None:
+            with lock:
+                registry.discard(_conn)
+                registry.discard(_resp)
+
     while time.monotonic() < stop and fails < 3:
+        resp = None
         try:
             _rem = stop - time.monotonic()
             if _rem <= 0:
@@ -8413,11 +8455,23 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                 with lock:
                     registry.add(conn)
             conn.request("GET", path,
-                         headers={"User-Agent": UA_BROWSER,
+                         headers={"User-Agent": UA_TOOL,
                                   "Connection": "close"})
+            _rem2 = stop - time.monotonic()
+            if _rem2 <= 0:
+                _cleanup(conn, None)
+                break
+            try:
+                if conn.sock is not None:
+                    conn.sock.settimeout(min(10, _rem2))
+            except Exception:
+                pass
             resp = conn.getresponse()
+            if registry is not None:
+                with lock:
+                    registry.add(resp)
             if resp.status < 200 or resp.status >= 300:
-                conn.close()
+                _cleanup(conn, resp)
                 raise RuntimeError(f"HTTP {resp.status}")
             while time.monotonic() < stop:
                 # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计。
@@ -8429,7 +8483,7 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                         _take = min(32768, room)
                         counter[0] += _take
                 if _take <= 0:
-                    conn.close()
+                    _cleanup(conn, resp)
                     return
                 try:
                     chunk = _read_timed(resp, _take,
@@ -8453,22 +8507,12 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                             and cap_box[0] is None):
                         cap_box[0] = time.monotonic()
                 if counter[0] >= DL_CAP_BYTES:
-                    conn.close()
+                    _cleanup(conn, resp)
                     return
-            conn.close()
-            if registry is not None:
-                with lock:
-                    registry.discard(conn)
+            _cleanup(conn, resp)
             fails = 0
         except Exception:
-            if registry is not None and conn is not None:
-                with lock:
-                    registry.discard(conn)
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
+            _cleanup(conn, resp)
             fails += 1
             time.sleep(0.2)
 
@@ -8703,9 +8747,9 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
         try:
             res = run_passive(eip)
             out["egress_reputation"] = {
-                "risk_level": res.get("risk_level"),
-                "threat_score": res.get("threat_score"),
-                "fraud_score": res.get("fraud_score"),
+                "risk_level": res.get("verdict"),
+                "threat_score": res.get("scores", {}).get("threat", (None,))[0],
+                "fraud_score": res.get("scores", {}).get("fraud", (None,))[0],
             }
             if not json_mode:
                 print_report(res)
@@ -9159,9 +9203,9 @@ def _banner_net_info():
                     d = json.loads(raw.decode("utf-8", errors="replace"))
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
-                org = d.get("org") or d.get("isp") or ""
+                org = (d.get("org") or d.get("isp") or "").strip()
                 parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
-                if d.get("hosting") or is_datacenter_heuristic(org, org):
+                if d.get("hosting") or is_datacenter_heuristic(org, org)[0]:
                     parts.append(T("dc"))
                 elif is_residential_isp(org, org):
                     parts.append(T("residential"))
@@ -9185,9 +9229,9 @@ def _banner_net_info():
                         d = json.loads(raw.decode("utf-8",
                                                   errors="replace"))
                     conn = d.get("connection") or {}
-                    org = conn.get("org") or conn.get("isp") or ""
+                    org = (conn.get("org") or conn.get("isp") or "").strip()
                     parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
-                    if is_datacenter_heuristic(org, org):
+                    if is_datacenter_heuristic(org, org)[0]:
                         parts.append(T("dc"))
                     elif is_residential_isp(org, org):
                         parts.append(T("residential"))
