@@ -7742,12 +7742,32 @@ DNSBL_LISTS = [
     "bl.nordspam.com", "spamsources.fabel.dk", "bl.0spam.org",
 ]
 
+# CONF-13b2b.1: IPv6 查询仅限运营商文档明确支持 IPv6 的 zone。2026-10-29 逐条
+# 核验：29 条中仅 Spamhaus ZEN 有官方文档支撑（nibble 反转查询）；其余 28 条
+# 无 IPv6 支持证据（第三方注记亦称多数列表不支持 IPv6），一律不查、不计 clean。
+_DNSBL_IPV6_LISTS = frozenset({"zen.spamhaus.org"})
+
 
 def check_dnsbl(ip, max_lists=29, json_mode=False):
     """纯 Python 并发检测权威 DNSBL 黑名单，校验返回码为 127.0.0.x；127.255.255.x 拒查码计 unknown，不进干净。"""
     ip_s = str(ip)
-    rev = ".".join(reversed(ip_s.split(".")))
-    lists = DNSBL_LISTS[:max_lists]
+    # CONF-13b2b.1: 按地址族分流。旧码对 IPv6 沿用 IPv4 八位反转，生成含冒号的
+    # 非法查询名、空应答计 clean（假阴性）。IPv6 仅查 _DNSBL_IPV6_LISTS；不可
+    # 解析输入无有效查询可构造，fail-closed 直接返全 unknown，不发任何查询。
+    try:
+        _addr = ipaddress.ip_address(ip_s)
+    except ValueError:
+        _addr = None
+    if _addr is not None and _addr.version == 6:
+        _nib = _addr.exploded.replace(":", "")
+        rev = ".".join(reversed(_nib))
+        lists = [lst for lst in DNSBL_LISTS[:max_lists]
+                 if lst in _DNSBL_IPV6_LISTS]
+    elif _addr is not None:
+        rev = ".".join(reversed(ip_s.split(".")))
+        lists = DNSBL_LISTS[:max_lists]
+    else:
+        return (0, 0, 0, [])
     total = len(lists)
     marked = 0
     bl = []
@@ -9052,6 +9072,50 @@ def _logo_render():
     return out
 
 
+def _urlopen_bounded(req, budget):
+    """urlopen（含同步 DNS 解析、建连、响应头读取）纳入绝对截止。
+
+    socket 超时只约束单次 connect/recv：同步 DNS 解析与慢滴响应头均可不断
+    重置单次超时、远超横幅总预算。本函数以线程 + join(budget) 封顶（与
+    _read_timed 同款模式）；超时后主线程立即返 None，迟到线程完成（或失败）
+    后自行收尾：锁保证“主线程标记放弃后 worker 关闭”与“worker 已存入后
+    主线程关闭”恰好其一执行，不泄漏响应；线程为 daemon，不阻塞进程退出。
+    """
+    if budget <= 0:
+        return None
+    box = {}
+    lock = threading.Lock()
+
+    def _go():
+        try:
+            resp = urllib.request.urlopen(req, timeout=min(5, budget))
+        except Exception:
+            return
+        with lock:
+            if box.get("abandoned"):
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            else:
+                box["resp"] = resp
+
+    t = threading.Thread(target=_go, daemon=True)
+    t.start()
+    t.join(budget)
+    with lock:
+        if t.is_alive():
+            box["abandoned"] = True
+            resp = box.pop("resp", None)
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            return None
+        return box.get("resp")
+
+
 def _banner_net_info():
     """横幅网络信息 (进程内缓存, 只查一次): 出口地理(按界面语言本地化) + IPv6 出口地址。
     整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。"""
@@ -9085,7 +9149,10 @@ def _banner_net_info():
                     "http://ip-api.com/json/%s?lang=%s&fields=status,country,"
                     "city,org,isp,hosting" % (egress, _lang),
                     headers={"User-Agent": UA_BROWSER})
-                with urllib.request.urlopen(req, timeout=min(5, _rem())) as r:
+                r = _urlopen_bounded(req, _rem())
+                if r is None:
+                    raise TimeoutError("banner geo open deadline")
+                with r:
                     raw = _read_timed(r, 8192, _rem())
                     if raw is None:
                         raise TimeoutError("banner geo read deadline")
@@ -9108,7 +9175,10 @@ def _banner_net_info():
                     req = urllib.request.Request(
                         (("https://ipwho.is/%s?lang=%s" % (egress, _ipwho_lang())) if _ipwho_lang() else ("https://ipwho.is/%s" % egress)),
                         headers={"User-Agent": UA_BROWSER})
-                    with urllib.request.urlopen(req, timeout=min(5, _rem())) as r:
+                    r = _urlopen_bounded(req, _rem())
+                    if r is None:
+                        raise TimeoutError("banner geo open deadline")
+                    with r:
                         raw = _read_timed(r, 8192, _rem())
                         if raw is None:
                             raise TimeoutError("banner geo read deadline")
