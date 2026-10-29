@@ -3778,7 +3778,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定，分别累计；单源独标不扣分）
+    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定：True 票多于 False 票即成立，源不可用或字段缺失计弃权票；分别累计）
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -3810,7 +3810,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定，分別累計；單源獨標不扣分）
+    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計）
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -3842,7 +3842,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     No PTR record                     +5
   [Platform 0-100] DC/proxy traits (not malice)
     ISP/Org datacenter/hosting trait  +30
-    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; accumulate separately; a single source alone does not deduct)
+    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet: established when True votes outnumber False votes; unavailable sources or missing fields count as abstentions; accumulate separately)
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
@@ -3875,7 +3875,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     PTR レコードなし                  +5
   [プラットフォーム互換性 0-100] DC/プロキシ属性 (非悪意スコア)
     データセンター/ホスティング属性   +30
-    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決、それぞれ加算、単独ソースのみでは減点なし）
+    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決：True 票が False 票を上回れば成立、ソース利用不可またはフィールド欠損は棄権票；それぞれ加算）
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算、第三者スコアではない)
@@ -3907,7 +3907,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     Нет PTR-записи                    +5
   [Совместимость 0-100] Признаки ДЦ/прокси (не оценка вредоносности)
     Признаки дата-центра / хостинга   +30
-    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; суммируются; один источник не штрафуется)
+    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet: засчитывается при перевесе True над False; недоступные источники или отсутствующие поля — воздержавшиеся; суммируются)
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
@@ -3939,7 +3939,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     نبود رکورد PTR                    +5
   [سازگاری پلتفرم 0-100] ویژگی دیتاسنتر/پروکسی (امتیاز مخرب نیست)
     ویژگی دیتاسنتر یا میزبانی         +30
-    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هر دو جداگانه جمع می‌شوند؛ یک منبع به‌تنهایی کسر نمی‌شود)
+    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هرگاه آرای موافق از مخالف بیشتر شود برقرار است؛ منابع در دسترس‌نبوده یا فیلدهای بدون مقدار رأی ممتنع محسوب می‌شوند؛ هر دو جداگانه جمع می‌شوند)
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
@@ -4145,14 +4145,16 @@ def score_platform(s):
         ev.append("Hosting/DC trait +30")
 
     def _consensus(*vals):
-        # 与 _print_streaming_inference 同口径：True 票多于 False 票才成立；
-        # 单源独标不扣分（与推断一致，非矛盾）。
+        # 与 _print_streaming_inference 同口径：True 票多于 False 票即成立；
+        # None 为弃权票（源不可用或字段缺失），不参与比较。故单源独标仅在有反票时
+        # 不扣分；若其余皆弃权（1 True / 0 False），按现行口径成立并扣分（与旧 OR
+        # 判断一致，非新增扣分）。
         return (sum(1 for v in vals if v is True)
                 > sum(1 for v in vals if v is False))
 
     def _p(d):
-        # _factor_rows 口径：源不可用计 None；fp/il/iq 字段缺失计 None，
-        # 其余源缺失字段计 False。
+        # 缺失票约定：源不可用计 None；字段缺失亦计 None（弃权），不计入比较；
+        # 已判定才计 True/False。fp/il/iq 与其余源同口径。
         if not d.get("ok"):
             return None
         return d.get("proxy")
@@ -4434,8 +4436,8 @@ def _print_streaming_inference(res):
     ia = s.get("ipapi", {})
 
     def _consensus(*vals):
-        """多源共识: True 票多于 False 票才成立 (与 [2] 因子聚合口径一致),
-        防止单一源误标独裁判定 (如 proxycheck 把云厂商 IP 标为 VPN)。"""
+        """多源共识: True 票多于 False 票才成立；None 为弃权票（源不可用），
+        不参与比较（单源独标仅在有反票时不成立，其余皆弃权时仍成立）。"""
         return (sum(1 for v in vals if v is True)
                 > sum(1 for v in vals if v is False))
 
