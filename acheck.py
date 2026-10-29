@@ -2492,13 +2492,16 @@ def _extra_sub(disp, kind):
     _by_variant = {}
     for (variant, _ctx), loc in _GEO_EXTRA[kind].items():
         _by_variant.setdefault(variant, []).append((_ctx, loc))
+    # CONF-FIXES-2.1：上下文词集须取自原始整串；取自不断被替换的当前 disp 时，
+    # 前序替换会抹掉后序变体的上下文词（如 New York 先被译走，York 的 {new} 消失）。
+    _orig_words = set(re.findall(r"[A-Za-z0-9]+", disp.lower()))
     for variant, cands in _by_variant.items():
         if not variant:
             continue
         if len(cands) == 1:
             loc = cands[0][1]
         else:
-            _disp_words = set(re.findall(r"[A-Za-z0-9]+", disp.lower()))
+            _disp_words = _orig_words
             _variant_words = set(re.findall(r"[A-Za-z0-9]+", variant.lower()))
             _winners = []
             for _ctx, _loc in cands:
@@ -3350,6 +3353,24 @@ class RDAP(Provider):
                 continue  # cidr0_cidrs 非 list/None：候选无效，试下一基地
             if not cand.get("name") and not cand.get("cidr0_cidrs"):
                 continue  # 空字典/无网络身份：不得截断回退
+            if not cand.get("name"):
+                # CONF-FIXES-2.2：无名称候选须至少含一个有效 CIDR，否则继续下一基地；
+                # 旧“接受在前、校验在后”会使全无效列表截断回退且 CIDR 留空。
+                _has_valid_cidr = False
+                for _c in cand.get("cidr0_cidrs") or []:
+                    if not isinstance(_c, dict):
+                        continue
+                    _pfx = _c.get("v4prefix") or _c.get("v6prefix")
+                    if not _pfx:
+                        continue
+                    try:
+                        ipaddress.ip_network(f"{_pfx}/{_c.get('length')}", strict=False)
+                    except Exception:
+                        continue
+                    _has_valid_cidr = True
+                    break
+                if not _has_valid_cidr:
+                    continue
             d = cand
             break
         if d is None:
@@ -8122,24 +8143,29 @@ def _sock_readline(s, limit=512, deadline=None):
 
 def _probe_body_empty(s, deadline=None):
     """200 兼容校验：读满头块至空行，要求显式 Content-Length: 0；
-    无 CL / 分块 / 冲突 CL / 头块不完整（EOF 或超 32 行）皆不认（无法验证空体）。"""
+    无 CL / 任何 Transfer-Encoding / 冲突 CL / 头块不完整（EOF、超 32 行或无 CRLF
+    截断）皆不认（无法验证空体）。"""
     try:
         _cl_values = []
-        _chunked = False
+        _te_present = False
         for _ in range(32):
             ln = _sock_readline(s, deadline=deadline)
             if ln == b"\r\n":
-                break  # 头块完整：据收集到的 CL/chunked 判定
+                break  # 头块完整：据收集到的 CL/TE 判定
             if ln == b"":
                 return False  # EOF：头块不完整，无法验证
-            if ln.lower().startswith(b"transfer-encoding:") \
-                    and b"chunked" in ln.lower():
-                _chunked = True
+            # CONF-FIXES-3.1：超限截断的无 CRLF 片段不得参与判定（_sock_readline
+            # 要求调用方验完整性；600 空格 TE 头行即借此漏过 chunked 检查）。
+            if not ln.endswith(b"\r\n"):
+                return False
+            if ln.lower().startswith(b"transfer-encoding:"):
+                # CONF-FIXES-3.2：TE 存在时 CL 即不可信（RFC 7230），不只 chunked。
+                _te_present = True
             if ln.lower().startswith(b"content-length:"):
                 _cl_values.append(ln.split(b":", 1)[1].strip())
         else:
             return False  # 32 行未见空行：头块不完整
-        if _chunked or not _cl_values:
+        if _te_present or not _cl_values:
             return False
         return all(v == b"0" for v in _cl_values)
     except OSError:
