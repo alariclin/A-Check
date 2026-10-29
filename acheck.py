@@ -2528,10 +2528,12 @@ def _resolve_geo_online(jobs):
             list(ex.map(_one, todo))
 
 
-def _extra_sub(disp, kind):
-    """把在线兜底命中的地名替换进对比行整串。
+def _extra_sub(disp, kind, ctx_text=None):
+    """把在线兜底命中的地名替换进对比行整串（disp 为待替换串）。
     同一变体有多个上下文候选时，只采用上下文成分出现在整串中的唯一候选；
-    无法消歧时不任意采用首项（该变体原样保留）。"""
+    无法消歧时不任意采用首项（该变体原样保留）。
+    ctx_text：消歧上下文来源，默认 disp；调用方可传整串以保留跨字段上下文
+    （CONF-FIXES-2.1），同时把替换限定在本字段内。"""
     if _GEO_EXTRA.get("lang") != LANG:
         return disp
     _by_variant = {}
@@ -2539,7 +2541,7 @@ def _extra_sub(disp, kind):
         _by_variant.setdefault(variant, []).append((_ctx, loc))
     # CONF-FIXES-2.1：上下文词集须取自原始整串；取自不断被替换的当前 disp 时，
     # 前序替换会抹掉后序变体的上下文词（如 New York 先被译走，York 的 {new} 消失）。
-    _orig_words = set(re.findall(r"[A-Za-z0-9]+", disp.lower()))
+    _orig_words = set(re.findall(r"[A-Za-z0-9]+", (ctx_text if ctx_text is not None else disp).lower()))
     for variant, cands in _by_variant.items():
         if not variant:
             continue
@@ -2571,7 +2573,7 @@ def _loc_region(text):
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
         _matches = [v for (n, _ctx), v in _GEO_EXTRA["region"].items() if n == t]
-        if len(_matches) == 1:
+        if len(set(_matches)) == 1:
             return _matches[0]
         # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
@@ -2593,7 +2595,7 @@ def _loc_city(text):
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
             _matches = [v for (n, _ctx), v in _GEO_EXTRA["city"].items() if n == cand]
-            if len(_matches) == 1:
+            if len(set(_matches)) == 1:
                 return _matches[0]
             # 多候选：不盲取首项，退静态表/原文（落到下行静态查表）
         en = _ANY_CITY2EN.get(cand)
@@ -3657,7 +3659,12 @@ def _build_unified_profile(s):
         if _src.get("country"):
             country, _country_src = _src["country"], _src
             break
-    country_code = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    if not isinstance(country, str):
+        # 异常源返回非字符串国家名（如数字）：视为无国家名，不让后续 .strip() 崩溃。
+        country = ""
+    _cc_raw = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    # 空白码与非字符串码均归一为空：空白不阻断后续回填，非字符串不崩溃。
+    country_code = _cc_raw.strip() if isinstance(_cc_raw, str) else ""
     _ct = country.strip()
     if not country_code and len(_ct) == 2 and _ct.isalpha() and _ct.isascii():
         country_code = _ct.upper()
@@ -3668,13 +3675,23 @@ def _build_unified_profile(s):
     if not country_code and country:
         _cn = country.strip().lower()
         for _cand in (wi, wa, gj, il, iq, co, ti):
-            if (_cand.get("country") or "").strip().lower() == _cn:
-                country_code = _cand.get("country_code") or ""
+            _cc_name = _cand.get("country")
+            if isinstance(_cc_name, str) and _cc_name.strip().lower() == _cn:
+                _cc_code = _cand.get("country_code")
+                country_code = _cc_code.strip() if isinstance(_cc_code, str) else ""
                 if country_code:
                     break
     if not country_code and not country:
         # 未选出国家名时无拼接可言：单凭代码的源（country.is / RDAP）是唯一地理证据，沿旧链取值。
-        country_code = wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or ""
+        # 链上逐源 strip：空白源不截断链（链后 strip 会把首个空白误作终值，
+        # 丢弃后续源的有效码）；非字符串源视为空。
+        def _cc_stripped(d, k="country_code"):
+            _v = d.get(k)
+            return _v.strip() if isinstance(_v, str) else ""
+        country_code = (_cc_stripped(wi) or _cc_stripped(wa) or _cc_stripped(gj)
+                        or _cc_stripped(il) or _cc_stripped(iq) or _cc_stripped(co)
+                        or _cc_stripped(ti) or _cc_stripped(ci)
+                        or _cc_stripped(rd, "country") or "")
     # CONF-7.1: region/city/经纬度/时区只取与已选国家一致的来源；
     # 来源国家无法确定（既无 country 名又无 country_code）时宁可留空，
     # 不跨国家拼接。country 字段形态不统一（名或 ISO 码），故名、码双通道比对。
@@ -3686,8 +3703,10 @@ def _build_unified_profile(s):
     def _same_country(_src):
         if not _sel_name:
             return True
-        _sc = (_src.get("country") or "").strip().lower()
-        _scc = (_src.get("country_code") or "").strip().lower()
+        _sc_raw = _src.get("country")
+        _scc_raw = _src.get("country_code")
+        _sc = _sc_raw.strip().lower() if isinstance(_sc_raw, str) else ""
+        _scc = _scc_raw.strip().lower() if isinstance(_scc_raw, str) else ""
         if _sc and _sc == _sel_name:
             return True
         if _scc and _sel_code and _scc == _sel_code:
@@ -4476,10 +4495,14 @@ def _print_streaming_inference(res):
         # 2 字母非 ASCII（如「中国」）不是代码，仍走原名匹配分支。
         for tk in tokens:
             tk_l = tk.lower()
-            if len(tk_l) == 2 and tk_l.isascii() and tk_l == cc_code:
-                return True
             if len(tk_l) == 2 and tk_l.isascii():
-                continue
+                if tk_l == cc_code:
+                    return True
+                if cc_code:
+                    # 代码槽位有依据时错配直接跳过（绝不落入名匹配，见上注）。
+                    continue
+                # 代码缺失时无依据可错配：落入下方名匹配（码形国家名如 "CN"
+                # 本身即须被识别；错配保护仅在代码存在时才有意义）。
             if len(tk_l) <= 3 and tk_l.isascii():
                 if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
@@ -4943,12 +4966,18 @@ def _print_basic_block(s, prof):
             for k in _order:
                 _loc, _names, _f_co, _f_mid, _f_ci = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
-                # F3-C 分字段翻译：region/city 按字段各自翻译后再拼串，
-                # 不再对整串做 region 轮→city 轮替换（Victoria 类城市名
-                # 不再被 region 表误译为州名）。
-                _disp = _join_nonempty(_loc_country_name(_f_co),
-                                       _loc_region(_f_mid), _loc_city(_f_ci))
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_disp, 'region'), 'city')}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                # F3-C 分字段翻译：region/city 按字段各自翻译后再拼串；
+                # 补充翻译（_extra_sub）亦按字段隔离：region/city 轮各只作用
+                # 于本字段，但消歧上下文仍取整串词集（CONF-FIXES-2.1 跨字段
+                # 上下文保留），Victoria 类城市名不再被 region 表误译。
+                _f_co_t = _loc_country_name(_f_co)
+                _f_mid_t = _loc_region(_f_mid)
+                _f_ci_t = _loc_city(_f_ci)
+                _disp = _join_nonempty(_f_co_t, _f_mid_t, _f_ci_t)
+                _disp = _join_nonempty(_f_co_t,
+                                       _extra_sub(_f_mid_t, 'region', _disp),
+                                       _extra_sub(_f_ci_t, 'city', _disp))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
