@@ -4786,53 +4786,59 @@ def _print_basic_block(s, prof):
     # 地理位置组: 国家码徽章排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
+
+    def _has_loc(*vals):
+        # 定位记录判空：按全部展示字段判（省州亦计入），空白字符串视为空，
+        # 非字符串先 str 化防崩。
+        return any(str(v or "").strip() for v in vals)
+
     locs = []
-    if wi.get("ok") and (wi.get("country") or wi.get("city")):
+    if wi.get("ok") and _has_loc(wi.get("country"), wi.get("region"), wi.get("city")):
         locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
                      wi.get("country"), wi.get("city")))
-    if ii.get("ok") and (ii.get("country") or ii.get("city")):
+    if ii.get("ok") and _has_loc(ii.get("country"), ii.get("region"), ii.get("city")):
         locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
                      ii.get("country"), ii.get("city")))
-    if db.get("ok") and (db.get("country") or db.get("city")):
+    if db.get("ok") and _has_loc(db.get("country"), db.get("state"), db.get("city")):
         locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
                      db.get("country"), db.get("city")))
-    if pc.get("ok") and (pc.get("country") or pc.get("city")):
+    if pc.get("ok") and _has_loc(pc.get("country"), pc.get("city")):
         locs.append(("proxycheck", _join_nonempty(pc.get("country"), pc.get("city")),
                      pc.get("country"), pc.get("city")))
     fp = s.get("freeipapi", {})
-    if fp.get("ok") and (fp.get("country") or fp.get("city")):
+    if fp.get("ok") and _has_loc(fp.get("country"), fp.get("city")):
         locs.append(("freeipapi", _join_nonempty(fp.get("country"), fp.get("city")),
                      fp.get("country"), fp.get("city")))
     wap = s.get("ipwhoisapp", {})
-    if wap.get("ok") and (wap.get("country") or wap.get("city")):
+    if wap.get("ok") and _has_loc(wap.get("country"), wap.get("region"), wap.get("city")):
         locs.append(("ipwhois.app", _join_nonempty(wap.get("country"), wap.get("region"), wap.get("city")),
                      wap.get("country"), wap.get("city")))
     ais = s.get("ipapiis", {})
-    if ais.get("ok") and (ais.get("country") or ais.get("city")):
+    if ais.get("ok") and _has_loc(ais.get("country"), ais.get("region"), ais.get("city")):
         locs.append(("ipapi.is", _join_nonempty(ais.get("country"), ais.get("region"), ais.get("city")),
                      ais.get("country"), ais.get("city")))
     igd = s.get("ipguide", {})
-    if igd.get("ok") and (igd.get("country") or igd.get("city")):
+    if igd.get("ok") and _has_loc(igd.get("country"), igd.get("city")):
         locs.append(("ip.guide", _join_nonempty(igd.get("country"), igd.get("city")),
                      igd.get("country"), igd.get("city")))
     ilc = s.get("iplocate", {})
-    if ilc.get("ok") and (ilc.get("country") or ilc.get("city")):
+    if ilc.get("ok") and _has_loc(ilc.get("country"), ilc.get("region"), ilc.get("city")):
         locs.append(("iplocate.io", _join_nonempty(ilc.get("country"), ilc.get("region"), ilc.get("city")),
                      ilc.get("country"), ilc.get("city")))
     iqc = s.get("ipquery", {})
-    if iqc.get("ok") and (iqc.get("country") or iqc.get("city")):
+    if iqc.get("ok") and _has_loc(iqc.get("country"), iqc.get("region"), iqc.get("city")):
         locs.append(("ipquery.io", _join_nonempty(iqc.get("country"), iqc.get("region"), iqc.get("city")),
                      iqc.get("country"), iqc.get("city")))
     coc = s.get("ipapico", {})
-    if coc.get("ok") and (coc.get("country") or coc.get("city")):
+    if coc.get("ok") and _has_loc(coc.get("country"), coc.get("region"), coc.get("city")):
         locs.append(("ipapi.co", _join_nonempty(coc.get("country"), coc.get("region"), coc.get("city")),
                      coc.get("country"), coc.get("city")))
     tic = s.get("twoip", {})
-    if tic.get("ok") and (tic.get("country") or tic.get("city")):
+    if tic.get("ok") and _has_loc(tic.get("country"), tic.get("region"), tic.get("city")):
         locs.append(("2ip.io", _join_nonempty(tic.get("country"), tic.get("region"), tic.get("city")),
                      tic.get("country"), tic.get("city")))
     gjs = s.get("geojs", {})
-    if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
+    if gjs.get("ok") and _has_loc(gjs.get("country"), gjs.get("region"), gjs.get("city")):
         locs.append(("GeoJS", _join_nonempty(gjs.get("country"), gjs.get("region"), gjs.get("city")),
                      gjs.get("country"), gjs.get("city")))
     _gjobs = []
