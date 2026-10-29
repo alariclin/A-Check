@@ -5960,6 +5960,8 @@ def test_reddit(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    if code == 200 and not _complete and "Blocked" not in body[:4096]:
+        return T("unknown"), "", None
     if code == 200 and "Blocked" not in body[:4096]:
         return T("unlocked"), "", get_unlock_type("www.reddit.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -5987,6 +5989,8 @@ def test_chatgpt(local_ip=None):
         return T("unknown"), "", None
     if api_code is None:
         return T("failed"), "", None
+    if api_code in (200, 401) and not _api_complete:
+        return T("unknown"), "", None
     if api_code in (200, 401):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
     if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
@@ -6022,6 +6026,8 @@ def test_claude(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
         return T("unknown"), "", None
     if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
@@ -6272,10 +6278,48 @@ SPEED6_ENDPOINTS = [
 ]
 
 
-def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None):
+def _open_bounded(open_fn, deadline):
+    """打开阶段绝对截止：deadline 前未完成 open 即返 None，worker 不再滞留。
+    迟到响应由打开线程在锁内确认“已放弃”后自行关闭，不遗留未登记 socket；
+    正常完成时响应归调用方所有；open 本身的快失败照常抛出。"""
+    if deadline - time.monotonic() <= 0:
+        return None
+    box = {}
+    lock = threading.Lock()
+    done = threading.Event()
+
+    def _run():
+        try:
+            box["resp"] = open_fn()
+        except Exception as e:
+            box["err"] = e
+        finally:
+            with lock:
+                done.set()
+                if box.get("abandoned") and box.get("resp") is not None:
+                    try:
+                        box["resp"].close()
+                    except Exception:
+                        pass
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    done.wait(max(0.0, deadline - time.monotonic()))
+    with lock:
+        if not done.is_set():
+            box["abandoned"] = True
+            return None
+    if "err" in box:
+        raise box["err"]
+    return box["resp"]
+
+
+def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
+                      cap_box=None):
     """直连下载计数 worker: 在 stop 前循环拉流累计字节 (urllib)。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。
     打开阶段超时按窗口剩余封顶（固定 10s 会拖过窗口），窗口后禁发新请求；
+    打开阶段另经 _open_bounded 纳入 stop 绝对截止，迟到响应由打开线程自行关闭（CONF-11.3）；
     已打开的响应登记入 registry，供 measure 在窗口尽时统一关闭。"""
     fails = 0
     while time.monotonic() < stop and fails < 3:
@@ -6286,29 +6330,51 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None):
                 break
             req = urllib.request.Request(url, headers={"User-Agent": UA_TOOL})
             _to = min(10, _rem)
-            with (opener.open(req, timeout=_to) if opener else urllib.request.urlopen(req, timeout=_to)) as r:
+            # CONF-11.3: 打开阶段纳入绝对截止（DNS 解析/多地址尝试/重定向均可超窗）：
+            # _open_bounded 在 stop 前未完成即放弃，迟到响应由打开线程自行关闭，
+            # worker 不再滞留于 open() 内；覆盖 _pinned_opener 与默认 opener 两路。
+            def _do_open():
+                if opener:
+                    return opener.open(req, timeout=_to)
+                return urllib.request.urlopen(req, timeout=_to)
+            _r = _open_bounded(_do_open, stop)
+            if _r is None:
+                break  # 打开阶段已触及窗口截止，放弃本轮
+            with _r as r:
                 _resp = r
                 if registry is not None:
                     with lock:
                         registry.add(r)
                 while time.monotonic() < stop:
-                    with lock:
-                        room = DL_CAP_BYTES - counter[0]
-                    if room <= 0:
-                        return
-                    chunk = _read_timed(r, min(32768, room),
-                                        max(0.0, stop - time.monotonic()))
-                    if chunk is None:
-                        break  # 窗口已尽，限时读未返回
-                    if not chunk:
-                        break
-                    if time.monotonic() >= stop:
-                        break  # 停滞读在 stop 后才返回时不计入窗口字节
+                    # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计；
+                    # 旧“锁外读、锁内重算”会使多流同读一室时超读且漏计。
                     with lock:
                         room = DL_CAP_BYTES - counter[0]
                         if room <= 0:
                             return
-                        counter[0] += min(len(chunk), room)
+                        _take = min(32768, room)
+                        counter[0] += _take
+                    try:
+                        chunk = _read_timed(r, _take,
+                                            max(0.0, stop - time.monotonic()))
+                    except Exception:
+                        with lock:
+                            counter[0] -= _take
+                        raise
+                    if chunk is None or not chunk:
+                        with lock:
+                            counter[0] -= _take
+                        break  # 窗口已尽未返回，或 EOF：归还预留
+                    if time.monotonic() >= stop:
+                        with lock:
+                            counter[0] -= _take
+                        break  # 停滞读在 stop 后才返回时不计入窗口字节
+                    with lock:
+                        counter[0] += min(len(chunk), _take) - _take
+                        # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
+                        if (counter[0] >= DL_CAP_BYTES and cap_box is not None
+                                and cap_box[0] is None):
+                            cap_box[0] = time.monotonic()
                     if counter[0] >= DL_CAP_BYTES:
                         return
                 _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
@@ -6329,6 +6395,7 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
     单节点下载量受 DL_CAP_BYTES 上限约束。"""
     counter, lock = [0], threading.Lock()
     registry = set()
+    cap_box = [None]  # CONF-15.1：首次触顶时间（锁内记录）
     t0 = time.monotonic()
     stop = t0 + duration
     ex = ThreadPoolExecutor(max_workers=streams)
@@ -6337,7 +6404,8 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
         # 与地址族选择脱钩；family 非 0 时 _pinned_opener 内亦已禁代理。
         _op = _pinned_opener(family) if family else urllib.request.build_opener(
             urllib.request.ProxyHandler({}))
-        futs = [ex.submit(_dl_direct_worker, url, stop, counter, lock, _op, registry)
+        futs = [ex.submit(_dl_direct_worker, url, stop, counter, lock, _op, registry,
+                      cap_box)
                 for _ in range(streams)]
         for f in futs:
             try:
@@ -6350,12 +6418,20 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
             _left = list(registry)
         for _r in _left:
             try:
+                _resp_shutdown(_r)  # CONF-11.2：先唤醒遗留读线程再 close
+            except Exception:
+                pass
+            try:
                 _r.close()
             except Exception:
                 pass
         ex.shutdown(wait=False)
-    # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
-    elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
+    # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）；
+    # CONF-15.1：已触顶时以首次触顶时间为有效终点，不按完整窗口摊薄。
+    if cap_box[0] is not None:
+        elapsed = max(0.1, cap_box[0] - t0)
+    else:
+        elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if counter[0] == 0:
         return None, 0
     return round((counter[0] * 8 / 1e6) / elapsed, 2), counter[0]
@@ -8208,7 +8284,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
 
 
 def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
-                       registry=None):
+                       registry=None, cap_box=None):
     """经代理下载计数 worker: 对指定地区端点循环拉流。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
     fails = 0
@@ -8232,25 +8308,38 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                 conn.close()
                 raise RuntimeError(f"HTTP {resp.status}")
             while time.monotonic() < stop:
-                with lock:
-                    room = DL_CAP_BYTES - counter[0]
-                if room <= 0:
-                    conn.close()
-                    return
-                chunk = _read_timed(resp, min(32768, room),
-                                    max(0.0, stop - time.monotonic()))
-                if chunk is None:
-                    break  # 窗口已尽，限时读未返回
-                if not chunk:
-                    break
-                if time.monotonic() >= stop:
-                    break  # 停滞读在 stop 后才返回时不计入窗口字节
+                # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计。
                 with lock:
                     room = DL_CAP_BYTES - counter[0]
                     if room <= 0:
-                        conn.close()
-                        return
-                    counter[0] += min(len(chunk), room)
+                        _take = 0
+                    else:
+                        _take = min(32768, room)
+                        counter[0] += _take
+                if _take <= 0:
+                    conn.close()
+                    return
+                try:
+                    chunk = _read_timed(resp, _take,
+                                        max(0.0, stop - time.monotonic()))
+                except Exception:
+                    with lock:
+                        counter[0] -= _take
+                    raise
+                if chunk is None or not chunk:
+                    with lock:
+                        counter[0] -= _take
+                    break  # 窗口已尽未返回，或 EOF：归还预留
+                if time.monotonic() >= stop:
+                    with lock:
+                        counter[0] -= _take
+                    break  # 停滞读在 stop 后才返回时不计入窗口字节
+                with lock:
+                    counter[0] += min(len(chunk), _take) - _take
+                    # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
+                    if (counter[0] >= DL_CAP_BYTES and cap_box is not None
+                            and cap_box[0] is None):
+                        cap_box[0] = time.monotonic()
                 if counter[0] >= DL_CAP_BYTES:
                     conn.close()
                     return
@@ -8277,12 +8366,13 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
     """经 SOCKS5 对单个端点多连接下载测速, 返回 Mbps 或 None。"""
     counter, lock = [0], threading.Lock()
     registry = set()
+    cap_box = [None]  # CONF-15.1：首次触顶时间（锁内记录）
     t0 = time.monotonic()
     stop = t0 + duration
     ex = ThreadPoolExecutor(max_workers=streams)
     try:
         futs = [ex.submit(_dl_proxy_worker, ph, pp, user, pwd, host, path,
-                          stop, counter, lock, registry)
+                          stop, counter, lock, registry, cap_box)
                 for _ in range(streams)]
         for f in futs:
             try:
@@ -8295,12 +8385,20 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
             _left = list(registry)
         for _r in _left:
             try:
+                _resp_shutdown(_r)  # CONF-11.2：先唤醒遗留读线程再 close
+            except Exception:
+                pass
+            try:
                 _r.close()
             except Exception:
                 pass
         ex.shutdown(wait=False)
-    # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）
-    elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
+    # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）；
+    # CONF-15.1：已触顶时以首次触顶时间为有效终点，不按完整窗口摊薄。
+    if cap_box[0] is not None:
+        elapsed = max(0.1, cap_box[0] - t0)
+    else:
+        elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if counter[0] == 0:
         return None
     return round((counter[0] * 8 / 1e6) / elapsed, 2)
