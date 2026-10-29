@@ -8285,7 +8285,7 @@ def proxy_speed_regions(ph, pp, username=None, password=None, duration=4,
         rows.append(row)
         if on_result:
             on_result(row)
-    ok = [r for r in rows if r["down_mbps"]]
+    ok = [r for r in rows if r["down_mbps"] is not None]
     best = max(ok, key=lambda r: r["down_mbps"]) if ok else None
     return rows, best
 
@@ -8907,7 +8907,7 @@ def _banner_net_info():
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
             _ip6 = ipaddress.IPv6Address(_cand)
-            if _ip6.is_global:
+            if _ip6.is_global and not _ip6.is_multicast:
                 _v6addr = str(_ip6)
                 break
         except Exception:
@@ -8932,7 +8932,7 @@ def _banner_net_info():
                         raise TimeoutError("banner v6 read deadline")
                     _cand = raw.decode("utf-8", errors="replace").strip()
                 _ip6 = ipaddress.IPv6Address(_cand)
-                if _ip6.is_global:
+                if _ip6.is_global and not _ip6.is_multicast:
                     _v6addr = str(_ip6)
                     break
             except Exception:
@@ -9067,7 +9067,10 @@ def _parse_version(v):
     for piece in str(v).strip().split("."):
         if not piece.isascii() or not piece.isdigit():
             return None
-        parts.append(int(piece))
+        try:
+            parts.append(int(piece))
+        except ValueError:
+            return None
     return tuple(parts) if parts else None
 
 
@@ -9081,6 +9084,8 @@ def check_update():
             tag = json.loads(_read_limited(r, timeout=8).decode(
                 "utf-8")).get("tag_name", "")
     except Exception:
+        tag = ""
+    if not isinstance(tag, str):
         tag = ""
     latest = tag.lstrip("v")
     if not latest:
