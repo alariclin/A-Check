@@ -4217,8 +4217,11 @@ def run_passive(ip):
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
-                _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                         .get("address") or {})
+                try:
+                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
+                             .get("address") or {})
+                finally:
+                    _resp_shutdown(_rp)
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -5161,6 +5164,7 @@ def run_passive6(ip):
     avail = [p for p in PROVIDERS if p.key in V6_PROVIDER_KEYS and p.available()]
     total_p = len(avail)
     done_cnt = [0]
+    progress_closed = [False]  # 采集超时后迟到进度不再打印（与 run_passive 同口径）
 
     def _query_one(p):
         try:
@@ -5170,14 +5174,30 @@ def run_passive6(ip):
         try:
             with _progress_lock:
                 done_cnt[0] += 1
-                _render_progress_locked(done_cnt[0], total_p, p.name)
+                if not progress_closed[0]:
+                    _render_progress_locked(done_cnt[0], total_p, p.name)
         except Exception:
             pass
         return p.key, res
 
-    with ThreadPoolExecutor(max_workers=10) as ex:
-        for k, v in ex.map(_query_one, avail):
-            sources[k] = v
+    _ex = ThreadPoolExecutor(max_workers=10)
+    try:
+        _futs = {_ex.submit(_query_one, p): p for p in avail}
+        try:
+            for _f in as_completed(_futs, timeout=30):
+                _k, _v = _f.result()
+                sources[_k] = _v
+        except _CFTimeoutError:
+            with _progress_lock:
+                progress_closed[0] = True
+        for _f, _p in _futs.items():
+            if _p.key not in sources:
+                sources[_p.key] = {"ok": False, "err": "timeout"}
+                _f.cancel()
+    finally:
+        with _progress_lock:
+            progress_closed[0] = True
+        _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
         print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
@@ -5195,8 +5215,11 @@ def run_passive6(ip):
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
             with urllib.request.urlopen(_rq, timeout=4) as _rp:
-                _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                         .get("address") or {})
+                try:
+                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
+                             .get("address") or {})
+                finally:
+                    _resp_shutdown(_rp)
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -6015,7 +6038,9 @@ def test_primevideo(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://www.primevideo.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
@@ -6184,7 +6209,9 @@ def test_line(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://www.line.me/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -6230,7 +6257,9 @@ def test_deepseek(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://www.deepseek.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -6244,7 +6273,9 @@ def test_appletv(local_ip=None):
     code, body, _, _complete, hdrs = _active_get("https://tv.apple.com/")
     if code is None:
         return T("failed"), "", None
-    if _is_challenge(code, body):
+    if _is_challenge(code, body, hdrs):
+        return T("unknown"), "", None
+    if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -6419,42 +6450,44 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                 break  # 打开阶段已触及窗口截止，放弃本轮
             with _r as r:
                 _resp = r
-                if registry is not None:
-                    with lock:
-                        registry.add(r)
-                while time.monotonic() < stop:
-                    # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计；
-                    # 旧“锁外读、锁内重算”会使多流同读一室时超读且漏计。
-                    with lock:
-                        room = DL_CAP_BYTES - counter[0]
-                        if room <= 0:
+                try:
+                    if registry is not None:
+                        with lock:
+                            registry.add(r)
+                    while time.monotonic() < stop:
+                        # CONF-11.4: 锁内预留额度再读，读完归还未用部分并按实读累计；
+                        # 旧“锁外读、锁内重算”会使多流同读一室时超读且漏计。
+                        with lock:
+                            room = DL_CAP_BYTES - counter[0]
+                            if room <= 0:
+                                return
+                            _take = min(32768, room)
+                            counter[0] += _take
+                        try:
+                            chunk = _read_timed(r, _take,
+                                                max(0.0, stop - time.monotonic()))
+                        except Exception:
+                            with lock:
+                                counter[0] -= _take
+                            raise
+                        if chunk is None or not chunk:
+                            with lock:
+                                counter[0] -= _take
+                            break  # 窗口已尽未返回，或 EOF：归还预留
+                        if time.monotonic() >= stop:
+                            with lock:
+                                counter[0] -= _take
+                            break  # 停滞读在 stop 后才返回时不计入窗口字节
+                        with lock:
+                            counter[0] += min(len(chunk), _take) - _take
+                            # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
+                            if (counter[0] >= DL_CAP_BYTES and cap_box is not None
+                                    and cap_box[0] is None):
+                                cap_box[0] = time.monotonic()
+                        if counter[0] >= DL_CAP_BYTES:
                             return
-                        _take = min(32768, room)
-                        counter[0] += _take
-                    try:
-                        chunk = _read_timed(r, _take,
-                                            max(0.0, stop - time.monotonic()))
-                    except Exception:
-                        with lock:
-                            counter[0] -= _take
-                        raise
-                    if chunk is None or not chunk:
-                        with lock:
-                            counter[0] -= _take
-                        break  # 窗口已尽未返回，或 EOF：归还预留
-                    if time.monotonic() >= stop:
-                        with lock:
-                            counter[0] -= _take
-                        break  # 停滞读在 stop 后才返回时不计入窗口字节
-                    with lock:
-                        counter[0] += min(len(chunk), _take) - _take
-                        # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
-                        if (counter[0] >= DL_CAP_BYTES and cap_box is not None
-                                and cap_box[0] is None):
-                            cap_box[0] = time.monotonic()
-                    if counter[0] >= DL_CAP_BYTES:
-                        return
-                _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
+                finally:
+                    _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
             if registry is not None and _resp is not None:
                 with lock:
                     registry.discard(_resp)
@@ -6783,7 +6816,10 @@ def test_dns_servers(timeout=3):
                 headers={"Accept": "application/dns-message", "User-Agent": UA_BROWSER},
             )
             with _pinned_opener(4).open(rq, timeout=timeout + 2) as rp:
-                d = _read_limited(rp, timeout=timeout + 2)
+                try:
+                    d = _read_limited(rp, timeout=timeout + 2)
+                finally:
+                    _resp_shutdown(rp)
             rtt = round((time.monotonic() - t0) * 1000, 1)
             if _dns_test_ok(d, tid, pkt):
                 return {"name": name, "ip": url, "proto": "DoH", "ok": True, "rtt_ms": rtt}
@@ -7925,6 +7961,8 @@ def _run_streaming_table_impl(egress, json_mode=False):
     def _st(s):
         if s == T("unlocked"):
             return _c(C.green, _pad(s, 11))
+        if s == T("reachable"):
+            return _c(C.cyan, _pad(s, 11))
         if s == T("blocked"):
             return _c(C.red, _pad(s, 11))
         return _c(C.dim, _pad(s, 11))
@@ -8257,19 +8295,19 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
     try:
         s.settimeout(timeout)
         # 1. 问候
-        s.sendall(b"\x05\x02\x00\x02" if (username and password)
+        s.sendall(b"\x05\x02\x00\x02" if username is not None
                   else b"\x05\x01\x00")
         ver, method = _sock_readn(s, 2)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
-        offered = (0x00, 0x02) if (username and password) else (0x00,)
+        offered = (0x00, 0x02) if username is not None else (0x00,)
         if method == 0xFF:
             raise OSError("proxy rejected all auth methods")
         if method not in offered:
             raise OSError("server selected unoffered auth method %#04x" % method)
         # 2. 用户名/密码认证 (RFC 1929)
         if method == 0x02:
-            u, p = username.encode(), password.encode()
+            u, p = username.encode(), (password or "").encode()
             if len(u) > 255 or len(p) > 255:
                 raise OSError("username/password too long for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
@@ -8295,8 +8333,7 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                     # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
                     # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP（单地址尝试，
                     # 多地址重试须重建 SOCKS 会话，不在此展开）。
-                    _infos = socket.getaddrinfo(dh, dp, socket.AF_UNSPEC,
-                                                socket.SOCK_STREAM)
+                    _infos = _getaddrinfo_timed(dh, dp, timeout=timeout)
                     if not _infos:
                         raise OSError("DNS resolution failed: %s" % dh)
                     _fam0, _, _, _, _sa0 = _infos[0]
@@ -8879,6 +8916,8 @@ def _parse_node_line(line):
         else:
             host, _p = rest.rsplit(":", 1)
             port = int(_p)
+            if ":" in host:
+                return None  # 裸 IPv6 须用 [v6]:port，rsplit 误切拒绝
     except Exception:
         return None
     if not host or not (0 < port < 65536):
@@ -9232,10 +9271,13 @@ def _banner_net_info():
                 if r is None:
                     raise TimeoutError("banner geo open deadline")
                 with r:
-                    raw = _read_timed(r, 8192, _rem())
-                    if raw is None:
-                        raise TimeoutError("banner geo read deadline")
-                    d = json.loads(raw.decode("utf-8", errors="replace"))
+                    try:
+                        raw = _read_timed(r, 8192, _rem())
+                        if raw is None:
+                            raise TimeoutError("banner geo read deadline")
+                        d = json.loads(raw.decode("utf-8", errors="replace"))
+                    finally:
+                        _resp_shutdown(r)
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
                 org = (d.get("org") or d.get("isp") or "").strip()
@@ -9258,11 +9300,14 @@ def _banner_net_info():
                     if r is None:
                         raise TimeoutError("banner geo open deadline")
                     with r:
-                        raw = _read_timed(r, 8192, _rem())
-                        if raw is None:
-                            raise TimeoutError("banner geo read deadline")
-                        d = json.loads(raw.decode("utf-8",
-                                                  errors="replace"))
+                        try:
+                            raw = _read_timed(r, 8192, _rem())
+                            if raw is None:
+                                raise TimeoutError("banner geo read deadline")
+                            d = json.loads(raw.decode("utf-8",
+                                                      errors="replace"))
+                        finally:
+                            _resp_shutdown(r)
                     conn = d.get("connection") or {}
                     org = (conn.get("org") or conn.get("isp") or "").strip()
                     parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
@@ -9305,10 +9350,13 @@ def _banner_net_info():
                     continue
                 req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
                 with _no_proxy.open(req, timeout=min(3, _rem())) as r:
-                    raw = _read_timed(r, 128, _rem())
-                    if raw is None:
-                        raise TimeoutError("banner v6 read deadline")
-                    _cand = raw.decode("utf-8", errors="replace").strip()
+                    try:
+                        raw = _read_timed(r, 128, _rem())
+                        if raw is None:
+                            raise TimeoutError("banner v6 read deadline")
+                        _cand = raw.decode("utf-8", errors="replace").strip()
+                    finally:
+                        _resp_shutdown(r)
                 _ip6 = ipaddress.IPv6Address(_cand)
                 if _ip6.is_global and not _ip6.is_multicast:
                     _v6addr = str(_ip6)
@@ -9459,8 +9507,11 @@ def check_update():
             "https://api.github.com/repos/alariclin/A-Check/releases/latest",
             headers={"User-Agent": "acheck/%s" % VERSION})
         with urllib.request.urlopen(req, timeout=8) as r:
-            tag = json.loads(_read_limited(r, timeout=8).decode(
-                "utf-8")).get("tag_name", "")
+            try:
+                tag = json.loads(_read_limited(r, timeout=8).decode(
+                    "utf-8")).get("tag_name", "")
+            finally:
+                _resp_shutdown(r)
     except Exception:
         tag = ""
     if not isinstance(tag, str):
@@ -9537,6 +9588,10 @@ def run_tcpping_only():
             else:
                 th, tp_ = tinp.rsplit(":", 1)
                 tp_ = int(tp_)
+                if ":" in th:
+                    raise ValueError("bare IPv6 needs brackets")
+            if not th or not (0 < tp_ < 65536):
+                raise ValueError("bad host/port")
         except Exception:
             print(T("invalid_input"))
             continue
@@ -9884,6 +9939,10 @@ def main():
             else:
                 _ph, _pt = _pp.rsplit(":", 1)
                 _pt = int(_pt)
+                if ":" in _ph:
+                    raise ValueError("bare IPv6 needs brackets")
+            if not _ph or not (0 < _pt < 65536):
+                raise ValueError("bad host/port")
         except Exception:
             print(json.dumps({"error": "invalid --proxy format, want HOST:PORT"},
                              ensure_ascii=False) if ns.json
@@ -10045,6 +10104,8 @@ def main():
                             pport = int(_pp)
                         else:
                             raise ValueError("bad format")
+                        if not phost or not (0 < pport < 65536):
+                            raise ValueError("bad host/port")
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
