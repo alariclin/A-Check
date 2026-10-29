@@ -4239,6 +4239,11 @@ def _verdict_label(combined, core_ok, completeness, malicious_listed):
     return T("verdict_high")
 
 
+_POOL_LOCK = threading.Lock()
+_V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不停运行中任务会累积线程
+_V6_POOL = None  # run_passive6 同上
+
+
 def run_passive(ip):
     ip_s = str(ip)
     sources = {}
@@ -4261,7 +4266,12 @@ def run_passive(ip):
             pass
         return p.key, res
 
-    _ex = ThreadPoolExecutor(max_workers=14)
+    global _V4_POOL
+    if _V4_POOL is None:
+        with _POOL_LOCK:
+            if _V4_POOL is None:
+                _V4_POOL = ThreadPoolExecutor(max_workers=14)
+    _ex = _V4_POOL
     try:
         _futs = {_ex.submit(_query_one, p): p for p in avail_providers}
         try:
@@ -4278,7 +4288,7 @@ def run_passive(ip):
     finally:
         with _progress_lock:
             progress_closed[0] = True
-        _ex.shutdown(wait=False)
+        # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
     if "--json" not in sys.argv:
         with _progress_lock:
@@ -5322,7 +5332,12 @@ def run_passive6(ip):
             pass
         return p.key, res
 
-    _ex = ThreadPoolExecutor(max_workers=10)
+    global _V6_POOL
+    if _V6_POOL is None:
+        with _POOL_LOCK:
+            if _V6_POOL is None:
+                _V6_POOL = ThreadPoolExecutor(max_workers=10)
+    _ex = _V6_POOL
     try:
         _futs = {_ex.submit(_query_one, p): p for p in avail}
         try:
@@ -5339,7 +5354,7 @@ def run_passive6(ip):
     finally:
         with _progress_lock:
             progress_closed[0] = True
-        _ex.shutdown(wait=False)
+        # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
     if "--json" not in sys.argv:
         with _progress_lock:
@@ -5896,15 +5911,19 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
 
 
 def _pinned_connect(conn, family):
-    # 透传连接超时（None 时守默认 5 秒：_getaddrinfo_timed 的 join 算术不接受 None）
-    infos = _getaddrinfo_timed(conn.host, conn.port, family,
-                               timeout=conn.timeout if conn.timeout is not None else 5)
+    # 透传连接超时（None 与 socket 默认哨兵均守默认 5 秒：
+    # _getaddrinfo_timed 的 join 算术与 settimeout 均不接受非数值超时；
+    # 哨兵经 getattr 取：私有属性，桩模块可能缺失，缺失时仅 None 归默认）
+    _to = conn.timeout
+    if _to is None or _to is getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None):
+        _to = 5
+    infos = _getaddrinfo_timed(conn.host, conn.port, family, timeout=_to)
     last = None
     for af, _st, _proto, _nm, sa in infos:
         _s = None
         try:
             _s = socket.socket(af, socket.SOCK_STREAM)
-            _s.settimeout(conn.timeout)
+            _s.settimeout(_to)
             _s.connect(sa)
             conn.sock = _s
             break
