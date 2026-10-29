@@ -1932,6 +1932,11 @@ def _get_system_nameservers():
     return ns or ["1.1.1.1", "8.8.8.8"]
 
 
+# Null MX 标记：域名明确声明不收邮件时置位（_dns_query_udp 的 MX 支），
+# 显示层据此给出“不收邮件”说明；mx_results 本身保持 bool/None，JSON 结构不变。
+_MX_NULL = {}
+
+
 def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames=False):
     """
     发送标准 UDP 53 查询并解析返回记录:
@@ -2043,6 +2048,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     results = []
     _target_failed = False
+    _null_mx = False
     for _okey, _rt, _rc, _rd, _off in records:
         if _rc != 1 or _okey not in allowed_owners:
             continue
@@ -2061,6 +2067,12 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             if len(_rd) < 3:
                 _target_failed = True
                 continue
+            if len(_rd) == 3 and _rd[2] == 0:
+                # Null MX：RDATA 仅偏好值 + 根标签——明确不收邮件，不是查询失败，
+                # 不置 _target_failed、不 append；混有真实 MX 时以真实记录为准
+                # （文末仅当 results 为空才置标记）。
+                _null_mx = True
+                continue
             pref = struct.unpack(">H", _rd[:2])[0]
             mx_host, mend = _decode_dns_name(data, _off + 2)
             if mx_host and mend - (_off + 2) <= len(_rd) - 2:
@@ -2070,6 +2082,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     if _target_failed:
         return (None, []) if return_cnames else None
 
+    if qtype == 15 and _null_mx and not results:
+        _MX_NULL[domain] = True
     if qtype == 15:
         results.sort(key=lambda x: x[0])
         results = [h for _, h in results]
@@ -2536,9 +2550,10 @@ def _loc_region(text):
         return text
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
-        for (n, _ctx), v in _GEO_EXTRA["region"].items():
-            if n == t:
-                return v
+        _matches = [v for (n, _ctx), v in _GEO_EXTRA["region"].items() if n == t]
+        if len(_matches) == 1:
+            return _matches[0]
+        # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
     if en:
         return _REGION_L10N.get(LANG, {}).get(en, text)
@@ -2557,9 +2572,10 @@ def _loc_city(text):
         cands.append(folded)
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
-            for (n, _ctx), v in _GEO_EXTRA["city"].items():
-                if n == cand:
-                    return v
+            _matches = [v for (n, _ctx), v in _GEO_EXTRA["city"].items() if n == cand]
+            if len(_matches) == 1:
+                return _matches[0]
+            # 多候选：不盲取首项，退静态表/原文（落到下行静态查表）
         en = _ANY_CITY2EN.get(cand)
         if en:
             return _CITY_L10N.get(LANG, {}).get(en, text)
@@ -2586,13 +2602,17 @@ def _loc_sub_in(disp, any2en, table):
             if idx < 0:
                 continue
             start, end = idx, idx + len(variant)
+        # 不可译候选（无静态表项，或译文等于自身即已本地化名）不得遮蔽
+        # 其余可译名：选 best 时直接跳过，取最长可译项。
+        loc = table.get(LANG, {}).get(en)
+        if not loc or loc == variant:
+            continue
         if best is None or len(variant) > len(best[0]):
             best = (variant, en)
             best_start, best_end = start, end
     if best:
         loc = table.get(LANG, {}).get(best[1])
-        if loc and loc != best[0]:
-            return disp[:best_start] + loc + disp[best_end:]
+        return disp[:best_start] + loc + disp[best_end:]
     return disp
 
 
@@ -2798,12 +2818,17 @@ class ProxyCheck(Provider):
             d = root[str(ip)]
             if not isinstance(d, dict) or not d:
                 return {"ok": False, "err": "empty ip object"}
+            try:
+                _risk = int(d["risk"]) if d.get("risk") is not None else None
+            except (TypeError, ValueError):
+                _risk = None
             return {
                 "ok": True,
                 "proxy": d.get("proxy", "") == "yes",
                 "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
                 "type": d.get("type", ""),
-                "risk": (int(d["risk"]) if d.get("risk") is not None else None),
+                "tor": d.get("tor", "") == "yes",
+                "risk": _risk,
                 "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
                 "range": d.get("range", ""),
@@ -2828,6 +2853,8 @@ class DBIP(Provider):
             d = json.loads(raw)
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
+            if not d.get("countryName"):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "country": d.get("countryName") or "",
@@ -2859,6 +2886,8 @@ class FreeIPAPI(Provider):
                 asn_val = str(raw_asn)
             else:
                 asn_val = ""
+            if not d.get("countryName"):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "proxy": d.get("isProxy"),
@@ -3034,6 +3063,8 @@ class IPApiIs(Provider):
             d = json.loads(raw)
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
+            if not d.get("country"):
+                return {"ok": False, "err": "empty country"}
             asn_raw = str(d.get("asn") or "").strip()
             company = d.get("company") or ""
             if not isinstance(company, str):
@@ -3071,6 +3102,8 @@ class IPGuide(Provider):
             net = d.get("network") or {}
             asys = net.get("autonomous_system") or {}
             loc = d.get("location") or {}
+            if not (d.get("location") or {}).get("country"):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "isp": asys.get("organization") or asys.get("name") or "",
@@ -3105,6 +3138,8 @@ class GeoJS(Provider):
             d = json.loads(raw)
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
+            if not d.get("country"):
+                return {"ok": False, "err": "empty country"}
 
             def _f(v):
                 try:
@@ -4707,13 +4742,13 @@ def _print_basic_block(s, prof):
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
     locs = []
-    if wi.get("ok"):
+    if wi.get("ok") and (wi.get("country") or wi.get("city")):
         locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
                      wi.get("country"), wi.get("city")))
     if ii.get("ok") and (ii.get("country") or ii.get("city")):
         locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
                      ii.get("country"), ii.get("city")))
-    if db.get("ok"):
+    if db.get("ok") and (db.get("country") or db.get("city")):
         locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
                      db.get("country"), db.get("city")))
     if pc.get("ok") and (pc.get("country") or pc.get("city")):
@@ -4843,7 +4878,7 @@ def _print_basic_block(s, prof):
                 _mid = _mid[:-len(ci)].strip()
             k = (_norm(co, True), _norm(_mid), _norm(ci))
             if k not in _groups:
-                _groups[k] = (loc, [])
+                _groups[k] = (loc, [], co, _mid, ci)
                 _order.append(k)
             _groups[k][1].append(name)
         _order.sort(key=lambda k: -len(_groups[k][1]))
@@ -4886,9 +4921,14 @@ def _print_basic_block(s, prof):
         if locs:
             _lbl = T("sec_loc")
             for k in _order:
-                _loc, _names = _groups[k]
+                _loc, _names, _f_co, _f_mid, _f_ci = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_loc_sub_in(_loc_sub_in(_loc_display(_loc), _ANY_REGION2EN, _REGION_L10N), _ANY_CITY2EN, _CITY_L10N), 'region'), 'city')}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                # F3-C 分字段翻译：region/city 按字段各自翻译后再拼串，
+                # 不再对整串做 region 轮→city 轮替换（Victoria 类城市名
+                # 不再被 region 表误译为州名）。
+                _disp = _join_nonempty(_loc_country_name(_f_co),
+                                       _loc_region(_f_mid), _loc_city(_f_ci))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_disp, 'region'), 'city')}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -5245,7 +5285,8 @@ def run_passive6(ip):
         _ex.shutdown(wait=False)
 
     if "--json" not in sys.argv:
-        print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+        with _progress_lock:
+            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
@@ -5278,6 +5319,19 @@ def run_passive6(ip):
     p_pts, p_ev = score_platform(sources)
     combined6 = round(t_pts * 0.4 + f_pts * 0.3 + r_pts * 0.15 + p_pts * 0.15)
 
+    # 与 run_passive 同口径：核心源权重 + 置信度 + 综合 verdict；
+    # v6 排除 feodo/et（仅 IPv4 名单），恶意名单事实只取 spamhaus。
+    _core_checks6 = [
+        bool(sources.get("ipwhois", {}).get("ok") or sources.get("ipinfo", {}).get("ok")),
+        bool(sources.get("scamalytics", {}).get("ok")),
+        bool(sources.get("proxycheck", {}).get("ok")),
+        bool(sources.get("ripestat", {}).get("ok")),
+    ]
+    _core_ok6 = sum(1 for c_ok in _core_checks6 if c_ok)
+    _confidence6 = min(100, int(round(completeness * 0.7 + (_core_ok6 / len(_core_checks6)) * 30)))
+    _malicious6 = bool(sources.get("spamhaus", {}).get("ok") and sources.get("spamhaus", {}).get("listed"))
+    _verdict6 = _verdict_label(combined6, _core_ok6, completeness, _malicious6)
+
     return {
         "ip": ip_s,
         "ipv6": True,
@@ -5295,7 +5349,9 @@ def run_passive6(ip):
             "ok": ok_count,
             "total": total,
             "failed": failed,
+            "confidence": _confidence6,
         },
+        "verdict": _verdict6,
         "ts": now_iso(),
     }
 
@@ -5783,7 +5839,9 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
 
 
 def _pinned_connect(conn, family):
-    infos = _getaddrinfo_timed(conn.host, conn.port, family)
+    # 透传连接超时（None 时守默认 5 秒：_getaddrinfo_timed 的 join 算术不接受 None）
+    infos = _getaddrinfo_timed(conn.host, conn.port, family,
+                               timeout=conn.timeout if conn.timeout is not None else 5)
     last = None
     for af, _st, _proto, _nm, sa in infos:
         _s = None
@@ -5804,7 +5862,15 @@ def _pinned_connect(conn, family):
     if conn.sock is None:
         raise last if last is not None else OSError("no usable address")
     if conn._tunnel_host:
-        conn._tunnel()
+        try:
+            conn._tunnel()
+        except Exception:
+            try:
+                conn.sock.close()
+            except Exception:
+                pass
+            conn.sock = None
+            raise
 
 
 def _pinned_opener(family, follow_redirects=True):
@@ -5819,8 +5885,17 @@ def _pinned_opener(family, follow_redirects=True):
     class _HSC(http.client.HTTPSConnection):
         def connect(self):
             _pinned_connect(self, fam)
-            self.sock = self._context.wrap_socket(
-                self.sock, server_hostname=self._tunnel_host or self.host)
+            try:
+                self.sock = self._context.wrap_socket(
+                    self.sock, server_hostname=self._tunnel_host or self.host)
+            except Exception:
+                # 对照 _SocksHTTPS：wrap 失败时关原 TCP socket 后重抛
+                try:
+                    self.sock.close()
+                except Exception:
+                    pass
+                self.sock = None
+                raise
 
     class _HH(urllib.request.HTTPHandler):
         def http_open(self, req):
@@ -6050,7 +6125,7 @@ def test_netflix(local_ip=None):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
-        orig_tag = _L("自制?", "Orig?", "オリジナル?", "Оригинал?", "اصلی?")
+        orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     _ft = _http_fallthrough(code2)
@@ -6125,12 +6200,16 @@ def test_chatgpt(local_ip=None):
         return T("unknown"), "", None
     if code is None:
         return T("failed"), "", None
-    loc = ""
-    if code == 200 and "loc=" in body:
-        m = re.search(r"loc=([A-Z]{2})", body)
-        loc = m.group(1) if m else ""
-        if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
-            return T("blocked"), f"[{loc}]", None
+    # 首探针门：非 200、截断、无 loc=、loc 无有效码一律 unknown，绝不进次探针；
+    # code is None 在上游已返 failed，不与 unknown 混淆。
+    if code != 200 or not _complete or "loc=" not in body:
+        return T("unknown"), "", None
+    m = re.search(r"loc=([A-Z]{2})", body)
+    if not m:
+        return T("unknown"), "", None
+    loc = m.group(1)
+    if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
+        return T("blocked"), f"[{loc}]", None
     api_code, api_body, _, _api_complete, api_hdrs = _active_get("https://api.openai.com/v1/models")
     if _is_challenge(api_code, api_body, api_hdrs):
         return T("unknown"), "", None
@@ -6332,7 +6411,7 @@ def test_appletv(local_ip=None):
     return T("blocked"), "", None
 
 
-def check_mail_port25():
+def check_mail_port25(family=socket.AF_UNSPEC):
     """连接真实监听 25 端口的权威 MX 服务器，而非 Web A 记录。"""
     targets = [
         ("gmail-smtp-in.l.google.com", 25),
@@ -6340,21 +6419,21 @@ def check_mail_port25():
     ]
     for host, port in targets:
         try:
-            _connect_host(host, port, 4).close()
+            _connect_host(host, port, 4, family).close()
             return True
         except Exception:
             continue
     return False
 
 
-def check_mx_port25(domain, timeout=4):
+def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
     """纯 Python 查询域名 MX 记录并测试 25 端口连通性 (无需 nslookup)。"""
     try:
         sys_ns = _get_system_nameservers()[0]
         mxs = _dns_query_udp(domain, qtype=15, server=sys_ns, timeout=2.5)
-        if not mxs:
+        if mxs is None:
             mxs = _dns_query_udp(domain, qtype=15, server="1.1.1.1", timeout=2.5)
-        if not mxs:
+        if mxs is None:
             default_mx = {
                 "gmail.com": ["gmail-smtp-in.l.google.com"],
                 "outlook.com": ["outlook-com.olc.protection.outlook.com"],
@@ -6363,7 +6442,7 @@ def check_mx_port25(domain, timeout=4):
             mxs = default_mx.get(domain, [domain])
         for mx in mxs[:2]:
             try:
-                _connect_host(mx.rstrip("."), 25, timeout).close()
+                _connect_host(mx.rstrip("."), 25, timeout, family).close()
                 return True
             except Exception:
                 continue
@@ -6776,10 +6855,11 @@ def _udp_recv_from(sock, ip, timeout, tid=None):
             return d
 
 
-def _connect_host(host, port, timeout):
+def _connect_host(host, port, timeout, family=socket.AF_UNSPEC):
     """经限时解析后连接：解析走 _getaddrinfo_timed（受 timeout 约束），
-    再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。"""
-    infos = _getaddrinfo_timed(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM,
+    再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。
+    family 钉地址族（默认 AF_UNSPEC 不变；邮件检测按当前栈传）。"""
+    infos = _getaddrinfo_timed(host, port, family, socket.SOCK_STREAM,
                                timeout=timeout)
     if not infos:
         raise OSError("DNS resolution failed: %s" % host)
@@ -7571,7 +7651,8 @@ def get_system_info():
                     if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google")):
                         virt = vm_label
                     else:
-                        virt = "?"
+                        # 与 macOS/Linux 对齐：探测成功且无虚拟化信号 → 物理机
+                        virt = T("virt_phys")
             # 全败或输出无效时 virt 保持 "?"（探测失败 ≠ 确认物理机）
         elif sys.platform == "darwin":
             out = subprocess.run(
@@ -8075,8 +8156,8 @@ def _run_active6(json_mode, egress6):
     io6 = disk_io_test()
     mx_domains6 = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25_6 = ex.submit(check_mail_port25)
-        f_mxs_6 = [ex.submit(check_mx_port25, dom) for _, dom in mx_domains6]
+        f_p25_6 = ex.submit(check_mail_port25, family=socket.AF_INET6)
+        f_mxs_6 = [ex.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
         p25_6 = f_p25_6.result()
         mx6_results = [f.result() for f in f_mxs_6]
     dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
@@ -8201,9 +8282,10 @@ def run_active(json_mode=False, stack=None):
     else:
         dns_res = test_dns_servers()
     mx_domains = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
+    _mail_family = socket.AF_INET if stack == "4" else socket.AF_UNSPEC
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25 = ex.submit(check_mail_port25)
-        f_mxs = [ex.submit(check_mx_port25, dom) for _, dom in mx_domains]
+        f_p25 = ex.submit(check_mail_port25, family=_mail_family)
+        f_mxs = [ex.submit(check_mx_port25, dom, family=_mail_family) for _, dom in mx_domains]
         p25 = f_p25.result()
         mx_results = [f.result() for f in f_mxs]
 
@@ -8230,6 +8312,9 @@ def run_active(json_mode=False, stack=None):
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx_ok}/{mx_total}')}")
+        for _mx_name, _mx_dom in mx_domains:
+            if _MX_NULL.get(_mx_dom):
+                print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name + ')')}")
 
         _dnsbl_lbl = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
         _eff = _c(C.cyan, str(total))
@@ -9354,7 +9439,8 @@ def _banner_net_info():
     def _rem():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False}
+            "ipv6_verified": False, "dns_ok": False,
+            "geo_country": "", "geo_city": "", "geo_net": "", "geo_org": ""}
     if _rem() > 0:
         try:
             info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
@@ -9390,14 +9476,16 @@ def _banner_net_info():
                 if d.get("status") != "success":
                     raise ValueError("ip-api fail")
                 org = (d.get("org") or d.get("isp") or "").strip()
-                parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
+                # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
+                info["geo_country"] = d.get("country") or ""
+                info["geo_city"] = d.get("city") or ""
                 if d.get("hosting") or is_datacenter_heuristic(org, org)[0]:
-                    parts.append(T("dc"))
+                    info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
-                    parts.append(T("residential"))
-                if org:
-                    parts.append(org)
-                info["geo"] = " · ".join(p for p in parts if p)
+                    info["geo_net"] = "residential"
+                else:
+                    info["geo_net"] = ""
+                info["geo_org"] = org
             except Exception:
                 try:
                     if _rem() <= 0:
@@ -9419,14 +9507,15 @@ def _banner_net_info():
                             _resp_shutdown(r)
                     conn = d.get("connection") or {}
                     org = (conn.get("org") or conn.get("isp") or "").strip()
-                    parts = [_loc_country_name(d.get("country") or ""), d.get("city") or ""]
+                    info["geo_country"] = d.get("country") or ""
+                    info["geo_city"] = d.get("city") or ""
                     if is_datacenter_heuristic(org, org)[0]:
-                        parts.append(T("dc"))
+                        info["geo_net"] = "dc"
                     elif is_residential_isp(org, org):
-                        parts.append(T("residential"))
-                    if org:
-                        parts.append(org)
-                    info["geo"] = " · ".join(p for p in parts if p)
+                        info["geo_net"] = "residential"
+                    else:
+                        info["geo_net"] = ""
+                    info["geo_org"] = org
                 except Exception:
                     pass
     except Exception:
@@ -9497,6 +9586,21 @@ def _banner_net_info():
     return info
 
 
+def _banner_geo_text(net):
+    """横幅地理行渲染时本地化：缓存只存原始字段，文本按当前 LANG 即时拼出；
+    切语言无需失效缓存、无需重起线程（#24，不走 started 回退）。"""
+    if "geo_country" in net or "geo_city" in net:
+        parts = [_loc_country_name(net.get("geo_country") or ""), net.get("geo_city") or ""]
+        if net.get("geo_net") == "dc":
+            parts.append(T("dc"))
+        elif net.get("geo_net") == "residential":
+            parts.append(T("residential"))
+        if net.get("geo_org"):
+            parts.append(net["geo_org"])
+        return " · ".join(p for p in parts if p)
+    return net.get("geo", "")
+
+
 def _banner_net_info_async():
     """横幅网络信息（菜单先显示）：缓存命中即返回；未命中则起后台守护线程填充，
     本次先返回占位（网络行显示未测），下次横幅即见缓存。"""
@@ -9555,8 +9659,9 @@ def print_banner():
                              T("sys_disk"), si.get("disk", "?")))))
     # 网络行
     if net["egress"]:
+        _geo_txt = _banner_geo_text(net)
         v4 = "%s %s" % (_c(C.green, "●"),
-                        _white(net["egress"] + ((" " + net["geo"]) if net["geo"] else "")))
+                        _white(net["egress"] + ((" " + _geo_txt) if _geo_txt else "")))
     else:
         v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
