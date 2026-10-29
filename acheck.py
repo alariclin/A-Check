@@ -2250,8 +2250,15 @@ class RIPEstat(Provider):
                                 if st and (earliest is None or st < earliest):
                                     earliest = st
                                 fp = tl.get("full_peers_seeing", 0) or 0
+                                # 字符串计数值先规范化：旧版直接比较，字符串
+                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                                # （first_seen/visibility 全丢；F04）。
+                                try:
+                                    fp = int(fp)
+                                except (TypeError, ValueError, OverflowError):
+                                    fp = 0
                                 if fp > max_peers:
-                                    max_peers = int(fp)
+                                    max_peers = fp
                     if earliest:
                         first_seen = earliest[:10]
                         try:
@@ -2842,7 +2849,9 @@ class ProxyCheck(Provider):
                 return {"ok": False, "err": "empty ip object"}
             try:
                 _risk = int(d["risk"]) if d.get("risk") is not None else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
+                # 其余字段继续返回，不丢整源（F05）。
                 _risk = None
             return {
                 "ok": True,
@@ -2875,11 +2884,12 @@ class DBIP(Provider):
             d = json.loads(raw)
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
-            if not d.get("countryName"):
+            _cn = d.get("countryName")
+            if not isinstance(_cn, str) or not _cn.strip():
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "country": d.get("countryName") or "",
+                "country": _cn.strip(),
                 "state": d.get("stateProv") or "",
                 "city": d.get("city") or "",
                 "ts": now_iso(),
@@ -2908,12 +2918,13 @@ class FreeIPAPI(Provider):
                 asn_val = str(raw_asn)
             else:
                 asn_val = ""
-            if not d.get("countryName"):
+            _cn = d.get("countryName")
+            if not isinstance(_cn, str) or not _cn.strip():
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "proxy": d.get("isProxy"),
-                "country": d.get("countryName", ""),
+                "country": _cn.strip(),
                 "city": d.get("cityName", ""),
                 "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
@@ -7716,7 +7727,9 @@ def get_system_info():
                 except Exception:
                     pass
             if probed:
-                if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu")):
+                # F29：Bochs 型号/厂商串不含既有关键词，补 "bochs"（“探测成功
+                # 无信号→物理机”的 .19 设计本身保留）。
+                if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "bochs")):
                     virt = vm_label
                 else:
                     # CONF-13a.1：未命中关键词 ≠ 确认物理机（EC2 实例型号串即实例类型
@@ -7741,7 +7754,7 @@ def get_system_info():
                                 mfr = out2.stdout.lower()
                         except Exception:
                             pass
-                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google")):
+                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google", "bochs")):
                         virt = vm_label
                     else:
                         # 与 macOS/Linux 对齐：探测成功且无虚拟化信号 → 物理机
