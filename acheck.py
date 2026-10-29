@@ -2938,11 +2938,17 @@ class EmergingThreats(Provider):
 
     def check(self, ip):
         def _parse(raw):
-            return {
-                line.strip()
-                for line in raw.splitlines()
-                if line.strip() and not line.startswith("#")
-            }
+            out = set()
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    ipaddress.ip_address(line)
+                except ValueError:
+                    continue
+                out.add(line)
+            return out or None
 
         lst = _get_threat_list(
             "et_compromised",
@@ -2961,7 +2967,17 @@ class TorExitNodes(Provider):
 
     def check(self, ip):
         def _parse(raw):
-            return {l.strip() for l in raw.splitlines() if l.strip() and not l.startswith("#")}
+            out = set()
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    ipaddress.ip_address(line)
+                except ValueError:
+                    continue
+                out.add(line)
+            return out or None
 
         lst = _get_threat_list(
             "tor_exit",
@@ -3018,8 +3034,10 @@ class IPApiIs(Provider):
             d = json.loads(raw)
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
-            asn_raw = str(d.get("asn") or "")
+            asn_raw = str(d.get("asn") or "").strip()
             company = d.get("company") or ""
+            if not isinstance(company, str):
+                company = ""
             return {
                 "ok": True,
                 "isp": company,
@@ -3446,7 +3464,7 @@ class IPsum(Provider):
                         out[parts[0]] = int(parts[1])
                     except ValueError:
                         pass
-            return out
+            return out or None
 
         lst = _get_threat_list(
             "ipsum",
@@ -3474,7 +3492,7 @@ class X4BNetVPN(Provider):
                     nets.append(ipaddress.ip_network(line, strict=False))
                 except ValueError:
                     pass
-            return nets
+            return nets or None
 
         try:
             addr = ipaddress.ip_address(ip)
@@ -3585,6 +3603,9 @@ def _build_unified_profile(s):
             country, _country_src = _src["country"], _src
             break
     country_code = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    _ct = country.strip()
+    if not country_code and len(_ct) == 2 and _ct.isalpha() and _ct.isascii():
+        country_code = _ct.upper()
     if not country_code and country:
         # 名码成组：代码须由已选国家名派生（_CC_EN 名→码表），或取自国家名一致的同源；
         # 禁止从国家名不同的他源借码（如 ipguide 称 US 而 geojs 称 DE，借码会拼出 US 名 + DE 码）。
@@ -3617,6 +3638,8 @@ def _build_unified_profile(s):
         if _scc and _sel_code and _scc == _sel_code:
             return True
         if _sc and len(_sc) == 2 and _sel_code and _sc == _sel_code:
+            return True
+        if _sc and _sel_code and _CC_EN.get(_sc, "").lower() == _sel_code:
             return True
         return False
 
@@ -4709,7 +4732,7 @@ def _print_basic_block(s, prof):
                "germany": "de", "france": "fr", "japan": "jp",
                "south korea": "kr", "korea": "kr", "singapore": "sg",
                "india": "in", "brazil": "br", "russia": "ru",
-               "united kingdom": "uk", "netherlands": "nl",
+               "united kingdom": "gb", "uk": "gb", "netherlands": "nl",
                "switzerland": "ch", "sweden": "se", "norway": "no",
                "finland": "fi", "denmark": "dk", "austria": "at",
                "belgium": "be", "ireland": "ie", "poland": "pl",
@@ -4733,8 +4756,18 @@ def _print_basic_block(s, prof):
                 _ANY2CODE[_nm] = _cd
                 _ANY2CODE[_nm.lower()] = _cd
 
-        def _norm(txt):
+        def _norm(txt, _country=False):
             _t0 = str(txt or "").strip()
+            if _country:
+                if _t0 in _ANY2CODE:
+                    return _ANY2CODE[_t0].lower()
+                _tl = _t0.lower()
+                if _tl in _ANY2CODE:
+                    return _ANY2CODE[_tl].lower()
+                if _tl in _CC_EN:
+                    return _CC_EN[_tl].lower()
+                if _tl in _CC:
+                    return _CC[_tl]
             if _t0 in _ANY_CITY2EN:
                 return _ANY_CITY2EN[_t0].lower()
             if _t0 in _ANY_REGION2EN:
@@ -4746,6 +4779,8 @@ def _print_basic_block(s, prof):
                 return _ANY2CODE[txt].lower()
             if txt in _CC:
                 return _CC[txt]
+            if txt in _CC_EN:
+                return _CC_EN[txt].lower()
             txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
             return " ".join(txt.split())
 
@@ -4758,7 +4793,7 @@ def _print_basic_block(s, prof):
                 _mid = _mid[len(co):].strip()
             if ci and _mid.endswith(ci):
                 _mid = _mid[:-len(ci)].strip()
-            k = (_norm(co), _norm(_mid), _norm(ci))
+            k = (_norm(co, True), _norm(_mid), _norm(ci))
             if k not in _groups:
                 _groups[k] = (loc, [])
                 _order.append(k)
