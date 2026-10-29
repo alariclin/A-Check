@@ -1947,6 +1947,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     sock = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
+        # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的唯一合法目标。
+        _qname_term = 12 + len(_encode_dns_name(domain_q)) - 1
         tid = random.randint(1, 65534)
         header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
         question = _encode_dns_name(domain_q) + struct.pack(">HH", qtype, 1)
@@ -2070,11 +2072,25 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             if len(_rd) == 3 and _rd[2] == 0:
                 # Null MX：RDATA 仅偏好值 + 根标签——明确不收邮件，不是查询失败，
                 # 不置 _target_failed、不 append；混有真实 MX 时以真实记录为准
-                # （文末仅当 results 为空才置标记）。
-                _null_mx = True
+                # （文末仅当 results 为空才置标记）。偏好值必须为 0（RFC 7505），
+                # 非零偏好 + 根标签不是 Null MX，仅跳过该条，不置标记。
+                if struct.unpack(">H", _rd[:2])[0] == 0:
+                    _null_mx = True
                 continue
             pref = struct.unpack(">H", _rd[:2])[0]
             mx_host, mend = _decode_dns_name(data, _off + 2)
+            if mx_host == "":
+                # 解出根交换域名：仅当交换名为恰好 4 字节（偏好值 + 单指针）且指针
+                # 指向问题段 QNAME 根终止符时，才视为合法压缩 Null MX（偏好 0 置
+                # 标记，非零偏好仅跳过）；指向包内任意零字节（如偏好值高字节）的
+                # “根”属畸形，判查询失败（fail-closed；selfaudit F5 覆盖此情形）。
+                if (len(_rd) == 4 and _rd[2] & 0xC0 == 0xC0
+                        and (((_rd[2] & 0x3F) << 8) | _rd[3]) == _qname_term):
+                    if pref == 0:
+                        _null_mx = True
+                    continue
+                _target_failed = True
+                continue
             if mx_host and mend - (_off + 2) <= len(_rd) - 2:
                 results.append((pref, mx_host.rstrip(".")))
             else:
@@ -2084,6 +2100,10 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
     if qtype == 15 and _null_mx and not results:
         _MX_NULL[domain] = True
+    elif qtype == 15 and results:
+        # 真实 MX 出现即清除旧标记：标记反映最近一次成功查询，避免跨查询陈旧。
+        # 查询失败（提前返回 None）不触碰标记（无新知识）。
+        _MX_NULL.pop(domain, None)
     if qtype == 15:
         results.sort(key=lambda x: x[0])
         results = [h for _, h in results]
@@ -6440,6 +6460,10 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
                 "qq.com": ["mx1.qq.com", "mx2.qq.com"],
             }
             mxs = default_mx.get(domain, [domain])
+        if mxs == [] and not _MX_NULL.get(domain):
+            # 成功查询无记录且非 Null MX：按 RFC 5321 §5.1 隐式 MX，尝试域名自身。
+            # Null MX 域不走此分支（标记已置位，仍返 False）。
+            mxs = [domain]
         for mx in mxs[:2]:
             try:
                 _connect_host(mx.rstrip("."), 25, timeout, family).close()
@@ -8174,6 +8198,9 @@ def _run_active6(json_mode, egress6):
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx6_ok}/{len(mx_domains6)}')}")
+        for _mx_name6, _mx_dom6 in mx_domains6:
+            if _MX_NULL.get(_mx_dom6):
+                print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name6 + ')')}")
         _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
         print(
             f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_c(C.cyan, str(dnsbl6_total))}  "
