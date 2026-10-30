@@ -10352,12 +10352,12 @@ def main():
                   "self-check.", file=sys.stderr)
             sys.exit(2)  # 交互启动失败：非零退出（避开 130 中断码）
     try:
-        print_banner()
         _menu_first = True
         while True:
             if not _menu_first:
                 print(_c(C.cyan, "─" * 78))
             _menu_first = False
+            print_banner()
             print_menu()
             choice = input(T("prompt_choice2")).strip().lower()
             if choice == "q" or choice == "0":
@@ -10393,7 +10393,6 @@ def main():
                     if 0 <= idx < len(_langs):
                         LANG = _langs[idx]
                         print(f"  → {_names[LANG]}")
-                        print_banner()
                     else:
                         print(T("invalid_input"))
                 except ValueError:
