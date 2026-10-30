@@ -5910,6 +5910,7 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
         _t = threading.Thread(target=_run, daemon=True)
         _t.start()
         _started = True
+        _banner_net_register_worker(_t)
         _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
         if _t.is_alive():
             raise OSError(f"DNS resolution timed out: {host}")
@@ -9391,6 +9392,13 @@ _banner_net_cache = None
 _banner_net_budget = 15  # 横幅网络信息整条任务总截止（秒；裁定未定量，我方取 15）
 _banner_net_started = [False]
 _banner_net_lock = threading.Lock()
+# 横幅后台线程与已登记工作线程（退出前有界 join 用，防关闭期 TLS 竞态
+# 致 SIGSEGV：守护线程在解释器拆解期间做首次 HTTPS 的 CA 加载会触及
+# 已释放状态；join 上限取横幅预算剩余部分，横幅已完成时立即返回）。
+_banner_net_thread = None
+_banner_net_deadline = None
+_banner_net_workers = []
+_banner_net_workers_lock = threading.Lock()
 
 
 def _logo_spread(lines, target=76):
@@ -9528,6 +9536,7 @@ def _urlopen_bounded(req, budget):
 
     t = threading.Thread(target=_go, daemon=True)
     t.start()
+    _banner_net_register_worker(t)
     t.join(budget)
     with lock:
         if t.is_alive():
@@ -9724,9 +9733,44 @@ def _banner_geo_text(net):
     return net.get("geo", "")
 
 
+def _banner_net_register_worker(t):
+    """登记一个横幅相关守护工作线程（退出前有界 join 用）。"""
+    with _banner_net_workers_lock:
+        _banner_net_workers[:] = [w for w in _banner_net_workers
+                                  if w.is_alive()]
+        _banner_net_workers.append(t)
+
+
+def _banner_net_join():
+    """退出前有界等待横幅后台线程与已登记工作线程。
+
+    防止守护线程在解释器拆解期间做 TLS（进程内首次 HTTPS 的 CA 加载）
+    触及已释放状态导致 SIGSEGV。等待总量以横幅预算剩余部分为上限；
+    横幅已完成或未启动时立即返回；不改变任何输出与退出码。
+    """
+    deadline = _banner_net_deadline
+    if deadline is None:
+        return
+    threads = []
+    t = _banner_net_thread
+    if t is not None:
+        threads.append(t)
+    with _banner_net_workers_lock:
+        threads.extend(_banner_net_workers)
+    for th in threads:
+        rem = deadline - time.monotonic()
+        if rem <= 0:
+            break
+        try:
+            th.join(rem)
+        except Exception:
+            pass
+
+
 def _banner_net_info_async():
     """横幅网络信息（菜单先显示）：缓存命中即返回；未命中则起后台守护线程填充，
     本次先返回占位（网络行显示未测），下次横幅即见缓存。"""
+    global _banner_net_thread, _banner_net_deadline
     if _banner_net_cache is not None:
         return _banner_net_cache
     with _banner_net_lock:
@@ -9734,7 +9778,10 @@ def _banner_net_info_async():
             return _banner_net_cache
         if not _banner_net_started[0]:
             _banner_net_started[0] = True
-            threading.Thread(target=_banner_net_info, daemon=True).start()
+            _banner_net_deadline = time.monotonic() + _banner_net_budget
+            _banner_net_thread = threading.Thread(target=_banner_net_info,
+                                                  daemon=True)
+            _banner_net_thread.start()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 
@@ -10427,6 +10474,7 @@ def main():
                 while True:
                     pinp = input(T("prompt_proxy")).strip()
                     if pinp.lower() == "q":
+                        _banner_net_join()
                         return
                     if pinp.lower() == "b" or pinp == "":
                         break
@@ -10464,6 +10512,7 @@ def main():
                 # 提示符处 q=退出程序, b/空=直接返回
                 inp = input(T("prompt_ip")).strip().lower()
                 if inp == "q":
+                    _banner_net_join()
                     return
                 if inp == "b" or inp == "":
                     continue
@@ -10483,7 +10532,9 @@ def main():
                 continue
     except (KeyboardInterrupt, EOFError):
         print(f"\n  {T('cancelled')}", file=sys.stderr)
+        _banner_net_join()
         sys.exit(130)
+    _banner_net_join()
 
 
 if __name__ == "__main__":
@@ -10491,7 +10542,9 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(f"\n  {T('cancelled')}", file=sys.stderr)
+        _banner_net_join()
         sys.exit(130)
     except EOFError:
         print(f"\n  {T('cancelled')}", file=sys.stderr)
+        _banner_net_join()
         sys.exit(130)
