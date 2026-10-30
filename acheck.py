@@ -5910,6 +5910,7 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
         _t = threading.Thread(target=_run, daemon=True)
         _t.start()
         _started = True
+        _banner_net_register_worker(_t)
         _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
         if _t.is_alive():
             raise OSError(f"DNS resolution timed out: {host}")
@@ -9391,6 +9392,14 @@ _banner_net_cache = None
 _banner_net_budget = 15  # 横幅网络信息整条任务总截止（秒；裁定未定量，我方取 15）
 _banner_net_started = [False]
 _banner_net_lock = threading.Lock()
+# 横幅后台线程与已登记工作线程（退出前有界 join 用，防关闭期 TLS 竞态
+# 致 SIGSEGV：守护线程在解释器拆解期间做首次 HTTPS 的 CA 加载会触及
+# 已释放状态；join 上限取横幅预算剩余部分，横幅已完成但 worker 活着
+# 时仍会等到预算耗尽或 worker 结束）。
+_banner_net_thread = None
+_banner_net_deadline = None
+_banner_net_workers = []
+_banner_net_workers_lock = threading.Lock()
 
 
 def _logo_spread(lines, target=76):
@@ -9528,6 +9537,7 @@ def _urlopen_bounded(req, budget):
 
     t = threading.Thread(target=_go, daemon=True)
     t.start()
+    _banner_net_register_worker(t)
     t.join(budget)
     with lock:
         if t.is_alive():
@@ -9724,9 +9734,201 @@ def _banner_geo_text(net):
     return net.get("geo", "")
 
 
+def _banner_net_register_worker(t):
+    """登记一个守护工作线程（退出前 _banner_net_join 有界等待用）。
+
+    注意登记无调用方检查：_getaddrinfo_timed 对每路 DNS 工作线程都
+    登记（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径），
+    故等待集可能包含活着的非横幅 DNS worker。登记点在线程 start()
+    之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
+    """
+    with _banner_net_workers_lock:
+        _banner_net_workers[:] = [w for w in _banner_net_workers
+                                  if w.is_alive()]
+        _banner_net_workers.append(t)
+
+
+def _banner_net_join():
+    """退出前有界等待横幅后台线程与已登记工作线程。
+
+    防止守护线程在解释器拆解期间做 TLS（进程内首次 HTTPS 的 CA 加载）
+    触及已释放状态导致 SIGSEGV。等待以横幅启动时定下的绝对 deadline
+    为上限（横幅预算 15 秒的剩余部分）；预算耗尽时仍在执行的线程不再
+    等待（边界：有界等待不等于彻底消除，超过预算仍在执行的 worker
+    照常可能撞上关闭期）。预算语义须准确理解：固定绝对 deadline，
+    每轮以 deadline - monotonic() 重算剩余；锁等待、快照扫描、调度
+    等操作消耗的时间会在下一次预算检查中体现为剩余减少，但这些操作
+    本身不受剩余预算约束——一次操作可能跨过 deadline 才返回，故返回
+    时刻可能越过 deadline（超量取决于锁竞争、调度暂停与中断处理，
+    无固定上界）。
+
+    真实执行顺序：每轮把横幅线程与已登记 workers 一起取快照、依次
+    join，轮末重取快照；只要还有新出现的活 worker 且预算仍有剩余就
+    继续，直到无活 worker 或预算耗尽——被等期间新登记的 worker 也会
+    被等到，不会因一次性快照漏等。
+
+    等待集为已登记的活 worker：_getaddrinfo_timed 无条件登记每路 DNS
+    工作线程（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径
+    的调用），故等待集可能包含活着的非横幅 DNS worker；无 deadline
+    （横幅未启动）时立即返回、不等待。
+
+    第二次 Ctrl-C 全过程语义：位于相应异常保护范围内的 KI 由各层
+    处理器恢复；函数入口及未受保护的回边、异常处理控制流仍可能
+    使 KI 逃出；正常返回及预算内持续保留等待义务的保证，以未发生
+    此类异常逃出为前提。except 处理体内已无工作语句、仅 continue
+    回边跳转（属未覆盖控制流残留），故不存在处理器内初始化又被
+    打断的逃出路径——取消路径恰好一次“已取消”＋130（打印由调用方
+    做，join 本身不打印），正常路径（0/q）退出码不变且不打印
+    “已取消”。
+    实现分三层：join 调用内的 KI 被吞掉，但在受影响、已验证的
+    运行时及中断路径上，被打断的 join 会使 CPython 把该线程对象
+    标记为已停止（实测：其后 is_alive() 恒为 False、再次 join 立即
+    返回，而底层线程仍在跑），故该线程记入 interrupted，改按
+    threading.enumerate() 的对象身份轮询等它真正结束；毒化登记不得
+    丢失——append 本身也可能被 KI 打断，故登记处另包一层 KI 重试循环，
+    重 attempts 直到 append 完成才 break，登记完成后即使再来 KI，
+    外层重试也能在 interrupted 中找到它；登记义务预登记化——join 前
+    已把 th 记入 pending 集合（不覆盖已有成员），外层重试不清除
+    它，故 KI 落在 except 入口（while 建立到内层 try 体首之间）或
+    登记回边时，即使 interrupted 尚无它，快照仍能按对象身份等它
+    真正结束，不会因 is_alive 失真而漏等；集合化后，后续 join 也
+    不会覆盖尚未完成、尚未转移的义务；join 调用外的 KI（初始化、
+    deadline 读取、
+    锁获取、快照构造、monotonic、轮次控制流、轮询等待）由外层捕获
+    后重查预算、重取快照继续等。deadline 由横幅启动时一次性定值，
+    之后不再重算；外层重试每轮重读的只是同一固定值，不是重置截止。
+    登记重试循环本身无预算检查：持续中断下，即使预算已耗尽，登记
+    重试仍会继续 attempts（每次 attempts 极短），故返回时刻仍可能
+    迟于 deadline；此属“中断有限”条件的一部分，非独立缺陷。
+    终止性为有条件表述：重试不刷新截止时间；在中断有限、等待原语
+    （join 超时、轮询睡眠、锁获取）能取得进展且线程能获得调度的
+    条件下，等待按同一预算退出。此处“退出”指函数返回（含预算耗尽
+    返回），不等同于“所有 worker 已完成”；“不丢失等待义务”指预算
+    未耗尽时不因中断而提前返回——最终停止执行、正常返回、不丢失
+    等待义务是三个不同的结论，不可混为一谈，且三者各有适用条件：
+    上述保证均以未发生未覆盖控制流逃出为前提，一个落在未保护回边
+    上的 KI 就可以异常退出函数，此时“正常返回”与“不丢失等待义务”
+    的保证不适用（逃出本身不是静默漏等，由调用方按取消处理）。
+    轮询成本：等待集（interrupted 与 pending 合计）有 I 个、存活
+    线程 L 个时，每轮做身份比对（每轮 O(I×L)）；进入轮询阶段后，
+    每轮请求睡眠不超过 50ms，但完成发现还要加上扫描、调度与重试
+    延迟，故发现时延无 50ms 严格上界。
+
+    未覆盖控制流残留（纯 Python 内无法消除，不用信号屏蔽手段）：
+    函数入口字节码（try 建立前）、循环回边字节码、except 处理体
+    本身（现仅 continue 回边跳转）仍是可中断点；KI 恰好落在这些
+    位置上仍会逃出。其中循环回边是跳转类控制流点，函数入口与异常
+    处理控制流不在此归类之列；此处不给出墙钟窗口或风险上界，不得
+    据此推导发生概率；相应保护范围内的工作位置可恢复，恢复时由
+    pending/interrupted 保留义务，未保护控制流仍适用前述例外。
+    上述残留的后果是 KI 逃出
+    函数（由调用方按取消处理），而非静默漏等；静默漏等的条件化保证
+    为：预算未耗尽且未发生未覆盖控制流逃出时，不因中断而提前返回
+    ——该保证由 pending 集合与登记重试循环实现，须在 pending 集合化
+    修复后才成立，不得声称绝对零窗口。
+    范围限定：被中断线程完成状态（W1）仅在所报测试环境验证；
+    14 系统非交互冒烟不验证各运行时上的 KI／线程毒化行为。
+
+    残留（本轮不改）：本函数只在正常／取消／q 路径上被调用；未捕获
+    异常导致的 traceback 退出路径不经过 join。_urlopen_bounded 超时
+    后 abandon 的 _go 工作线程若未登记，同样不在等待集内。
+    """
+    # 等待状态以哨兵起步：真正的初始化（interrupted = []、pending = []）
+    # 发生在下面单个 try 内，KI 落在初始化行也会被外层 except 统一重试；
+    # 哨兵行本身与循环回边字节码属上述未覆盖控制流残留。pending 为
+    # 预登记义务集合：join 前把 th 记入集合（不覆盖已有成员），外层
+    # 重试不清除它（见下述快照逻辑）。
+    interrupted = None
+    pending = None
+    while True:
+        try:
+            if interrupted is None:
+                interrupted = []
+            if pending is None:
+                pending = []
+            deadline = _banner_net_deadline
+            if deadline is None:
+                return
+            while True:
+                rem = deadline - time.monotonic()
+                if rem <= 0:
+                    return
+                threads = []
+                t = _banner_net_thread
+                if t is not None and t.is_alive():
+                    threads.append(t)
+                with _banner_net_workers_lock:
+                    threads.extend(w for w in _banner_net_workers
+                                   if w.is_alive())
+                if interrupted:
+                    live = threading.enumerate()
+                    interrupted = [w for w in interrupted
+                                   if any(x is w for x in live)]
+                # 预登记义务（P1-1）：join 前已把 th 记入 pending 集合，
+                # 不覆盖已有成员；join 被打断在登记保护区之外（except
+                # 入口、登记回边）时，外层重试仍能在此看到它——不论
+                # is_alive（毒化后恒 False），一律按对象身份轮询等它
+                # 真正结束；已完成则从集合移出。赋值前 KI 则 join 尚未
+                # 运行、无毒化，下轮快照仍能找到活线程，故该窗口良性。
+                if pending:
+                    live = threading.enumerate()
+                    pending = [w for w in pending
+                               if any(x is w for x in live)]
+                if not threads and not interrupted and not pending:
+                    return
+                for th in threads:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        break
+                    if not any(x is th for x in pending):
+                        pending.append(th)
+                    try:
+                        th.join(rem)
+                    except KeyboardInterrupt:
+                        # join 被打断：该线程的 is_alive 已失真（其后
+                        # 恒 False、再次 join 立即返回），快照再也找
+                        # 不到它；记入 interrupted，改由下述轮询等它
+                        # 真正结束，否则 join 会提前返回。登记本身也
+                        # 可能被 KI 打断：重试直到 append 完成才 break，
+                        # 否则外层重试重取快照时会丢失该线程。登记
+                        # 成功后义务转入 interrupted，pending 中移出。
+                        while True:
+                            try:
+                                if th not in interrupted:
+                                    interrupted.append(th)
+                                break
+                            except KeyboardInterrupt:
+                                continue
+                    except Exception:
+                        pass
+                    pending = [w for w in pending if w is not th]
+                while interrupted or pending:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        break
+                    live = threading.enumerate()
+                    if interrupted:
+                        interrupted = [w for w in interrupted
+                                       if any(x is w for x in live)]
+                    if pending:
+                        pending = [w for w in pending
+                                   if any(x is w for x in live)]
+                    if not interrupted and not pending:
+                        break
+                    time.sleep(min(0.05, rem))
+        except KeyboardInterrupt:
+            # 统一重试：位于相应异常保护范围内的 KI 由各层处理器恢复；
+            # interrupted 与 pending 已建立则保留（不重置、不清除），
+            # 未建立则下一轮 try 内初始化。处理体内已无工作语句、仅
+            # continue 回边跳转（属未覆盖控制流残留，见文档），故不
+            # 存在“处理器内初始化又被打断”的逃出路径。
+            continue
+
+
 def _banner_net_info_async():
     """横幅网络信息（菜单先显示）：缓存命中即返回；未命中则起后台守护线程填充，
     本次先返回占位（网络行显示未测），下次横幅即见缓存。"""
+    global _banner_net_thread, _banner_net_deadline
     if _banner_net_cache is not None:
         return _banner_net_cache
     with _banner_net_lock:
@@ -9734,7 +9936,10 @@ def _banner_net_info_async():
             return _banner_net_cache
         if not _banner_net_started[0]:
             _banner_net_started[0] = True
-            threading.Thread(target=_banner_net_info, daemon=True).start()
+            _banner_net_deadline = time.monotonic() + _banner_net_budget
+            _banner_net_thread = threading.Thread(target=_banner_net_info,
+                                                  daemon=True)
+            _banner_net_thread.start()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 
@@ -10427,6 +10632,7 @@ def main():
                 while True:
                     pinp = input(T("prompt_proxy")).strip()
                     if pinp.lower() == "q":
+                        _banner_net_join()
                         return
                     if pinp.lower() == "b" or pinp == "":
                         break
@@ -10464,6 +10670,7 @@ def main():
                 # 提示符处 q=退出程序, b/空=直接返回
                 inp = input(T("prompt_ip")).strip().lower()
                 if inp == "q":
+                    _banner_net_join()
                     return
                 if inp == "b" or inp == "":
                     continue
@@ -10483,7 +10690,9 @@ def main():
                 continue
     except (KeyboardInterrupt, EOFError):
         print(f"\n  {T('cancelled')}", file=sys.stderr)
+        _banner_net_join()
         sys.exit(130)
+    _banner_net_join()
 
 
 if __name__ == "__main__":
@@ -10491,7 +10700,9 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print(f"\n  {T('cancelled')}", file=sys.stderr)
+        _banner_net_join()
         sys.exit(130)
     except EOFError:
         print(f"\n  {T('cancelled')}", file=sys.stderr)
+        _banner_net_join()
         sys.exit(130)
