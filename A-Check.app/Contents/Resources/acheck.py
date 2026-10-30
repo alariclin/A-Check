@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.19 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.20 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -54,7 +54,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.19"
+VERSION = "4.14.20"
 
 
 def _init_console():
@@ -1947,6 +1947,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     sock = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
+        # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的唯一合法目标。
+        _qname_term = 12 + len(_encode_dns_name(domain_q)) - 1
         tid = random.randint(1, 65534)
         header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
         question = _encode_dns_name(domain_q) + struct.pack(">HH", qtype, 1)
@@ -2070,11 +2072,25 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             if len(_rd) == 3 and _rd[2] == 0:
                 # Null MX：RDATA 仅偏好值 + 根标签——明确不收邮件，不是查询失败，
                 # 不置 _target_failed、不 append；混有真实 MX 时以真实记录为准
-                # （文末仅当 results 为空才置标记）。
-                _null_mx = True
+                # （文末仅当 results 为空才置标记）。偏好值必须为 0（RFC 7505），
+                # 非零偏好 + 根标签不是 Null MX，仅跳过该条，不置标记。
+                if struct.unpack(">H", _rd[:2])[0] == 0:
+                    _null_mx = True
                 continue
             pref = struct.unpack(">H", _rd[:2])[0]
             mx_host, mend = _decode_dns_name(data, _off + 2)
+            if mx_host == "":
+                # 解出根交换域名：仅当交换名为恰好 4 字节（偏好值 + 单指针）且指针
+                # 指向问题段 QNAME 根终止符时，才视为合法压缩 Null MX（偏好 0 置
+                # 标记，非零偏好仅跳过）；指向包内任意零字节（如偏好值高字节）的
+                # “根”属畸形，判查询失败（fail-closed；selfaudit F5 覆盖此情形）。
+                if (len(_rd) == 4 and _rd[2] & 0xC0 == 0xC0
+                        and (((_rd[2] & 0x3F) << 8) | _rd[3]) == _qname_term):
+                    if pref == 0:
+                        _null_mx = True
+                    continue
+                _target_failed = True
+                continue
             if mx_host and mend - (_off + 2) <= len(_rd) - 2:
                 results.append((pref, mx_host.rstrip(".")))
             else:
@@ -2084,6 +2100,10 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
     if qtype == 15 and _null_mx and not results:
         _MX_NULL[domain] = True
+    elif qtype == 15 and results:
+        # 真实 MX 出现即清除旧标记：标记反映最近一次成功查询，避免跨查询陈旧。
+        # 查询失败（提前返回 None）不触碰标记（无新知识）。
+        _MX_NULL.pop(domain, None)
     if qtype == 15:
         results.sort(key=lambda x: x[0])
         results = [h for _, h in results]
@@ -2230,8 +2250,15 @@ class RIPEstat(Provider):
                                 if st and (earliest is None or st < earliest):
                                     earliest = st
                                 fp = tl.get("full_peers_seeing", 0) or 0
+                                # 字符串计数值先规范化：旧版直接比较，字符串
+                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                                # （first_seen/visibility 全丢；F04）。
+                                try:
+                                    fp = int(fp)
+                                except (TypeError, ValueError, OverflowError):
+                                    fp = 0
                                 if fp > max_peers:
-                                    max_peers = int(fp)
+                                    max_peers = fp
                     if earliest:
                         first_seen = earliest[:10]
                         try:
@@ -2508,10 +2535,12 @@ def _resolve_geo_online(jobs):
             list(ex.map(_one, todo))
 
 
-def _extra_sub(disp, kind):
-    """把在线兜底命中的地名替换进对比行整串。
+def _extra_sub(disp, kind, ctx_text=None):
+    """把在线兜底命中的地名替换进对比行整串（disp 为待替换串）。
     同一变体有多个上下文候选时，只采用上下文成分出现在整串中的唯一候选；
-    无法消歧时不任意采用首项（该变体原样保留）。"""
+    无法消歧时不任意采用首项（该变体原样保留）。
+    ctx_text：消歧上下文来源，默认 disp；调用方可传整串以保留跨字段上下文
+    （CONF-FIXES-2.1），同时把替换限定在本字段内。"""
     if _GEO_EXTRA.get("lang") != LANG:
         return disp
     _by_variant = {}
@@ -2519,7 +2548,7 @@ def _extra_sub(disp, kind):
         _by_variant.setdefault(variant, []).append((_ctx, loc))
     # CONF-FIXES-2.1：上下文词集须取自原始整串；取自不断被替换的当前 disp 时，
     # 前序替换会抹掉后序变体的上下文词（如 New York 先被译走，York 的 {new} 消失）。
-    _orig_words = set(re.findall(r"[A-Za-z0-9]+", disp.lower()))
+    _orig_words = set(re.findall(r"[A-Za-z0-9]+", (ctx_text if ctx_text is not None else disp).lower()))
     for variant, cands in _by_variant.items():
         if not variant:
             continue
@@ -2551,7 +2580,7 @@ def _loc_region(text):
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
         _matches = [v for (n, _ctx), v in _GEO_EXTRA["region"].items() if n == t]
-        if len(_matches) == 1:
+        if len(set(_matches)) == 1:
             return _matches[0]
         # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
@@ -2573,7 +2602,7 @@ def _loc_city(text):
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
             _matches = [v for (n, _ctx), v in _GEO_EXTRA["city"].items() if n == cand]
-            if len(_matches) == 1:
+            if len(set(_matches)) == 1:
                 return _matches[0]
             # 多候选：不盲取首项，退静态表/原文（落到下行静态查表）
         en = _ANY_CITY2EN.get(cand)
@@ -2696,7 +2725,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.19 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.20 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2820,7 +2849,9 @@ class ProxyCheck(Provider):
                 return {"ok": False, "err": "empty ip object"}
             try:
                 _risk = int(d["risk"]) if d.get("risk") is not None else None
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
+                # 其余字段继续返回，不丢整源（F05）。
                 _risk = None
             return {
                 "ok": True,
@@ -2853,11 +2884,12 @@ class DBIP(Provider):
             d = json.loads(raw)
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
-            if not d.get("countryName"):
+            _cn = d.get("countryName")
+            if not isinstance(_cn, str) or not _cn.strip():
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "country": d.get("countryName") or "",
+                "country": _cn.strip(),
                 "state": d.get("stateProv") or "",
                 "city": d.get("city") or "",
                 "ts": now_iso(),
@@ -2886,12 +2918,13 @@ class FreeIPAPI(Provider):
                 asn_val = str(raw_asn)
             else:
                 asn_val = ""
-            if not d.get("countryName"):
+            _cn = d.get("countryName")
+            if not isinstance(_cn, str) or not _cn.strip():
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
                 "proxy": d.get("isProxy"),
-                "country": d.get("countryName", ""),
+                "country": _cn.strip(),
                 "city": d.get("cityName", ""),
                 "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
@@ -3637,7 +3670,12 @@ def _build_unified_profile(s):
         if _src.get("country"):
             country, _country_src = _src["country"], _src
             break
-    country_code = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    if not isinstance(country, str):
+        # 异常源返回非字符串国家名（如数字）：视为无国家名，不让后续 .strip() 崩溃。
+        country = ""
+    _cc_raw = (_country_src.get("country_code") or "") if _country_src is not None else ""
+    # 空白码与非字符串码均归一为空：空白不阻断后续回填，非字符串不崩溃。
+    country_code = _cc_raw.strip() if isinstance(_cc_raw, str) else ""
     _ct = country.strip()
     if not country_code and len(_ct) == 2 and _ct.isalpha() and _ct.isascii():
         country_code = _ct.upper()
@@ -3648,13 +3686,23 @@ def _build_unified_profile(s):
     if not country_code and country:
         _cn = country.strip().lower()
         for _cand in (wi, wa, gj, il, iq, co, ti):
-            if (_cand.get("country") or "").strip().lower() == _cn:
-                country_code = _cand.get("country_code") or ""
+            _cc_name = _cand.get("country")
+            if isinstance(_cc_name, str) and _cc_name.strip().lower() == _cn:
+                _cc_code = _cand.get("country_code")
+                country_code = _cc_code.strip() if isinstance(_cc_code, str) else ""
                 if country_code:
                     break
     if not country_code and not country:
         # 未选出国家名时无拼接可言：单凭代码的源（country.is / RDAP）是唯一地理证据，沿旧链取值。
-        country_code = wi.get("country_code") or wa.get("country_code") or gj.get("country_code") or il.get("country_code") or iq.get("country_code") or co.get("country_code") or ti.get("country_code") or ci.get("country_code") or rd.get("country") or ""
+        # 链上逐源 strip：空白源不截断链（链后 strip 会把首个空白误作终值，
+        # 丢弃后续源的有效码）；非字符串源视为空。
+        def _cc_stripped(d, k="country_code"):
+            _v = d.get(k)
+            return _v.strip() if isinstance(_v, str) else ""
+        country_code = (_cc_stripped(wi) or _cc_stripped(wa) or _cc_stripped(gj)
+                        or _cc_stripped(il) or _cc_stripped(iq) or _cc_stripped(co)
+                        or _cc_stripped(ti) or _cc_stripped(ci)
+                        or _cc_stripped(rd, "country") or "")
     # CONF-7.1: region/city/经纬度/时区只取与已选国家一致的来源；
     # 来源国家无法确定（既无 country 名又无 country_code）时宁可留空，
     # 不跨国家拼接。country 字段形态不统一（名或 ISO 码），故名、码双通道比对。
@@ -3666,8 +3714,10 @@ def _build_unified_profile(s):
     def _same_country(_src):
         if not _sel_name:
             return True
-        _sc = (_src.get("country") or "").strip().lower()
-        _scc = (_src.get("country_code") or "").strip().lower()
+        _sc_raw = _src.get("country")
+        _scc_raw = _src.get("country_code")
+        _sc = _sc_raw.strip().lower() if isinstance(_sc_raw, str) else ""
+        _scc = _scc_raw.strip().lower() if isinstance(_scc_raw, str) else ""
         if _sc and _sc == _sel_name:
             return True
         if _scc and _sel_code and _scc == _sel_code:
@@ -3722,7 +3772,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.19 免 Key 公开版):
+评分规则 (v4.14.20 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3739,7 +3789,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定，分别累计；单源独标不扣分）
+    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定：True 票多于 False 票即成立，源不可用或字段缺失计弃权票；分别累计）
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -3754,7 +3804,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.19 免 Key 公開版):
+評分規則 (v4.14.20 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3771,7 +3821,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定，分別累計；單源獨標不扣分）
+    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計）
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -3786,7 +3836,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.19 Keyless Public Edition):
+Scoring rules (v4.14.20 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3803,7 +3853,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     No PTR record                     +5
   [Platform 0-100] DC/proxy traits (not malice)
     ISP/Org datacenter/hosting trait  +30
-    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; accumulate separately; a single source alone does not deduct)
+    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet: established when True votes outnumber False votes; unavailable sources or missing fields count as abstentions; accumulate separately)
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
@@ -3819,7 +3869,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.19 キー不要公開版):
+スコアリングルール (v4.14.20 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3836,7 +3886,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     PTR レコードなし                  +5
   [プラットフォーム互換性 0-100] DC/プロキシ属性 (非悪意スコア)
     データセンター/ホスティング属性   +30
-    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決、それぞれ加算、単独ソースのみでは減点なし）
+    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決：True 票が False 票を上回れば成立、ソース利用不可またはフィールド欠損は棄権票；それぞれ加算）
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算、第三者スコアではない)
@@ -3851,7 +3901,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.19 Публичная версия без ключей):
+Правила оценки (v4.14.20 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3868,7 +3918,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     Нет PTR-записи                    +5
   [Совместимость 0-100] Признаки ДЦ/прокси (не оценка вредоносности)
     Признаки дата-центра / хостинга   +30
-    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet; суммируются; один источник не штрафуется)
+    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet: засчитывается при перевесе True над False; недоступные источники или отсутствующие поля — воздержавшиеся; суммируются)
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
@@ -3883,7 +3933,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.19):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.20):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3900,7 +3950,7 @@ Scoring rules (v4.14.19 Keyless Public Edition):
     نبود رکورد PTR                    +5
   [سازگاری پلتفرم 0-100] ویژگی دیتاسنتر/پروکسی (امتیاز مخرب نیست)
     ویژگی دیتاسنتر یا میزبانی         +30
-    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هر دو جداگانه جمع می‌شوند؛ یک منبع به‌تنهایی کسر نمی‌شود)
+    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هرگاه آرای موافق از مخالف بیشتر شود برقرار است؛ منابع در دسترس‌نبوده یا فیلدهای بدون مقدار رأی ممتنع محسوب می‌شوند؛ هر دو جداگانه جمع می‌شوند)
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
@@ -4106,14 +4156,16 @@ def score_platform(s):
         ev.append("Hosting/DC trait +30")
 
     def _consensus(*vals):
-        # 与 _print_streaming_inference 同口径：True 票多于 False 票才成立；
-        # 单源独标不扣分（与推断一致，非矛盾）。
+        # 与 _print_streaming_inference 同口径：True 票多于 False 票即成立；
+        # None 为弃权票（源不可用或字段缺失），不参与比较。故单源独标仅在有反票时
+        # 不扣分；若其余皆弃权（1 True / 0 False），按现行口径成立并扣分（与旧 OR
+        # 判断一致，非新增扣分）。
         return (sum(1 for v in vals if v is True)
                 > sum(1 for v in vals if v is False))
 
     def _p(d):
-        # _factor_rows 口径：源不可用计 None；fp/il/iq 字段缺失计 None，
-        # 其余源缺失字段计 False。
+        # 缺失票约定：源不可用计 None；字段缺失亦计 None（弃权），不计入比较；
+        # 已判定才计 True/False。fp/il/iq 与其余源同口径。
         if not d.get("ok"):
             return None
         return d.get("proxy")
@@ -4198,6 +4250,11 @@ def _verdict_label(combined, core_ok, completeness, malicious_listed):
     return T("verdict_high")
 
 
+_POOL_LOCK = threading.Lock()
+_V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不停运行中任务会累积线程
+_V6_POOL = None  # run_passive6 同上
+
+
 def run_passive(ip):
     ip_s = str(ip)
     sources = {}
@@ -4220,7 +4277,12 @@ def run_passive(ip):
             pass
         return p.key, res
 
-    _ex = ThreadPoolExecutor(max_workers=14)
+    global _V4_POOL
+    if _V4_POOL is None:
+        with _POOL_LOCK:
+            if _V4_POOL is None:
+                _V4_POOL = ThreadPoolExecutor(max_workers=14)
+    _ex = _V4_POOL
     try:
         _futs = {_ex.submit(_query_one, p): p for p in avail_providers}
         try:
@@ -4237,7 +4299,7 @@ def run_passive(ip):
     finally:
         with _progress_lock:
             progress_closed[0] = True
-        _ex.shutdown(wait=False)
+        # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
     if "--json" not in sys.argv:
         with _progress_lock:
@@ -4395,8 +4457,8 @@ def _print_streaming_inference(res):
     ia = s.get("ipapi", {})
 
     def _consensus(*vals):
-        """多源共识: True 票多于 False 票才成立 (与 [2] 因子聚合口径一致),
-        防止单一源误标独裁判定 (如 proxycheck 把云厂商 IP 标为 VPN)。"""
+        """多源共识: True 票多于 False 票才成立；None 为弃权票（源不可用），
+        不参与比较（单源独标仅在有反票时不成立，其余皆弃权时仍成立）。"""
         return (sum(1 for v in vals if v is True)
                 > sum(1 for v in vals if v is False))
 
@@ -4456,10 +4518,14 @@ def _print_streaming_inference(res):
         # 2 字母非 ASCII（如「中国」）不是代码，仍走原名匹配分支。
         for tk in tokens:
             tk_l = tk.lower()
-            if len(tk_l) == 2 and tk_l.isascii() and tk_l == cc_code:
-                return True
             if len(tk_l) == 2 and tk_l.isascii():
-                continue
+                if tk_l == cc_code:
+                    return True
+                if cc_code:
+                    # 代码槽位有依据时错配直接跳过（绝不落入名匹配，见上注）。
+                    continue
+                # 代码缺失时无依据可错配：落入下方名匹配（码形国家名如 "CN"
+                # 本身即须被识别；错配保护仅在代码存在时才有意义）。
             if len(tk_l) <= 3 and tk_l.isascii():
                 if re.search(rf"(?<![a-z]){re.escape(tk_l)}(?![a-z])", cc):
                     return True
@@ -4741,53 +4807,59 @@ def _print_basic_block(s, prof):
     # 地理位置组: 国家码徽章排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
     pc = s.get("proxycheck", {})
+
+    def _has_loc(*vals):
+        # 定位记录判空：按全部展示字段判（省州亦计入），空白字符串视为空，
+        # 非字符串先 str 化防崩。
+        return any(str(v or "").strip() for v in vals)
+
     locs = []
-    if wi.get("ok") and (wi.get("country") or wi.get("city")):
+    if wi.get("ok") and _has_loc(wi.get("country"), wi.get("region"), wi.get("city")):
         locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
                      wi.get("country"), wi.get("city")))
-    if ii.get("ok") and (ii.get("country") or ii.get("city")):
+    if ii.get("ok") and _has_loc(ii.get("country"), ii.get("region"), ii.get("city")):
         locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
                      ii.get("country"), ii.get("city")))
-    if db.get("ok") and (db.get("country") or db.get("city")):
+    if db.get("ok") and _has_loc(db.get("country"), db.get("state"), db.get("city")):
         locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
                      db.get("country"), db.get("city")))
-    if pc.get("ok") and (pc.get("country") or pc.get("city")):
+    if pc.get("ok") and _has_loc(pc.get("country"), pc.get("city")):
         locs.append(("proxycheck", _join_nonempty(pc.get("country"), pc.get("city")),
                      pc.get("country"), pc.get("city")))
     fp = s.get("freeipapi", {})
-    if fp.get("ok") and (fp.get("country") or fp.get("city")):
+    if fp.get("ok") and _has_loc(fp.get("country"), fp.get("city")):
         locs.append(("freeipapi", _join_nonempty(fp.get("country"), fp.get("city")),
                      fp.get("country"), fp.get("city")))
     wap = s.get("ipwhoisapp", {})
-    if wap.get("ok") and (wap.get("country") or wap.get("city")):
+    if wap.get("ok") and _has_loc(wap.get("country"), wap.get("region"), wap.get("city")):
         locs.append(("ipwhois.app", _join_nonempty(wap.get("country"), wap.get("region"), wap.get("city")),
                      wap.get("country"), wap.get("city")))
     ais = s.get("ipapiis", {})
-    if ais.get("ok") and (ais.get("country") or ais.get("city")):
+    if ais.get("ok") and _has_loc(ais.get("country"), ais.get("region"), ais.get("city")):
         locs.append(("ipapi.is", _join_nonempty(ais.get("country"), ais.get("region"), ais.get("city")),
                      ais.get("country"), ais.get("city")))
     igd = s.get("ipguide", {})
-    if igd.get("ok") and (igd.get("country") or igd.get("city")):
+    if igd.get("ok") and _has_loc(igd.get("country"), igd.get("city")):
         locs.append(("ip.guide", _join_nonempty(igd.get("country"), igd.get("city")),
                      igd.get("country"), igd.get("city")))
     ilc = s.get("iplocate", {})
-    if ilc.get("ok") and (ilc.get("country") or ilc.get("city")):
+    if ilc.get("ok") and _has_loc(ilc.get("country"), ilc.get("region"), ilc.get("city")):
         locs.append(("iplocate.io", _join_nonempty(ilc.get("country"), ilc.get("region"), ilc.get("city")),
                      ilc.get("country"), ilc.get("city")))
     iqc = s.get("ipquery", {})
-    if iqc.get("ok") and (iqc.get("country") or iqc.get("city")):
+    if iqc.get("ok") and _has_loc(iqc.get("country"), iqc.get("region"), iqc.get("city")):
         locs.append(("ipquery.io", _join_nonempty(iqc.get("country"), iqc.get("region"), iqc.get("city")),
                      iqc.get("country"), iqc.get("city")))
     coc = s.get("ipapico", {})
-    if coc.get("ok") and (coc.get("country") or coc.get("city")):
+    if coc.get("ok") and _has_loc(coc.get("country"), coc.get("region"), coc.get("city")):
         locs.append(("ipapi.co", _join_nonempty(coc.get("country"), coc.get("region"), coc.get("city")),
                      coc.get("country"), coc.get("city")))
     tic = s.get("twoip", {})
-    if tic.get("ok") and (tic.get("country") or tic.get("city")):
+    if tic.get("ok") and _has_loc(tic.get("country"), tic.get("region"), tic.get("city")):
         locs.append(("2ip.io", _join_nonempty(tic.get("country"), tic.get("region"), tic.get("city")),
                      tic.get("country"), tic.get("city")))
     gjs = s.get("geojs", {})
-    if gjs.get("ok") and (gjs.get("country") or gjs.get("city")):
+    if gjs.get("ok") and _has_loc(gjs.get("country"), gjs.get("region"), gjs.get("city")):
         locs.append(("GeoJS", _join_nonempty(gjs.get("country"), gjs.get("region"), gjs.get("city")),
                      gjs.get("country"), gjs.get("city")))
     _gjobs = []
@@ -4923,12 +4995,18 @@ def _print_basic_block(s, prof):
             for k in _order:
                 _loc, _names, _f_co, _f_mid, _f_ci = _groups[k]
                 _gf = _fl(k[0] if len(k[0]) == 2 and k[0].isalpha() and k[0].isascii() else "")
-                # F3-C 分字段翻译：region/city 按字段各自翻译后再拼串，
-                # 不再对整串做 region 轮→city 轮替换（Victoria 类城市名
-                # 不再被 region 表误译为州名）。
-                _disp = _join_nonempty(_loc_country_name(_f_co),
-                                       _loc_region(_f_mid), _loc_city(_f_ci))
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_extra_sub(_extra_sub(_disp, 'region'), 'city')}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                # F3-C 分字段翻译：region/city 按字段各自翻译后再拼串；
+                # 补充翻译（_extra_sub）亦按字段隔离：region/city 轮各只作用
+                # 于本字段，但消歧上下文仍取整串词集（CONF-FIXES-2.1 跨字段
+                # 上下文保留），Victoria 类城市名不再被 region 表误译。
+                _f_co_t = _loc_country_name(_f_co)
+                _f_mid_t = _loc_region(_f_mid)
+                _f_ci_t = _loc_city(_f_ci)
+                _disp = _join_nonempty(_f_co_t, _f_mid_t, _f_ci_t)
+                _disp = _join_nonempty(_f_co_t,
+                                       _extra_sub(_f_mid_t, 'region', _disp),
+                                       _extra_sub(_f_ci_t, 'city', _disp))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -4990,10 +5068,10 @@ def _factor_rows(s, wi_server, v6=False):
         ("Tor Exit", [None, None, _h(te, bool(te.get("is_tor_exit"))),
                       None, None, None]),
         ("proxycheck", [
-            _h(pc, bool(pc.get("proxy"))),
-            _h(pc, bool(pc.get("vpn"))),
-            _h(pc, "tor" in str(pc.get("type", "")).lower()),
-            _h(pc, "hosting" in str(pc.get("type", "")).lower()),
+            None if pc.get("proxy") is None else _h(pc, bool(pc.get("proxy"))),
+            None if pc.get("vpn") is None else _h(pc, bool(pc.get("vpn"))),
+            None if pc.get("type") is None else _h(pc, "tor" in str(pc.get("type")).lower()),
+            None if pc.get("type") is None else _h(pc, "hosting" in str(pc.get("type")).lower()),
             None, None]),
         ("ipwho.is", [
             wi.get("proxy") if wi.get("ok") else None,
@@ -5265,7 +5343,12 @@ def run_passive6(ip):
             pass
         return p.key, res
 
-    _ex = ThreadPoolExecutor(max_workers=10)
+    global _V6_POOL
+    if _V6_POOL is None:
+        with _POOL_LOCK:
+            if _V6_POOL is None:
+                _V6_POOL = ThreadPoolExecutor(max_workers=10)
+    _ex = _V6_POOL
     try:
         _futs = {_ex.submit(_query_one, p): p for p in avail}
         try:
@@ -5282,7 +5365,7 @@ def run_passive6(ip):
     finally:
         with _progress_lock:
             progress_closed[0] = True
-        _ex.shutdown(wait=False)
+        # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
     if "--json" not in sys.argv:
         with _progress_lock:
@@ -5558,7 +5641,7 @@ def get_egress_ip(budget=None):
         else:
             _to = 6
         try:
-            _ua = {"User-Agent": "A-Check/4.14.19 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.20 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=_to) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -5839,15 +5922,19 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
 
 
 def _pinned_connect(conn, family):
-    # 透传连接超时（None 时守默认 5 秒：_getaddrinfo_timed 的 join 算术不接受 None）
-    infos = _getaddrinfo_timed(conn.host, conn.port, family,
-                               timeout=conn.timeout if conn.timeout is not None else 5)
+    # 透传连接超时（None 与 socket 默认哨兵均守默认 5 秒：
+    # _getaddrinfo_timed 的 join 算术与 settimeout 均不接受非数值超时；
+    # 哨兵经 getattr 取：私有属性，桩模块可能缺失，缺失时仅 None 归默认）
+    _to = conn.timeout
+    if _to is None or _to is getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None):
+        _to = 5
+    infos = _getaddrinfo_timed(conn.host, conn.port, family, timeout=_to)
     last = None
     for af, _st, _proto, _nm, sa in infos:
         _s = None
         try:
             _s = socket.socket(af, socket.SOCK_STREAM)
-            _s.settimeout(conn.timeout)
+            _s.settimeout(_to)
             _s.connect(sa)
             conn.sock = _s
             break
@@ -6019,11 +6106,15 @@ def get_unlock_type(domain, local_ip=None):
         # 前缀一律经 ipaddress 归一化：v4 /24、v6 /64（禁用字符串 split 切前缀；
         # 压缩格式 IPv6 直接切会把空串当段）。v4 由现行 /16 收紧至 /24。
         def _pfx(_ip):
+            # 按实际地址族定粒度：点分判断会把 ::ffff:192.0.2.1 这类点分嵌入
+            # IPv6 误送 IPv4 解析，失败后原串与对端 /64 归一化结果永不重叠，
+            # 把“不可判定”变成错误的确定 False（F22）。
             try:
-                if "." in _ip:
-                    return str(ipaddress.IPv4Network((_ip, 24),
+                _a = ipaddress.ip_address(_ip)
+                if isinstance(_a, ipaddress.IPv4Address):
+                    return str(ipaddress.IPv4Network((_a, 24),
                                                      strict=False).network_address)
-                return str(ipaddress.IPv6Network((_ip, 64),
+                return str(ipaddress.IPv6Network((_a, 64),
                                                  strict=False).network_address)
             except Exception:
                 return _ip
@@ -6204,7 +6295,9 @@ def test_chatgpt(local_ip=None):
     # code is None 在上游已返 failed，不与 unknown 混淆。
     if code != 200 or not _complete or "loc=" not in body:
         return T("unknown"), "", None
-    m = re.search(r"loc=([A-Z]{2})", body)
+    # loc 须为独立字段：前视排除 xloc= 这类子串、后视排除 loc=USA 这类
+    # 超长码（trace 体为 key=value 行格式；F23）。
+    m = re.search(r"(?<![A-Za-z])loc=([A-Z]{2})(?![A-Z])", body)
     if not m:
         return T("unknown"), "", None
     loc = m.group(1)
@@ -6440,6 +6533,10 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
                 "qq.com": ["mx1.qq.com", "mx2.qq.com"],
             }
             mxs = default_mx.get(domain, [domain])
+        if mxs == [] and not _MX_NULL.get(domain):
+            # 成功查询无记录且非 Null MX：按 RFC 5321 §5.1 隐式 MX，尝试域名自身。
+            # Null MX 域不走此分支（标记已置位，仍返 False）。
+            mxs = [domain]
         for mx in mxs[:2]:
             try:
                 _connect_host(mx.rstrip("."), 25, timeout, family).close()
@@ -6586,6 +6683,10 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                         with lock:
                             room = DL_CAP_BYTES - counter[0]
                             if room <= 0:
+                                # 已持锁内直接退登记（锁非重入，不可再加锁）；
+                                # 否则 return 跳过块后 discard，响应滞留 registry。
+                                if registry is not None:
+                                    registry.discard(r)
                                 return
                             _take = min(32768, room)
                             counter[0] += _take
@@ -6611,6 +6712,9 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                                     and cap_box[0] is None):
                                 cap_box[0] = time.monotonic()
                         if counter[0] >= DL_CAP_BYTES:
+                            if registry is not None:
+                                with lock:
+                                    registry.discard(r)
                             return
                 finally:
                     _resp_shutdown(r)  # 唤醒 _read_timed 遗留读线程，否则随后 close() 等它
@@ -7623,7 +7727,9 @@ def get_system_info():
                 except Exception:
                     pass
             if probed:
-                if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu")):
+                # F29：Bochs 型号/厂商串不含既有关键词，补 "bochs"（“探测成功
+                # 无信号→物理机”的 .19 设计本身保留）。
+                if any(k in o for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "bochs")):
                     virt = vm_label
                 else:
                     # CONF-13a.1：未命中关键词 ≠ 确认物理机（EC2 实例型号串即实例类型
@@ -7648,7 +7754,7 @@ def get_system_info():
                                 mfr = out2.stdout.lower()
                         except Exception:
                             pass
-                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google")):
+                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google", "bochs")):
                         virt = vm_label
                     else:
                         # 与 macOS/Linux 对齐：探测成功且无虚拟化信号 → 物理机
@@ -8174,6 +8280,9 @@ def _run_active6(json_mode, egress6):
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx6_ok}/{len(mx_domains6)}')}")
+        for _mx_name6, _mx_dom6 in mx_domains6:
+            if _MX_NULL.get(_mx_dom6):
+                print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name6 + ')')}")
         _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
         print(
             f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_c(C.cyan, str(dnsbl6_total))}  "
@@ -8486,22 +8595,27 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
     s = socket.create_connection((ph, pp), timeout=timeout)
     try:
         s.settimeout(timeout)
-        # 1. 问候
-        s.sendall(b"\x05\x02\x00\x02" if username is not None
+        # 1. 问候（RFC 1929 字段长 1..255：任一为空即无有效账密，只提供 0x00；
+        # 旧版仅 username 非 None 即协商 0x02，password=None 时 PLEN=0、
+        # username="" 时 ULEN=0，严格服务端拒认，旧版仅 0x00 时反可成功，属回归）
+        _has_auth = bool(username) and bool(password)
+        s.sendall(b"\x05\x02\x00\x02" if _has_auth
                   else b"\x05\x01\x00")
         ver, method = _sock_readn(s, 2)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
-        offered = (0x00, 0x02) if username is not None else (0x00,)
+        offered = (0x00, 0x02) if _has_auth else (0x00,)
         if method == 0xFF:
             raise OSError("proxy rejected all auth methods")
         if method not in offered:
             raise OSError("server selected unoffered auth method %#04x" % method)
         # 2. 用户名/密码认证 (RFC 1929)
         if method == 0x02:
-            u, p = username.encode(), (password or "").encode()
+            u, p = username.encode(), password.encode()
             if len(u) > 255 or len(p) > 255:
                 raise OSError("username/password too long for SOCKS5")
+            if len(u) < 1 or len(p) < 1:
+                raise OSError("username/password empty for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
             if _sock_readn(s, 2) != b"\x01\x00":
                 raise OSError("authentication failed")
@@ -9590,13 +9704,22 @@ def _banner_geo_text(net):
     """横幅地理行渲染时本地化：缓存只存原始字段，文本按当前 LANG 即时拼出；
     切语言无需失效缓存、无需重起线程（#24，不走 started 回退）。"""
     if "geo_country" in net or "geo_city" in net:
-        parts = [_loc_country_name(net.get("geo_country") or ""), net.get("geo_city") or ""]
+        # 渲染边界校验：缓存原始字段不校验类型，非字符串一律视为空串丢弃
+        # （字符串原样通过；否则 join 在此抛 TypeError 且调用点无保护，菜单崩溃；
+        # fallback 的 geo 字段恒为 join 产物字符串，不动）。
+        _cc = net.get("geo_country")
+        _cc = _cc if isinstance(_cc, str) else ""
+        _ct = net.get("geo_city")
+        _ct = _ct if isinstance(_ct, str) else ""
+        _og = net.get("geo_org")
+        _og = _og if isinstance(_og, str) else ""
+        parts = [_loc_country_name(_cc), _ct]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
             parts.append(T("residential"))
-        if net.get("geo_org"):
-            parts.append(net["geo_org"])
+        if _og:
+            parts.append(_og)
         return " · ".join(p for p in parts if p)
     return net.get("geo", "")
 
@@ -10229,12 +10352,12 @@ def main():
                   "self-check.", file=sys.stderr)
             sys.exit(2)  # 交互启动失败：非零退出（避开 130 中断码）
     try:
-        print_banner()
         _menu_first = True
         while True:
             if not _menu_first:
                 print(_c(C.cyan, "─" * 78))
             _menu_first = False
+            print_banner()
             print_menu()
             choice = input(T("prompt_choice2")).strip().lower()
             if choice == "q" or choice == "0":
@@ -10270,7 +10393,6 @@ def main():
                     if 0 <= idx < len(_langs):
                         LANG = _langs[idx]
                         print(f"  → {_names[LANG]}")
-                        print_banner()
                     else:
                         print(T("invalid_input"))
                 except ValueError:
