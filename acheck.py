@@ -9394,7 +9394,8 @@ _banner_net_started = [False]
 _banner_net_lock = threading.Lock()
 # 横幅后台线程与已登记工作线程（退出前有界 join 用，防关闭期 TLS 竞态
 # 致 SIGSEGV：守护线程在解释器拆解期间做首次 HTTPS 的 CA 加载会触及
-# 已释放状态；join 上限取横幅预算剩余部分，横幅已完成时立即返回）。
+# 已释放状态；join 上限取横幅预算剩余部分，横幅已完成但 worker 活着
+# 时仍会等到预算耗尽或 worker 结束）。
 _banner_net_thread = None
 _banner_net_deadline = None
 _banner_net_workers = []
@@ -9734,7 +9735,13 @@ def _banner_geo_text(net):
 
 
 def _banner_net_register_worker(t):
-    """登记一个横幅相关守护工作线程（退出前有界 join 用）。"""
+    """登记一个守护工作线程（退出前 _banner_net_join 有界等待用）。
+
+    注意登记无调用方检查：_getaddrinfo_timed 对每路 DNS 工作线程都
+    登记（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径），
+    故等待集可能包含活着的非横幅 DNS worker。登记点在线程 start()
+    之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
+    """
     with _banner_net_workers_lock:
         _banner_net_workers[:] = [w for w in _banner_net_workers
                                   if w.is_alive()]
@@ -9746,25 +9753,46 @@ def _banner_net_join():
 
     防止守护线程在解释器拆解期间做 TLS（进程内首次 HTTPS 的 CA 加载）
     触及已释放状态导致 SIGSEGV。等待总量以横幅预算剩余部分为上限；
-    横幅已完成或未启动时立即返回；不改变任何输出与退出码。
+    预算耗尽时仍在执行的线程不再等待（边界：有界等待不等于彻底
+    消除，超过预算仍在执行的 worker 照常可能撞上关闭期）。
+
+    顺序：先等横幅线程，再重取快照等 workers；每轮结束重新快照，
+    只要还有新出现的活 worker 且预算仍有剩余就继续，直到无活 worker
+    或预算耗尽——横幅线程在被等期间登记的新 worker 也会被等到，
+    不会因一次性快照漏等。
+
+    等待集为已登记的活 worker：_getaddrinfo_timed 无条件登记每路 DNS
+    工作线程（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径
+    的调用），故等待集可能包含活着的非横幅 DNS worker；无 deadline
+    （横幅未启动）时立即返回、不等待。
+
+    join 全程吞掉 KeyboardInterrupt：第二次 Ctrl-C 不改变结果——
+    取消路径恰好一次“已取消”＋130（打印由调用方做，join 本身不打印），
+    正常路径（0/q）退出码不变且不打印“已取消”。
     """
     deadline = _banner_net_deadline
     if deadline is None:
         return
-    threads = []
-    t = _banner_net_thread
-    if t is not None:
-        threads.append(t)
-    with _banner_net_workers_lock:
-        threads.extend(_banner_net_workers)
-    for th in threads:
+    while True:
         rem = deadline - time.monotonic()
         if rem <= 0:
             break
-        try:
-            th.join(rem)
-        except Exception:
-            pass
+        threads = []
+        t = _banner_net_thread
+        if t is not None and t.is_alive():
+            threads.append(t)
+        with _banner_net_workers_lock:
+            threads.extend(w for w in _banner_net_workers if w.is_alive())
+        if not threads:
+            break
+        for th in threads:
+            rem = deadline - time.monotonic()
+            if rem <= 0:
+                break
+            try:
+                th.join(rem)
+            except (KeyboardInterrupt, Exception):
+                pass
 
 
 def _banner_net_info_async():
