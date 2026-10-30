@@ -9752,47 +9752,97 @@ def _banner_net_join():
     """退出前有界等待横幅后台线程与已登记工作线程。
 
     防止守护线程在解释器拆解期间做 TLS（进程内首次 HTTPS 的 CA 加载）
-    触及已释放状态导致 SIGSEGV。等待总量以横幅预算剩余部分为上限；
-    预算耗尽时仍在执行的线程不再等待（边界：有界等待不等于彻底
-    消除，超过预算仍在执行的 worker 照常可能撞上关闭期）。
+    触及已释放状态导致 SIGSEGV。等待以横幅启动时定下的 deadline 为
+    上限（横幅预算 15 秒的剩余部分）；预算耗尽时仍在执行的线程不再
+    等待（边界：有界等待不等于彻底消除，超过预算仍在执行的 worker
+    照常可能撞上关闭期）。15 秒是预算说明，不是 join 调用本身的
+    严格墙钟保证（锁等待、快照扫描、调度开销不计入）。
 
-    顺序：先等横幅线程，再重取快照等 workers；每轮结束重新快照，
-    只要还有新出现的活 worker 且预算仍有剩余就继续，直到无活 worker
-    或预算耗尽——横幅线程在被等期间登记的新 worker 也会被等到，
-    不会因一次性快照漏等。
+    真实执行顺序：每轮把横幅线程与已登记 workers 一起取快照、依次
+    join，轮末重取快照；只要还有新出现的活 worker 且预算仍有剩余就
+    继续，直到无活 worker 或预算耗尽——被等期间新登记的 worker 也会
+    被等到，不会因一次性快照漏等。
 
     等待集为已登记的活 worker：_getaddrinfo_timed 无条件登记每路 DNS
     工作线程（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径
     的调用），故等待集可能包含活着的非横幅 DNS worker；无 deadline
     （横幅未启动）时立即返回、不等待。
 
-    join 全程吞掉 KeyboardInterrupt：第二次 Ctrl-C 不改变结果——
-    取消路径恰好一次“已取消”＋130（打印由调用方做，join 本身不打印），
+    第二次 Ctrl-C 全过程语义：函数内任何位置的 KeyboardInterrupt
+    都不逃出，调用方结果与无第二次 Ctrl-C 时完全一致——取消路径
+    恰好一次“已取消”＋130（打印由调用方做，join 本身不打印），
     正常路径（0/q）退出码不变且不打印“已取消”。
+    实现分两层：join 调用内的 KI 被吞掉，但被打断的 join 会使
+    CPython 把该线程对象标记为已停止（实测：其后 is_alive() 恒为
+    False、再次 join 立即返回，而底层线程仍在跑），故该线程记入
+    interrupted，改按 threading.enumerate() 的对象身份轮询等它真正
+    结束；join 调用外的 KI（deadline 读取、锁获取、快照构造、
+    monotonic、轮次控制流、轮询等待）由外层捕获后重查预算、重取
+    快照继续等。deadline 由横幅启动时一次性定值，之后不再重算；
+    外层重试每轮重读的只是同一固定值，不是重置截止，故等待仍有界
+    终止，不会因重试延长等待。
+
+    残留（本轮不改）：本函数只在正常／取消／q 路径上被调用；未捕获
+    异常导致的 traceback 退出路径不经过 join。_urlopen_bounded 超时
+    后 abandon 的 _go 工作线程若未登记，同样不在等待集内。
     """
-    deadline = _banner_net_deadline
-    if deadline is None:
-        return
+    # _banner_net_deadline 由横幅启动时一次性定值，之后不再重算；
+    # 下述外层重试每轮重读的只是同一固定值，不是重置截止。
+    # interrupted 必须定义在外层重试循环之外：KI 中断会使线程对象
+    # 的 is_alive 失真（见下），重试时不能丢了这些仍欠等待的线程。
+    interrupted = []
     while True:
-        rem = deadline - time.monotonic()
-        if rem <= 0:
-            break
-        threads = []
-        t = _banner_net_thread
-        if t is not None and t.is_alive():
-            threads.append(t)
-        with _banner_net_workers_lock:
-            threads.extend(w for w in _banner_net_workers if w.is_alive())
-        if not threads:
-            break
-        for th in threads:
-            rem = deadline - time.monotonic()
-            if rem <= 0:
-                break
-            try:
-                th.join(rem)
-            except (KeyboardInterrupt, Exception):
-                pass
+        try:
+            deadline = _banner_net_deadline
+            if deadline is None:
+                return
+            while True:
+                rem = deadline - time.monotonic()
+                if rem <= 0:
+                    return
+                threads = []
+                t = _banner_net_thread
+                if t is not None and t.is_alive():
+                    threads.append(t)
+                with _banner_net_workers_lock:
+                    threads.extend(w for w in _banner_net_workers
+                                   if w.is_alive())
+                if interrupted:
+                    live = threading.enumerate()
+                    interrupted = [w for w in interrupted
+                                   if any(x is w for x in live)]
+                if not threads and not interrupted:
+                    return
+                for th in threads:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        break
+                    try:
+                        th.join(rem)
+                    except KeyboardInterrupt:
+                        # join 被打断：该线程的 is_alive 已失真（其后
+                        # 恒 False、再次 join 立即返回），快照再也找
+                        # 不到它；记入 interrupted，改由下述轮询等它
+                        # 真正结束，否则 join 会提前返回。
+                        if th not in interrupted:
+                            interrupted.append(th)
+                    except Exception:
+                        pass
+                while interrupted:
+                    rem = deadline - time.monotonic()
+                    if rem <= 0:
+                        break
+                    live = threading.enumerate()
+                    interrupted = [w for w in interrupted
+                                   if any(x is w for x in live)]
+                    if not interrupted:
+                        break
+                    time.sleep(min(0.05, rem))
+        except KeyboardInterrupt:
+            # join 调用外的 KI（deadline 读取、锁获取、快照构造、
+            # monotonic、轮次控制流、轮询等待）：不逃出，重查预算、
+            # 重取快照继续等。
+            continue
 
 
 def _banner_net_info_async():
