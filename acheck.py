@@ -8331,8 +8331,20 @@ def run_active(json_mode=False, stack=None):
                 print(f"    1. {T('stack_auto')}")
                 print(f"    2. {T('stack_v4')}")
                 print(f"    3. {T('stack_v6')}")
-                _sel = input(f"  {T('stack_prompt')}").strip()
-                stack = {"1": "auto", "2": "4", "3": "6"}.get(_sel, "auto")
+                while True:
+                    _sel = input(f"  {T('stack_prompt')}").strip()
+                    if _sel == "":
+                        # 回车是已文档化的默认含义（=auto），不算无效输入。
+                        stack = "auto"
+                        break
+                    if _sel in ("1", "2", "3"):
+                        stack = {"1": "auto", "2": "4", "3": "6"}[_sel]
+                        break
+                    print(T("invalid_input"))
+        except EOFError:
+            # EOF 不是普通无效输入：直接抛出，走主循环的“已取消”路径，
+            # 绝不能吞成 auto，更不能无限重问。
+            raise
         except Exception:
             stack = "auto"
 
@@ -10050,6 +10062,7 @@ def _parse_version(v):
 
 def check_update():
     """菜单 6: 对比 GitHub 最新 Release 与本地版本。"""
+    cause = None
     try:
         req = urllib.request.Request(
             "https://api.github.com/repos/alariclin/A-Check/releases/latest",
@@ -10060,18 +10073,45 @@ def check_update():
                     "utf-8")).get("tag_name", "")
             finally:
                 _resp_shutdown(r)
+    except TimeoutError:
+        tag = ""
+        cause = "timeout"
+    except urllib.error.URLError as e:
+        tag = ""
+        reason = getattr(e, "reason", None)
+        if isinstance(reason, TimeoutError):
+            cause = "timeout"
+        elif isinstance(reason, socket.gaierror):
+            cause = "dns"
+        elif isinstance(reason, (ConnectionError, OSError)):
+            cause = "connection"
+        else:
+            cause = "unknown"
+    except ValueError:
+        # 响应体不可解析/超限：属响应侧问题，非请求异常。
+        tag = ""
+        cause = "response"
     except Exception:
         tag = ""
+        cause = "unknown"
     if not isinstance(tag, str):
         tag = ""
     latest = tag.lstrip("v")
+    if latest and _parse_version(latest) is None:
+        latest = ""
+    if not latest and cause is None:
+        # 无异常但无可用版本：tag 缺失/为空/不可解析，属响应侧问题。
+        cause = "response"
     if not latest:
         print(f"  {_c(C.dim, T('upd_failed'))}")
+        if cause:
+            print(f"  {_c(C.dim, '[cause: %s]' % cause)}")
     else:
         lv = _parse_version(latest)
         cv = _parse_version(VERSION)
         if lv is None or cv is None:
             print(f"  {_c(C.dim, T('upd_failed'))}")
+            print(f"  {_c(C.dim, '[cause: response]')}")
         else:
             n = max(len(lv), len(cv))
             lv += (0,) * (n - len(lv))
@@ -10687,6 +10727,7 @@ def main():
                     res = run_passive(ip)
                     print_report(res, dns_rec=True)
             else:
+                print(T("invalid_input"))
                 continue
     except (KeyboardInterrupt, EOFError):
         print(f"\n  {T('cancelled')}", file=sys.stderr)
