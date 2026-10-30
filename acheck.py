@@ -5068,10 +5068,10 @@ def _factor_rows(s, wi_server, v6=False):
         ("Tor Exit", [None, None, _h(te, bool(te.get("is_tor_exit"))),
                       None, None, None]),
         ("proxycheck", [
-            _h(pc, bool(pc.get("proxy"))),
-            _h(pc, bool(pc.get("vpn"))),
-            _h(pc, "tor" in str(pc.get("type", "")).lower()),
-            _h(pc, "hosting" in str(pc.get("type", "")).lower()),
+            None if pc.get("proxy") is None else _h(pc, bool(pc.get("proxy"))),
+            None if pc.get("vpn") is None else _h(pc, bool(pc.get("vpn"))),
+            None if pc.get("type") is None else _h(pc, "tor" in str(pc.get("type")).lower()),
+            None if pc.get("type") is None else _h(pc, "hosting" in str(pc.get("type")).lower()),
             None, None]),
         ("ipwho.is", [
             wi.get("proxy") if wi.get("ok") else None,
