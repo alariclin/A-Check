@@ -9759,7 +9759,8 @@ def _banner_net_join():
     每轮以 deadline - monotonic() 重算剩余；锁等待、快照扫描、调度
     等操作消耗的时间会在下一次预算检查中体现为剩余减少，但这些操作
     本身不受剩余预算约束——一次操作可能跨过 deadline 才返回，故返回
-    时刻可能越过 deadline（超量取决于锁竞争与快照规模，通常为毫秒级）。
+    时刻可能越过 deadline（超量取决于锁竞争、调度暂停与中断处理，
+    无固定上界）。
 
     真实执行顺序：每轮把横幅线程与已登记 workers 一起取快照、依次
     join，轮末重取快照；只要还有新出现的活 worker 且预算仍有剩余就
@@ -9772,31 +9773,49 @@ def _banner_net_join():
     （横幅未启动）时立即返回、不等待。
 
     第二次 Ctrl-C 全过程语义：单个 try 覆盖初始化与全部工作位置，
-    KI 落在任何工作位置都不逃出、由外层 except 统一重试——取消路径
-    恰好一次“已取消”＋130（打印由调用方做，join 本身不打印），
-    正常路径（0/q）退出码不变且不打印“已取消”。
-    实现分三层：join 调用内的 KI 被吞掉，但被打断的 join 会使
-    CPython 把该线程对象标记为已停止（实测：其后 is_alive() 恒为
-    False、再次 join 立即返回，而底层线程仍在跑），故该线程记入
-    interrupted，改按 threading.enumerate() 的对象身份轮询等它真正
-    结束；毒化登记不得丢失——append 本身也可能被 KI 打断，故登记处
-    另包一层 KI 重试循环，重 attempts 直到 append 完成才 break，
-    登记完成后即使再来 KI，外层重试也能在 interrupted 中找到它；
-    join 调用外的 KI（初始化、deadline 读取、锁获取、快照构造、
-    monotonic、轮次控制流、轮询等待）由外层捕获后重查预算、重取
-    快照继续等。deadline 由横幅启动时一次性定值，之后不再重算；
-    外层重试每轮重读的只是同一固定值，不是重置截止。
-    终止性为有条件表述：重试不刷新截止时间，在中断有限、等待原语
-    （join 超时、轮询睡眠）能取得进展的条件下，等待按同一预算退出。
-    轮询成本：interrupted 有 I 个、存活线程 L 个时，每 50ms 一轮做
-    身份比对（每轮 O(I×L)）；正常完成发现可能迟至下一次轮询
-    （最长约 50ms）。
+    KI 落在任何工作位置都不逃出、由外层 except 统一重试；except
+    处理体内已无工作语句、仅 continue 回边跳转（属理论残留），故
+    不存在处理器内初始化又被打断的逃出路径——取消路径恰好一次
+    “已取消”＋130（打印由调用方做，join 本身不打印），正常路径
+    （0/q）退出码不变且不打印“已取消”。
+    实现分三层：join 调用内的 KI 被吞掉，但在受影响、已验证的
+    运行时及中断路径上，被打断的 join 会使 CPython 把该线程对象
+    标记为已停止（实测：其后 is_alive() 恒为 False、再次 join 立即
+    返回，而底层线程仍在跑），故该线程记入 interrupted，改按
+    threading.enumerate() 的对象身份轮询等它真正结束；毒化登记不得
+    丢失——append 本身也可能被 KI 打断，故登记处另包一层 KI 重试循环，
+    重 attempts 直到 append 完成才 break，登记完成后即使再来 KI，
+    外层重试也能在 interrupted 中找到它；登记义务预登记化——join 前
+    已把 th 记为 pending_th，外层重试不清除它，故 KI 落在 except
+    入口（while 建立到内层 try 体首之间）或登记回边时，即使
+    interrupted 尚无它，快照仍能按对象身份等它真正结束，不会因
+    is_alive 失真而漏等；join 调用外的 KI（初始化、deadline 读取、
+    锁获取、快照构造、monotonic、轮次控制流、轮询等待）由外层捕获
+    后重查预算、重取快照继续等。deadline 由横幅启动时一次性定值，
+    之后不再重算；外层重试每轮重读的只是同一固定值，不是重置截止。
+    登记重试循环本身无预算检查：持续中断下，即使预算已耗尽，登记
+    重试仍会继续 attempts（每次 attempts 极短），故返回时刻仍可能
+    迟于 deadline；此属“中断有限”条件的一部分，非独立缺陷。
+    终止性为有条件表述：重试不刷新截止时间；在中断有限、等待原语
+    （join 超时、轮询睡眠、锁获取）能取得进展且线程能获得调度的
+    条件下，等待按同一预算退出。此处“退出”指函数返回（含预算耗尽
+    返回），不等同于“所有 worker 已完成”；“不丢失等待义务”指预算
+    未耗尽时不因中断而提前返回——最终停止执行、正常返回、不丢失
+    等待义务是三个不同的结论，不可混为一谈。
+    轮询成本：等待集（interrupted 与 pending 合计）有 I 个、存活
+    线程 L 个时，每轮做身份比对（每轮 O(I×L)）；进入轮询阶段后，
+    每轮请求睡眠不超过 50ms，但完成发现还要加上扫描、调度与重试
+    延迟，故发现时延无 50ms 严格上界。
 
     理论残留（纯 Python 内无法消除，不用信号屏蔽手段）：函数入口
-    字节码（try 建立前）、循环回边字节码、except 处理体本身仍是
-    可中断点；KI 恰好落在这些单条字节码上仍会逃出——窗口已缩至
-    单条字节码量级，工作位置（初始化、deadline 读取、锁获取、
-    快照构造、join、轮询、登记）均已覆盖，不得声称绝对零窗口。
+    字节码（try 建立前）、循环回边字节码、except 处理体本身（现仅
+    continue 回边跳转）仍是可中断点；KI 恰好落在这些单条字节码上
+    仍会逃出——窗口已缩至单条字节码量级，工作位置（初始化、deadline
+    读取、锁获取、快照构造、join、轮询、登记）与登记义务窗口（join
+    前至登记完成）均已覆盖；但“单条字节码量级”仅描述窗口宽度，不
+    给出墙钟窗口或风险上界，不得声称绝对零窗口。上述残留的后果是
+    KI 逃出函数（由调用方按取消处理），而非静默漏等——静默漏等路径
+    已由 pending_th 与登记重试循环覆盖。
     范围限定：被中断线程完成状态（W1）仅在所报测试环境验证；
     14 系统非交互冒烟不验证各运行时上的 KI／线程毒化行为。
 
@@ -9806,8 +9825,10 @@ def _banner_net_join():
     """
     # 等待状态以哨兵起步：真正的初始化（interrupted = []）发生在下面
     # 单个 try 内，KI 落在初始化行也会被外层 except 统一重试；哨兵行
-    # 本身与循环回边字节码属上述理论残留。
+    # 本身与循环回边字节码属上述理论残留。pending_th 为预登记义务：
+    # join 前已记下 th，外层重试不清除它（见下述快照逻辑）。
     interrupted = None
+    pending_th = None
     while True:
         try:
             if interrupted is None:
@@ -9830,12 +9851,24 @@ def _banner_net_join():
                     live = threading.enumerate()
                     interrupted = [w for w in interrupted
                                    if any(x is w for x in live)]
-                if not threads and not interrupted:
+                # 预登记义务（P1-1）：join 前已记下 th；join 被打断
+                # 在登记保护区之外（except 入口、登记回边）时，外层
+                # 重试仍能在此看到它——不论 is_alive（毒化后恒
+                # False），一律按对象身份轮询等它真正结束；已完成则
+                # 清 pending。赋值前 KI 则 join 尚未运行、无毒化，
+                # 下轮快照仍能找到活线程，故该窗口良性。
+                if pending_th is not None:
+                    live = threading.enumerate()
+                    if not any(x is pending_th for x in live):
+                        pending_th = None
+                if (not threads and not interrupted
+                        and pending_th is None):
                     return
                 for th in threads:
                     rem = deadline - time.monotonic()
                     if rem <= 0:
                         break
+                    pending_th = th
                     try:
                         th.join(rem)
                     except KeyboardInterrupt:
@@ -9844,7 +9877,8 @@ def _banner_net_join():
                         # 不到它；记入 interrupted，改由下述轮询等它
                         # 真正结束，否则 join 会提前返回。登记本身也
                         # 可能被 KI 打断：重试直到 append 完成才 break，
-                        # 否则外层重试重取快照时会丢失该线程。
+                        # 否则外层重试重取快照时会丢失该线程。登记
+                        # 成功后义务转入 interrupted，pending 清除。
                         while True:
                             try:
                                 if th not in interrupted:
@@ -9854,23 +9888,28 @@ def _banner_net_join():
                                 continue
                     except Exception:
                         pass
-                while interrupted:
+                    pending_th = None
+                while interrupted or pending_th is not None:
                     rem = deadline - time.monotonic()
                     if rem <= 0:
                         break
                     live = threading.enumerate()
-                    interrupted = [w for w in interrupted
-                                   if any(x is w for x in live)]
-                    if not interrupted:
+                    if interrupted:
+                        interrupted = [w for w in interrupted
+                                       if any(x is w for x in live)]
+                    if pending_th is not None and not any(
+                            x is pending_th for x in live):
+                        pending_th = None
+                    if not interrupted and pending_th is None:
                         break
                     time.sleep(min(0.05, rem))
         except KeyboardInterrupt:
             # 统一重试：KI 落在初始化、deadline 读取、锁获取、快照
             # 构造、monotonic、轮次控制流、轮询等待等任何工作位置都
-            # 不逃出；interrupted 已建立则保留（不重置），未建立则
-            # 下一轮初始化。
-            if interrupted is None:
-                interrupted = []
+            # 不逃出；interrupted 与 pending_th 已建立则保留（不重置
+            # 、不清除），未建立则下一轮 try 内初始化。处理体内已无
+            # 工作语句、仅 continue 回边跳转（属理论残留，见文档），
+            # 故不存在“处理器内初始化又被打断”的逃出路径。
             continue
 
 
