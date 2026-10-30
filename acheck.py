@@ -9752,11 +9752,14 @@ def _banner_net_join():
     """退出前有界等待横幅后台线程与已登记工作线程。
 
     防止守护线程在解释器拆解期间做 TLS（进程内首次 HTTPS 的 CA 加载）
-    触及已释放状态导致 SIGSEGV。等待以横幅启动时定下的 deadline 为
-    上限（横幅预算 15 秒的剩余部分）；预算耗尽时仍在执行的线程不再
+    触及已释放状态导致 SIGSEGV。等待以横幅启动时定下的绝对 deadline
+    为上限（横幅预算 15 秒的剩余部分）；预算耗尽时仍在执行的线程不再
     等待（边界：有界等待不等于彻底消除，超过预算仍在执行的 worker
-    照常可能撞上关闭期）。15 秒是预算说明，不是 join 调用本身的
-    严格墙钟保证（锁等待、快照扫描、调度开销不计入）。
+    照常可能撞上关闭期）。预算语义须准确理解：固定绝对 deadline，
+    每轮以 deadline - monotonic() 重算剩余；锁等待、快照扫描、调度
+    等操作消耗的时间会在下一次预算检查中体现为剩余减少，但这些操作
+    本身不受剩余预算约束——一次操作可能跨过 deadline 才返回，故返回
+    时刻可能越过 deadline（超量取决于锁竞争与快照规模，通常为毫秒级）。
 
     真实执行顺序：每轮把横幅线程与已登记 workers 一起取快照、依次
     join，轮末重取快照；只要还有新出现的活 worker 且预算仍有剩余就
@@ -9768,31 +9771,47 @@ def _banner_net_join():
     的调用），故等待集可能包含活着的非横幅 DNS worker；无 deadline
     （横幅未启动）时立即返回、不等待。
 
-    第二次 Ctrl-C 全过程语义：函数内任何位置的 KeyboardInterrupt
-    都不逃出，调用方结果与无第二次 Ctrl-C 时完全一致——取消路径
+    第二次 Ctrl-C 全过程语义：单个 try 覆盖初始化与全部工作位置，
+    KI 落在任何工作位置都不逃出、由外层 except 统一重试——取消路径
     恰好一次“已取消”＋130（打印由调用方做，join 本身不打印），
     正常路径（0/q）退出码不变且不打印“已取消”。
-    实现分两层：join 调用内的 KI 被吞掉，但被打断的 join 会使
+    实现分三层：join 调用内的 KI 被吞掉，但被打断的 join 会使
     CPython 把该线程对象标记为已停止（实测：其后 is_alive() 恒为
     False、再次 join 立即返回，而底层线程仍在跑），故该线程记入
     interrupted，改按 threading.enumerate() 的对象身份轮询等它真正
-    结束；join 调用外的 KI（deadline 读取、锁获取、快照构造、
+    结束；毒化登记不得丢失——append 本身也可能被 KI 打断，故登记处
+    另包一层 KI 重试循环，重 attempts 直到 append 完成才 break，
+    登记完成后即使再来 KI，外层重试也能在 interrupted 中找到它；
+    join 调用外的 KI（初始化、deadline 读取、锁获取、快照构造、
     monotonic、轮次控制流、轮询等待）由外层捕获后重查预算、重取
     快照继续等。deadline 由横幅启动时一次性定值，之后不再重算；
-    外层重试每轮重读的只是同一固定值，不是重置截止，故等待仍有界
-    终止，不会因重试延长等待。
+    外层重试每轮重读的只是同一固定值，不是重置截止。
+    终止性为有条件表述：重试不刷新截止时间，在中断有限、等待原语
+    （join 超时、轮询睡眠）能取得进展的条件下，等待按同一预算退出。
+    轮询成本：interrupted 有 I 个、存活线程 L 个时，每 50ms 一轮做
+    身份比对（每轮 O(I×L)）；正常完成发现可能迟至下一次轮询
+    （最长约 50ms）。
+
+    理论残留（纯 Python 内无法消除，不用信号屏蔽手段）：函数入口
+    字节码（try 建立前）、循环回边字节码、except 处理体本身仍是
+    可中断点；KI 恰好落在这些单条字节码上仍会逃出——窗口已缩至
+    单条字节码量级，工作位置（初始化、deadline 读取、锁获取、
+    快照构造、join、轮询、登记）均已覆盖，不得声称绝对零窗口。
+    范围限定：被中断线程完成状态（W1）仅在所报测试环境验证；
+    14 系统非交互冒烟不验证各运行时上的 KI／线程毒化行为。
 
     残留（本轮不改）：本函数只在正常／取消／q 路径上被调用；未捕获
     异常导致的 traceback 退出路径不经过 join。_urlopen_bounded 超时
     后 abandon 的 _go 工作线程若未登记，同样不在等待集内。
     """
-    # _banner_net_deadline 由横幅启动时一次性定值，之后不再重算；
-    # 下述外层重试每轮重读的只是同一固定值，不是重置截止。
-    # interrupted 必须定义在外层重试循环之外：KI 中断会使线程对象
-    # 的 is_alive 失真（见下），重试时不能丢了这些仍欠等待的线程。
-    interrupted = []
+    # 等待状态以哨兵起步：真正的初始化（interrupted = []）发生在下面
+    # 单个 try 内，KI 落在初始化行也会被外层 except 统一重试；哨兵行
+    # 本身与循环回边字节码属上述理论残留。
+    interrupted = None
     while True:
         try:
+            if interrupted is None:
+                interrupted = []
             deadline = _banner_net_deadline
             if deadline is None:
                 return
@@ -9823,9 +9842,16 @@ def _banner_net_join():
                         # join 被打断：该线程的 is_alive 已失真（其后
                         # 恒 False、再次 join 立即返回），快照再也找
                         # 不到它；记入 interrupted，改由下述轮询等它
-                        # 真正结束，否则 join 会提前返回。
-                        if th not in interrupted:
-                            interrupted.append(th)
+                        # 真正结束，否则 join 会提前返回。登记本身也
+                        # 可能被 KI 打断：重试直到 append 完成才 break，
+                        # 否则外层重试重取快照时会丢失该线程。
+                        while True:
+                            try:
+                                if th not in interrupted:
+                                    interrupted.append(th)
+                                break
+                            except KeyboardInterrupt:
+                                continue
                     except Exception:
                         pass
                 while interrupted:
@@ -9839,9 +9865,12 @@ def _banner_net_join():
                         break
                     time.sleep(min(0.05, rem))
         except KeyboardInterrupt:
-            # join 调用外的 KI（deadline 读取、锁获取、快照构造、
-            # monotonic、轮次控制流、轮询等待）：不逃出，重查预算、
-            # 重取快照继续等。
+            # 统一重试：KI 落在初始化、deadline 读取、锁获取、快照
+            # 构造、monotonic、轮次控制流、轮询等待等任何工作位置都
+            # 不逃出；interrupted 已建立则保留（不重置），未建立则
+            # 下一轮初始化。
+            if interrupted is None:
+                interrupted = []
             continue
 
 
