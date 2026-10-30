@@ -9906,6 +9906,7 @@ def check_update():
         cv = _parse_version(VERSION)
         if lv is None or cv is None:
             print(f"  {_c(C.dim, T('upd_failed'))}")
+            print(f"  {_c(C.dim, '[cause: response]')}")
         else:
             n = max(len(lv), len(cv))
             lv += (0,) * (n - len(lv))
