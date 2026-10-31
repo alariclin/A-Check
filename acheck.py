@@ -3692,8 +3692,9 @@ def _build_unified_profile(s):
     _country_src = None
     country = ""
     for _src in (wi, db, fp, ii, pc, wa, ai, gu, gj, il, iq, co, ti, ht, ox):
-        if _src.get("country"):
-            country, _country_src = _src["country"], _src
+        _c = _src.get("country")
+        if isinstance(_c, str) and _c.strip():
+            country, _country_src = _c, _src
             break
     if not isinstance(country, str):
         # 异常源返回非字符串国家名（如数字）：视为无国家名，不让后续 .strip() 崩溃。
@@ -3731,18 +3732,27 @@ def _build_unified_profile(s):
     # CONF-7.1: region/city/经纬度/时区只取与已选国家一致的来源；
     # 来源国家无法确定（既无 country 名又无 country_code）时宁可留空，
     # 不跨国家拼接。country 字段形态不统一（名或 ISO 码），故名、码双通道比对。
-    # 未选出国家名时（country 为空）无国家可言，沿旧链取首个非空值。
+    # 名、码皆无时无国家可言，沿旧链取首个非空值；仅码已知时仍按码一致过滤。
     _sel_name = country.strip().lower()
     _sel_code = (country_code.strip().lower() or _CC_EN.get(_sel_name, "")
                  or (_sel_name if len(_sel_name) == 2 else ""))
 
     def _same_country(_src):
-        if not _sel_name:
+        if not _sel_name and not _sel_code:
             return True
         _sc_raw = _src.get("country")
         _scc_raw = _src.get("country_code")
         _sc = _sc_raw.strip().lower() if isinstance(_sc_raw, str) else ""
         _scc = _scc_raw.strip().lower() if isinstance(_scc_raw, str) else ""
+        if not _sel_name:
+            # 仅码情形：只拒绝显式异码；未声明国家信息的来源不因此被拒。
+            if _scc and _scc != _sel_code:
+                return False
+            if _sc and len(_sc) == 2 and _sc != _sel_code:
+                return False
+            if _sc and _CC_EN.get(_sc, "").lower() and _CC_EN.get(_sc, "").lower() != _sel_code:
+                return False
+            return True
         if _sc and _sc == _sel_name:
             return True
         if _scc and _sel_code and _scc == _sel_code:
@@ -4211,7 +4221,7 @@ def score_platform(s):
         _v(pc), _v(wi),
         None if (not il.get("ok") or il.get("vpn") is None) else bool(il.get("vpn")),
         None if (not iq.get("ok") or iq.get("vpn") is None) else bool(iq.get("vpn")),
-        None if not xv.get("ok") else bool(xv.get("listed")),
+        None if (not xv.get("ok") or xv.get("listed") is None) else bool(xv.get("listed")),
     )
     if is_prx:
         pts += 40
