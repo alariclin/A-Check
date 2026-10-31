@@ -2001,7 +2001,10 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     qtype_r, qclass_r = struct.unpack(">HH", data[offset:offset + 4])
     offset += 4
-    if (qname or "").lower().rstrip(".") != domain_q.lower().rstrip(".") \
+    # 解码失败（None）必须拒绝，不得以 (qname or "") 把 None 当根域名
+    # 与空串查询比对通过（2-2：空串域名＋自指问题段曾误返成功空结果）。
+    if qname is None \
+            or qname.lower().rstrip(".") != domain_q.lower().rstrip(".") \
             or qtype_r != qtype or qclass_r != 1:
         return (None, []) if return_cnames else None
 
