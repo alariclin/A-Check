@@ -8084,6 +8084,7 @@ def disk_io_test(size_mb=64):
         return None
     finally:
         live_fd = None
+        live_ino = None
         if f is not None:
             try:
                 live_fd = f.fileno()
@@ -8091,6 +8092,12 @@ def disk_io_test(size_mb=64):
                 live_fd = None
         elif fd is not None:
             live_fd = fd
+        if live_fd is not None:
+            try:
+                # 关前先记 inode（关后 fd 无法再 fstat，守卫不能丢）
+                live_ino = os.fstat(live_fd).st_ino
+            except Exception:
+                live_ino = None
         if live_fd is not None:
             try:
                 # unlink 前核 inode 一致：名下文件被换则不删他人文件
@@ -8111,6 +8118,18 @@ def disk_io_test(size_mb=64):
         elif fd is not None:
             try:
                 os.close(fd)
+            except Exception:
+                pass
+        # Windows 补删：首次 unlink 若因句柄被拒，关后按已记 inode 重删
+        if live_ino is not None and os.path.lexists(tmp_path):
+            try:
+                if os.stat(tmp_path).st_ino == live_ino:
+                    os.unlink(tmp_path)
+            except Exception:
+                pass
+        if _privdir:
+            try:
+                os.rmdir(_privdir)
             except Exception:
                 pass
 
@@ -8164,7 +8183,10 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     except ValueError:
         _addr = None
     if _addr is not None and _addr.version == 6:
-        _nib = _addr.exploded.replace(":", "")
+        try:
+            _nib = _addr.exploded.replace(":", "")
+        except ValueError:
+            return (0, 0, 0, [])
         rev = ".".join(reversed(_nib))
         lists = [lst for lst in DNSBL_LISTS[:max_lists]
                  if lst in _DNSBL_IPV6_LISTS]
@@ -8347,6 +8369,7 @@ def _run_active6(json_mode, egress6):
         mx6_results = [f.result() for f in f_mxs_6]
     dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
     if not json_mode:
+        print_system_info(si6, io6)
         _section(T("sec_mail"))
         if p25_6:
             print(f"  {T('port25')}: {_c(C.green, T('normal'))}")
