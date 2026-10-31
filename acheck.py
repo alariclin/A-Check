@@ -9040,6 +9040,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._ph, self._pp = ph, pp
         self._user, self._pwd = username, password
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
+        self._hs_closed = False  # 8-2：握手期内被 close 的标记
 
     def connect(self):
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
@@ -9049,8 +9050,8 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 先挂 self.sock 再 wrap：覆盖 TLS wrap 阶段，窗口清理能关到它。
         self.sock = raw
         try:
-            self.sock = self._context.wrap_socket(raw,
-                                                  server_hostname=self.host)
+            _tls = self._context.wrap_socket(raw,
+                                             server_hostname=self.host)
         except Exception:
             try:
                 raw.close()
@@ -9058,9 +9059,23 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
             raise
+        if self._hs_closed:
+            # 8-2：wrap 期间已被 close（此时 _hs_box 登记的仍是已脱离
+            # 的原始 socket，关不到实际 TLS socket）：关掉新得的 TLS
+            # socket，不把活 socket 写回已关闭的连接对象。worker 侧
+            # 的窗口复查兜底（GET 前复查）保持在位，不动。
+            try:
+                _tls.close()
+            except Exception:
+                pass
+            self.sock = None
+        else:
+            self.sock = _tls
 
     def close(self):
-        # 先关断握手中的 socket（shutdown 唤醒阻塞 recv），再走标准关闭。
+        # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
+        # 的 socket（shutdown 唤醒阻塞 recv），最后走标准关闭。
+        self._hs_closed = True
         for _s in self._hs_box:
             try:
                 _s.shutdown(socket.SHUT_RDWR)
