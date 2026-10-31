@@ -7039,14 +7039,16 @@ DNS_SERVERS_DOT = [
 
 
 def _dns_test_ok(d, tid, qpkt):
-    """DNS 测试路径 (UDP53/DoT/DoH) 的响应判定：长度、事务 ID、QR、RCODE、
-    问题段 (名/类型/类与查询一致，名比对不区分大小写与末尾点) 全验；
+    """DNS 测试路径 (UDP53/DoT/DoH) 的响应判定：长度、事务 ID、QR、OPCODE、
+    RCODE、问题段 (名/类型/类与查询一致，名比对不区分大小写与末尾点) 全验；
     查询原样回送、QR=0 的截断/伪造响应一律判败；TC 截断、无答案、
-    答案段越界一律判败。"""
+    答案段越界一律判败。OPCODE 须为 0（标准查询）：OPCODE=1/2 的响应
+    不是对本次查询的回答，不得判成功（7a-1）。"""
     if d is None or len(d) < 12:
         return False
     r_tid, flags, qdcount, ancount, _, _ = struct.unpack(">HHHHHH", d[:12])
-    if r_tid != tid or not (flags & 0x8000) or (flags & 0x0F) != 0 or qdcount != 1:
+    if (r_tid != tid or not (flags & 0x8000) or (flags & 0x7800) != 0
+            or (flags & 0x0F) != 0 or qdcount != 1):
         return False
     if flags & 0x0200:  # TC 截断：不可信
         return False
