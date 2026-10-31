@@ -6319,6 +6319,12 @@ def test_netflix(local_ip=None):
         )
         region = f"[{m.group(1).upper()}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
+    # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
+    # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
+    # 次探针 403 会被误判 blocked）。
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
 
     code2, body2, final_url2, complete2, hdrs2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
