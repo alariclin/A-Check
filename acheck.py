@@ -6292,7 +6292,9 @@ def test_disney(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "not available" not in body.lower():
+    # 最终 URL 来自重定向链、不受正文截断影响：URL 已含 blocked 信号时
+    # 不因正文不完整判 unknown，落入正常分类（6-3）。
+    if code == 200 and not complete and "not available" not in body.lower() and "unavailable" not in final_url.lower():
         return T("unknown"), "", None
     if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
@@ -6311,8 +6313,10 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "Not Available" not in body:
-        return T("unknown"), "", None  # 首探针证据不完整即判 unknown，不落入次探针
+    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
+    # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
+    if code == 200 and not complete and "Not Available" not in body and "nsfw" not in final_url:
+        return T("unknown"), "", None
     if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
@@ -6453,7 +6457,9 @@ def test_gemini(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "isn't currently supported" not in body.lower():
+    # 最终 URL 信号不受正文截断影响：URL 已含 faq 信号时不因正文
+    # 不完整判 unknown，落入正常分类（6-3）。
+    if code == 200 and not complete and "isn't currently supported" not in body.lower() and "faq" not in final_url.lower():
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
