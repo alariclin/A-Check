@@ -1815,6 +1815,7 @@ def _decode_dns_name(pkt, offset):
     orig_offset = offset
     seen = set()
     terminated = False
+    wire_len = 1  # 展开名线长含末尾根标签：超 255 字节即畸形（RFC 1035）
     while offset < len(pkt):
         if offset in seen:
             break
@@ -1838,6 +1839,9 @@ def _decode_dns_name(pkt, offset):
         else:
             offset += 1
             if offset + length > len(pkt):
+                break
+            wire_len += 1 + length
+            if wire_len > 255:
                 break
             labels.append(pkt[offset:offset + length].decode("ascii", errors="replace"))
             offset += length
@@ -1997,6 +2001,10 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
     rcode = flags & 0x000F
     if rcode == 3:  # NXDOMAIN（发送方与问题段已验）
+        if qtype == 15:
+            # 域名已不存在：旧 Null MX 断言随之失效，清除残留标记（与成功尾部
+            # 同口径；其他 qtype 不触碰标记）。
+            _MX_NULL.pop(domain, None)
         return ([], []) if return_cnames else []
     if rcode != 0:
         return (None, []) if return_cnames else None
@@ -2035,7 +2043,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         for _okey, _rt, _rc, _rd, _off in records:
             if _okey == _cur and _rt == 5 and _rc == 1:
                 _tgt, _cend = _decode_dns_name(data, _off)
-                if _tgt is None or _cend - _off > len(_rd):
+                if _tgt is None or _cend - _off != len(_rd):
                     # 已存在 CNAME，但目标名称畸形，不能当作链正常结束。
                     _cname_bad = True
                     break
@@ -2078,7 +2086,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             results.append(socket.inet_ntop(socket.AF_INET6, _rd))
         elif _rt == 12 and qtype == 12:  # PTR record
             ptr_host, pend = _decode_dns_name(data, _off)
-            if ptr_host and pend - _off <= len(_rd):
+            if ptr_host and pend - _off == len(_rd):
                 results.append(ptr_host.rstrip("."))
             else:
                 # 目标类型 RDATA 解码失败不是“无记录”，须走查询失败分支
@@ -2109,7 +2117,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
                     continue
                 _target_failed = True
                 continue
-            if mx_host and mend - (_off + 2) <= len(_rd) - 2:
+            if mx_host and mend - (_off + 2) == len(_rd) - 2:
                 results.append((pref, mx_host.rstrip(".")))
             else:
                 _target_failed = True
@@ -2835,25 +2843,14 @@ class GreyNoise(Provider):
 class IPApi(Provider):
     key = "ipapi"
     name = "ip-api.com"
+    # 停用：免费端点仅支持明文 HTTP（https 实测 403），明文结果可被中间网络伪造
+    # status/proxy/hosting，继续信任会使风险画像失真。采集层以 available() 过滤，
+    # 故本源不再参与画像／因子（各票均为弃权）；本源从不提供国家字段，停用不
+    # 影响国家信息。恢复须以支持 HTTPS 的端点＋认证为前提。
+    enabled = False
 
     def check(self, ip):
-        # 注: ip-api.com 免费端点仅支持明文 HTTP（https 实测 403），结果可被中间网络篡改；
-        # 若在意完整性请改用 proxycheck.io / ipwho.is（已集成，均为 https）。
-        ok, raw = http_get(f"http://ip-api.com/json/{ip}?fields=status,proxy,hosting,query", use_cache=False)
-        if not ok:
-            return {"ok": False, "err": raw}
-        try:
-            d = json.loads(raw)
-            if d.get("status") != "success":
-                return {"ok": False, "err": d.get("message", "API error")}
-            return {
-                "ok": True,
-                "proxy": bool(d.get("proxy")),
-                "hosting": bool(d.get("hosting")),
-                "ts": now_iso(),
-            }
-        except Exception as e:
-            return {"ok": False, "err": str(e)[:80]}
+        return {"ok": False, "err": "disabled: free endpoint does not support HTTPS"}
 
 
 @register
