@@ -13,7 +13,7 @@ trap "rm -rf $TDIR; echo '[清理] 临时文件已删除'" EXIT
 cd $TDIR
 
 echo "=== [1/10] [联网] 下载发布代码 ==="
-curl -sL -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.22/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
+curl -sL -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.23/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
 python3 -m py_compile acheck.py || { echo "FAIL: [本地] 编译失败"; exit 1; }
 echo "编译 OK"
 
