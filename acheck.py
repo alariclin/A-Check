@@ -7083,7 +7083,10 @@ def _dns_test_ok(d, tid, qpkt):
         for _oan, _oat, _oac, _oroff, _ordlen in _answers:
             if _oat == 5 and _oac == 1:
                 _tgt, _tend = _decode_dns_name(d, _oroff)
-                if _tgt and _tend - _oroff <= _ordlen:
+                # CNAME 目标须恰好消费整个 RDATA：域名后赃数据不得建
+                # 关联（7a-2；本函数 _dns_test_ok，与融合轮 2-3 所修的
+                # _dns_query_udp 不同函数，不得以“已修”关闭本条）。
+                if _tgt and _tend - _oroff == _ordlen:
                     _cmap[_oan] = _tgt.lower().rstrip(".")
         _ccur = (qname_q or "").lower().rstrip(".")
         for _ in range(16):
