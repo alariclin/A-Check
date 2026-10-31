@@ -9811,34 +9811,9 @@ def _banner_net_info():
                 break
         except Exception:
             continue
-    if _v6addr is None:
-        # 回退：显式禁代理 opener + AAAA 预解析——默认 opener 会读环境代理，
-        # 代理的 v6 出口曾被误标为本机已验证；两主机均为 v6-only，预解析到 AAAA
-        # 才尝试，成功即证明本机 v6 传输（TLS 主机名与证书验证仍由 urlopen 负责）。
-        _no_proxy = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        for _u in ("https://api6.ipify.org", "https://ipv6.icanhazip.com"):
-            if _rem() <= 0:
-                break
-            try:
-                _host6 = _u.split("://", 1)[1].split("/", 1)[0]
-                if not _getaddrinfo_timed(_host6, 443, socket.AF_INET6,
-                                          socket.SOCK_STREAM, timeout=min(3, _rem())):
-                    continue
-                req = urllib.request.Request(_u, headers={"User-Agent": UA_BROWSER})
-                with _no_proxy.open(req, timeout=min(3, _rem())) as r:
-                    try:
-                        raw = _read_timed(r, 128, _rem())
-                        if raw is None:
-                            raise TimeoutError("banner v6 read deadline")
-                        _cand = raw.decode("utf-8", errors="replace").strip()
-                    finally:
-                        _resp_shutdown(r)
-                _ip6 = ipaddress.IPv6Address(_cand)
-                if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
-                    _v6addr = str(_ip6)
-                    break
-            except Exception:
-                continue
+    # 注：普通 opener 回退块已删除（9-1／9-2 合并修复）：同步 open 可绕横幅
+    # 绝对截止，且 AAAA 预解析成功不能证明后续请求走了 IPv6；仅保留 pinned6
+    #（显式 AF_INET6 绑定＋SNI=host TLS）与只置地址不置 verified 的 UDP 回退。
     if _v6addr is not None:
         info["ipv6_verified"] = True
     if _v6addr is None and _rem() > 0:
