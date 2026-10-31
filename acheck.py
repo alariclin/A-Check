@@ -8050,11 +8050,20 @@ def _overlay_backing_ft(opts, mounts):
         upper = None
         for item in cur_opts.split(","):
             if item.startswith("upperdir="):
+                _raw_upper = _unescape_mount_path(item[len("upperdir="):])
+                # 7b-3：相对 upperdir 无法确认归属（realpath 会按进程
+                # 工作目录解析，误配根挂载），直接返 None。
+                if not os.path.isabs(_raw_upper):
+                    return None
                 # CONF-13b1.2：upperdir 须先 realpath 再与挂载点匹配（主循环对候选
                 # 先 realpath；只反转义会使经符号链接的 upperdir 误配磁盘挂载点）。
-                upper = os.path.realpath(_unescape_mount_path(item[len("upperdir="):]))
+                upper = os.path.realpath(_raw_upper)
                 break
         if not upper or upper in seen:
+            return None
+        # 7b-3：realpath 不要求路径存在，lazy-unmount 后已消失的
+        # upperdir 仍会按字符串前缀误配 "/"（返根类型）；不存在即无法确认。
+        if not os.path.exists(upper):
             return None
         seen.add(upper)
         best_ft = best_opts = None
