@@ -6422,9 +6422,12 @@ def test_chatgpt(local_ip=None):
     # code is None 在上游已返 failed，不与 unknown 混淆。
     if code != 200 or not _complete or "loc=" not in body:
         return T("unknown"), "", None
-    # loc 须为独立字段：前视排除 xloc= 这类子串、后视排除 loc=USA 这类
-    # 超长码（trace 体为 key=value 行格式；F23）。
-    m = re.search(r"(?<![A-Za-z])loc=([A-Z]{2})(?![A-Z])", body)
+    # loc 须为恰好两字母的独立字段：前视排除字母／数字／下划线相邻
+    # （xloc=、x_loc= 均不得命中），后视排除字母／数字相邻（loc=USA、
+    # loc=CN123 均不得命中；trace 体为 key=value 行格式；F23、6-6）。
+    # 上方 "loc=" 门禁仅为廉价预筛（子串命中如 x_loc= 无害），
+    # 真正的字段校验以本正则为准。
+    m = re.search(r"(?<![A-Za-z0-9_])loc=([A-Z]{2})(?![A-Za-z0-9])", body)
     if not m:
         return T("unknown"), "", None
     loc = m.group(1)
