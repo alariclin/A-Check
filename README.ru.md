@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.23-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.24-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,32 +97,32 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.23/A-Check-v4.14.23-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.24/A-Check-v4.14.24-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.23/A-Check-v4.14.23-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.24/A-Check-v4.14.24-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.23/A-Check-v4.14.23-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.24/A-Check-v4.14.24-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.23/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.24/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **Зеркало CDN — для регионов, где GitHub труднодоступен (например, материковый Китай). Один файл, полный функционал:**
 gh-proxy (прямой доступ из Китая):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.23/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.24/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.23/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.24/acheck.py -o acheck.py && python3 acheck.py
 ```
 Или запустите скрипт напрямую (нужен Python 3.8+):
 
