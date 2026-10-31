@@ -2415,6 +2415,12 @@ def _loc_display(disp):
         loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
         if loc:
             return f"{loc} {m.group(2)}"
+    if re.fullmatch(r"[A-Z]{2}", disp):
+        # 裸国家代码：无后续字段时亦本地化（UK→GB 查表）。
+        code = "GB" if disp == "UK" else disp
+        loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
+        if loc:
+            return loc
     if LANG == "zh-TW":
         for zh_name, code in sorted(_ZH_NAME2CODE.items(), key=lambda kv: -len(kv[0])):
             if disp.startswith(zh_name):
@@ -2567,7 +2573,8 @@ def _extra_sub(disp, kind, ctx_text=None):
     # CONF-FIXES-2.1：上下文词集须取自原始整串；取自不断被替换的当前 disp 时，
     # 前序替换会抹掉后序变体的上下文词（如 New York 先被译走，York 的 {new} 消失）。
     _orig_words = set(re.findall(r"[A-Za-z0-9]+", (ctx_text if ctx_text is not None else disp).lower()))
-    for variant, cands in _by_variant.items():
+    # 最长变体优先：短名称先替换会破坏完整长名称（如 York 抢先于 East York）。
+    for variant, cands in sorted(_by_variant.items(), key=lambda kv: -len(kv[0])):
         if not variant:
             continue
         if len(cands) == 1:
@@ -2876,7 +2883,7 @@ class ProxyCheck(Provider):
                 "proxy": d.get("proxy", "") == "yes",
                 "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
                 "type": d.get("type", ""),
-                "tor": d.get("tor", "") == "yes",
+                "tor": d.get("tor", "") == "yes" or str(d.get("type") or "").upper() == "TOR",
                 "risk": _risk,
                 "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
