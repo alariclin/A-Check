@@ -4480,6 +4480,8 @@ def _print_streaming_inference(res):
     iq = s.get("ipquery", {})
     xv = s.get("x4bvpn", {})
     fp = s.get("freeipapi", {})
+    ia = s.get("ipapi", {})
+    ti = s.get("twoip", {})
     if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
     if wi.get("ok") and wi.get("hosting"):
@@ -4488,8 +4490,10 @@ def _print_streaming_inference(res):
         is_dc = True
     if iq.get("ok") and iq.get("datacenter"):
         is_dc = True
-
-    ia = s.get("ipapi", {})
+    if ia.get("ok") and ia.get("hosting"):
+        is_dc = True
+    if ti.get("ok") and ti.get("hosting"):
+        is_dc = True
 
     def _consensus(*vals):
         """多源共识: True 票多于 False 票才成立；None 为弃权票（源不可用），
@@ -4516,6 +4520,8 @@ def _print_streaming_inference(res):
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
         or (bool(wi.get("tor")) if wi.get("ok") else False)
+        or (bool(il.get("tor")) if il.get("ok") else False)
+        or (bool(iq.get("tor")) if iq.get("ok") else False)
         or bool(is_tor_exit)
     )
 
@@ -5117,9 +5123,9 @@ def _factor_rows(s, wi_server, v6=False):
             None if fp.get("proxy") is None else _h(fp, bool(fp.get("proxy"))),
             None, None, None, None, None]),
         ("ip-api.com", [
-            _h(ia, bool(ia.get("proxy"))),
+            None if ia.get("proxy") is None else _h(ia, bool(ia.get("proxy"))),
             None, None,
-            _h(ia, bool(ia.get("hosting"))),
+            None if ia.get("hosting") is None else _h(ia, bool(ia.get("hosting"))),
             None, None]),
         ("iplocate.io", [
             None if il.get("proxy") is None else _h(il, bool(il.get("proxy"))),
@@ -5224,7 +5230,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         if iq.get("datacenter"):
             type_sources.append(("ipquery.io", T("dc")))
         elif iq.get("mobile"):
-            type_sources.append(("ipquery.io", T("unknown")))
+            type_sources.append(("ipquery.io", T("mobile")))
         else:
             type_sources.append((T("heuristic"), T("residential")
                                  if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
@@ -5530,7 +5536,7 @@ def print_report6(res, embedded=False):
         if _iq6.get("datacenter"):
             _ts6.append(("ipquery.io", T("dc")))
         elif _iq6.get("mobile"):
-            _ts6.append(("ipquery.io", T("unknown")))
+            _ts6.append(("ipquery.io", T("mobile")))
         else:
             _ts6.append((T("heuristic"), T("residential")
                          if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
