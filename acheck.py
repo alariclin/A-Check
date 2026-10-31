@@ -4185,7 +4185,9 @@ def score_platform(s):
     wi = s.get("ipwhois", {})
     pc = s.get("proxycheck", {})
     fp = s.get("freeipapi", {})
-    ia = s.get("ipapi", {})
+    # 4-1 清理：ipapi 已停用（IPApi.enabled=False、check() 恒返 disabled、
+    # 采集层以 available() 过滤），生产 sources 里 ia 恒为 {}、_p(ia) 恒为
+    # 弃权 None；删除该死票（本函数内唯一 ia 用处），生产计分不变。
     il = s.get("iplocate", {})
     iq = s.get("ipquery", {})
     xv = s.get("x4bvpn", {})
@@ -4223,7 +4225,6 @@ def score_platform(s):
     is_prx = _consensus(
         _p(pc), _p(wi),
         None if (not fp.get("ok") or fp.get("proxy") is None) else bool(fp.get("proxy")),
-        _p(ia),
         None if (not il.get("ok") or il.get("proxy") is None) else bool(il.get("proxy")),
         None if (not iq.get("ok") or iq.get("proxy") is None) else bool(iq.get("proxy")),
     )
