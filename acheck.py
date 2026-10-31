@@ -1737,12 +1737,16 @@ def validate_ip(s):
         ip = ipaddress.ip_address(str(s).strip())
         if isinstance(ip, ipaddress.IPv6Address):
             return None
-        # 显式拒绝私网、保留地址、组播及 Fake-IP 基准测试网段
+        # 显式拒绝私网、保留地址、组播及 Fake-IP 基准测试网段；另显式
+        # 排除 192.0.0.0/24（除 .9／.10）：标准库在 3.13 前仅把 /29 判
+        # 私网，3.8 至回补前构建会误接受 192.0.0.8 等 Dummy 地址（2-1）。
         if (
             not ip.is_global
             or ip.is_multicast
             or ip.is_reserved
             or ip in ipaddress.ip_network("198.18.0.0/15")
+            or (ip in ipaddress.ip_network("192.0.0.0/24")
+                and str(ip) not in ("192.0.0.9", "192.0.0.10"))
         ):
             return None
         return ip
@@ -1766,7 +1770,9 @@ def parse_any_ip(s):
         else:
             return None, "private_ip"
     if (not ip.is_global or ip.is_multicast or ip.is_reserved
-            or ip in ipaddress.ip_network("198.18.0.0/15")):
+            or ip in ipaddress.ip_network("198.18.0.0/15")
+            or (ip in ipaddress.ip_network("192.0.0.0/24")
+                and str(ip) not in ("192.0.0.9", "192.0.0.10"))):
         return None, "private_ip"
     return ip, 4
 
