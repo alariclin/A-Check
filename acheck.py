@@ -6844,18 +6844,25 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                             with lock:
                                 counter[0] -= _take
                             break  # 窗口已尽未返回，或 EOF：归还预留
-                        if time.monotonic() >= stop:
-                            with lock:
-                                counter[0] -= _take
-                            break  # 停滞读在 stop 后才返回时不计入窗口字节
+                        # 6-4：读后 stop 检查与锁内结算必须原子化。旧“锁外
+                        # 检查、锁内结算”下，横跨 stop 的迭代可在主线程
+                        # 窗口后读数之后才结算，致 Mbps／字节数漏计；故在
+                        # 同一锁内复核 stop，过期则丢弃该块、不结算。
+                        _past_stop = False
                         with lock:
-                            counter[0] += min(len(chunk), _take) - _take
-                            settled[0] += min(len(chunk), _take)
-                            # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
-                            # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
-                            if (settled[0] >= DL_CAP_BYTES and cap_box is not None
-                                    and cap_box[0] is None):
-                                cap_box[0] = time.monotonic()
+                            if time.monotonic() >= stop:
+                                counter[0] -= _take
+                                _past_stop = True
+                            else:
+                                counter[0] += min(len(chunk), _take) - _take
+                                settled[0] += min(len(chunk), _take)
+                                # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
+                                # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
+                                if (settled[0] >= DL_CAP_BYTES and cap_box is not None
+                                        and cap_box[0] is None):
+                                    cap_box[0] = time.monotonic()
+                        if _past_stop:
+                            break  # 停滞读在 stop 后才结算时不计入窗口字节
                         if settled[0] >= DL_CAP_BYTES:
                             if registry is not None:
                                 with lock:
