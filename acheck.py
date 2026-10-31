@@ -9862,8 +9862,13 @@ def _banner_net_register_worker(t):
     之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
     """
     with _banner_net_workers_lock:
+        # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
+        # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
+        # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
+        _live = threading.enumerate()
         _banner_net_workers[:] = [w for w in _banner_net_workers
-                                  if w.is_alive()]
+                                  if w.is_alive()
+                                  or any(x is w for x in _live)]
         _banner_net_workers.append(t)
 
 
@@ -9889,7 +9894,11 @@ def _banner_net_join():
     等待集为已登记的活 worker：_getaddrinfo_timed 无条件登记每路 DNS
     工作线程（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径
     的调用），故等待集可能包含活着的非横幅 DNS worker；无 deadline
-    （横幅未启动）时立即返回、不等待。
+    （横幅未启动）时立即返回、不等待。快照与登记清理均按
+    enumerate() 对象身份纳入仍在跑的线程：在别处 join 被打断毒化
+    is_alive() 的 worker（如 _urlopen_bounded 的工作线程）同样被等到；
+    join 返回后仍在跑的线程转入 interrupted 按身份轮询，不直接丢弃
+    义务（9-1）。
 
     第二次 Ctrl-C 全过程语义：位于相应异常保护范围内的 KI 由各层
     处理器恢复；函数入口及未受保护的回边、异常处理控制流仍可能
@@ -9977,8 +9986,13 @@ def _banner_net_join():
                 if t is not None and t.is_alive():
                     threads.append(t)
                 with _banner_net_workers_lock:
+                    # 快照不得只凭 is_alive()：在别处 join 被打断毒化
+                    # 的 worker（is_alive 恒 False 但仍在跑）必须按
+                    # enumerate() 对象身份纳入等待集，否则漏等（9-1）。
+                    _live = threading.enumerate()
                     threads.extend(w for w in _banner_net_workers
-                                   if w.is_alive())
+                                   if w.is_alive()
+                                   or any(x is w for x in _live))
                 if interrupted:
                     live = threading.enumerate()
                     interrupted = [w for w in interrupted
@@ -10020,6 +10034,14 @@ def _banner_net_join():
                                 continue
                     except Exception:
                         pass
+                    if any(x is th for x in threading.enumerate()):
+                        # join 已返回但线程仍在跑：或是 is_alive 已被别
+                        # 处打断的 join 毒化（再次 join 立即返回），或是
+                        # 本轮预算片耗尽。不得直接移出 pending 丢弃义务，
+                        # 转入按对象身份轮询的 interrupted，改由轮询等它
+                        # 真正结束（预算耗尽时轮询循环自行 break）。
+                        if th not in interrupted:
+                            interrupted.append(th)
                     pending = [w for w in pending if w is not th]
                 while interrupted or pending:
                     rem = deadline - time.monotonic()
