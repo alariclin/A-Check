@@ -5369,7 +5369,11 @@ V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapi", "ipapiis", "ipinfo",
                     "freeipapi", "dbip", "geojs", "ipguide", "ripestat",
                     "scamalytics", "proxycheck", "spamhaus", "shodan_idb",
                     "ptr", "iplocate", "ipquery", "ipapico", "twoip", "otx",
-                    "rdap", "hackertarget", "x4bvpn", "countryis")
+                    "rdap", "hackertarget", "x4bvpn", "countryis",
+                    # 5-1：v6 因子行消费二者（IPsum／blocklist.de 黑名单列），
+                    # 且二者均已注册可用、不在上方排除清单内，先前遗漏致
+                    # v6 sources 恒缺、因子恒为 None。
+                    "ipsum", "blocklistde")
 
 
 def run_passive6(ip):
