@@ -7130,6 +7130,11 @@ def _udp_recv_from(sock, ip, timeout, tid=None):
             d, addr = sock.recvfrom(512)
         except Exception:
             return None
+        # 7a-3：recv 返回后复核绝对截止。线程在 recv 前后被挂起时，
+        # 已入队的数据会立即返回、相对 socket 超时拦不住，迟到数据
+        # 不得当成功（与 recv 前检查用同一 >= 截止口径）。
+        if time.monotonic() >= deadline:
+            return None
         if addr[0] == ip and addr[1] == 53:
             if tid is not None:
                 if len(d) < 2 or struct.unpack(">H", d[:2])[0] != tid:
@@ -7182,6 +7187,10 @@ def _recv_exact(ss, n, dl):
         if not chunk:
             return None
         d += chunk
+        # 7a-3：每块返回后复核绝对截止（与 _udp_recv_from 同理）：
+        # 挂起后恢复时已过截止、已到达数据仍须按超时处理。
+        if time.monotonic() >= dl:
+            return None
     return d
 
 
