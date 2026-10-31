@@ -1760,7 +1760,8 @@ def parse_any_ip(s):
         _mapped = ip.ipv4_mapped
         if _mapped is not None:
             ip = _mapped  # ::ffff:a.b.c.d 按内嵌 IPv4 处理, 走 v4 校验与数据源
-        elif ip.is_global and not ip.is_multicast and not ip.is_reserved:
+        elif (ip.is_global and not ip.is_multicast
+              and not ip.is_reserved and not ip.is_site_local):
             return ip, 6
         else:
             return None, "private_ip"
@@ -1831,6 +1832,9 @@ def _decode_dns_name(pkt, offset):
                 orig_offset = offset + 2
                 jumped = True
             offset = ptr
+        elif (length & 0xC0) != 0x00:
+            # 非普通标签、非压缩指针：不按标签长度解释。
+            break
         else:
             offset += 1
             if offset + length > len(pkt):
@@ -2025,14 +2029,22 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     _cur = domain_q.lower().rstrip(".")
     _seen_chain = {_cur}
     _chain_broken = False
+    _cname_bad = False
     for _hop in range(16):
         _nxt = None
         for _okey, _rt, _rc, _rd, _off in records:
             if _okey == _cur and _rt == 5 and _rc == 1:
                 _tgt, _cend = _decode_dns_name(data, _off)
-                if _tgt and _cend - _off <= len(_rd):
+                if _tgt is None or _cend - _off > len(_rd):
+                    # 已存在 CNAME，但目标名称畸形，不能当作链正常结束。
+                    _cname_bad = True
+                    break
+                if _tgt:
                     _nxt = _tgt.lower().rstrip(".")
                     break
+        if _cname_bad:
+            _chain_broken = True
+            break
         if _nxt is None:
             break
         if _nxt in _seen_chain:
@@ -2054,9 +2066,15 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
     for _okey, _rt, _rc, _rd, _off in records:
         if _rc != 1 or _okey not in allowed_owners:
             continue
-        if _rt == 1 and len(_rd) == 4 and qtype == 1:  # A record
+        if _rt == 1 and qtype == 1:  # A record
+            if len(_rd) != 4:
+                _target_failed = True
+                continue
             results.append(socket.inet_ntoa(_rd))
-        elif _rt == 28 and len(_rd) == 16 and qtype == 28:  # AAAA record
+        elif _rt == 28 and qtype == 28:  # AAAA record
+            if len(_rd) != 16:
+                _target_failed = True
+                continue
             results.append(socket.inet_ntop(socket.AF_INET6, _rd))
         elif _rt == 12 and qtype == 12:  # PTR record
             ptr_host, pend = _decode_dns_name(data, _off)
@@ -2100,8 +2118,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
     if qtype == 15 and _null_mx and not results:
         _MX_NULL[domain] = True
-    elif qtype == 15 and results:
-        # 真实 MX 出现即清除旧标记：标记反映最近一次成功查询，避免跨查询陈旧。
+    elif qtype == 15:
+        # 此成功路径中，真实 MX 或无 MX 结果均清除旧 Null MX 标记。
         # 查询失败（提前返回 None）不触碰标记（无新知识）。
         _MX_NULL.pop(domain, None)
     if qtype == 15:
