@@ -8702,11 +8702,14 @@ def _probe_body_empty(s, deadline=None):
 
 
 def socks5_connect(ph, pp, dh, dp, username=None, password=None,
-                   timeout=8, rdns=True):
+                   timeout=8, rdns=True, sock_box=None):
     """SOCKS5 CONNECT (RFC 1928/1929)。返回 (socket, 握手延迟 ms)。
-    rdns=True 即 socks5h: 域名发给代理端解析, 本地不做 DNS。"""
+    rdns=True 即 socks5h: 域名发给代理端解析, 本地不做 DNS。
+    sock_box 非空时建连成功即登记 socket，供窗口清理关断握手中的连接。"""
     t0 = time.perf_counter()
     s = socket.create_connection((ph, pp), timeout=timeout)
+    if sock_box is not None:
+        sock_box.append(s)
     try:
         s.settimeout(timeout)
         # 1. 问候（RFC 1929 字段长 1..255：任一为空即无有效账密，只提供 0x00；
@@ -8892,11 +8895,22 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         super().__init__(host, timeout=timeout, **kw)
         self._ph, self._pp = ph, pp
         self._user, self._pwd = username, password
+        self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
 
     def connect(self):
-        raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
-                                username=self._user, password=self._pwd,
-                                timeout=self.timeout, rdns=True)
+        try:
+            raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
+                                    username=self._user, password=self._pwd,
+                                    timeout=self.timeout, rdns=True,
+                                    sock_box=self._hs_box)
+        except TypeError:
+            # 兼容不接受 sock_box 的 socks 实现／旧 mock：退化为不传
+            #（生产路径的真实 socks5_connect 恒走 sock_box，不影响修复效力）。
+            raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
+                                    username=self._user, password=self._pwd,
+                                    timeout=self.timeout, rdns=True)
+        # 先挂 self.sock 再 wrap：覆盖 TLS wrap 阶段，窗口清理能关到它。
+        self.sock = raw
         try:
             self.sock = self._context.wrap_socket(raw,
                                                   server_hostname=self.host)
@@ -8905,13 +8919,30 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 raw.close()
             except Exception:
                 pass
+            self.sock = None
             raise
+
+    def close(self):
+        # 先关断握手中的 socket（shutdown 唤醒阻塞 recv），再走标准关闭。
+        for _s in self._hs_box:
+            try:
+                _s.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass
+            try:
+                _s.close()
+            except Exception:
+                pass
+        super().close()
 
 
 def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
-                       registry=None, cap_box=None):
+                       registry=None, cap_box=None, settled=None):
     """经代理下载计数 worker: 对指定地区端点循环拉流。
-    单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。"""
+    单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。
+    settled 未传时用本 worker 的已结算计数（直接调用亦不把他流预留当已下载）。"""
+    if settled is None:
+        settled = [0]
     fails = 0
     conn = None
 
@@ -8946,6 +8977,10 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
             if registry is not None:
                 with lock:
                     registry.add(conn)
+            conn.connect()  # 握手+TLS 先行：窗口复查在 GET 之前，防握手耗尽窗口后仍发 GET
+            if time.monotonic() >= stop:
+                _cleanup(conn, None)
+                break
             conn.request("GET", path,
                          headers={"User-Agent": UA_TOOL,
                                   "Connection": "close"})
@@ -8994,11 +9029,13 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                     break  # 停滞读在 stop 后才返回时不计入窗口字节
                 with lock:
                     counter[0] += min(len(chunk), _take) - _take
-                    # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
-                    if (counter[0] >= DL_CAP_BYTES and cap_box is not None
+                    settled[0] += min(len(chunk), _take)
+                    # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
+                    # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
+                    if (settled[0] >= DL_CAP_BYTES and cap_box is not None
                             and cap_box[0] is None):
                         cap_box[0] = time.monotonic()
-                if counter[0] >= DL_CAP_BYTES:
+                if settled[0] >= DL_CAP_BYTES:
                     _cleanup(conn, resp)
                     return
             _cleanup(conn, resp)
@@ -9015,12 +9052,13 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
     counter, lock = [0], threading.Lock()
     registry = set()
     cap_box = [None]  # CONF-15.1：首次触顶时间（锁内记录）
+    settled = [0]  # 只增不减的已结算字节：触顶判定与速率分子只看它（不含在途预留）
     t0 = time.monotonic()
     stop = t0 + duration
     ex = ThreadPoolExecutor(max_workers=streams)
     try:
         futs = [ex.submit(_dl_proxy_worker, ph, pp, user, pwd, host, path,
-                          stop, counter, lock, registry, cap_box)
+                          stop, counter, lock, registry, cap_box, settled)
                 for _ in range(streams)]
         for f in futs:
             try:
@@ -9047,9 +9085,9 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
         elapsed = max(0.1, cap_box[0] - t0)
     else:
         elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
-    if counter[0] == 0:
+    if settled[0] == 0:
         return None
-    return round((counter[0] * 8 / 1e6) / elapsed, 2)
+    return round((settled[0] * 8 / 1e6) / elapsed, 2)
 
 
 # 经代理测速的枢纽地区 (全量地区逐个走代理太慢/耗流量, 取 5 个代表点)
@@ -9346,6 +9384,9 @@ def _parse_node_line(line):
         return None
     if "@" in host:
         return None  # 非 socks5 解析后 host 仍含 @：裸 userinfo 账密不得落入 host/标签
+    if any(unicodedata.category(ch) in ("Cc", "Cf") or ord(ch) == 0x7f
+           for ch in host):
+        return None  # host 含终端控制字符：拒，防批量表原样打印注入终端序列
     return {"host": host, "port": port, "proto": proto,
             "user": user, "pass": pwd, "raw": s}
 
@@ -9378,7 +9419,7 @@ def batch_node_test(nodes, ping_count=5):
 def _node_label(nd):
     """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
     （裸 userinfo 行曾使账密经 raw 进排名表与日志）。"""
-    host = nd["host"]
+    host = _strip_cc(nd["host"])  # 纵深：即使解析层漏网，标签也不含控制字符
     if ":" in host and not host.startswith("["):
         host = "[%s]" % host
     if nd["proto"] == "socks5" and (nd.get("user") is not None
