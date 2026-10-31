@@ -8898,17 +8898,10 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
 
     def connect(self):
-        try:
-            raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
-                                    username=self._user, password=self._pwd,
-                                    timeout=self.timeout, rdns=True,
-                                    sock_box=self._hs_box)
-        except TypeError:
-            # 兼容不接受 sock_box 的 socks 实现／旧 mock：退化为不传
-            #（生产路径的真实 socks5_connect 恒走 sock_box，不影响修复效力）。
-            raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
-                                    username=self._user, password=self._pwd,
-                                    timeout=self.timeout, rdns=True)
+        raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
+                                username=self._user, password=self._pwd,
+                                timeout=self.timeout, rdns=True,
+                                sock_box=self._hs_box)
         # 先挂 self.sock 再 wrap：覆盖 TLS wrap 阶段，窗口清理能关到它。
         self.sock = raw
         try:
