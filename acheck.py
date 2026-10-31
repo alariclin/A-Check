@@ -5685,13 +5685,33 @@ def get_egress_ip(budget=None):
             _ua = {"User-Agent": "A-Check/4.14.22 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=_to) as r:
-                raw = r.read(512).decode("utf-8", errors="replace").strip()
+                # 读阶段亦受总预算约束：直接 read() 的耗时不扣打开耗时，
+                # 故读线程按剩余预算 join，超时即弃该源（与 _open_bounded 同法）。
+                _rbox = {}
+
+                def _do_read():
+                    try:
+                        _rbox["raw"] = r.read(512)
+                    except Exception as _e:
+                        _rbox["err"] = _e
+
+                _rt = threading.Thread(target=_do_read, daemon=True)
+                _rt.start()
+                _rrem = (_dl - time.monotonic()) if _dl is not None else None
+                _rt.join(_rrem)
+                if _rt.is_alive():
+                    continue  # 读已超总预算：弃该源（循环头因预算耗尽而 break）
+                if "err" in _rbox:
+                    continue
+                raw = _rbox.get("raw", b"").decode("utf-8", errors="replace").strip()
                 if raw.startswith("{"):
                     d = json.loads(raw)
                     ip = d.get("ip") or d.get("IP") or d.get("ip_address")
                 else:
                     ip = raw.splitlines()[0].strip() if raw else ""
                 if ip and validate_ip(ip):
+                    if _dl is not None and time.monotonic() >= _dl:
+                        continue  # 总预算已耗尽：丢弃迟到结果
                     return str(ip)
         except Exception:
             continue
@@ -6664,6 +6684,8 @@ def _open_bounded(open_fn, deadline):
     def _run():
         try:
             box["resp"] = open_fn()
+            # 取锁前记真实完成时刻：在 finally 锁内记会把取锁延迟误算成迟到。
+            box["done_at"] = time.monotonic()
         except Exception as e:
             box["err"] = e
         finally:
@@ -6682,18 +6704,30 @@ def _open_bounded(open_fn, deadline):
         if not done.is_set():
             box["abandoned"] = True
             return None
+        if (box.get("done_at") is not None
+                and box["done_at"] > deadline
+                and box.get("resp") is not None):
+            # 完成于 deadline 之后：拒收迟到响应并自行关闭，走既有超时路径。
+            try:
+                box["resp"].close()
+            except Exception:
+                pass
+            return None
     if "err" in box:
         raise box["err"]
     return box["resp"]
 
 
 def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
-                      cap_box=None):
+                      cap_box=None, settled=None):
     """直连下载计数 worker: 在 stop 前循环拉流累计字节 (urllib)。
     单次失败不放弃: 连续 3 次失败才退出 (抗瞬时抖动)。
     打开阶段超时按窗口剩余封顶（固定 10s 会拖过窗口），窗口后禁发新请求；
     打开阶段另经 _open_bounded 纳入 stop 绝对截止，迟到响应由打开线程自行关闭（CONF-11.3）；
-    已打开的响应登记入 registry，供 measure 在窗口尽时统一关闭。"""
+    已打开的响应登记入 registry，供 measure 在窗口尽时统一关闭。
+    settled 未传时用本 worker 的已结算计数（直接调用亦不把他流预留当已下载）。"""
+    if settled is None:
+        settled = [0]
     fails = 0
     while time.monotonic() < stop and fails < 3:
         _resp = None
@@ -6749,11 +6783,13 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                             break  # 停滞读在 stop 后才返回时不计入窗口字节
                         with lock:
                             counter[0] += min(len(chunk), _take) - _take
-                            # CONF-15.1: 锁内记录首次触顶时间作有效计时终点。
-                            if (counter[0] >= DL_CAP_BYTES and cap_box is not None
+                            settled[0] += min(len(chunk), _take)
+                            # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
+                            # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
+                            if (settled[0] >= DL_CAP_BYTES and cap_box is not None
                                     and cap_box[0] is None):
                                 cap_box[0] = time.monotonic()
-                        if counter[0] >= DL_CAP_BYTES:
+                        if settled[0] >= DL_CAP_BYTES:
                             if registry is not None:
                                 with lock:
                                     registry.discard(r)
@@ -6778,6 +6814,7 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
     counter, lock = [0], threading.Lock()
     registry = set()
     cap_box = [None]  # CONF-15.1：首次触顶时间（锁内记录）
+    settled = [0]  # 只增不减的已结算字节：触顶判定与速率分子只看它（不含在途预留）
     t0 = time.monotonic()
     stop = t0 + duration
     ex = ThreadPoolExecutor(max_workers=streams)
@@ -6787,7 +6824,7 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
         _op = _pinned_opener(family) if family else urllib.request.build_opener(
             urllib.request.ProxyHandler({}))
         futs = [ex.submit(_dl_direct_worker, url, stop, counter, lock, _op, registry,
-                      cap_box)
+                      cap_box, settled)
                 for _ in range(streams)]
         for f in futs:
             try:
@@ -6814,9 +6851,9 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
         elapsed = max(0.1, cap_box[0] - t0)
     else:
         elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
-    if counter[0] == 0:
+    if settled[0] == 0:
         return None, 0
-    return round((counter[0] * 8 / 1e6) / elapsed, 2), counter[0]
+    return round((settled[0] * 8 / 1e6) / elapsed, 2), settled[0]
 
 
 def regional_speed_test(duration=5, on_result=None, family=0):
