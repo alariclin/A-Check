@@ -5678,7 +5678,11 @@ def print_report6(res, embedded=False):
 
 def get_egress_ip(budget=None):
     """出口 IPv4（多源轮询）。budget 为总预算秒数时，每源超时取 min(6, 剩余)，
-    预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。"""
+    预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。
+    打开阶段亦受总预算约束：urlopen 的 timeout 不覆盖 DNS 解析（标准库
+    getaddrinfo 无超时参数），故打开也在线程内做、按剩余预算 join，超
+    时即弃该源（6-1 打开阶段残留；锁保证“主线程标记放弃后 worker 关闭”
+    与“worker 已存入后主线程关闭”恰好其一执行，不泄漏响应）。"""
     _dl = time.monotonic() + budget if budget is not None else None
     sources = [
         "https://api4.ipify.org?format=json",
@@ -5698,7 +5702,44 @@ def get_egress_ip(budget=None):
         try:
             _ua = {"User-Agent": "A-Check/4.14.23 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
-            with urllib.request.urlopen(req, timeout=_to) as r:
+            # 打开阶段按剩余预算 join（见函数文档 6-1）：DNS 解析不受
+            # urlopen 超时约束，在途 DNS 会绕过总预算，故须线程化打开。
+            _obox = {}
+            _olock = threading.Lock()
+
+            def _do_open():
+                try:
+                    _resp = urllib.request.urlopen(req, timeout=_to)
+                except Exception as _e:
+                    with _olock:
+                        _obox["err"] = _e
+                    return
+                with _olock:
+                    if _obox.get("abandoned"):
+                        try:
+                            _resp.close()
+                        except Exception:
+                            pass
+                    else:
+                        _obox["resp"] = _resp
+
+            _ot = threading.Thread(target=_do_open, daemon=True)
+            _ot.start()
+            _orem = (_dl - time.monotonic()) if _dl is not None else None
+            _ot.join(_orem)
+            if _ot.is_alive():
+                with _olock:
+                    _obox["abandoned"] = True
+                    _resp = _obox.pop("resp", None)
+                if _resp is not None:
+                    try:
+                        _resp.close()
+                    except Exception:
+                        pass
+                continue  # 打开已超总预算：弃该源（循环头因预算耗尽而 break）
+            if "err" in _obox:
+                continue
+            with _obox["resp"] as r:
                 # 读阶段亦受总预算约束：直接 read() 的耗时不扣打开耗时，
                 # 故读线程按剩余预算 join，超时即弃该源（与 _open_bounded 同法）。
                 _rbox = {}
