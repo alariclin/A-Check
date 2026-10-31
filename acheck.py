@@ -3479,9 +3479,13 @@ class RDAP(Provider):
             _c0 = cand.get("cidr0_cidrs")
             if _c0 is not None and not isinstance(_c0, list):
                 continue  # cidr0_cidrs 非 list/None：候选无效，试下一基地
-            if not cand.get("name") and not cand.get("cidr0_cidrs"):
+            # 候选名须为非空白字符串才算“有名称”：非字符串（如 123）
+            # 或空白名（如 "   "）均视为无名，不得截断端点回退（3-2）。
+            _has_name = isinstance(cand.get("name"), str) \
+                and bool(cand.get("name").strip())
+            if not _has_name and not cand.get("cidr0_cidrs"):
                 continue  # 空字典/无网络身份：不得截断回退
-            if not cand.get("name"):
+            if not _has_name:
                 # CONF-FIXES-2.2：无名称候选须至少含一个有效 CIDR，否则继续下一基地；
                 # 旧“接受在前、校验在后”会使全无效列表截断回退且 CIDR 留空。
                 _has_valid_cidr = False
