@@ -8331,7 +8331,11 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
         lists = [lst for lst in DNSBL_LISTS[:max_lists]
                  if lst in _DNSBL_IPV6_LISTS]
     elif _addr is not None:
-        rev = ".".join(reversed(ip_s.split(".")))
+        # 7c-1：反转规范化后的地址（与 IPv6 分支用 _addr.exploded 同款），
+        # 不用原始串：前导零容忍仅存于 Python 3.8.0–3.9.4，该范围运行
+        # 时原始串反转会查错 DNSBL 名、空应答计 clean（假阴性）；现代版
+        # 上该输入在解析处即 fail-closed，本改动不改变现代版行为。
+        rev = ".".join(reversed(_addr.exploded.split(".")))
         lists = DNSBL_LISTS[:max_lists]
     else:
         return (0, 0, 0, [])
