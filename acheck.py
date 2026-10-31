@@ -6758,11 +6758,21 @@ def _open_bounded(open_fn, deadline):
         finally:
             with lock:
                 done.set()
-                if box.get("abandoned") and box.get("resp") is not None:
-                    try:
-                        box["resp"].close()
-                    except Exception:
-                        pass
+                if box.get("abandoned"):
+                    # 迟到放弃路径：错误响应与正常响应同等关闭（6-5）。
+                    # HTTPError 本身即未关闭的错误响应；不关闭则异常
+                    # traceback→帧→box→异常成环，连接保留至循环 GC。
+                    if box.get("resp") is not None:
+                        try:
+                            box["resp"].close()
+                        except Exception:
+                            pass
+                    _err = box.get("err")
+                    if isinstance(_err, urllib.error.HTTPError):
+                        try:
+                            _err.close()
+                        except Exception:
+                            pass
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -6781,7 +6791,14 @@ def _open_bounded(open_fn, deadline):
                 pass
             return None
     if "err" in box:
-        raise box["err"]
+        # 即时失败路径：抛出前关闭错误响应（6-5），不留引用环内的未关连接。
+        _err = box["err"]
+        if isinstance(_err, urllib.error.HTTPError):
+            try:
+                _err.close()
+            except Exception:
+                pass
+        raise _err
     return box["resp"]
 
 
