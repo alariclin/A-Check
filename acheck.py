@@ -8006,9 +8006,15 @@ def get_system_info():
                 hv_cpu = False
                 cpu_read = False
                 if os.path.exists("/proc/cpuinfo"):
-                    with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
-                        hv_cpu = "hypervisor" in f.read().lower()
-                    cpu_read = True
+                    # 7b-2：cpuinfo 读取须有局部保护（与上方 DMI 逐文件
+                    # 保护同款）：该文件存在却抛错时不得进外层 except
+                    # 丢弃已算出的 hv_dmi，回落到 DMI 结论即可。
+                    try:
+                        with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                            hv_cpu = "hypervisor" in f.read().lower()
+                        cpu_read = True
+                    except Exception:
+                        pass
                 brand_dmi = any(k in dmi_text for k in (
                     "amazon ec2", "google", "digitalocean", "alibaba",
                     "linode", "vultr", "hetzner", "oracle",
