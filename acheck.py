@@ -7469,12 +7469,24 @@ def test_dns_servers6(timeout=3):
                     closed = True
                     break
                 raw += chunk
-                if head is None:
+                while head is None:
                     _sep = raw.find(b"\r\n\r\n")
                     if _sep < 0:
+                        break
+                    _hblock = raw[:_sep]
+                    # 7a-4：循环跳过 1xx 临时响应头（103 Early Hints 等）
+                    # 直至最终响应头：首个头块未必是最终响应，临时头后
+                    # 的最终响应头才是；同轮内已到达的最终头亦须就地
+                    # 识别，不得等下一 recv（否则关连接后 head 恒空）。
+                    _st = _hblock.split(b"\r\n", 1)[0].split()
+                    if (len(_st) >= 2 and _st[1].isdigit()
+                            and 100 <= int(_st[1]) < 200):
+                        raw = raw[_sep + 4:]
                         continue
-                    head = raw[:_sep]
+                    head = _hblock
                     head_end = _sep + 4
+                if head is None:
+                    continue
                 body = raw[head_end:]
                 if _http_te_chunked(head):
                     if _decode_chunked(body) is not None:
