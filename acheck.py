@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.22 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.23 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -54,7 +54,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.22"
+VERSION = "4.14.23"
 
 
 def _init_console():
@@ -2758,7 +2758,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.22 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.23 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3804,7 +3804,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.22 免 Key 公开版):
+评分规则 (v4.14.23 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3821,7 +3821,7 @@ SCORING_RULES = {
     无 PTR 反向解析记录               +5
   [平台兼容 0-100] 机房/代理属性 (非恶意分)
     ISP/组织含机房关键词或托管属性    +30
-    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多数认定：True 票多于 False 票即成立，源不可用或字段缺失计弃权票；分别累计）
+    多源共识代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery/X4BNet 多数认定：True 票多于 False 票即成立，源不可用或字段缺失计弃权票；分别累计）
     Tor 节点                          +30
   [综合] = 威胁×0.4 + 欺诈×0.3 + 声誉×0.15 + 平台×0.15
   [纯净度] = 100 - 综合 (本工具自有换算，非第三方评分)
@@ -3836,7 +3836,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.22 免 Key 公開版):
+評分規則 (v4.14.23 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3853,7 +3853,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet 多數認定：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計）
+    多源共識代理 +40，VPN +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery/X4BNet 多數認定：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計）
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -3868,7 +3868,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.22 Keyless Public Edition):
+Scoring rules (v4.14.23 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3885,7 +3885,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     No PTR record                     +5
   [Platform 0-100] DC/proxy traits (not malice)
     ISP/Org datacenter/hosting trait  +30
-    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet: established when True votes outnumber False votes; unavailable sources or missing fields count as abstentions; accumulate separately)
+    Multi-source consensus proxy +40, VPN +40 (majority of proxycheck/ipwho.is/freeipapi/iplocate/ipquery/X4BNet: established when True votes outnumber False votes; unavailable sources or missing fields count as abstentions; accumulate separately)
     Tor node                          +30
   [Combined] = Threat×0.4 + Fraud×0.3 + Reputation×0.15 + Platform×0.15
   [Purity] = 100 - Combined (own conversion, not third-party)
@@ -3901,7 +3901,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.22 キー不要公開版):
+スコアリングルール (v4.14.23 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3918,7 +3918,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     PTR レコードなし                  +5
   [プラットフォーム互換性 0-100] DC/プロキシ属性 (非悪意スコア)
     データセンター/ホスティング属性   +30
-    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet の多数決：True 票が False 票を上回れば成立、ソース利用不可またはフィールド欠損は棄権票；それぞれ加算）
+    複数ソースの合意によるプロキシ +40、VPN 検出 +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery/X4BNet の多数決：True 票が False 票を上回れば成立、ソース利用不可またはフィールド欠損は棄権票；それぞれ加算）
     Tor ノード                        +30
   [総合] = 脅威×0.4 + 不正×0.3 + 履歴×0.15 + 互換×0.15
   [純度] = 100 - 総合 (独自換算、第三者スコアではない)
@@ -3933,7 +3933,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.22 Публичная версия без ключей):
+Правила оценки (v4.14.23 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3950,7 +3950,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     Нет PTR-записи                    +5
   [Совместимость 0-100] Признаки ДЦ/прокси (не оценка вредоносности)
     Признаки дата-центра / хостинга   +30
-    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet: засчитывается при перевесе True над False; недоступные источники или отсутствующие поля — воздержавшиеся; суммируются)
+    Прокси +40, VPN +40 по консенсусу источников (большинство из proxycheck/ipwho.is/freeipapi/iplocate/ipquery/X4BNet: засчитывается при перевесе True над False; недоступные источники или отсутствующие поля — воздержавшиеся; суммируются)
     Узел Tor                          +30
   [Итого] = Угрозы×0.4 + Мошенничество×0.3 + Репутация×0.15 + Совместимость×0.15
   [Чистота] = 100 - Итого (собственный расчёт, не сторонняя оценка)
@@ -3965,7 +3965,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.22):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.23):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -3982,7 +3982,7 @@ Scoring rules (v4.14.22 Keyless Public Edition):
     نبود رکورد PTR                    +5
   [سازگاری پلتفرم 0-100] ویژگی دیتاسنتر/پروکسی (امتیاز مخرب نیست)
     ویژگی دیتاسنتر یا میزبانی         +30
-    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/ip-api.com/iplocate/ipquery/X4BNet؛ هرگاه آرای موافق از مخالف بیشتر شود برقرار است؛ منابع در دسترس‌نبوده یا فیلدهای بدون مقدار رأی ممتنع محسوب می‌شوند؛ هر دو جداگانه جمع می‌شوند)
+    پروکسی +40، VPN +40 بر اساس اجماع چند منبع (اکثریت proxycheck/ipwho.is/freeipapi/iplocate/ipquery/X4BNet؛ هرگاه آرای موافق از مخالف بیشتر شود برقرار است؛ منابع در دسترس‌نبوده یا فیلدهای بدون مقدار رأی ممتنع محسوب می‌شوند؛ هر دو جداگانه جمع می‌شوند)
     گره Tor                           +30
   [ترکیبی] = تهدید×0.4 + تقلب×0.3 + اعتبار×0.15 + پلتفرم×0.15
   [خلوص] = 100 - ترکیبی (محاسبه داخلی ابزار، امتیاز شخص ثالث نیست)
@@ -5679,7 +5679,7 @@ def get_egress_ip(budget=None):
         else:
             _to = 6
         try:
-            _ua = {"User-Agent": "A-Check/4.14.22 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.23 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=_to) as r:
                 # 读阶段亦受总预算约束：直接 read() 的耗时不扣打开耗时，
