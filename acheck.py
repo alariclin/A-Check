@@ -9501,6 +9501,14 @@ def _parse_node_line(line):
                 user, pwd = auth.split(":", 1)
             else:
                 user = auth
+            # 8-1：凭证做百分号解码（仅凭证部分，host/port 不动）：
+            # 含编码分隔符的合法凭证否则原样发给代理致认证失败。
+            # 先按字面分隔符切分、再解码，故 %3A 解出的 ":" 不再
+            # 被当分隔符；%40 解出的 "@" 亦不影响已完成的切分。
+            if user is not None:
+                user = urllib.parse.unquote(user)
+            if pwd is not None:
+                pwd = urllib.parse.unquote(pwd)
     if "://" in rest:
         return None  # 非 socks5 方案（如 socks5h://）一律拒，防账密落入 host/标签
     try:
