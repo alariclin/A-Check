@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.21 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.22 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -54,7 +54,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.21"
+VERSION = "4.14.22"
 
 
 def _init_console():
@@ -2725,7 +2725,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.21 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.22 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3772,7 +3772,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.21 免 Key 公开版):
+评分规则 (v4.14.22 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3804,7 +3804,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.21 免 Key 公開版):
+評分規則 (v4.14.22 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3836,7 +3836,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.21 Keyless Public Edition):
+Scoring rules (v4.14.22 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3869,7 +3869,7 @@ Scoring rules (v4.14.21 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.21 キー不要公開版):
+スコアリングルール (v4.14.22 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3901,7 +3901,7 @@ Scoring rules (v4.14.21 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.21 Публичная версия без ключей):
+Правила оценки (v4.14.22 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3933,7 +3933,7 @@ Scoring rules (v4.14.21 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.21):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.22):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -5641,7 +5641,7 @@ def get_egress_ip(budget=None):
         else:
             _to = 6
         try:
-            _ua = {"User-Agent": "A-Check/4.14.21 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.22 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
             with urllib.request.urlopen(req, timeout=_to) as r:
                 raw = r.read(512).decode("utf-8", errors="replace").strip()
@@ -9938,20 +9938,27 @@ def _banner_net_join():
 
 
 def _banner_net_info_async():
-    """横幅网络信息（菜单先显示）：缓存命中即返回；未命中则起后台守护线程填充，
-    本次先返回占位（网络行显示未测），下次横幅即见缓存。"""
-    global _banner_net_thread, _banner_net_deadline
+    """横幅网络信息（首次同步取数）：缓存命中即返回；未命中则在调用线程
+    同步执行 _banner_net_info（等取数完成，首幅横幅即见真实出口 IP），
+    不另起后台线程。同步取数前先定下退出等待 deadline（与原后台启动时
+    相同），使取数中途被 Ctrl-C 打断时退出路径的 join 仍有预算可等已
+    登记 worker，不因 deadline 为空而立即返回；取数完成后缓存即生效，
+    后续横幅直接命中缓存。"""
+    global _banner_net_deadline
     if _banner_net_cache is not None:
         return _banner_net_cache
+    _need_fetch = False
     with _banner_net_lock:
         if _banner_net_cache is not None:
             return _banner_net_cache
         if not _banner_net_started[0]:
             _banner_net_started[0] = True
             _banner_net_deadline = time.monotonic() + _banner_net_budget
-            _banner_net_thread = threading.Thread(target=_banner_net_info,
-                                                  daemon=True)
-            _banner_net_thread.start()
+            _need_fetch = True
+    if _need_fetch:
+        return _banner_net_info()
+    if _banner_net_cache is not None:
+        return _banner_net_cache
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 

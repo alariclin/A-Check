@@ -11,9 +11,9 @@
     <key>CFBundleDisplayName</key>
     <string>IP 信誉检测</string>
     <key>CFBundleVersion</key>
-    <string>4.14.21</string>
+    <string>4.14.22</string>
     <key>CFBundleShortVersionString</key>
-    <string>4.14.21</string>
+    <string>4.14.22</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
