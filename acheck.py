@@ -9938,20 +9938,27 @@ def _banner_net_join():
 
 
 def _banner_net_info_async():
-    """横幅网络信息（菜单先显示）：缓存命中即返回；未命中则起后台守护线程填充，
-    本次先返回占位（网络行显示未测），下次横幅即见缓存。"""
-    global _banner_net_thread, _banner_net_deadline
+    """横幅网络信息（首次同步取数）：缓存命中即返回；未命中则在调用线程
+    同步执行 _banner_net_info（等取数完成，首幅横幅即见真实出口 IP），
+    不另起后台线程。同步取数前先定下退出等待 deadline（与原后台启动时
+    相同），使取数中途被 Ctrl-C 打断时退出路径的 join 仍有预算可等已
+    登记 worker，不因 deadline 为空而立即返回；取数完成后缓存即生效，
+    后续横幅直接命中缓存。"""
+    global _banner_net_deadline
     if _banner_net_cache is not None:
         return _banner_net_cache
+    _need_fetch = False
     with _banner_net_lock:
         if _banner_net_cache is not None:
             return _banner_net_cache
         if not _banner_net_started[0]:
             _banner_net_started[0] = True
             _banner_net_deadline = time.monotonic() + _banner_net_budget
-            _banner_net_thread = threading.Thread(target=_banner_net_info,
-                                                  daemon=True)
-            _banner_net_thread.start()
+            _need_fetch = True
+    if _need_fetch:
+        return _banner_net_info()
+    if _banner_net_cache is not None:
+        return _banner_net_cache
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 
