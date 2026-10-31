@@ -7953,8 +7953,13 @@ def get_system_info():
                                 mfr = out2.stdout.lower()
                         except Exception:
                             pass
-                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google", "bochs")):
+                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "bochs")):
                         virt = vm_label
+                    elif any(k in mfr for k in ("amazon ec2", "google")):
+                        # 7b-1：云厂商牌子 alone 不能定虚拟化（EC2 裸金属
+                        # 如 m5.metal 的 Manufacturer 同为 Amazon EC2），
+                        # 与 Linux 分支“品牌 alone → 不确定”规则对齐。
+                        virt = "?"
                     else:
                         # 与 macOS/Linux 对齐：探测成功且无虚拟化信号 → 物理机
                         virt = T("virt_phys")
