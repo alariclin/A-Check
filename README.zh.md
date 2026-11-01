@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.23-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.24-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -97,32 +97,32 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.23/A-Check-v4.14.23-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.24/A-Check-v4.14.24-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.23/A-Check-v4.14.23-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.24/A-Check-v4.14.24-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.23/A-Check-v4.14.23-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.24/A-Check-v4.14.24-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系统（单文件，需 Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.23/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.24/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN 镜像——GitHub 直连困难的地区（如中国大陆）可用。单文件版，功能完整：**
 gh-proxy（大陆直连）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.23/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.24/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.23/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.24/acheck.py -o acheck.py && python3 acheck.py
 ```
 也可以直接运行脚本本体（需 Python 3.8+）：
 

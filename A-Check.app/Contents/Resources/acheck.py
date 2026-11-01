@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.23 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.24 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -54,7 +54,7 @@ import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.23"
+VERSION = "4.14.24"
 
 
 def _init_console():
@@ -1737,12 +1737,16 @@ def validate_ip(s):
         ip = ipaddress.ip_address(str(s).strip())
         if isinstance(ip, ipaddress.IPv6Address):
             return None
-        # 显式拒绝私网、保留地址、组播及 Fake-IP 基准测试网段
+        # 显式拒绝私网、保留地址、组播及 Fake-IP 基准测试网段；另显式
+        # 排除 192.0.0.0/24（除 .9／.10）：标准库在 3.13 前仅把 /29 判
+        # 私网，3.8 至回补前构建会误接受 192.0.0.8 等 Dummy 地址（2-1）。
         if (
             not ip.is_global
             or ip.is_multicast
             or ip.is_reserved
             or ip in ipaddress.ip_network("198.18.0.0/15")
+            or (ip in ipaddress.ip_network("192.0.0.0/24")
+                and str(ip) not in ("192.0.0.9", "192.0.0.10"))
         ):
             return None
         return ip
@@ -1766,7 +1770,9 @@ def parse_any_ip(s):
         else:
             return None, "private_ip"
     if (not ip.is_global or ip.is_multicast or ip.is_reserved
-            or ip in ipaddress.ip_network("198.18.0.0/15")):
+            or ip in ipaddress.ip_network("198.18.0.0/15")
+            or (ip in ipaddress.ip_network("192.0.0.0/24")
+                and str(ip) not in ("192.0.0.9", "192.0.0.10"))):
         return None, "private_ip"
     return ip, 4
 
@@ -1995,7 +2001,10 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     qtype_r, qclass_r = struct.unpack(">HH", data[offset:offset + 4])
     offset += 4
-    if (qname or "").lower().rstrip(".") != domain_q.lower().rstrip(".") \
+    # 解码失败（None）必须拒绝，不得以 (qname or "") 把 None 当根域名
+    # 与空串查询比对通过（2-2：空串域名＋自指问题段曾误返成功空结果）。
+    if qname is None \
+            or qname.lower().rstrip(".") != domain_q.lower().rstrip(".") \
             or qtype_r != qtype or qclass_r != 1:
         return (None, []) if return_cnames else None
 
@@ -2758,7 +2767,7 @@ class IPInfo(Provider):
 
     def check(self, ip):
         ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
-                           headers={"User-Agent": "A-Check/4.14.23 (+https://github.com/alariclin/A-Check)"},
+                           headers={"User-Agent": "A-Check/4.14.24 (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3470,9 +3479,13 @@ class RDAP(Provider):
             _c0 = cand.get("cidr0_cidrs")
             if _c0 is not None and not isinstance(_c0, list):
                 continue  # cidr0_cidrs 非 list/None：候选无效，试下一基地
-            if not cand.get("name") and not cand.get("cidr0_cidrs"):
+            # 候选名须为非空白字符串才算“有名称”：非字符串（如 123）
+            # 或空白名（如 "   "）均视为无名，不得截断端点回退（3-2）。
+            _has_name = isinstance(cand.get("name"), str) \
+                and bool(cand.get("name").strip())
+            if not _has_name and not cand.get("cidr0_cidrs"):
                 continue  # 空字典/无网络身份：不得截断回退
-            if not cand.get("name"):
+            if not _has_name:
                 # CONF-FIXES-2.2：无名称候选须至少含一个有效 CIDR，否则继续下一基地；
                 # 旧“接受在前、校验在后”会使全无效列表截断回退且 CIDR 留空。
                 _has_valid_cidr = False
@@ -3804,7 +3817,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.23 免 Key 公开版):
+评分规则 (v4.14.24 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -3836,7 +3849,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.23 免 Key 公開版):
+評分規則 (v4.14.24 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -3868,7 +3881,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.23 Keyless Public Edition):
+Scoring rules (v4.14.24 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -3901,7 +3914,7 @@ Scoring rules (v4.14.23 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.23 キー不要公開版):
+スコアリングルール (v4.14.24 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -3933,7 +3946,7 @@ Scoring rules (v4.14.23 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.23 Публичная версия без ключей):
+Правила оценки (v4.14.24 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -3965,7 +3978,7 @@ Scoring rules (v4.14.23 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.23):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.24):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -4172,7 +4185,9 @@ def score_platform(s):
     wi = s.get("ipwhois", {})
     pc = s.get("proxycheck", {})
     fp = s.get("freeipapi", {})
-    ia = s.get("ipapi", {})
+    # 4-1 清理：ipapi 已停用（IPApi.enabled=False、check() 恒返 disabled、
+    # 采集层以 available() 过滤），生产 sources 里 ia 恒为 {}、_p(ia) 恒为
+    # 弃权 None；删除该死票（本函数内唯一 ia 用处），生产计分不变。
     il = s.get("iplocate", {})
     iq = s.get("ipquery", {})
     xv = s.get("x4bvpn", {})
@@ -4210,7 +4225,6 @@ def score_platform(s):
     is_prx = _consensus(
         _p(pc), _p(wi),
         None if (not fp.get("ok") or fp.get("proxy") is None) else bool(fp.get("proxy")),
-        _p(ia),
         None if (not il.get("ok") or il.get("proxy") is None) else bool(il.get("proxy")),
         None if (not iq.get("ok") or iq.get("proxy") is None) else bool(iq.get("proxy")),
     )
@@ -5356,7 +5370,11 @@ V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapi", "ipapiis", "ipinfo",
                     "freeipapi", "dbip", "geojs", "ipguide", "ripestat",
                     "scamalytics", "proxycheck", "spamhaus", "shodan_idb",
                     "ptr", "iplocate", "ipquery", "ipapico", "twoip", "otx",
-                    "rdap", "hackertarget", "x4bvpn", "countryis")
+                    "rdap", "hackertarget", "x4bvpn", "countryis",
+                    # 5-1：v6 因子行消费二者（IPsum／blocklist.de 黑名单列），
+                    # 且二者均已注册可用、不在上方排除清单内，先前遗漏致
+                    # v6 sources 恒缺、因子恒为 None。
+                    "ipsum", "blocklistde")
 
 
 def run_passive6(ip):
@@ -5661,7 +5679,11 @@ def print_report6(res, embedded=False):
 
 def get_egress_ip(budget=None):
     """出口 IPv4（多源轮询）。budget 为总预算秒数时，每源超时取 min(6, 剩余)，
-    预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。"""
+    预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。
+    打开阶段亦受总预算约束：urlopen 的 timeout 不覆盖 DNS 解析（标准库
+    getaddrinfo 无超时参数），故打开也在线程内做、按剩余预算 join，超
+    时即弃该源（6-1 打开阶段残留；锁保证“主线程标记放弃后 worker 关闭”
+    与“worker 已存入后主线程关闭”恰好其一执行，不泄漏响应）。"""
     _dl = time.monotonic() + budget if budget is not None else None
     sources = [
         "https://api4.ipify.org?format=json",
@@ -5679,9 +5701,46 @@ def get_egress_ip(budget=None):
         else:
             _to = 6
         try:
-            _ua = {"User-Agent": "A-Check/4.14.23 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
+            _ua = {"User-Agent": "A-Check/4.14.24 (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
-            with urllib.request.urlopen(req, timeout=_to) as r:
+            # 打开阶段按剩余预算 join（见函数文档 6-1）：DNS 解析不受
+            # urlopen 超时约束，在途 DNS 会绕过总预算，故须线程化打开。
+            _obox = {}
+            _olock = threading.Lock()
+
+            def _do_open():
+                try:
+                    _resp = urllib.request.urlopen(req, timeout=_to)
+                except Exception as _e:
+                    with _olock:
+                        _obox["err"] = _e
+                    return
+                with _olock:
+                    if _obox.get("abandoned"):
+                        try:
+                            _resp.close()
+                        except Exception:
+                            pass
+                    else:
+                        _obox["resp"] = _resp
+
+            _ot = threading.Thread(target=_do_open, daemon=True)
+            _ot.start()
+            _orem = (_dl - time.monotonic()) if _dl is not None else None
+            _ot.join(_orem)
+            if _ot.is_alive():
+                with _olock:
+                    _obox["abandoned"] = True
+                    _resp = _obox.pop("resp", None)
+                if _resp is not None:
+                    try:
+                        _resp.close()
+                    except Exception:
+                        pass
+                continue  # 打开已超总预算：弃该源（循环头因预算耗尽而 break）
+            if "err" in _obox:
+                continue
+            with _obox["resp"] as r:
                 # 读阶段亦受总预算约束：直接 read() 的耗时不扣打开耗时，
                 # 故读线程按剩余预算 join，超时即弃该源（与 _open_bounded 同法）。
                 _rbox = {}
@@ -6234,7 +6293,9 @@ def test_disney(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "not available" not in body.lower():
+    # 最终 URL 来自重定向链、不受正文截断影响：URL 已含 blocked 信号时
+    # 不因正文不完整判 unknown，落入正常分类（6-3）。
+    if code == 200 and not complete and "not available" not in body.lower() and "unavailable" not in final_url.lower():
         return T("unknown"), "", None
     if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
@@ -6253,14 +6314,22 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "Not Available" not in body:
-        return T("unknown"), "", None  # 首探针证据不完整即判 unknown，不落入次探针
+    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
+    # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
+    if code == 200 and not complete and "Not Available" not in body and "nsfw" not in final_url:
+        return T("unknown"), "", None
     if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
         )
         region = f"[{m.group(1).upper()}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
+    # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
+    # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
+    # 次探针 403 会被误判 blocked）。
+    _ft = _http_fallthrough(code)
+    if _ft is not None:
+        return _ft, "", None
 
     code2, body2, final_url2, complete2, hdrs2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
@@ -6354,9 +6423,12 @@ def test_chatgpt(local_ip=None):
     # code is None 在上游已返 failed，不与 unknown 混淆。
     if code != 200 or not _complete or "loc=" not in body:
         return T("unknown"), "", None
-    # loc 须为独立字段：前视排除 xloc= 这类子串、后视排除 loc=USA 这类
-    # 超长码（trace 体为 key=value 行格式；F23）。
-    m = re.search(r"(?<![A-Za-z])loc=([A-Z]{2})(?![A-Z])", body)
+    # loc 须为恰好两字母的独立字段：前视排除字母／数字／下划线相邻
+    # （xloc=、x_loc= 均不得命中），后视排除字母／数字相邻（loc=USA、
+    # loc=CN123 均不得命中；trace 体为 key=value 行格式；F23、6-6）。
+    # 上方 "loc=" 门禁仅为廉价预筛（子串命中如 x_loc= 无害），
+    # 真正的字段校验以本正则为准。
+    m = re.search(r"(?<![A-Za-z0-9_])loc=([A-Z]{2})(?![A-Za-z0-9])", body)
     if not m:
         return T("unknown"), "", None
     loc = m.group(1)
@@ -6389,7 +6461,9 @@ def test_gemini(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "isn't currently supported" not in body.lower():
+    # 最终 URL 信号不受正文截断影响：URL 已含 faq 信号时不因正文
+    # 不完整判 unknown，落入正常分类（6-3）。
+    if code == 200 and not complete and "isn't currently supported" not in body.lower() and "faq" not in final_url.lower():
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
@@ -6688,11 +6762,21 @@ def _open_bounded(open_fn, deadline):
         finally:
             with lock:
                 done.set()
-                if box.get("abandoned") and box.get("resp") is not None:
-                    try:
-                        box["resp"].close()
-                    except Exception:
-                        pass
+                if box.get("abandoned"):
+                    # 迟到放弃路径：错误响应与正常响应同等关闭（6-5）。
+                    # HTTPError 本身即未关闭的错误响应；不关闭则异常
+                    # traceback→帧→box→异常成环，连接保留至循环 GC。
+                    if box.get("resp") is not None:
+                        try:
+                            box["resp"].close()
+                        except Exception:
+                            pass
+                    _err = box.get("err")
+                    if isinstance(_err, urllib.error.HTTPError):
+                        try:
+                            _err.close()
+                        except Exception:
+                            pass
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -6711,7 +6795,14 @@ def _open_bounded(open_fn, deadline):
                 pass
             return None
     if "err" in box:
-        raise box["err"]
+        # 即时失败路径：抛出前关闭错误响应（6-5），不留引用环内的未关连接。
+        _err = box["err"]
+        if isinstance(_err, urllib.error.HTTPError):
+            try:
+                _err.close()
+            except Exception:
+                pass
+        raise _err
     return box["resp"]
 
 
@@ -6774,18 +6865,25 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
                             with lock:
                                 counter[0] -= _take
                             break  # 窗口已尽未返回，或 EOF：归还预留
-                        if time.monotonic() >= stop:
-                            with lock:
-                                counter[0] -= _take
-                            break  # 停滞读在 stop 后才返回时不计入窗口字节
+                        # 6-4：读后 stop 检查与锁内结算必须原子化。旧“锁外
+                        # 检查、锁内结算”下，横跨 stop 的迭代可在主线程
+                        # 窗口后读数之后才结算，致 Mbps／字节数漏计；故在
+                        # 同一锁内复核 stop，过期则丢弃该块、不结算。
+                        _past_stop = False
                         with lock:
-                            counter[0] += min(len(chunk), _take) - _take
-                            settled[0] += min(len(chunk), _take)
-                            # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
-                            # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
-                            if (settled[0] >= DL_CAP_BYTES and cap_box is not None
-                                    and cap_box[0] is None):
-                                cap_box[0] = time.monotonic()
+                            if time.monotonic() >= stop:
+                                counter[0] -= _take
+                                _past_stop = True
+                            else:
+                                counter[0] += min(len(chunk), _take) - _take
+                                settled[0] += min(len(chunk), _take)
+                                # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
+                                # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
+                                if (settled[0] >= DL_CAP_BYTES and cap_box is not None
+                                        and cap_box[0] is None):
+                                    cap_box[0] = time.monotonic()
+                        if _past_stop:
+                            break  # 停滞读在 stop 后才结算时不计入窗口字节
                         if settled[0] >= DL_CAP_BYTES:
                             if registry is not None:
                                 with lock:
@@ -6942,14 +7040,16 @@ DNS_SERVERS_DOT = [
 
 
 def _dns_test_ok(d, tid, qpkt):
-    """DNS 测试路径 (UDP53/DoT/DoH) 的响应判定：长度、事务 ID、QR、RCODE、
-    问题段 (名/类型/类与查询一致，名比对不区分大小写与末尾点) 全验；
+    """DNS 测试路径 (UDP53/DoT/DoH) 的响应判定：长度、事务 ID、QR、OPCODE、
+    RCODE、问题段 (名/类型/类与查询一致，名比对不区分大小写与末尾点) 全验；
     查询原样回送、QR=0 的截断/伪造响应一律判败；TC 截断、无答案、
-    答案段越界一律判败。"""
+    答案段越界一律判败。OPCODE 须为 0（标准查询）：OPCODE=1/2 的响应
+    不是对本次查询的回答，不得判成功（7a-1）。"""
     if d is None or len(d) < 12:
         return False
     r_tid, flags, qdcount, ancount, _, _ = struct.unpack(">HHHHHH", d[:12])
-    if r_tid != tid or not (flags & 0x8000) or (flags & 0x0F) != 0 or qdcount != 1:
+    if (r_tid != tid or not (flags & 0x8000) or (flags & 0x7800) != 0
+            or (flags & 0x0F) != 0 or qdcount != 1):
         return False
     if flags & 0x0200:  # TC 截断：不可信
         return False
@@ -6984,7 +7084,10 @@ def _dns_test_ok(d, tid, qpkt):
         for _oan, _oat, _oac, _oroff, _ordlen in _answers:
             if _oat == 5 and _oac == 1:
                 _tgt, _tend = _decode_dns_name(d, _oroff)
-                if _tgt and _tend - _oroff <= _ordlen:
+                # CNAME 目标须恰好消费整个 RDATA：域名后赃数据不得建
+                # 关联（7a-2；本函数 _dns_test_ok，与融合轮 2-3 所修的
+                # _dns_query_udp 不同函数，不得以“已修”关闭本条）。
+                if _tgt and _tend - _oroff == _ordlen:
                     _cmap[_oan] = _tgt.lower().rstrip(".")
         _ccur = (qname_q or "").lower().rstrip(".")
         for _ in range(16):
@@ -7027,6 +7130,11 @@ def _udp_recv_from(sock, ip, timeout, tid=None):
             sock.settimeout(remain)
             d, addr = sock.recvfrom(512)
         except Exception:
+            return None
+        # 7a-3：recv 返回后复核绝对截止。线程在 recv 前后被挂起时，
+        # 已入队的数据会立即返回、相对 socket 超时拦不住，迟到数据
+        # 不得当成功（与 recv 前检查用同一 >= 截止口径）。
+        if time.monotonic() >= deadline:
             return None
         if addr[0] == ip and addr[1] == 53:
             if tid is not None:
@@ -7080,6 +7188,10 @@ def _recv_exact(ss, n, dl):
         if not chunk:
             return None
         d += chunk
+        # 7a-3：每块返回后复核绝对截止（与 _udp_recv_from 同理）：
+        # 挂起后恢复时已过截止、已到达数据仍须按超时处理。
+        if time.monotonic() >= dl:
+            return None
     return d
 
 
@@ -7358,12 +7470,24 @@ def test_dns_servers6(timeout=3):
                     closed = True
                     break
                 raw += chunk
-                if head is None:
+                while head is None:
                     _sep = raw.find(b"\r\n\r\n")
                     if _sep < 0:
+                        break
+                    _hblock = raw[:_sep]
+                    # 7a-4：循环跳过 1xx 临时响应头（103 Early Hints 等）
+                    # 直至最终响应头：首个头块未必是最终响应，临时头后
+                    # 的最终响应头才是；同轮内已到达的最终头亦须就地
+                    # 识别，不得等下一 recv（否则关连接后 head 恒空）。
+                    _st = _hblock.split(b"\r\n", 1)[0].split()
+                    if (len(_st) >= 2 and _st[1].isdigit()
+                            and 100 <= int(_st[1]) < 200):
+                        raw = raw[_sep + 4:]
                         continue
-                    head = raw[:_sep]
+                    head = _hblock
                     head_end = _sep + 4
+                if head is None:
+                    continue
                 body = raw[head_end:]
                 if _http_te_chunked(head):
                     if _decode_chunked(body) is not None:
@@ -7830,8 +7954,13 @@ def get_system_info():
                                 mfr = out2.stdout.lower()
                         except Exception:
                             pass
-                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "amazon ec2", "google", "bochs")):
+                    if any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "bochs")):
                         virt = vm_label
+                    elif any(k in mfr for k in ("amazon ec2", "google")):
+                        # 7b-1：云厂商牌子 alone 不能定虚拟化（EC2 裸金属
+                        # 如 m5.metal 的 Manufacturer 同为 Amazon EC2），
+                        # 与 Linux 分支“品牌 alone → 不确定”规则对齐。
+                        virt = "?"
                     else:
                         # 与 macOS/Linux 对齐：探测成功且无虚拟化信号 → 物理机
                         virt = T("virt_phys")
@@ -7878,9 +8007,15 @@ def get_system_info():
                 hv_cpu = False
                 cpu_read = False
                 if os.path.exists("/proc/cpuinfo"):
-                    with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
-                        hv_cpu = "hypervisor" in f.read().lower()
-                    cpu_read = True
+                    # 7b-2：cpuinfo 读取须有局部保护（与上方 DMI 逐文件
+                    # 保护同款）：该文件存在却抛错时不得进外层 except
+                    # 丢弃已算出的 hv_dmi，回落到 DMI 结论即可。
+                    try:
+                        with open("/proc/cpuinfo", encoding="utf-8", errors="replace") as f:
+                            hv_cpu = "hypervisor" in f.read().lower()
+                        cpu_read = True
+                    except Exception:
+                        pass
                 brand_dmi = any(k in dmi_text for k in (
                     "amazon ec2", "google", "digitalocean", "alibaba",
                     "linode", "vultr", "hetzner", "oracle",
@@ -7916,11 +8051,20 @@ def _overlay_backing_ft(opts, mounts):
         upper = None
         for item in cur_opts.split(","):
             if item.startswith("upperdir="):
+                _raw_upper = _unescape_mount_path(item[len("upperdir="):])
+                # 7b-3：相对 upperdir 无法确认归属（realpath 会按进程
+                # 工作目录解析，误配根挂载），直接返 None。
+                if not os.path.isabs(_raw_upper):
+                    return None
                 # CONF-13b1.2：upperdir 须先 realpath 再与挂载点匹配（主循环对候选
                 # 先 realpath；只反转义会使经符号链接的 upperdir 误配磁盘挂载点）。
-                upper = os.path.realpath(_unescape_mount_path(item[len("upperdir="):]))
+                upper = os.path.realpath(_raw_upper)
                 break
         if not upper or upper in seen:
+            return None
+        # 7b-3：realpath 不要求路径存在，lazy-unmount 后已消失的
+        # upperdir 仍会按字符串前缀误配 "/"（返根类型）；不存在即无法确认。
+        if not os.path.exists(upper):
             return None
         seen.add(upper)
         best_ft = best_opts = None
@@ -8188,7 +8332,11 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
         lists = [lst for lst in DNSBL_LISTS[:max_lists]
                  if lst in _DNSBL_IPV6_LISTS]
     elif _addr is not None:
-        rev = ".".join(reversed(ip_s.split(".")))
+        # 7c-1：反转规范化后的地址（与 IPv6 分支用 _addr.exploded 同款），
+        # 不用原始串：前导零容忍仅存于 Python 3.8.0–3.9.4，该范围运行
+        # 时原始串反转会查错 DNSBL 名、空应答计 clean（假阴性）；现代版
+        # 上该输入在解析处即 fail-closed，本改动不改变现代版行为。
+        rev = ".".join(reversed(_addr.exploded.split(".")))
         lists = DNSBL_LISTS[:max_lists]
     else:
         return (0, 0, 0, [])
@@ -8893,6 +9041,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._ph, self._pp = ph, pp
         self._user, self._pwd = username, password
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
+        self._hs_closed = False  # 8-2：握手期内被 close 的标记
 
     def connect(self):
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
@@ -8902,8 +9051,8 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 先挂 self.sock 再 wrap：覆盖 TLS wrap 阶段，窗口清理能关到它。
         self.sock = raw
         try:
-            self.sock = self._context.wrap_socket(raw,
-                                                  server_hostname=self.host)
+            _tls = self._context.wrap_socket(raw,
+                                             server_hostname=self.host)
         except Exception:
             try:
                 raw.close()
@@ -8911,9 +9060,23 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
             raise
+        if self._hs_closed:
+            # 8-2：wrap 期间已被 close（此时 _hs_box 登记的仍是已脱离
+            # 的原始 socket，关不到实际 TLS socket）：关掉新得的 TLS
+            # socket，不把活 socket 写回已关闭的连接对象。worker 侧
+            # 的窗口复查兜底（GET 前复查）保持在位，不动。
+            try:
+                _tls.close()
+            except Exception:
+                pass
+            self.sock = None
+        else:
+            self.sock = _tls
 
     def close(self):
-        # 先关断握手中的 socket（shutdown 唤醒阻塞 recv），再走标准关闭。
+        # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
+        # 的 socket（shutdown 唤醒阻塞 recv），最后走标准关闭。
+        self._hs_closed = True
         for _s in self._hs_box:
             try:
                 _s.shutdown(socket.SHUT_RDWR)
@@ -9354,6 +9517,14 @@ def _parse_node_line(line):
                 user, pwd = auth.split(":", 1)
             else:
                 user = auth
+            # 8-1：凭证做百分号解码（仅凭证部分，host/port 不动）：
+            # 含编码分隔符的合法凭证否则原样发给代理致认证失败。
+            # 先按字面分隔符切分、再解码，故 %3A 解出的 ":" 不再
+            # 被当分隔符；%40 解出的 "@" 亦不影响已完成的切分。
+            if user is not None:
+                user = urllib.parse.unquote(user)
+            if pwd is not None:
+                pwd = urllib.parse.unquote(pwd)
     if "://" in rest:
         return None  # 非 socks5 方案（如 socks5h://）一律拒，防账密落入 host/标签
     try:
@@ -9862,8 +10033,13 @@ def _banner_net_register_worker(t):
     之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
     """
     with _banner_net_workers_lock:
+        # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
+        # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
+        # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
+        _live = threading.enumerate()
         _banner_net_workers[:] = [w for w in _banner_net_workers
-                                  if w.is_alive()]
+                                  if w.is_alive()
+                                  or any(x is w for x in _live)]
         _banner_net_workers.append(t)
 
 
@@ -9889,7 +10065,11 @@ def _banner_net_join():
     等待集为已登记的活 worker：_getaddrinfo_timed 无条件登记每路 DNS
     工作线程（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径
     的调用），故等待集可能包含活着的非横幅 DNS worker；无 deadline
-    （横幅未启动）时立即返回、不等待。
+    （横幅未启动）时立即返回、不等待。快照与登记清理均按
+    enumerate() 对象身份纳入仍在跑的线程：在别处 join 被打断毒化
+    is_alive() 的 worker（如 _urlopen_bounded 的工作线程）同样被等到；
+    join 返回后仍在跑的线程转入 interrupted 按身份轮询，不直接丢弃
+    义务（9-1）。
 
     第二次 Ctrl-C 全过程语义：位于相应异常保护范围内的 KI 由各层
     处理器恢复；函数入口及未受保护的回边、异常处理控制流仍可能
@@ -9977,8 +10157,13 @@ def _banner_net_join():
                 if t is not None and t.is_alive():
                     threads.append(t)
                 with _banner_net_workers_lock:
+                    # 快照不得只凭 is_alive()：在别处 join 被打断毒化
+                    # 的 worker（is_alive 恒 False 但仍在跑）必须按
+                    # enumerate() 对象身份纳入等待集，否则漏等（9-1）。
+                    _live = threading.enumerate()
                     threads.extend(w for w in _banner_net_workers
-                                   if w.is_alive())
+                                   if w.is_alive()
+                                   or any(x is w for x in _live))
                 if interrupted:
                     live = threading.enumerate()
                     interrupted = [w for w in interrupted
@@ -10020,6 +10205,14 @@ def _banner_net_join():
                                 continue
                     except Exception:
                         pass
+                    if any(x is th for x in threading.enumerate()):
+                        # join 已返回但线程仍在跑：或是 is_alive 已被别
+                        # 处打断的 join 毒化（再次 join 立即返回），或是
+                        # 本轮预算片耗尽。不得直接移出 pending 丢弃义务，
+                        # 转入按对象身份轮询的 interrupted，改由轮询等它
+                        # 真正结束（预算耗尽时轮询循环自行 break）。
+                        if th not in interrupted:
+                            interrupted.append(th)
                     pending = [w for w in pending if w is not th]
                 while interrupted or pending:
                     rem = deadline - time.monotonic()
