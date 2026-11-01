@@ -5712,6 +5712,17 @@ def get_egress_ip(budget=None):
                 try:
                     _resp = urllib.request.urlopen(req, timeout=_to)
                 except Exception as _e:
+                    # R2a-1：HTTPError 本身即响应对象：异常路径须显式
+                    # 关闭其携带的响应，否则保留的末条／迟到错误因
+                    # traceback 成环而只能等循环 GC，确定性清理缺失。
+                    # 主线程只判 "err" 在否、从不读错误体，故此处
+                    # 关闭安全；非响应异常无 close 属性，原样存储。
+                    _close = getattr(_e, "close", None)
+                    if callable(_close):
+                        try:
+                            _close()
+                        except Exception:
+                            pass
                     with _olock:
                         _obox["err"] = _e
                     return
@@ -9072,6 +9083,17 @@ class _SocksHTTPS(http.client.HTTPSConnection):
             self.sock = None
         else:
             self.sock = _tls
+            # R6-1：close 可能落在标记检查与写回之间：写回后再复核
+            # 一次标记；若已关闭，关掉新得的 TLS socket、不让已关闭
+            # 的对象重新持有活 socket。单次检查不可靠：交错下读到
+            # 的可能是旧值，故以写回后的复核为准；复核时若 close
+            # 已清掉 sock，则 self.sock is not _tls，自然不再动作。
+            if self._hs_closed and self.sock is _tls:
+                try:
+                    _tls.close()
+                except Exception:
+                    pass
+                self.sock = None
 
     def close(self):
         # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
