@@ -4772,12 +4772,13 @@ def _print_streaming_inference(res):
         "⚠ 以下は推測であり、実際の接続テストではありません",
         "⚠ Это лишь предположение, а НЕ реальные тесты подключения",
         "⚠ این فقط یک استنتاج است، نه تست واقعی اتصال",
+        zhtw="⚠ 以下為模擬推測，非實際連接測試",
     )
     print(f"  {_c(C.yellow, warn)}")
 
-    def _verdict_cell(svc):
+    def _verdict_cell(svc, width=14):
         verdict, _ = svc_map.get(svc, (T("unknown"), "mid"))
-        padded = _pad(verdict, 14)
+        padded = _pad(verdict, width)
         if verdict == T("infer_avail"):
             return _c(C.green, padded)
         if verdict == T("infer_block"):
@@ -4786,10 +4787,10 @@ def _print_streaming_inference(res):
             return _c(C.yellow, padded)
         return _c(C.dim, padded)
 
-    def _conf_cell(svc):
+    def _conf_cell(svc, width=14):
         _, conf = svc_map.get(svc, ("", "mid"))
         col = {"high": C.green, "mid": C.yellow, "low": C.red}.get(conf, C.dim)
-        return _pad(_c(col, "●"), 14)
+        return _pad(_c(col, "●"), width)
 
     categories = [
         (T("cat_video"), ["TikTok", "Disney+", "Netflix", "YouTube", "AmazonPV", "AppleTV+"]),
@@ -4797,10 +4798,14 @@ def _print_streaming_inference(res):
         (T("cat_social"), ["Reddit", "Instagram", "Facebook", "X", "Line", "WhatsApp"]),
     ]
     for cat_name, svcs in categories:
+        _w = 14
+        for _sv in svcs:
+            _v, _ = svc_map.get(_sv, (T("unknown"), "mid"))
+            _w = max(_w, _disp_width(_sv) + 1, _disp_width(_v) + 1)
         print(f"  {_c(C.bold, cat_name)}:")
-        print("    " + "".join(_pad(n, 14) for n in svcs))
-        print("    " + "".join(_verdict_cell(sv) for sv in svcs))
-        print("    " + "".join(_conf_cell(sv) for sv in svcs))
+        print("    " + "".join(_pad(n, _w) for n in svcs))
+        print("    " + "".join(_verdict_cell(sv, _w) for sv in svcs))
+        print("    " + "".join(_conf_cell(sv, _w) for sv in svcs))
         print()
 
 
@@ -5041,7 +5046,7 @@ def _print_basic_block(s, prof):
             print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {prof['latitude']}, {prof['longitude']}")
             print(f"  {_cf}{_c(C.dim, T('map') + ':')} {_c(C.cyan, 'https://www.google.com/maps?q=%s,%s' % (prof['latitude'], prof['longitude']))}")
         if _cg.get("ok"):
-            print(f"  {_fl(_cg.get('cc'))}{_c(C.dim, T('coord_country') + ':')} {_cg.get('country')}")
+            print(f"  {_fl(_cg.get('cc'))}{_c(C.dim, T('coord_country') + ':')} {_loc_country_name(_cg.get('country'))}")
         if locs:
             _lbl = T("sec_loc")
             for k in _order:
@@ -5352,8 +5357,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     if include_streaming_inference:
         _done_txt = "✓ " + T("done")
         print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل'))}")
-        print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید'))}")
+        print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
+        print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
 
 
 # ============================================================
@@ -6355,7 +6360,7 @@ def test_netflix(local_ip=None):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
-        orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?")
+        orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?", zhtw="自製?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     _ft = _http_fallthrough(code2)
@@ -7724,11 +7729,11 @@ def recommend_dns_for_ip(country):
     db = DNS_COUNTRY_DB[key]
     _section(T("sec_dns_rec"))
     print(f"  {_c(C.dim, T('location') + ': ' + (_loc_country_name(country) or '?'))}")
-    print(f"\n  {_c(C.green, _L('✓ 推荐:', '✓ Recommended:', '✓ おすすめ:', '✓ Рекомендуется:', '✓ توصیه‌شده:'))}")
+    print(f"\n  {_c(C.green, _L('✓ 推荐:', '✓ Recommended:', '✓ おすすめ:', '✓ Рекомендуется:', '✓ توصیه‌شده:', zhtw='✓ 推薦：'))}")
     for name, ip, proto in db["rec"]:
         print(f"    {name:14} {ip:22} [{proto}]")
     if db["blocked"]:
-        print(f"\n  {_c(C.red, _L('✗ 已知不可用/被阻断:', '✗ Known blocked:', '✗ 利用不可/ブロック済み:', '✗ Заблокировано/недоступно:', '✗ مسدود/غیرقابل استفاده:'))}")
+        print(f"\n  {_c(C.red, _L('✗ 已知不可用/被阻断:', '✗ Known blocked:', '✗ 利用不可/ブロック済み:', '✗ Заблокировано/недоступно:', '✗ مسدود/غیرقابل استفاده:', zhtw='✗ 已知不可用/被阻斷：'))}")
         for name, reason in db["blocked"]:
             reason = _DNS_REASON_L.get(reason, {}).get(LANG, reason)
             print(f"    {name:24} {reason}")
@@ -7789,6 +7794,7 @@ def print_speed_section(json_mode=False, family=0, gated=False):
         "※ 参考値：実際の速度はサーバー／経路によって異なり、ISP の最大帯域を保証するものではありません",
         "※ Справочно: фактическая скорость зависит от сервера/маршрута и не является гарантией макс. полосы провайдера",
         "※ صرفاً جهت اطلاع: سرعت واقعی به سرور/مسیر بستگی دارد و تضمینی برای رسیدن به حداکثر پهنای باند ISP نیست",
+        zhtw="※ 僅供參考：實際速度受伺服器／路由影響，非營運商承諾最大頻寬",
     )
     print(f"  {_c(C.yellow, warn_txt)}")
     try:
@@ -8354,6 +8360,7 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     total = len(lists)
     marked = 0
     bl = []
+    pbl = []
     done = [0]
     sys_ns = _get_system_nameservers()[0]
     is_json = json_mode or "--json" in sys.argv
@@ -8369,6 +8376,8 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
             if not ans:
                 return lst, False  # 空应答（NXDOMAIN/无记录）= 未列入
             for a_ip in ans:
+                if a_ip in ("127.0.0.10", "127.0.0.11"):
+                    return lst, "pbl"  # Spamhaus PBL: 策略名单, 非垃圾邮件证据
                 if re.match(r"^127\.0\.0\.\d+$", a_ip):
                     return lst, True
             if any(a_ip.startswith("127.255.") for a_ip in ans):
@@ -8390,12 +8399,14 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
             if r is True:
                 marked += 1
                 bl.append(lst)
+            elif r == "pbl":
+                pbl.append(lst)
             elif r is None:
                 total -= 1
 
     if not is_json:
         print(" " * 40, end="\r", flush=True)
-    return total, max(0, total - marked), marked, sorted(bl)
+    return total, max(0, total - marked), marked, sorted(bl), sorted(pbl)
 
 
 def _run_streaming_table(egress, json_mode=False, family=0):
@@ -8523,7 +8534,7 @@ def _run_active6(json_mode, egress6):
         f_mxs_6 = [ex.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
         p25_6 = f_p25_6.result()
         mx6_results = [f.result() for f in f_mxs_6]
-    dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
+    dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
     if not json_mode:
         print_system_info(si6, io6)
         _section(T("sec_mail"))
@@ -8541,14 +8552,19 @@ def _run_active6(json_mode, egress6):
         for _mx_name6, _mx_dom6 in mx_domains6:
             if _MX_NULL.get(_mx_dom6):
                 print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name6 + ')')}")
-        _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
+        _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)", zhtw="IP 位址黑名單資料庫")
         print(
             f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_c(C.cyan, str(dnsbl6_total))}  "
             f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_c(C.green, str(dnsbl6_clean))}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}"
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
         )
         for b in dnsbl6_bl[:10]:
             print(f"    {_c(C.red, '- ' + b)}")
+        if dnsbl6_pbl:
+            for b in dnsbl6_pbl[:10]:
+                print(f"    {_c(C.yellow, '- ' + b)}")
+            print(f"    {_c(C.dim, _L('※ PBL 为策略名单：表示该地址段按策略不应直接发信，非垃圾邮件证据', '※ PBL is a policy list: the range should not send mail directly; not evidence of spam', '※ PBL はポリシーリストです：このアドレス範囲は直接送信すべきでなく、スパムの証拠ではありません', '※ PBL — список политик: диапазон не должен отправлять почту напрямую, это не свидетельство спама', '※ PBL فهرست سیاست است: این بازه نباید مستقیماً نامه ارسال کند؛ مدرکی بر اسپم بودن نیست', zhtw='※ PBL 為策略名單：表示該位址段按策略不應直接發信，非垃圾郵件證據'))}")
     out = {"ip": egress6, "ipv6": True,
            "active": {"egress_ipv6": egress6, "ipv6_report": res6,
                       "streaming_ipv6": streaming6, "speed_ipv6": speed6,
@@ -8564,6 +8580,7 @@ def _run_active6(json_mode, egress6):
                           "clean": dnsbl6_clean,
                           "listed": dnsbl6_marked,
                           "hit_lists": dnsbl6_bl,
+                          "policy_lists": dnsbl6_pbl,
                       }}}
     if json_mode:
         print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
@@ -8668,7 +8685,7 @@ def run_active(json_mode=False, stack=None):
         p25 = f_p25.result()
         mx_results = [f.result() for f in f_mxs]
 
-    total, clean, marked, bl = check_dnsbl(egress, json_mode=json_mode)
+    total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
 
     st_res = print_speed_section(json_mode=json_mode, gated=True)
 
@@ -8695,18 +8712,23 @@ def run_active(json_mode=False, stack=None):
             if _MX_NULL.get(_mx_dom):
                 print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name + ')')}")
 
-        _dnsbl_lbl = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)")
+        _dnsbl_lbl = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)", zhtw="IP 位址黑名單資料庫")
         _eff = _c(C.cyan, str(total))
         _ok = _c(C.green, str(clean))
         _bl = _c(C.red if marked > 0 else C.green, str(marked))
         print(
             f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_eff}  "
             f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_ok}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl}"
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(pbl)))}"
         )
         if bl:
             for b in bl[:10]:
                 print(f"    {_c(C.red, '- ' + b)}")
+        if pbl:
+            for b in pbl[:10]:
+                print(f"    {_c(C.yellow, '- ' + b)}")
+            print(f"    {_c(C.dim, _L('※ PBL 为策略名单：表示该地址段按策略不应直接发信，非垃圾邮件证据', '※ PBL is a policy list: the range should not send mail directly; not evidence of spam', '※ PBL はポリシーリストです：このアドレス範囲は直接送信すべきでなく、スパムの証拠ではありません', '※ PBL — список политик: диапазон не должен отправлять почту напрямую, это не свидетельство спама', '※ PBL فهرست سیاست است: این بازه نباید مستقیماً نامه ارسال کند؛ مدرکی بر اسپم بودن نیست', zhtw='※ PBL 為策略名單：表示該位址段按策略不應直接發信，非垃圾郵件證據'))}")
 
 
 
@@ -8731,7 +8753,7 @@ def run_active(json_mode=False, stack=None):
             _section(T("sec_stream") + " (IPv6)")
         streaming6_json = _run_streaming_table(egress6, json_mode=json_mode, family=6)
         speed6_res = print_speed_section(json_mode=json_mode, family=6, gated=True)
-        dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl = check_dnsbl(egress6, json_mode=json_mode)
+        dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
         if not json_mode:
             _eff6 = _c(C.cyan, str(dnsbl6_total))
             _ok6 = _c(C.green, str(dnsbl6_clean))
@@ -8739,10 +8761,15 @@ def run_active(json_mode=False, stack=None):
             print(
                 f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_eff6}  "
                 f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_ok6}  "
-                f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl6}"
+                f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl6}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
             )
             for b in dnsbl6_bl[:10]:
                 print(f"    {_c(C.red, '- ' + b)}")
+            if dnsbl6_pbl:
+                for b in dnsbl6_pbl[:10]:
+                    print(f"    {_c(C.yellow, '- ' + b)}")
+                print(f"    {_c(C.dim, _L('※ PBL 为策略名单：表示该地址段按策略不应直接发信，非垃圾邮件证据', '※ PBL is a policy list: the range should not send mail directly; not evidence of spam', '※ PBL はポリシーリストです：このアドレス範囲は直接送信すべきでなく、スパムの証拠ではありません', '※ PBL — список политик: диапазон не должен отправлять почту напрямую, это не свидетельство спама', '※ PBL فهرست سیاست است: این بازه نباید مستقیماً نامه ارسال کند؛ مدرکی بر اسپم بودن نیست', zhtw='※ PBL 為策略名單：表示該位址段按策略不應直接發信，非垃圾郵件證據'))}")
 
     if not json_mode:
         _print_completeness(res)
@@ -8760,6 +8787,7 @@ def run_active(json_mode=False, stack=None):
                 "clean": clean,
                 "listed": marked,
                 "hit_lists": bl,
+                "policy_lists": pbl,
             },
         },
         "speed": st_res,
@@ -8775,6 +8803,7 @@ def run_active(json_mode=False, stack=None):
             "clean": dnsbl6_clean,
             "listed": dnsbl6_marked,
             "hit_lists": dnsbl6_bl,
+            "policy_lists": dnsbl6_pbl,
         }
 
     if json_mode:
@@ -10821,7 +10850,8 @@ def main():
                    "Предупреждение: конфликт режимов, выполняется только %s, "
                    "игнорируется: %s",
                    "هشدار: حالت‌های متناقض، فقط %s اجرا می‌شود، "
-                   "نادیده گرفته شد: %s")
+                   "نادیده گرفته شد: %s",
+                   zhtw="警告：模式衝突，僅運行%s，忽略：%s")
               % (_modes[0], ", ".join(_modes[1:])), file=sys.stderr)
 
     _ip_ignored_tpl = _L("※ %s 模式忽略指定的 IP 参数",
