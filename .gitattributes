@@ -1,0 +1,2 @@
+# 行尾规则: Windows 批处理须为 CRLF (LF-only 在部分 cmd.exe 下 goto 跳转不稳定)
+*.bat text eol=crlf

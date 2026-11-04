@@ -2653,6 +2653,19 @@ def _loc_city(text):
     return text
 
 
+def _localize_profile_copy(prof):
+    """JSON 用 profile 本地化副本: country/region/city 走与文本报告相同
+    的本地化函数; 其余字段原样, 输入不改动 (文本报告仍用原始 profile)。"""
+    out = dict(prof)
+    if prof.get("country"):
+        out["country"] = _loc_country_name(prof["country"])
+    if prof.get("region"):
+        out["region"] = _loc_region(prof["region"])
+    if prof.get("city"):
+        out["city"] = _loc_city(prof["city"])
+    return out
+
+
 def _loc_sub_in(disp, any2en, table):
     """在对比行整串里按最长变体匹配替换一个地名 (州/省或城市)。
     ASCII 变体须词边界匹配（避免 London 命中 Londonderry），替换落在边界匹配处；
@@ -4775,6 +4788,7 @@ def _print_streaming_inference(res):
         zhtw="⚠ 以下為模擬推測，非實際連接測試",
     )
     print(f"  {_c(C.yellow, warn)}")
+    print(f"  {_c(C.dim, _L('● 置信度：绿高 / 黄中 / 红低', '● Confidence: green high / yellow medium / red low', '● 信頼度：緑＝高／黄＝中／赤＝低', '● Достоверность: зелёный — высокая, жёлтый — средняя, красный — низкая', '● اطمینان: سبز زیاد، زرد متوسط، قرمز کم', zhtw='● 置信度：綠高／黃中／紅低'))}")
 
     def _verdict_cell(svc, width=14):
         verdict, _ = svc_map.get(svc, (T("unknown"), "mid"))
@@ -7744,19 +7758,23 @@ def recommend_dns_for_ip(country):
 
 
 _NO_SPEED = False        # --no-speed: 自检时跳过测速
+_FORCE_SPEED = False     # --with-speed: 自检时显式开启测速
 _SPEED_DECISION = None   # 本次运行的测速确认结果缓存 (None=未决定)
 
 
 def _speed_allowed(json_mode):
-    """自检内测速开关: --no-speed 恒关; JSON/非交互终端恒开 (脚本兼容);
-    交互终端在测速段前询问一次 (默认否, 防下载流量消耗), 结果缓存。"""
+    """自检内测速开关: --no-speed 恒关; --with-speed 显式开; JSON/非交互终端
+    默认关 (防脚本/CI 意外下载流量); 交互终端在测速段前询问一次
+    (默认否), 结果缓存。"""
     global _SPEED_DECISION
     if _SPEED_DECISION is not None:
         return _SPEED_DECISION
     if _NO_SPEED:
         _SPEED_DECISION = False
-    elif json_mode or not sys.stdin.isatty():
+    elif _FORCE_SPEED:
         _SPEED_DECISION = True
+    elif json_mode or not sys.stdin.isatty():
+        _SPEED_DECISION = False
     else:
         try:
             _ask = T("speed_ask")
@@ -9516,8 +9534,8 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     else:
         _note(_c(C.red, T("diag_tcp_fail")))
 
-    # 6. 吞吐 (经代理, 多地区枢纽节点下载)
-    _note(T("diag_speed_testing"))
+    # 6. 吞吐 (经代理, 多地区枢纽节点下载; --no-speed 跳过)
+    _note(T("speed_skipped") if _NO_SPEED else T("diag_speed_testing"))
 
     def _hub_row(row):
         if not json_mode:
@@ -9526,7 +9544,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
 
     try:
-        trows, tbest = proxy_speed_regions(proxy_host, proxy_port,
+        trows, tbest = ([], None) if _NO_SPEED else proxy_speed_regions(proxy_host, proxy_port,
                                            username=username,
                                            password=password,
                                            on_result=_hub_row)
@@ -9694,6 +9712,9 @@ def _print_batch_results(results):
 
 def _batch_best_throughput(results):
     """排名后对最优 SOCKS5 节点实测经代理多地区下载吞吐 (附加行)。"""
+    if _NO_SPEED:
+        print(f"  {_c(C.dim, T('speed_skipped'))}")
+        return
     for r in results:
         nd = r["node"]
         usable = r["tcp"].get("ok") and r.get("socks5", {}).get("ok", True)
@@ -10579,6 +10600,7 @@ def _print_cli_help():
                   代理认证 (可选)
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
   --no-speed      自检时跳过网速测试
+  --with-speed    自检时强制进行网速测试
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
   --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
   --explain       输出评分维度与扣分规则说明
@@ -10618,6 +10640,7 @@ Options:
                   Proxy authentication (optional)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
   --no-speed      Skip the speed test during self-check
+  --with-speed    Force the speed test during self-check
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
@@ -10652,6 +10675,7 @@ Examples:
                   代理驗證 (可選)
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
   --no-speed      自檢時跳過網速測試
+  --with-speed    自檢時強制進行網速測試
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
   --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
   --explain       輸出評分維度與扣分規則說明
@@ -10685,6 +10709,7 @@ Examples:
                   プロキシ認証 (任意)
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
   --no-speed      セルフチェック時に速度テストをスキップ
+  --with-speed    セルフチェック時に速度テストを強制実行
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
   --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
   --explain       スコアリングのルールと重みを表示
@@ -10718,6 +10743,7 @@ Examples:
                   Аутентификация прокси (необязательно)
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковая многопоточная скорость)
   --no-speed      Пропустить тест скорости при самопроверке
+  --with-speed    Принудительно выполнять тест скорости при самопроверке
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
   --json          Вывод в JSON (с IP, --active или --proxy)
   --explain       Правила и веса скоринга
@@ -10751,6 +10777,7 @@ Examples:
                   احراز هویت پروکسی (اختیاری)
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج سرعت با اتصالات همزمان)
   --no-speed      رد کردن تست سرعت هنگام خودبررسی
+  --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
   --json          خروجی JSON (با IP، --active یا --proxy)
@@ -10773,7 +10800,7 @@ Examples:
 
 
 def main():
-    global LANG, _FORCE_STACK, _NO_SPEED
+    global LANG, _FORCE_STACK, _NO_SPEED, _FORCE_SPEED
     _init_console()
 
     parser = _CLIArgumentParser(prog="acheck.py", add_help=False, allow_abbrev=False)
@@ -10791,6 +10818,8 @@ def main():
                         help="multi-region download speed test")
     parser.add_argument("--no-speed", action="store_true", dest="no_speed",
                         help="skip the speed test during self-check")
+    parser.add_argument("--with-speed", action="store_true", dest="with_speed",
+                        help="force the speed test during self-check")
     parser.add_argument("--batch", metavar="NODES", default=None,
                         help="batch node test, comma-separated host:port or socks5:// URLs")
     parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
@@ -10814,6 +10843,7 @@ def main():
     if ns.lang:
         LANG = ns.lang
     _NO_SPEED = bool(ns.no_speed)
+    _FORCE_SPEED = bool(ns.with_speed)
 
     if ns.ipv4_only and ns.ipv6_only:
         if ns.json:
@@ -10929,7 +10959,9 @@ def main():
             print(json.dumps({"error": "invalid or non-public IP address"}, ensure_ascii=False))
             sys.exit(1)
         res = run_passive6(ip) if ver == 6 else run_passive(ip)
-        print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
+        _res_json = dict(res)
+        _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
+        print(json.dumps(_res_json, indent=2, default=str, ensure_ascii=False))
         return
 
     if ns.ip is not None:
