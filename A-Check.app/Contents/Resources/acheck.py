@@ -26,7 +26,6 @@ IP 信誉检测 v4.14.25 — 全量修复与并发优化公开版 (零 API Key �
     python3 acheck.py --explain              # 输出评分规则说明 (支持 6 种语言)
 """
 import base64
-import glob
 import http.client
 import ipaddress
 import json
@@ -50,7 +49,6 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
-import http.client
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
@@ -412,7 +410,7 @@ STR = {
         "m_query": "Query any IP",
         "m_stream": "Streaming unlock test",
         "m_sysinfo": "System info & IO test",
-        "m_lang": "Language / 切换语言",
+        "m_lang": "Language",
         "m_proxy": "Proxy diagnostics (SOCKS5)",
         "m_dnsleak": "DNS egress consistency check",
         "m_tcpping": "TCP latency test",
@@ -712,8 +710,8 @@ STR = {
     "ja": {
         "active_ip_ignored": "※ --active モードは本機の出口 IP を検査します。指定した IP 引数は無視されます。",
         "title": "IPレピュテーションチェック",
-        "prompt_ip": "パブリックIPを入力 (b 戻る，q 終了): ",
-        "invalid_ip": "無効なIPアドレスです，再入力してください",
+        "prompt_ip": "パブリックIPを入力 (b 戻る、q 終了): ",
+        "invalid_ip": "無効なIPアドレスです、再入力してください",
         "upd_ahead": "ローカルバージョンが最新リリースより新しいです (v%s)",
         "ipapi_http_note": "注：ip-api 無料ソースは平文 HTTP クエリのみ対応",
         "invalid_input": "入力が無効です、再入力してください",
@@ -876,13 +874,13 @@ STR = {
         "purity_fair": "普通",
         "purity_poor": "やや悪い",
         "purity_bad": "悪い",
-        "purity_note": "※ 本ツール独自換算 (100 - 総合点)，第三者スコアではない",
-        "platform_note": "※ プラットフォーム互換性が高い = DC/プロキシ属性，一部プラットフォームで検証強化の可能性，悪意を意味しない",
+        "purity_note": "※ 本ツール独自換算 (100 - 総合点)、第三者スコアではない",
+        "platform_note": "※ プラットフォーム互換性が高い = DC/プロキシ属性、一部プラットフォームで検証強化の可能性、悪意を意味しない",
         "success_query": "成功クエリ",
         "failed_sources": "失敗ソース",
-        "fail_note": "※ 失敗ソースは[確認不可]として処理，リスク点に計上しない——クリーンを意味しない",
+        "fail_note": "※ 失敗ソースは[確認不可]として処理、リスク点に計上しない——クリーンを意味しない",
         "confidence": "信頼度",
-        "disclaimer": "注: パッシブクエリは公開情報のみを反映，証拠なし≠リスクなし。\nDC IPのプラットフォームポリシーリスクは別途評価が必要。",
+        "disclaimer": "注: パッシブクエリは公開情報のみを反映、証拠なし≠リスクなし。\nDC IPのプラットフォームポリシーリスクは別途評価が必要。",
         "unlocked": "利用可能",
         "reachable": "到達可能",
         "blocked": "ブロック",
@@ -4833,7 +4831,9 @@ def _print_completeness(res):
     print(f"  {_c(C.dim, T('fail_note'))}")
     print(f"  {T('confidence')}: {c['confidence']}/100")
 
-    print(f"\n{_c(C.dim, T('disclaimer'))}")
+    print()
+    for _dl in T('disclaimer').split("\n"):
+        print(_c(C.dim, _dl))
 
 
 
@@ -5693,7 +5693,9 @@ def print_report6(res, embedded=False):
     if c["failed"]:
         print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
     print(f"  {_c(C.dim, T('v6_stream_note'))}")
-    print(f"\n{_c(C.dim, T('disclaimer'))}")
+    print()
+    for _dl in T('disclaimer').split("\n"):
+        print(_c(C.dim, _dl))
 
 
 def get_egress_ip(budget=None):
@@ -8572,9 +8574,9 @@ def _run_active6(json_mode, egress6):
                 print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name6 + ')')}")
         _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)", zhtw="IP 位址黑名單資料庫")
         print(
-            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_c(C.cyan, str(dnsbl6_total))}  "
-            f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_c(C.green, str(dnsbl6_clean))}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
+            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_c(C.cyan, str(dnsbl6_total))}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_c(C.green, str(dnsbl6_clean))}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
             f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
         )
         for b in dnsbl6_bl[:10]:
@@ -8735,9 +8737,9 @@ def run_active(json_mode=False, stack=None):
         _ok = _c(C.green, str(clean))
         _bl = _c(C.red if marked > 0 else C.green, str(marked))
         print(
-            f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_eff}  "
-            f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_ok}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl}  "
+            f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_eff}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_ok}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_bl}  "
             f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(pbl)))}"
         )
         if bl:
@@ -8777,9 +8779,9 @@ def run_active(json_mode=False, stack=None):
             _ok6 = _c(C.green, str(dnsbl6_clean))
             _bl6 = _c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))
             print(
-                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', 'Valid', 'Valid', 'Valid'))} {_eff6}  "
-                f"{_c(C.dim, _L('正常', 'Clean', 'Clean', 'Clean', 'Clean'))} {_ok6}  "
-                f"{_c(C.dim, _L('黑名单命中', 'Listed', 'Listed', 'Listed', 'Listed', zhtw='黑名單命中'))} {_bl6}  "
+                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_eff6}  "
+                f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_ok6}  "
+                f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_bl6}  "
             f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
             )
             for b in dnsbl6_bl[:10]:
@@ -10888,7 +10890,7 @@ def main():
                          "Note: %s mode ignores the specified IP argument.",
                          "※ %s モードは指定した IP 引数を無視します。",
                          "※ Режим %s игнорирует указанный IP.",
-                         "※ حالت %s آرگومان IP را نادیده میگیرد。",
+                         "※ حالت %s آرگومان IP را نادیده میگیرد.",
                          "※ %s 模式忽略指定的 IP 參數")
 
     if ns.active:

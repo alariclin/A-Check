@@ -10,7 +10,7 @@
   </p>
   <p>
     <a href="README.md">English</a> ·
-    <a href="README.zh.md">简体中文</a> ·
+    <a href="README.zh.md">簡體中文</a> ·
     <a href="README.zh-TW.md">繁體中文</a> ·
     <a href="README.ja.md">日本語</a> ·
     <a href="README.ru.md">Русский</a> ·
@@ -74,7 +74,7 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 | 2 | 查詢任意 IP | 輸入公網 IPv4 或 IPv6 出被動報告，查完自動返回主選單 |
 | 3 | 串流解鎖檢測 | 單獨實測 18 個平台的解鎖狀態 |
 | 4 | 系統資訊與 IO 測試 | 系統 / CPU / 記憶體 / 磁碟資訊與磁碟讀寫測速 |
-| 5 | 切換語言 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
+| 5 | 切換語言 / Language | 簡體中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | 檢查更新 | 對比 GitHub 最新 Release 提示新版本 |
 | 7 | 代理診斷 (SOCKS5) | 六步：握手 → 代理出口 IP → 出口信譽 → DNS 洩漏 → TCP 延遲 → 經代理吞吐（5 個地區樞紐取最快） |
 | 8 | DNS 洩漏檢測 | 對比系統解析器與直連解析結果，判斷 DNS 是否走漏 |
