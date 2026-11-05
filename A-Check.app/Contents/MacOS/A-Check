@@ -10,6 +10,12 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
+# 校验 Python 版本 (>= 3.8, acheck.py 要求 3.8+)
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null; then
+    osascript -e 'display alert "需要 Python 3.8+" message "请先安装 Python 3.8 或更高版本: https://www.python.org/downloads/"'
+    exit 1
+fi
+
 # 在终端中运行
 osascript <<EOF
 tell application "Terminal"

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.25-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.26-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -74,7 +74,7 @@ Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured stre
 | 2 | Look up any IP | Enter a public IPv4 or IPv6 for a passive report; returns to the main menu automatically |
 | 3 | Streaming unlock test | Measured unlock status for 18 platforms |
 | 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
-| 5 | Language / 切换语言 | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
+| 5 | Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | Check for updates | Compares against the latest GitHub Release |
 | 7 | Proxy diagnostics (SOCKS5) | Six steps: handshake → proxy egress IP → egress reputation → DNS leak → TCP latency → throughput via the proxy (fastest of 5 regional hubs) |
 | 8 | DNS leak test | Compares system-resolver vs direct resolution to detect DNS leaking |
@@ -97,32 +97,32 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.25/A-Check-v4.14.25-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.26/A-Check-v4.14.26-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.25/A-Check-v4.14.25-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.26/A-Check-v4.14.26-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.25/A-Check-v4.14.25-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.26/A-Check-v4.14.26-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.25/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.26/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
 gh-proxy (mainland China direct):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.25/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.26/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.25/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.26/acheck.py -o acheck.py && python3 acheck.py
 ```
 Or run the script directly (Python 3.8+):
 
