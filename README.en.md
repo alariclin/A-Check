@@ -74,7 +74,7 @@ Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured stre
 | 2 | Look up any IP | Enter a public IPv4 or IPv6 for a passive report; returns to the main menu automatically |
 | 3 | Streaming unlock test | Measured unlock status for 18 platforms |
 | 4 | System info & IO test | System / CPU / memory / disk details plus disk read-write speed |
-| 5 | Language / 切换语言 | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
+| 5 | Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | Check for updates | Compares against the latest GitHub Release |
 | 7 | Proxy diagnostics (SOCKS5) | Six steps: handshake → proxy egress IP → egress reputation → DNS leak → TCP latency → throughput via the proxy (fastest of 5 regional hubs) |
 | 8 | DNS leak test | Compares system-resolver vs direct resolution to detect DNS leaking |
