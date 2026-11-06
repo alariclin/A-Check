@@ -10937,6 +10937,23 @@ def main():
     parser.add_argument("--fa", action="store_const", const="fa", dest="lang")
     parser.add_argument("ip", nargs="?", default=None)
 
+    # F48: 解析失败时帮助须按用户指定的语言输出, 而 LANG 原在解析成功后才
+    # 生效。先用仅含六个语言选项的预解析器读语言 (parse_known_args 不因
+    # 未知选项退出; 多个语言选项时最后一个生效, 与 store_const 语义一致)。
+    try:
+        _pre = argparse.ArgumentParser(add_help=False)
+        _pre.add_argument("--zh", action="store_const", const="zh", dest="lang")
+        _pre.add_argument("--zh-tw", action="store_const", const="zh-TW", dest="lang")
+        _pre.add_argument("--en", action="store_const", const="en", dest="lang")
+        _pre.add_argument("--ja", action="store_const", const="ja", dest="lang")
+        _pre.add_argument("--ru", action="store_const", const="ru", dest="lang")
+        _pre.add_argument("--fa", action="store_const", const="fa", dest="lang")
+        _pre_ns, _ = _pre.parse_known_args(sys.argv[1:])
+        if _pre_ns.lang:
+            LANG = _pre_ns.lang
+    except SystemExit:
+        pass
+
     try:
         ns = parser.parse_args(sys.argv[1:])
     except ValueError as err:
