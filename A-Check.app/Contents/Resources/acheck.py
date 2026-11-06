@@ -5362,7 +5362,6 @@ def _factor_rows(s, wi_server, v6=False):
     sf = s.get("stopforumspam", {})
     us = s.get("urlscan", {})
     sa = s.get("sansisc", {})
-    sh = s.get("shodan_idb", {})
     gn = s.get("greynoise", {})
     fe = s.get("feodo", {})
     et = s.get("et_compromised", {})
@@ -5471,7 +5470,6 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     # [1] 基础信息 (支持多源融合兜底)
     _print_basic_block(s, prof)
     wi = s.get("ipwhois", {})
-    fp = s.get("freeipapi", {})
 
     # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
     if sysinfo:
@@ -5546,23 +5544,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     _NA = None
     _Q = "?"
 
-    sf = s.get("stopforumspam", {})
-    us = s.get("urlscan", {})
-    sa = s.get("sansisc", {})
-    sh = s.get("shodan_idb", {})
-    gn = s.get("greynoise", {})
-    fe = s.get("feodo", {})
-    et = s.get("et_compromised", {})
-    sp = s.get("spamhaus", {})
-    te = s.get("tor_exit", {})
     ia = s.get("ipapi", {})
     il = s.get("iplocate", {})
     iq = s.get("ipquery", {})
-    ti = s.get("twoip", {})
-    xv = s.get("x4bvpn", {})
-    isum = s.get("ipsum", {})
-    bd = s.get("blocklistde", {})
-    ox = s.get("otx", {})
 
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
@@ -5857,8 +5841,6 @@ def print_report6(res, embedded=False):
     _NA = None
     pc = s.get("proxycheck", {})
     wi = s.get("ipwhois", {})
-    fp = s.get("freeipapi", {})
-    ia = s.get("ipapi", {})
     sp = s.get("spamhaus", {})
     sh = s.get("shodan_idb", {})
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
@@ -5989,7 +5971,7 @@ def get_egress_ip(budget=None):
             _obox = {}
             _olock = threading.Lock()
 
-            def _do_open():
+            def _do_open(req=req, _to=_to, _olock=_olock, _obox=_obox):
                 try:
                     _resp = urllib.request.urlopen(req, timeout=_to)
                 except Exception as _e:
@@ -6037,7 +6019,7 @@ def get_egress_ip(budget=None):
                 # 故读线程按剩余预算 join，超时即弃该源（与 _open_bounded 同法）。
                 _rbox = {}
 
-                def _do_read():
+                def _do_read(_rbox=_rbox):
                     try:
                         _rbox["raw"] = r.read(512)
                     except Exception as _e:
@@ -6223,8 +6205,8 @@ def get_egress_ip6():
             # 读阶段用剩余预算；超时/失败均进 _https_get_pinned6 备用路径。
             _dl6 = time.monotonic() + 6
             _r6 = _open_bounded(
-                lambda: urllib.request.urlopen(
-                    req, timeout=max(0.1, _dl6 - time.monotonic())), _dl6)
+                lambda _req=req, _dl=_dl6: urllib.request.urlopen(
+                    _req, timeout=max(0.1, _dl - time.monotonic())), _dl6)
             if _r6 is None:
                 raise TimeoutError("egress6 open deadline exceeded")
             with _r6 as r:
@@ -7188,7 +7170,7 @@ def _dl_direct_worker(url, stop, counter, lock, opener=None, registry=None,
             # CONF-11.3: 打开阶段纳入绝对截止（DNS 解析/多地址尝试/重定向均可超窗）：
             # _open_bounded 在 stop 前未完成即放弃，迟到响应由打开线程自行关闭，
             # worker 不再滞留于 open() 内；覆盖 _pinned_opener 与默认 opener 两路。
-            def _do_open():
+            def _do_open(req=req, _to=_to):
                 if opener:
                     return opener.open(req, timeout=_to)
                 return urllib.request.urlopen(req, timeout=_to)
@@ -10294,11 +10276,11 @@ def _logo_spread(lines, target=76):
     """把 Logo 的字间间隔列均匀注空格, 拉宽到 target 列 (字形本身不动)。"""
     if not lines:
         return list(lines)
-    w0 = max(len(l) for l in lines)
+    w0 = max(len(line) for line in lines)
     if w0 >= target:
         return list(lines)
     gaps = [c for c in range(1, w0 - 1)
-            if all(c >= len(l) or l[c] == " " for l in lines)]
+            if all(c >= len(line) or line[c] == " " for line in lines)]
     if not gaps:
         return list(lines)
     groups = [[gaps[0]]]
@@ -10323,9 +10305,9 @@ def _logo_spread(lines, target=76):
         insert_at[g[-1]] = a
         rem -= a
     out = []
-    for l in lines:
+    for line in lines:
         buf = []
-        for c, ch in enumerate(l):
+        for c, ch in enumerate(line):
             buf.append(ch)
             if c in insert_at:
                 buf.append(" " * insert_at[c])
@@ -10336,11 +10318,11 @@ def _logo_spread(lines, target=76):
 def _logo_shift_a(lines, n=2):
     """首字母 A 单独右移 n 列 (从 A 后的间隔里扣, 总宽不变)。"""
     out = []
-    for l in lines:
-        if len(l) > 8 + n:
-            out.append(" " * n + l[:8] + l[8 + n:])
+    for line in lines:
+        if len(line) > 8 + n:
+            out.append(" " * n + line[:8] + line[8 + n:])
         else:
-            out.append(l)
+            out.append(line)
     return out
 
 
