@@ -6642,7 +6642,11 @@ def test_x(local_ip=None):
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
         return T("unknown"), "", None
-    if code in (200, 302):
+    if code == 302:
+        # F26：默认跟随重定向时暴露出来的 302 必是重定向未完成
+        #（循环 / 缺可用 Location），不是成功，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200:
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
