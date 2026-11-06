@@ -7911,7 +7911,7 @@ def print_speed_section(json_mode=False, family=0, gated=False):
         # F42: 0.0 Mbps 是合法数值结果, 须用 is not None 判缺失, 不用真值判断
         available = row["down_mbps"] is not None
         dl = "%.1f Mbps" % row["down_mbps"] if available else "-"
-        line = "  %-22s %-10s %s" % (row["region"], lat, dl)
+        line = "  %-22s %-10s %s" % (_loc_hub_name(row["region"]), lat, dl)
         print(_c(C.green, line) if available else _c(C.dim, line))
 
     if family == 6:
@@ -9400,6 +9400,20 @@ PROXY_SPEED_HUBS = ["SG Singapore", "JP Tokyo", "US Los Angeles",
                     "DE Frankfurt", "UK London"]
 
 
+def _loc_hub_name(name):
+    """代理测速枢纽地区名 -> 界面语言, 仅渲染时转换 (F43)。
+    枢纽键形如 "SG Singapore": 国家码保留, 城市部分查 _CITY_L10N;
+    原始键仍用于 SPEED_REGIONS 查找与结构化结果, 不在此改动。未收录
+    的城市原样返回。"""
+    if LANG == "en" or not name:
+        return name
+    code, sep, city = str(name).partition(" ")
+    if not sep:
+        return name
+    loc = _CITY_L10N.get(LANG, {}).get(city)
+    return f"{code} {loc}" if loc else name
+
+
 def proxy_speed_regions(ph, pp, username=None, password=None, duration=4,
                         on_result=None):
     """经 SOCKS5 代理逐枢纽下载测速。返回 (rows, best_row_or_None)。"""
@@ -9625,7 +9639,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             # F42: 0.0 Mbps 是合法数值结果, 须用 is not None 判缺失
             available = row["down_mbps"] is not None
             dl = "%.1f Mbps" % row["down_mbps"] if available else "-"
-            line = "    %-22s %s" % (row["region"], dl)
+            line = "    %-22s %s" % (_loc_hub_name(row["region"]), dl)
             print(_c(C.green, line) if available else _c(C.dim, line))
 
     try:
@@ -9642,7 +9656,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     # “未执行”显示为“失败” (tbest=None 在此分支下是跳过, 不是失败)。
     if not _NO_SPEED:
         if tbest:
-            _note(_c(C.green, T("diag_speed_ok") % (tbest["region"],
+            _note(_c(C.green, T("diag_speed_ok") % (_loc_hub_name(tbest["region"]),
                                                    tbest["down_mbps"])))
         else:
             _note(_c(C.dim, T("diag_speed_fail")))
@@ -9817,7 +9831,7 @@ def _batch_best_throughput(results):
             tbest = None
         if tbest:
             print(_c(C.green, T("batch_tp_ok") % (tbest["down_mbps"],
-                                                 tbest["region"])))
+                                                 _loc_hub_name(tbest["region"]))))
         return
 
 
