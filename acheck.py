@@ -6500,15 +6500,22 @@ def test_chatgpt(local_ip=None):
     # code is None 在上游已返 failed，不与 unknown 混淆。
     if code != 200 or not _complete or "loc=" not in body:
         return T("unknown"), "", None
-    # loc 须为恰好两字母的独立字段：前视排除字母／数字／下划线相邻
-    # （xloc=、x_loc= 均不得命中），后视排除字母／数字相邻（loc=USA、
-    # loc=CN123 均不得命中；trace 体为 key=value 行格式；F23、6-6）。
-    # 上方 "loc=" 门禁仅为廉价预筛（子串命中如 x_loc= 无害），
-    # 真正的字段校验以本正则为准。
-    m = re.search(r"(?<![A-Za-z0-9_])loc=([A-Z]{2})(?![A-Za-z0-9])", body)
-    if not m:
+    # loc 须为恰好两字母的独立字段：按 trace 的 key=value 行格式解析，
+    # 字段名须恰为 loc、值须恰为两字母（F24）。x-loc=、note=loc=、
+    # loc=US_extra、loc=USA 均不得命中；字段缺失、格式不合法或存在
+    # 冲突值时返 unknown。上方 "loc=" 门禁仅为廉价预筛（子串命中如
+    # x_loc= 无害），真正的字段校验以本解析为准。
+    _loc_vals = []
+    for _ln in body.split("\n"):
+        _ln = _ln.strip()
+        if "=" not in _ln:
+            continue
+        _k, _v = _ln.split("=", 1)
+        if _k.strip() == "loc":
+            _loc_vals.append(_v.strip())
+    if len(_loc_vals) != 1 or not re.fullmatch(r"[A-Z]{2}", _loc_vals[0]):
         return T("unknown"), "", None
-    loc = m.group(1)
+    loc = _loc_vals[0]
     if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
         return T("blocked"), f"[{loc}]", None
     api_code, api_body, _, _api_complete, api_hdrs = _active_get("https://api.openai.com/v1/models")
