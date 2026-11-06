@@ -10557,13 +10557,15 @@ def check_update():
                     "utf-8")).get("tag_name", "")
             finally:
                 _resp_shutdown(r)
-    except TimeoutError:
+    except (TimeoutError, socket.timeout):
+        # F47: 3.8/3.9 下 socket.timeout 是独立的 OSError 子类 (3.10 起才
+        # 是 TimeoutError 别名), 须与 TimeoutError 并列捕获, 否则误分类。
         tag = ""
         cause = "timeout"
     except urllib.error.URLError as e:
         tag = ""
         reason = getattr(e, "reason", None)
-        if isinstance(reason, TimeoutError):
+        if isinstance(reason, (TimeoutError, socket.timeout)):
             cause = "timeout"
         elif isinstance(reason, socket.gaierror):
             cause = "dns"
