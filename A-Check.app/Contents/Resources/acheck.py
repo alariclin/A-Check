@@ -10227,7 +10227,7 @@ def _banner_geo_text(net):
         _ct = _ct if isinstance(_ct, str) else ""
         _og = net.get("geo_org")
         _og = _og if isinstance(_og, str) else ""
-        parts = [_loc_country_name(_cc), _ct]
+        parts = [_loc_country_name(_cc), _loc_city(_ct)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
@@ -10786,8 +10786,12 @@ Options:
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
-  --zh / --zh-tw / --en / --ja / --ru / --fa
-                  Set output language
+  --zh            Use Simplified Chinese output (default)
+  --zh-tw         Use Traditional Chinese output
+  --en            Use English output
+  --ja            日本語で出力
+  --ru            Вывод на русском языке
+  --fa            خروجی به زبان فارسی
 
 Examples:
   python3 acheck.py                        # Interactive menu
@@ -10821,8 +10825,12 @@ Examples:
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
   --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
   --explain       輸出評分維度與扣分規則說明
-  --zh / --zh-tw / --en / --ja / --ru / --fa
-                  設定輸出語言
+  --zh            使用簡體中文輸出 (預設)
+  --zh-tw         使用繁體中文輸出
+  --en            Use English output
+  --ja            日本語で出力
+  --ru            Вывод на русском языке
+  --fa            خروجی به زبان فارسی
 
 範例:
   python3 acheck.py                        # 啟動互動式選單
@@ -10855,8 +10863,12 @@ Examples:
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
   --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
   --explain       スコアリングのルールと重みを表示
-  --zh / --zh-tw / --en / --ja / --ru / --fa
-                  出力言語を設定
+  --zh            簡体字中国語で出力 (デフォルト)
+  --zh-tw         繁体字中国語で出力
+  --en            Use English output
+  --ja            日本語で出力
+  --ru            Вывод на русском языке
+  --fa            خروجی به زبان فارسی
 
 例:
   python3 acheck.py                        # 対話メニュー
@@ -10889,8 +10901,12 @@ Examples:
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
   --json          Вывод в JSON (с IP, --active или --proxy)
   --explain       Правила и веса скоринга
-  --zh / --zh-tw / --en / --ja / --ru / --fa
-                  Язык вывода
+  --zh            Вывод на упрощённом китайском (по умолчанию)
+  --zh-tw         Вывод на традиционном китайском
+  --en            Use English output
+  --ja            日本語で出力
+  --ru            Вывод на русском языке
+  --fa            خروجی به زبان فارسی
 
 Примеры:
   python3 acheck.py                        # Интерактивное меню
@@ -10924,8 +10940,12 @@ Examples:
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
   --json          خروجی JSON (با IP، --active یا --proxy)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
-  --zh / --zh-tw / --en / --ja / --ru / --fa
-                  زبان خروجی
+  --zh            خروجی به زبان چینی ساده (پیش‌فرض)
+  --zh-tw         خروجی به زبان چینی سنتی
+  --en            Use English output
+  --ja            日本語で出力
+  --ru            Вывод на русском языке
+  --fa            خروجی به زبان فارسی
 
 مثال‌ها:
   python3 acheck.py                        # منوی تعاملی
@@ -11036,7 +11056,8 @@ def main():
     if ns.active:
         if ns.ip and not ns.json:
             print(_c(C.yellow, T("active_ip_ignored")))
-        run_active(json_mode=ns.json)
+        if run_active(json_mode=ns.json) is None:
+            sys.exit(1)
         return
 
     if ns.speed:
@@ -11069,8 +11090,11 @@ def main():
             sys.exit(2)
         if ns.ip and not ns.json:
             print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
-        run_proxy_diag(_ph, _pt, username=ns.proxy_user,
-                       password=ns.proxy_pass, json_mode=ns.json)
+        _diag = run_proxy_diag(_ph, _pt, username=ns.proxy_user,
+                               password=ns.proxy_pass, json_mode=ns.json)
+        if not (_diag.get("socks5") or {}).get("ok") \
+                or not _diag.get("egress_ip"):
+            sys.exit(1)
         return
 
     if ns.batch is not None:
