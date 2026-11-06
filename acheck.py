@@ -7700,7 +7700,7 @@ DNS_COUNTRY_DB = {
             ("Google 8.8.8.8", "DNS 污染/阻断"),
             ("Cloudflare 1.1.1.1", "不稳定/部分阻断"),
             ("Quad9 9.9.9.9", "阻断"),
-            ("Foreign DoH", "SNI 阻断"),
+            ("foreign_doh", "SNI 阻断"),
         ],
         "note": "国外公共 DNS 在中国大陆多被污染或阻断，优先用国内 DNS；DoH/DoT 走国外会被 SNI 阻断",
         "note_l": {
@@ -7789,6 +7789,14 @@ _DNS_REASON_L = {
     "Blocked": {"zh": "阻断", "en": "Blocked", "ja": "遮断", "ru": "Заблокировано", "fa": "مسدود", "zh-TW": "阻斷"},
 }
 
+# 非专名条目名称本地化 (F32): 供应商专名 (Cloudflare/Google 等) 保持原样,
+# 通用分类描述用稳定标识查表翻译; 未收录标识原样输出。
+_DNS_NAME_L = {
+    "foreign_doh": {"zh": "国外 DoH", "en": "Foreign DoH",
+                    "ja": "国外の DoH", "ru": "Зарубежный DoH",
+                    "fa": "DoH خارجی", "zh-TW": "國外 DoH"},
+}
+
 DNS_COUNTRY_MAP = {
     "china": "cn", "cn": "cn", "中国": "cn", "中國": "cn", "china mainland": "cn", "چین": "cn",
     "китай": "cn", "çin": "cn",
@@ -7822,6 +7830,7 @@ def recommend_dns_for_ip(country):
         print(f"\n  {_c(C.red, _L('✗ 已知不可用/被阻断:', '✗ Known blocked:', '✗ 利用不可/ブロック済み:', '✗ Заблокировано/недоступно:', '✗ مسدود/غیرقابل استفاده:', zhtw='✗ 已知不可用/被阻斷：'))}")
         for name, reason in db["blocked"]:
             reason = _DNS_REASON_L.get(reason, {}).get(LANG, reason)
+            name = _DNS_NAME_L.get(name, {}).get(LANG, name)
             print(f"    {name:24} {reason}")
     if db["note"]:
         _note = db.get("note_l", {}).get(LANG, db["note"])
