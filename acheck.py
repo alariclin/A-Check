@@ -7908,9 +7908,11 @@ def print_speed_section(json_mode=False, family=0, gated=False):
     def _row(row):
         lat = "%.0fms" % row["latency_ms"] if row["latency_ms"] is not None \
             else "-"
-        dl = "%.1f Mbps" % row["down_mbps"] if row["down_mbps"] else "-"
+        # F42: 0.0 Mbps 是合法数值结果, 须用 is not None 判缺失, 不用真值判断
+        available = row["down_mbps"] is not None
+        dl = "%.1f Mbps" % row["down_mbps"] if available else "-"
         line = "  %-22s %-10s %s" % (row["region"], lat, dl)
-        print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
+        print(_c(C.green, line) if available else _c(C.dim, line))
 
     if family == 6:
         print(f"  {_c(C.dim, T('speed6_note'))}")
@@ -9620,9 +9622,11 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
 
     def _hub_row(row):
         if not json_mode:
-            dl = "%.1f Mbps" % row["down_mbps"] if row["down_mbps"] else "-"
+            # F42: 0.0 Mbps 是合法数值结果, 须用 is not None 判缺失
+            available = row["down_mbps"] is not None
+            dl = "%.1f Mbps" % row["down_mbps"] if available else "-"
             line = "    %-22s %s" % (row["region"], dl)
-            print(_c(C.green, line) if row["down_mbps"] else _c(C.dim, line))
+            print(_c(C.green, line) if available else _c(C.dim, line))
 
     try:
         trows, tbest = ([], None) if _NO_SPEED else proxy_speed_regions(proxy_host, proxy_port,
