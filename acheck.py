@@ -4696,65 +4696,80 @@ def _print_streaming_inference(res):
     def _infer_strict(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：先算 IP 风险结论，再合并国家级部分限制——IP 结论已是
+        # block 时不得被国家级 limit 覆盖；只有更宽松时才提升为 limit，
+        # 置信度跟随产生最终结论的证据。
         if is_threat or high_fraud or has_abuse:
-            return T("infer_block"), "low"
-        if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_block"), "low"
-        if is_dc:
+            _ip = (T("infer_block"), "low")
+        elif is_tor or is_tor_exit or is_proxy or is_vpn:
+            _ip = (T("infer_block"), "low")
+        elif is_dc:
             # 机房不等于屏蔽: 主流云 IP 地区解锁多数可用 (用户真机实测
             # AWS 悉尼 IP 连 Disney+ 亦为原生解锁), 判可能可用/中置信;
             # Reddit 例外 (专门封机房段, 实测亦为屏蔽)
             if svc_name == "Reddit":
-                return T("infer_block"), "mid"
-            return T("infer_avail"), "mid"
-        if is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+                _ip = (T("infer_block"), "mid")
+            else:
+                _ip = (T("infer_avail"), "mid")
+        elif is_res:
+            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     def _infer_moderate(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：同 _infer_strict，先算 IP 结论再合并国家级 limit。
         if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
-            return T("infer_block"), "mid"
-        if is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
-        if is_dc:
-            return T("infer_avail"), "mid"
-        if is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+            _ip = (T("infer_block"), "mid")
+        elif is_proxy or is_vpn:
+            _ip = (T("infer_limit"), "mid")
+        elif is_dc:
+            _ip = (T("infer_avail"), "mid")
+        elif is_res:
+            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     def _infer_ai(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：同 _infer_strict，先算 IP 结论再合并国家级 limit。
         if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
-            return T("infer_block"), "mid"
-        if is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
-        if is_dc:
-            return T("infer_avail"), "mid"
-        if is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+            _ip = (T("infer_block"), "mid")
+        elif is_proxy or is_vpn:
+            _ip = (T("infer_limit"), "mid")
+        elif is_dc:
+            _ip = (T("infer_avail"), "mid")
+        elif is_res:
+            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     def _infer_lenient(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：同 _infer_strict，先算 IP 结论再合并国家级 limit。
         if is_threat:
-            return T("infer_limit"), "mid"
-        if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
-        if is_dc or is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+            _ip = (T("infer_limit"), "mid")
+        elif is_tor or is_tor_exit or is_proxy or is_vpn:
+            _ip = (T("infer_limit"), "mid")
+        elif is_dc or is_res:
+            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     svc_map = {
         "TikTok": _infer_moderate("TikTok"),
