@@ -5991,6 +5991,25 @@ def _https_get_pinned6(host, path, timeout=6):
                     eof = True
                     break
                 raw += chunk
+                # F21：收过程中解析响应头，按 HTTP 定界判收齐即停，不等 EOF：
+                # Content-Length 到量即完；chunked 收到完整终止零块+trailer
+                # 即完；仅关闭定界才等 EOF。未收齐继续读（chunked 解码失败
+                # 可能是体未收全，须与非法体区分：EOF/截止时后随校验拒收）。
+                _head, _sep, _body = raw.partition(b"\r\n\r\n")
+                if not _sep:
+                    continue
+                if not _http_status_ok(_head):
+                    break  # 非 200：停读，后随校验进下一地址
+                if _http_te_chunked(_head):
+                    if _decode_chunked(_body) is not None:
+                        break
+                else:
+                    _cl = _http_content_length(_head)
+                    if _cl is False:
+                        break  # 非法 CL：停读，后随校验拒收
+                    if _cl is not None and len(_body) >= _cl:
+                        break
+                    # _cl 为 None：关闭定界，继续等 EOF
             head, sep, body = raw.partition(b"\r\n\r\n")
             if not sep:
                 continue  # 无头体分隔符：首行不可信，不得当成功
@@ -7292,19 +7311,28 @@ def _udp_recv_from(sock, ip, timeout, tid=None):
 def _connect_host(host, port, timeout, family=socket.AF_UNSPEC):
     """经限时解析后连接：解析走 _getaddrinfo_timed（受 timeout 约束），
     再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。
-    family 钉地址族（默认 AF_UNSPEC 不变；邮件检测按当前栈传）。"""
+    family 钉地址族（默认 AF_UNSPEC 不变；邮件检测按当前栈传）。
+    F30：单目标共享 deadline——解析前建 deadline，解析与每次连接均用
+    剩余时间，耗尽即停；每地址不再重获完整 timeout。"""
+    _dl = time.monotonic() + timeout
+    _rem = _dl - time.monotonic()
+    if _rem <= 0:
+        raise OSError("connect deadline exceeded: %s" % host)
     infos = _getaddrinfo_timed(host, port, family, socket.SOCK_STREAM,
-                               timeout=timeout)
+                               timeout=_rem)
     if not infos:
         raise OSError("DNS resolution failed: %s" % host)
     last_err = None
     for _fam, _typ, _proto, _canon, sa in infos:
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            break
         sock = None
         try:
             # create_connection 只收 (host, port) 二元组，IPv6 四元组 sa 会解包
             # ValueError；按 fam/typ/proto 建 socket + connect(sa)，scope 信息亦保留。
             sock = socket.socket(_fam, _typ, _proto)
-            sock.settimeout(timeout)
+            sock.settimeout(_rem)
             sock.connect(sa)
             return sock
         except Exception as e:
@@ -7314,7 +7342,9 @@ def _connect_host(host, port, timeout, family=socket.AF_UNSPEC):
                     sock.close()
                 except Exception:
                     pass
-    raise OSError("connect failed: %s" % host) from last_err
+    if last_err is not None:
+        raise OSError("connect failed: %s" % host) from last_err
+    raise OSError("connect deadline exceeded: %s" % host)
 
 
 def _recv_exact(ss, n, dl):
