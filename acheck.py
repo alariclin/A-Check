@@ -9346,8 +9346,11 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 先挂 self.sock 再 wrap：覆盖 TLS wrap 阶段，窗口清理能关到它。
         self.sock = raw
         try:
-            _tls = self._context.wrap_socket(raw,
-                                             server_hostname=self.host)
+            # F40：do_handshake_on_connect=False，先拿到实际 SSLSocket
+            # 再握手；握手前即把 _tls 登记进 _hs_box、挂上 self.sock，
+            # 窗口清理才能在握手期间关到它（旧版登记的仍是已脱离的 raw）。
+            _tls = self._context.wrap_socket(
+                raw, server_hostname=self.host, do_handshake_on_connect=False)
         except Exception:
             try:
                 raw.close()
@@ -9355,29 +9358,38 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
             raise
-        if self._hs_closed:
-            # 8-2：wrap 期间已被 close（此时 _hs_box 登记的仍是已脱离
-            # 的原始 socket，关不到实际 TLS socket）：关掉新得的 TLS
-            # socket，不把活 socket 写回已关闭的连接对象。worker 侧
-            # 的窗口复查兜底（GET 前复查）保持在位，不动。
+        self._hs_box.append(_tls)
+        self.sock = _tls
+        try:
+            # 握手超时取当前剩余窗口：_dl_proxy_worker 建连时已按窗口
+            # 剩余封顶 self.timeout，握手即以它为限（非数值哨兵守 10 秒）。
+            _hs_to = self.timeout
+            if not isinstance(_hs_to, (int, float)):
+                _hs_to = 10
+            _tls.settimeout(_hs_to)
+            _tls.do_handshake()
+        except Exception:
+            try:
+                _tls.close()
+            except Exception:
+                pass
+            try:
+                raw.close()
+            except Exception:
+                pass
+            self.sock = None
+            raise
+        if self._hs_closed and self.sock is _tls:
+            # F40/8-2：握手期间已被 close：关掉新得的 TLS socket，
+            # 不把活 socket 写回已关闭的连接对象。worker 侧的窗口
+            # 复查兜底（GET 前复查）保持在位，不动。R6-1 写回后复核
+            # 亦在此：若 close 已清掉 sock，则 self.sock is not _tls，
+            # 自然不再动作。
             try:
                 _tls.close()
             except Exception:
                 pass
             self.sock = None
-        else:
-            self.sock = _tls
-            # R6-1：close 可能落在标记检查与写回之间：写回后再复核
-            # 一次标记；若已关闭，关掉新得的 TLS socket、不让已关闭
-            # 的对象重新持有活 socket。单次检查不可靠：交错下读到
-            # 的可能是旧值，故以写回后的复核为准；复核时若 close
-            # 已清掉 sock，则 self.sock is not _tls，自然不再动作。
-            if self._hs_closed and self.sock is _tls:
-                try:
-                    _tls.close()
-                except Exception:
-                    pass
-                self.sock = None
 
     def close(self):
         # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
