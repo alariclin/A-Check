@@ -7148,7 +7148,7 @@ def _dns_test_ok(d, tid, qpkt):
     不是对本次查询的回答，不得判成功（7a-1）。"""
     if d is None or len(d) < 12:
         return False
-    r_tid, flags, qdcount, ancount, _, _ = struct.unpack(">HHHHHH", d[:12])
+    r_tid, flags, qdcount, ancount, nscount, arcount = struct.unpack(">HHHHHH", d[:12])
     if (r_tid != tid or not (flags & 0x8000) or (flags & 0x7800) != 0
             or (flags & 0x0F) != 0 or qdcount != 1):
         return False
@@ -7178,6 +7178,17 @@ def _dns_test_ok(d, tid, qpkt):
             if _aoff + 10 + _rdlen > len(d):
                 return False
             _answers.append((_an.lower().rstrip("."), _at, _ac, _aoff + 10, _rdlen))
+            _aoff += 10 + _rdlen
+        # F28：继续遍历 Authority／Additional 段，至少验证每条记录的
+        # owner name、固定字段和 RDLENGTH 边界；头部声明存在、实际缺失
+        # 的记录不得通过（这些记录不用于答案匹配，只验结构完整性）。
+        for _n in range(nscount + arcount):
+            _rn, _aoff = _decode_dns_name(d, _aoff)
+            if _rn is None or _aoff + 10 > len(d):
+                return False
+            _rdlen = struct.unpack(">H", d[_aoff + 8:_aoff + 10])[0]
+            if _aoff + 10 + _rdlen > len(d):
+                return False
             _aoff += 10 + _rdlen
         # CNAME 链：从查询名出发跟随 IN 类 CNAME 记录（16 跳上限、防环）
         _owners = {(qname_q or "").lower().rstrip(".")}
