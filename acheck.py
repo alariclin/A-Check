@@ -2489,15 +2489,54 @@ _WD_LANGS = {"zh": ["zh-cn", "zh-hans", "zh"], "zh-TW": ["zh-tw", "zh-hant", "zh
 # F06 注: 简体界面明确标签 (zh-cn/zh-hans) 优先于通用 zh; 通用 zh 仅作最后
 # 回退, 其字形无简繁保证 (仓库无简繁转换器, 该回退为已知残留口径: 仅当无
 # 明确简体标签时才取通用 zh, 可能返回繁体字形)。
-_WD_PLACE = ("city", "town", "village", "municipality", "settlement", "borough",
-             "commune", "capital", "county seat", "census-designated", "urban")
-_WD_ADMIN = ("province", "state", "krai", "oblast", "canton", "prefecture",
-             "region", "county", "district", "territory", "department",
-             "governorate")
+# F05: Wikidata 实体类型校验 (P31, 必要时沿 P279 上溯一级)。
+# 行政区 / 地点类型的实例 QID (经 Wikidata API 实测核验, 2026-11-05):
+#   行政区直接 P31: Q35657 美国州、Q7275 州、Q82794 地区、Q28575 县、
+#   Q23058 瑞士州、Q34876 省、Q171308 州 (oblast)、Q835714 俄罗斯州、
+#   Q3348196 乌克兰州、Q6465 法国省、Q86622/Q1798622 总督辖区、Q50337 日本都道府县;
+#   根类型 (P279 上溯命中亦算): Q10864048 一级行政区划。
+#   地点直接 P31: Q515 城市、Q486972 人类聚居地、Q3957 镇、Q532 村、
+#   Q15284 市镇、Q1549591 大城市、Q200250 大都会、Q208511 全球城市、
+#   Q174844 特大城市、Q51929311 最大城市、Q1093829 美国城市、Q2264924 港口城市、
+#   Q15063611 纽约州城市。
+_WD_ADMIN_QIDS = frozenset({"Q35657", "Q7275", "Q82794", "Q28575", "Q23058",
+                            "Q34876", "Q171308", "Q835714", "Q3348196",
+                            "Q6465", "Q86622", "Q1798622", "Q50337"})
+_WD_ADMIN_ROOT_QIDS = frozenset({"Q10864048"})
+_WD_PLACE_QIDS = frozenset({"Q515", "Q486972", "Q3957", "Q532", "Q15284",
+                            "Q1549591", "Q200250", "Q208511", "Q174844",
+                            "Q51929311", "Q1093829", "Q2264924", "Q15063611"})
+_WD_PLACE_ROOT_QIDS = frozenset()
+
+
+def _wd_claim_ids(ent, prop):
+    """取实体某声明属性的 QID 列表 (缺失/畸形时为空表, 即类型无法确认)。"""
+    out = []
+    for st in (ent.get("claims") or {}).get(prop, []):
+        v = (st.get("mainsnak") or {}).get("datavalue", {}).get("value")
+        if isinstance(v, dict) and v.get("id"):
+            out.append(v["id"])
+    return out
+
+
+def _wd_pick_label(ent, langs):
+    """按界面语言优先级取条目标签 (去消歧后缀); 无则 None。"""
+    labels = ent.get("labels", {})
+    for lg in langs:
+        if lg in labels:
+            v = re.sub(r"\s*[\(\（][^\\)\）]*[\\)\）]\s*$", "",
+                       labels[lg]["value"]).strip()
+            return v or None
+    return None
 
 
 def _wd_label(name, kind, context):
-    """Wikidata 检索地名条目, 返回界面语言的条目名 (去消歧后缀); 无则 None。"""
+    """Wikidata 检索地名条目, 返回界面语言的条目名 (去消歧后缀); 无则 None。
+
+    候选须经实体类型校验 (P31, 必要时沿 P279 上溯一级): 描述子串匹配
+    不可作类型依据 ("state" 会命中 "city in the united states of america",
+    同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
+    时返 None。"""
     try:
         q = urllib.parse.quote(context or name)
         ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
@@ -2505,37 +2544,50 @@ def _wd_label(name, kind, context):
                            timeout=5, retries=1, use_cache=False)
         if not ok:
             return None
-        cands = json.loads(raw).get("search", [])
-        words = _WD_PLACE if kind == "city" else _WD_ADMIN
-        pick = None
-        for c in cands:
-            if (c.get("label") or "").lower() != name.lower():
-                continue
-            desc = (c.get("description") or "").lower()
-            if any(w in desc for w in words):
-                pick = c
-                break
-        if pick is None:
+        cands = [c for c in json.loads(raw).get("search", [])
+                 if (c.get("label") or "").lower() == name.lower()
+                 and c.get("id")]
+        if not cands:
             return None
         langs = _WD_LANGS.get(LANG, [])
         if not langs:
             return None
+        # 一次批量取全部候选的标签 + P31 声明
         ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                           f"&ids={pick['id']}&props=labels"
+                           f"&ids={'|'.join(c['id'] for c in cands)}"
+                           "&props=labels|claims"
                            f"&languages={'|'.join(langs)}&format=json",
                            timeout=5, retries=1, use_cache=False)
         if not ok:
             return None
-        labels = json.loads(raw)["entities"][pick["id"]].get("labels", {})
-        for lg in langs:
-            if lg in labels:
-                v = re.sub(r"\s*[\(（][^\)）]*[\)）]\s*$", "",
-                           labels[lg]["value"]).strip()
-                return v or None
+        entities = json.loads(raw).get("entities", {})
+        want = _WD_ADMIN_QIDS if kind == "region" else _WD_PLACE_QIDS
+        p31_map = {}
+        for c in cands:
+            p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
+            p31_map[c["id"]] = p31s
+            if any(p in want for p in p31s):
+                return _wd_pick_label(entities.get(c["id"], {}), langs)
+        # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
+        all_p31 = sorted({p for ps in p31_map.values() for p in ps})
+        parents = {}
+        if all_p31:
+            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                               f"&ids={'|'.join(all_p31)}&props=claims&format=json",
+                               timeout=5, retries=1, use_cache=False)
+            if ok:
+                for tid, tent in json.loads(raw).get("entities", {}).items():
+                    parents[tid] = _wd_claim_ids(tent, "P279")
+        roots = _WD_ADMIN_ROOT_QIDS if kind == "region" else _WD_PLACE_ROOT_QIDS
+        for c in cands:
+            ps = []
+            for p in p31_map.get(c["id"], []):
+                ps.extend(parents.get(p, []))
+            if any(p in want or p in roots for p in ps):
+                return _wd_pick_label(entities.get(c["id"], {}), langs)
         return None
     except Exception:
         return None
-
 
 def _join_nonempty(*parts, sep=" "):
     """拼接地名/上下文：只取非空字段，缺失字段不留字面 'None'（R2-8.2）。"""
