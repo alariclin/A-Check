@@ -2484,8 +2484,11 @@ _ANY_CITY2EN = _any2en(_CITY_L10N)
 
 # ---- 在线地名兜底 (本地表未收录时查 Wikidata 官方条目名, 结果仅用于显示层) ----
 _GEO_EXTRA = {"lang": None, "city": {}, "region": {}}
-_WD_LANGS = {"zh": ["zh", "zh-cn", "zh-hans"], "zh-TW": ["zh-tw", "zh-hant", "zh"],
+_WD_LANGS = {"zh": ["zh-cn", "zh-hans", "zh"], "zh-TW": ["zh-tw", "zh-hant", "zh"],
              "ja": ["ja"], "ru": ["ru"], "fa": ["fa"]}
+# F06 注: 简体界面明确标签 (zh-cn/zh-hans) 优先于通用 zh; 通用 zh 仅作最后
+# 回退, 其字形无简繁保证 (仓库无简繁转换器, 该回退为已知残留口径: 仅当无
+# 明确简体标签时才取通用 zh, 可能返回繁体字形)。
 _WD_PLACE = ("city", "town", "village", "municipality", "settlement", "borough",
              "commune", "capital", "county seat", "census-designated", "urban")
 _WD_ADMIN = ("province", "state", "krai", "oblast", "canton", "prefecture",
