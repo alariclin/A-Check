@@ -2480,11 +2480,11 @@ def _any2en(table):
     return m
 
 
-_CITY_L10N["zh"].update({"New York City": "纽约市", "Oklahoma City": "俄克拉荷马城"})
-_CITY_L10N["zh-TW"].update({"New York City": "紐約市", "Oklahoma City": "奧克拉荷馬城"})
-_CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma City": "オクラホマシティ"})
-_CITY_L10N["ru"].update({"New York City": "Нью-Йорк", "Oklahoma City": "Оклахома-Сити"})
-_CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهماسیتی"})
+_CITY_L10N["zh"].update({"New York City": "纽约市", "Oklahoma City": "俄克拉荷马城", "Mountain View": "山景城", "Palo Alto": "帕洛阿尔托"})
+_CITY_L10N["zh-TW"].update({"New York City": "紐約市", "Oklahoma City": "奧克拉荷馬城", "Mountain View": "山景城", "Palo Alto": "帕羅奧圖"})
+_CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma City": "オクラホマシティ", "Mountain View": "マウンテンビュー", "Palo Alto": "パロアルト"})
+_CITY_L10N["ru"].update({"New York City": "Нью-Йорк", "Oklahoma City": "Оклахома-Сити", "Mountain View": "Маунтин-Вью", "Palo Alto": "Пало-Альто"})
+_CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهماسیتی", "Mountain View": "ماونتین ویو", "Palo Alto": "پالو آلتو"})
 
 
 _ANY_REGION2EN = _any2en(_REGION_L10N)
