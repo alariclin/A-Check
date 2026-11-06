@@ -2742,8 +2742,11 @@ class IPWhoIs(Provider):
             sec = d.get("security") if isinstance(d.get("security"), dict) else {}
 
             def _b(k):
+                # F08: 契约规定 JSON 布尔值, 严格校验类型; 字符串
+                # "false"/数字/null 等非布尔值返 None (未知), 不得
+                # 以 bool(v) 误判 ("false" 为真、0 为假皆错)。
                 v = sec.get(k) if k in sec else conn.get(k)
-                return None if v is None else bool(v)
+                return v if isinstance(v, bool) else None
 
             return {
                 "ok": True,
@@ -2848,10 +2851,14 @@ class GreyNoise(Provider):
             d = json.loads(raw)
             if not isinstance(d, dict) or "noise" not in d or "riot" not in d:
                 return {"ok": False, "err": "missing noise/riot field"}
+            # F08: 契约规定 JSON 布尔值; 必要字段类型无效 (如 null/
+            # 字符串 "false") 即返 ok=False, 未知不得当否定。
+            if not isinstance(d.get("noise"), bool) or not isinstance(d.get("riot"), bool):
+                return {"ok": False, "err": "invalid noise/riot type"}
             return {
                 "ok": True,
-                "noise": bool(d.get("noise")),
-                "riot": bool(d.get("riot")),
+                "noise": d.get("noise"),
+                "riot": d.get("riot"),
                 "classification": d.get("classification", ""),
                 "ts": now_iso(),
             }
