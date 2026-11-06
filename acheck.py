@@ -6376,6 +6376,12 @@ def test_disney(local_ip=None):
     return T("blocked"), "", None
 
 
+def _netflix_unavailable(final_url, body):
+    """Netflix 不可用信号（两探针共用，F23）：正文含 "Not Available"
+    或最终 URL 含 nsfw；URL 信号不受正文截断影响。"""
+    return "Not Available" in (body or "") or "nsfw" in (final_url or "")
+
+
 def test_netflix(local_ip=None):
     # 70143836 为经典非自制剧 (Breaking Bad)，80018499 为自制剧 (Test Patterns)
     code, body, final_url, complete, hdrs = _active_get("https://www.netflix.com/title/70143836")
@@ -6387,9 +6393,9 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
     # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
-    if code == 200 and not complete and "Not Available" not in body and "nsfw" not in final_url:
+    if code == 200 and not complete and not _netflix_unavailable(final_url, body):
         return T("unknown"), "", None
-    if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
+    if code == 200 and not _netflix_unavailable(final_url, body):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
         )
@@ -6409,9 +6415,9 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
-    if code2 == 200 and not complete2 and "Not Available" not in body2:
+    if code2 == 200 and not complete2 and not _netflix_unavailable(final_url2, body2):
         return T("unknown"), "", None
-    if code2 == 200 and "Not Available" not in body2:
+    if code2 == 200 and not _netflix_unavailable(final_url2, body2):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
