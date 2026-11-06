@@ -11,6 +11,7 @@
 # 覆盖外: 被动/主动网络检测 (由 P1 真机 + 宿主夹具覆盖; 容器内外部 API 波动会让门 flaky,
 #   故不进本 harness)、容器无 systemd 的真实部署层。
 # python3 缺失时尝试按发行版包管理器安装; 装不上则 SKIP (非 FAIL), 如实上报。
+# 本地/容器内层均用 mktemp -d 独占临时目录放副本与缓存, 退出清理; 复制失败为 FAIL, 不记 SKIP。
 # 退出码: FAIL==0 时为 0 (SKIP 不拦门, 但须在回报中说明); 否则为 1。
 # 旧 Debian (buster/bullseye) 的 apt 源已迁 archive.debian.org, 自动改源 + 忽略过期校验。
 
@@ -48,7 +49,9 @@ RESULTS=""
 run_inner() {
     if [ "${ACHECK_LOCAL_ONLY:-0}" = "1" ]; then
         ACHECK_SRC="$ACHEK_ABS" timeout 420 sh -s "$1" "$2" <<'INNER'
-cp "${ACHECK_SRC:-/acheck.py}" /tmp/acheck.py 2>/dev/null || { echo "SKIP: cannot copy acheck.py"; exit 3; }
+WORKDIR="$(mktemp -d)" || { echo "FAIL: cannot create temp dir"; exit 1; }
+trap 'rm -rf "$WORKDIR"' EXIT
+cp "${ACHECK_SRC:-/acheck.py}" "$WORKDIR/acheck.py" || { echo "FAIL: cannot copy acheck.py"; exit 1; }
 if ! command -v python3 >/dev/null 2>&1; then
     case "$1" in
         apt)
@@ -64,14 +67,16 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 3; }
 python3 --version
-python3 -m py_compile /tmp/acheck.py || { echo "FAIL: py_compile"; exit 1; }
-python3 /tmp/acheck.py --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
-python3 /tmp/acheck.py --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
+python3 -m py_compile "$WORKDIR/acheck.py" || { echo "FAIL: py_compile"; exit 1; }
+python3 "$WORKDIR/acheck.py" --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
+python3 "$WORKDIR/acheck.py" --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
 echo "PASS"
 INNER
     else
         timeout 420 docker run --rm -i -v "$ACHEK_ABS:/acheck.py:ro" "$3" sh -s "$1" "$2" <<'INNER'
-cp "${ACHECK_SRC:-/acheck.py}" /tmp/acheck.py 2>/dev/null || { echo "SKIP: cannot copy acheck.py"; exit 3; }
+WORKDIR="$(mktemp -d)" || { echo "FAIL: cannot create temp dir"; exit 1; }
+trap 'rm -rf "$WORKDIR"' EXIT
+cp "${ACHECK_SRC:-/acheck.py}" "$WORKDIR/acheck.py" || { echo "FAIL: cannot copy acheck.py"; exit 1; }
 if ! command -v python3 >/dev/null 2>&1; then
     case "$1" in
         apt)
@@ -87,9 +92,9 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 3; }
 python3 --version
-python3 -m py_compile /tmp/acheck.py || { echo "FAIL: py_compile"; exit 1; }
-python3 /tmp/acheck.py --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
-python3 /tmp/acheck.py --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
+python3 -m py_compile "$WORKDIR/acheck.py" || { echo "FAIL: py_compile"; exit 1; }
+python3 "$WORKDIR/acheck.py" --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
+python3 "$WORKDIR/acheck.py" --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
 echo "PASS"
 INNER
     fi
