@@ -7044,7 +7044,9 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）；
     # CONF-15.1：已触顶时以首次触顶时间为有效终点，不按完整窗口摊薄。
     if cap_box[0] is not None:
-        elapsed = max(0.1, cap_box[0] - t0)
+        # F29：用真实的正 elapsed，仅以极小值防除零；不足 100ms 的触顶
+        # 不得按 100ms 计（50ms 触顶按 100ms 计会把速率报成一半）。
+        elapsed = max(1e-6, cap_box[0] - t0)
     else:
         elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:
@@ -9386,7 +9388,8 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）；
     # CONF-15.1：已触顶时以首次触顶时间为有效终点，不按完整窗口摊薄。
     if cap_box[0] is not None:
-        elapsed = max(0.1, cap_box[0] - t0)
+        # F29（同型，代理测速路径）：用真实的正 elapsed，仅以极小值防除零。
+        elapsed = max(1e-6, cap_box[0] - t0)
     else:
         elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:
