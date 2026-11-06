@@ -10042,7 +10042,8 @@ def _urlopen_bounded(req, budget):
 
 
 def _banner_net_info():
-    """横幅网络信息 (进程内缓存, 只查一次): 出口地理(按界面语言本地化) + IPv6 出口地址。
+    """横幅网络信息 (进程内缓存, 只查一次): 出口地理 (缓存英文原始字段,
+    渲染时按界面语言本地化) + IPv6 出口地址。
     整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。"""
     global _banner_net_cache
     if _banner_net_cache is not None:
@@ -10066,14 +10067,15 @@ def _banner_net_info():
         egress = get_egress_ip(budget=_rem()) if _rem() > 0 else None
         info["egress"] = egress
         if egress:
-            _lang = {"zh": "zh-CN", "zh-TW": "zh-CN", "en": "en",
-                     "ja": "ja", "ru": "ru", "fa": "en"}.get(LANG, "en")
+            # F46: 缓存只存语言无关的原始字段: 地理请求固定用 lang=en, 城市/
+            # 国家名按界面语言在渲染时本地化 (_banner_geo_text); 若按首发
+            # 语言请求, 缓存的城市就是该语言的本地化文本, 切语言后不会重译。
             # 注: ip-api.com 免费端点仅支持明文 HTTP（https 实测 403），结果可被中间网络篡改；
             # 横幅地理信息经此查询，报告内另有 ipapi_http_note 披露。
             try:
                 req = urllib.request.Request(
-                    "http://ip-api.com/json/%s?lang=%s&fields=status,country,"
-                    "city,org,isp,hosting" % (egress, _lang),
+                    "http://ip-api.com/json/%s?lang=en&fields=status,country,"
+                    "city,org,isp,hosting" % egress,
                     headers={"User-Agent": UA_BROWSER})
                 r = _urlopen_bounded(req, _rem())
                 if r is None:
@@ -10104,7 +10106,8 @@ def _banner_net_info():
                     if _rem() <= 0:
                         raise TimeoutError("banner budget exhausted")
                     req = urllib.request.Request(
-                        (("https://ipwho.is/%s?lang=%s" % (egress, _ipwho_lang())) if _ipwho_lang() else ("https://ipwho.is/%s" % egress)),
+                        # F46: 回退源亦不传 lang (默认英文), 缓存保持语言无关。
+                        "https://ipwho.is/%s" % egress,
                         headers={"User-Agent": UA_BROWSER})
                     r = _urlopen_bounded(req, _rem())
                     if r is None:
@@ -10187,7 +10190,7 @@ def _banner_geo_text(net):
         _ct = _ct if isinstance(_ct, str) else ""
         _og = net.get("geo_org")
         _og = _og if isinstance(_og, str) else ""
-        parts = [_loc_country_name(_cc), _ct]
+        parts = [_loc_country_name(_cc), _loc_city(_ct)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
