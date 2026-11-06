@@ -8438,7 +8438,10 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
             if not ans:
                 return lst, False  # 空应答（NXDOMAIN/无记录）= 未列入
             for a_ip in ans:
-                if a_ip in ("127.0.0.10", "127.0.0.11"):
+                # F33: 返回码含义由各服务商定义, 不得跨域复用 Spamhaus
+                # 规则; .10/.11 仅在 zen.spamhaus.org 上为 PBL
+                # (如 DroneBL 的 .10 是 ProxyChain, 属普通黑名单命中)。
+                if lst == "zen.spamhaus.org" and a_ip in ("127.0.0.10", "127.0.0.11"):
                     return lst, "pbl"  # Spamhaus PBL: 策略名单, 非垃圾邮件证据
                 if re.match(r"^127\.0\.0\.\d+$", a_ip):
                     return lst, True
