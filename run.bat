@@ -7,7 +7,7 @@ cd /d "%~dp0" || exit /b 1
 
 where python >nul 2>&1
 if errorlevel 1 goto :try_py
-python -c "import sys; assert sys.version_info >= (3,8)" >nul 2>&1
+python -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >nul 2>&1
 if errorlevel 1 goto :try_py
 python acheck.py %*
 goto :done
@@ -15,7 +15,7 @@ goto :done
 :try_py
 where py >nul 2>&1
 if errorlevel 1 goto :no_python
-py -3 -c "import sys; assert sys.version_info >= (3,8)" >nul 2>&1
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,8) else 1)" >nul 2>&1
 if errorlevel 1 goto :no_python
 py -3 acheck.py %*
 goto :done
