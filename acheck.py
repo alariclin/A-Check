@@ -8796,7 +8796,7 @@ def run_active(json_mode=False, stack=None):
         else:
             print(f"  {p25_lbl}: {_c(C.red, T('abnormal'))}")
             print(
-                f"  {_c(C.dim, _L('※ AWS/GCP 等云厂商默认封锁 25 端口出站，属正常限制', '※ Cloud providers block outbound port 25 by default', '※ Cloud providers block outbound port 25 by default', '※ Cloud providers block outbound port 25 by default', '※ Cloud providers block outbound port 25 by default', zhtw='※ AWS/GCP 等雲廠商預設封鎖 25 端口出站，屬正常限制'))}"
+                f"  {_c(C.dim, _L('※ AWS/GCP 等云厂商默认封锁 25 端口出站，属正常限制', '※ Cloud providers block outbound port 25 by default', '※ AWS/GCP などのクラウド事業者は、既定でアウトバウンドのポート 25 をブロックしています（正常な制限です）', '※ Облачные провайдеры (AWS/GCP и др.) по умолчанию блокируют исходящий порт 25 — это нормальное ограничение', '※ ارائه‌دهندگان ابری مانند AWS/GCP به‌طور پیش‌فرض پورت ۲۵ خروجی را مسدود می‌کنند؛ این یک محدودیت عادی است', zhtw='※ AWS/GCP 等雲廠商預設封鎖 25 端口出站，屬正常限制'))}"
             )
 
         mx_ok = sum(1 for r in mx_results if r is True)
