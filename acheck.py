@@ -6601,6 +6601,9 @@ def test_instagram(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -6617,6 +6620,9 @@ def test_facebook(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -6632,6 +6638,9 @@ def test_x(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
         return T("unknown"), "", None
     if code in (200, 302):
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
@@ -6665,6 +6674,9 @@ def test_whatsapp(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -6680,6 +6692,9 @@ def test_github(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
