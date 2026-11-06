@@ -10087,7 +10087,7 @@ def _banner_geo_text(net):
         _ct = _ct if isinstance(_ct, str) else ""
         _og = net.get("geo_org")
         _og = _og if isinstance(_og, str) else ""
-        parts = [_loc_country_name(_cc), _ct]
+        parts = [_loc_country_name(_cc), _loc_city(_ct)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
