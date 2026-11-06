@@ -1617,10 +1617,48 @@ def _resp_shutdown(r):
 
 def _read_limited(resp, cap=1048576, timeout=10):
     """带尺寸上限与全程硬时限的响应体读取：超限或超时抛错，调用方按失败处理。
-    时限为硬上限：每块读经限时单次读按剩余时间 join，超时即抛 TimeoutError。"""
+    时限为硬上限：每块读经限时单次读按剩余时间 join，超时即抛 TimeoutError。
+    F01：有有效 Content-Length 且非 chunked 时，EOF 核对实际长度，不足即抛
+    http.client.IncompleteRead（截断体不得当成功）；无长度、以关闭定界的
+    合法响应仍允许正常 EOF；204/304/1xx 无正文状态不做长度核对。"""
     buf = []
     total = 0
     deadline = time.monotonic() + timeout
+    # 预期长度：仅 CL 有效且非 chunked 时核对（chunked 由 http.client 解帧）。
+    _expected = None
+    try:
+        _status = getattr(resp, "status", None)
+        if _status is None:
+            _status = getattr(resp, "code", None)
+        _no_body = _status is not None and (
+            100 <= int(_status) < 200 or int(_status) in (204, 304))
+    except Exception:
+        _no_body = False
+    if not _no_body:
+        try:
+            _te = None
+            _gh = getattr(resp, "getheader", None)
+            if callable(_gh):
+                _te = _gh("Transfer-Encoding")
+            if _te is None:
+                _hdrs = getattr(resp, "headers", None)
+                if _hdrs is not None:
+                    _te = _hdrs.get("Transfer-Encoding")
+            _chunked = bool(_te) and "chunked" in str(_te).lower()
+            if not _chunked:
+                _cl = None
+                if callable(_gh):
+                    _cl = _gh("Content-Length")
+                if _cl is None:
+                    _hdrs = getattr(resp, "headers", None)
+                    if _hdrs is not None:
+                        _cl = _hdrs.get("Content-Length")
+                if _cl is not None:
+                    _v = str(_cl).strip()
+                    if _v.isdigit():
+                        _expected = int(_v)
+        except Exception:
+            _expected = None
     while True:
         remain = deadline - time.monotonic()
         if remain <= 0:
@@ -1629,6 +1667,10 @@ def _read_limited(resp, cap=1048576, timeout=10):
         if chunk is None:
             raise TimeoutError("response read deadline exceeded")
         if not chunk:
+            if _expected is not None and total < _expected:
+                raise http.client.IncompleteRead(
+                    b"".join(buf),
+                    _expected)
             break
         total += len(chunk)
         if total > cap:
@@ -1637,15 +1679,66 @@ def _read_limited(resp, cap=1048576, timeout=10):
     return b"".join(buf)
 
 
+def _urlopen_deadline(req, timeout):
+    """F02：带绝对截止的 urlopen（建连+读头共享 timeout 预算）。
+    在守护线程里打开，主线程按 deadline 等待；超时返 (None, None, True)；
+    快失败返 (None, err, False)；成功返 (resp, None, False)。
+    与 _open_bounded 不同：错误对象（含 HTTPError）不提前关闭，归调用方
+    读体后再关，错误体内容得以保留。迟到响应由打开线程自行关闭，不泄漏。"""
+    _dl = time.monotonic() + timeout
+    _box = {}
+    _lock = threading.Lock()
+    _done = threading.Event()
+
+    def _run():
+        try:
+            _box["resp"] = urllib.request.urlopen(
+                req, timeout=max(0.1, _dl - time.monotonic()))
+        except Exception as _e:
+            _box["err"] = _e
+        finally:
+            with _lock:
+                _done.set()
+                if _box.get("abandoned"):
+                    _resp = _box.get("resp")
+                    if _resp is not None:
+                        try:
+                            _resp.close()
+                        except Exception:
+                            pass
+
+    _t = threading.Thread(target=_run, daemon=True)
+    _t.start()
+    _done.wait(max(0.0, _dl - time.monotonic()))
+    with _lock:
+        if not _done.is_set():
+            _box["abandoned"] = True
+            return None, None, True
+        if "err" in _box:
+            return None, _box["err"], False
+        return _box["resp"], None, False
+
+
 def _http_fetch_uncached(url, h, timeout, retries):
-    """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。"""
+    """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。
+    F02：每次尝试建绝对截止（建连+读头+读体共享 timeout 预算），剩余预算
+    传给后续阶段；慢速发头 drip 不得拖超 timeout。"""
     last_err = ""
     for _ in range(retries):
+        _dl = time.monotonic() + timeout
         try:
             req = urllib.request.Request(url, headers=h)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            _r, _err, _timed_out = _urlopen_deadline(req, timeout)
+            if _timed_out:
+                last_err = "open deadline exceeded"
+                time.sleep(0.3)
+                continue
+            if _err is not None:
+                raise _err
+            with _r as r:
                 try:
-                    data = _read_limited(r, timeout=timeout).decode(
+                    data = _read_limited(
+                        r, timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     # 异常 unwind 也会走 with 退出关响应：先 shutdown 唤醒 stuck 读者
@@ -1656,7 +1749,8 @@ def _http_fetch_uncached(url, h, timeout, retries):
         except urllib.error.HTTPError as e:
             try:
                 try:
-                    data = _read_limited(e, timeout=timeout).decode(
+                    data = _read_limited(
+                        e, timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     data = ""
@@ -5866,6 +5960,7 @@ def print_report6(res, embedded=False):
 def get_egress_ip(budget=None):
     """出口 IPv4（多源轮询）。budget 为总预算秒数时，每源超时取 min(6, 剩余)，
     预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。
+    F19：budget=None 时打开/读阶段亦各以每源 6 秒 join 为限，不得无限等。
     打开阶段亦受总预算约束：urlopen 的 timeout 不覆盖 DNS 解析（标准库
     getaddrinfo 无超时参数），故打开也在线程内做、按剩余预算 join，超
     时即弃该源（6-1 打开阶段残留；锁保证“主线程标记放弃后 worker 关闭”
@@ -5923,7 +6018,7 @@ def get_egress_ip(budget=None):
 
             _ot = threading.Thread(target=_do_open, daemon=True)
             _ot.start()
-            _orem = (_dl - time.monotonic()) if _dl is not None else None
+            _orem = (_dl - time.monotonic()) if _dl is not None else _to
             _ot.join(_orem)
             if _ot.is_alive():
                 with _olock:
@@ -5950,9 +6045,13 @@ def get_egress_ip(budget=None):
 
                 _rt = threading.Thread(target=_do_read, daemon=True)
                 _rt.start()
-                _rrem = (_dl - time.monotonic()) if _dl is not None else None
+                _rrem = (_dl - time.monotonic()) if _dl is not None else _to
                 _rt.join(_rrem)
                 if _rt.is_alive():
+                    # F20：先 shutdown 唤醒读线程再退 with 调 close()，
+                    # 否则 close() 会等读线程占住的缓冲锁而超窗滞留。
+                    _resp_shutdown(r)
+                    _rt.join(2)
                     continue  # 读已超总预算：弃该源（循环头因预算耗尽而 break）
                 if "err" in _rbox:
                     continue
@@ -6057,6 +6156,25 @@ def _https_get_pinned6(host, path, timeout=6):
                     eof = True
                     break
                 raw += chunk
+                # F21：收过程中解析响应头，按 HTTP 定界判收齐即停，不等 EOF：
+                # Content-Length 到量即完；chunked 收到完整终止零块+trailer
+                # 即完；仅关闭定界才等 EOF。未收齐继续读（chunked 解码失败
+                # 可能是体未收全，须与非法体区分：EOF/截止时后随校验拒收）。
+                _head, _sep, _body = raw.partition(b"\r\n\r\n")
+                if not _sep:
+                    continue
+                if not _http_status_ok(_head):
+                    break  # 非 200：停读，后随校验进下一地址
+                if _http_te_chunked(_head):
+                    if _decode_chunked(_body) is not None:
+                        break
+                else:
+                    _cl = _http_content_length(_head)
+                    if _cl is False:
+                        break  # 非法 CL：停读，后随校验拒收
+                    if _cl is not None and len(_body) >= _cl:
+                        break
+                    # _cl 为 None：关闭定界，继续等 EOF
             head, sep, body = raw.partition(b"\r\n\r\n")
             if not sep:
                 continue  # 无头体分隔符：首行不可信，不得当成功
@@ -6101,8 +6219,23 @@ def get_egress_ip6():
         try:
             req = urllib.request.Request(f"https://{host}{path}",
                                          headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=6) as r:
-                raw = r.read(512).decode("utf-8", errors="replace")
+            # F19：首选路径亦走绝对截止打开（urlopen 超时不覆 DNS 解析），
+            # 读阶段用剩余预算；超时/失败均进 _https_get_pinned6 备用路径。
+            _dl6 = time.monotonic() + 6
+            _r6 = _open_bounded(
+                lambda: urllib.request.urlopen(
+                    req, timeout=max(0.1, _dl6 - time.monotonic())), _dl6)
+            if _r6 is None:
+                raise TimeoutError("egress6 open deadline exceeded")
+            with _r6 as r:
+                try:
+                    _b6 = _read_timed(r, 512,
+                                      max(0.0, _dl6 - time.monotonic()))
+                finally:
+                    _resp_shutdown(r)
+                if _b6 is None:
+                    raise TimeoutError("egress6 read deadline exceeded")
+                raw = _b6.decode("utf-8", errors="replace")
         except Exception:
             raw = _https_get_pinned6(host, path)
         if not raw:
@@ -7386,19 +7519,28 @@ def _udp_recv_from(sock, ip, timeout, tid=None):
 def _connect_host(host, port, timeout, family=socket.AF_UNSPEC):
     """经限时解析后连接：解析走 _getaddrinfo_timed（受 timeout 约束），
     再对解析出的 IP 直连；解析失败或全部地址连不上均抛 OSError。
-    family 钉地址族（默认 AF_UNSPEC 不变；邮件检测按当前栈传）。"""
+    family 钉地址族（默认 AF_UNSPEC 不变；邮件检测按当前栈传）。
+    F30：单目标共享 deadline——解析前建 deadline，解析与每次连接均用
+    剩余时间，耗尽即停；每地址不再重获完整 timeout。"""
+    _dl = time.monotonic() + timeout
+    _rem = _dl - time.monotonic()
+    if _rem <= 0:
+        raise OSError("connect deadline exceeded: %s" % host)
     infos = _getaddrinfo_timed(host, port, family, socket.SOCK_STREAM,
-                               timeout=timeout)
+                               timeout=_rem)
     if not infos:
         raise OSError("DNS resolution failed: %s" % host)
     last_err = None
     for _fam, _typ, _proto, _canon, sa in infos:
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            break
         sock = None
         try:
             # create_connection 只收 (host, port) 二元组，IPv6 四元组 sa 会解包
             # ValueError；按 fam/typ/proto 建 socket + connect(sa)，scope 信息亦保留。
             sock = socket.socket(_fam, _typ, _proto)
-            sock.settimeout(timeout)
+            sock.settimeout(_rem)
             sock.connect(sa)
             return sock
         except Exception as e:
@@ -7408,7 +7550,9 @@ def _connect_host(host, port, timeout, family=socket.AF_UNSPEC):
                     sock.close()
                 except Exception:
                     pass
-    raise OSError("connect failed: %s" % host) from last_err
+    if last_err is not None:
+        raise OSError("connect failed: %s" % host) from last_err
+    raise OSError("connect deadline exceeded: %s" % host)
 
 
 def _recv_exact(ss, n, dl):
@@ -9075,10 +9219,23 @@ _SOCKS5_ERRORS = {
 }
 
 
-def _sock_readn(s, n):
-    """精确读 n 字节: recv() 可能短读, 必须循环"""
+class _SocksRetryable(OSError):
+    """F38：CONNECT 应答表明该目标地址不可达，可换下一地址重试。
+    仅地址相关 rep（0x01/0x03/0x04/0x05）用此类；0x02/0x07/0x08 等
+    非地址错误仍走普通 OSError，立即停止。"""
+
+
+def _sock_readn(s, n, deadline=None):
+    """精确读 n 字节: recv() 可能短读, 必须循环。
+    deadline 给定时为单调时钟总截止（F37）：每次 recv 前按剩余重设
+    超时，耗尽即抛 socket.timeout；缺省时沿旧语义（不动 socket 超时）。"""
     d = b""
     while len(d) < n:
+        if deadline is not None:
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                raise socket.timeout("read deadline exceeded")
+            s.settimeout(remain)
         c = s.recv(n - len(d))
         if not c:
             raise OSError("connection closed by peer")
@@ -9142,20 +9299,58 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                    timeout=8, rdns=True, sock_box=None):
     """SOCKS5 CONNECT (RFC 1928/1929)。返回 (socket, 握手延迟 ms)。
     rdns=True 即 socks5h: 域名发给代理端解析, 本地不做 DNS。
-    sock_box 非空时建连成功即登记 socket，供窗口清理关断握手中的连接。"""
+    sock_box 非空时建连成功即登记 socket，供窗口清理关断握手中的连接。
+    F36：代理主机亦经 _getaddrinfo_timed 限时解析、逐地址连接，不再以
+    域名调 create_connection。F37：建连+握手共享单调时钟截止 _dl，
+    _sock_readn 每次读前按剩余重设超时。F38：rdns=False 时对解析结果
+    逐个尝试，可重试的 CONNECT 错误关闭当前会话、重建会话再试下一
+    地址；认证失败等非地址错误立即停。"""
     t0 = time.perf_counter()
-    s = socket.create_connection((ph, pp), timeout=timeout)
-    if sock_box is not None:
-        sock_box.append(s)
-    try:
-        s.settimeout(timeout)
+    _dl = time.monotonic() + timeout
+    _has_auth = bool(username) and bool(password)
+
+    def _open_proxy():
+        """F36：限时解析代理主机，逐地址建 socket、剩余时间连接。"""
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            raise OSError("proxy connect deadline exceeded: %s" % ph)
+        _infos = _getaddrinfo_timed(ph, pp, timeout=_rem)
+        if not _infos:
+            raise OSError("DNS resolution failed: %s" % ph)
+        _last = None
+        for _fam, _typ, _proto, _canon, _sa in _infos:
+            _rem = _dl - time.monotonic()
+            if _rem <= 0:
+                break
+            _s = None
+            try:
+                _s = socket.socket(_fam, _typ, _proto)
+                _s.settimeout(_rem)
+                _s.connect(_sa)
+                if sock_box is not None:
+                    sock_box.append(_s)
+                return _s
+            except Exception as _e:
+                _last = _e
+                if _s is not None:
+                    try:
+                        _s.close()
+                    except Exception:
+                        pass
+        raise OSError("proxy connect failed: %s" % ph) from _last
+
+    def _handshake(s, req):
+        """单次会话握手：问候/认证/CONNECT/应答/BND.ADDR 排空。
+        失败时由调用方关闭 s；可重试的 CONNECT 错误抛 _SocksRetryable。"""
+        if time.monotonic() >= _dl:
+            raise socket.timeout("SOCKS5 handshake deadline exceeded")
+        s.settimeout(max(0.001, _dl - time.monotonic()))
         # 1. 问候（RFC 1929 字段长 1..255：任一为空即无有效账密，只提供 0x00；
         # 旧版仅 username 非 None 即协商 0x02，password=None 时 PLEN=0、
         # username="" 时 ULEN=0，严格服务端拒认，旧版仅 0x00 时反可成功，属回归）
-        _has_auth = bool(username) and bool(password)
         s.sendall(b"\x05\x02\x00\x02" if _has_auth
                   else b"\x05\x01\x00")
-        ver, method = _sock_readn(s, 2)
+        ver, method = _sock_readn(s, 2, deadline=_dl)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
         offered = (0x00, 0x02) if _has_auth else (0x00,)
@@ -9171,56 +9366,96 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
             if len(u) < 1 or len(p) < 1:
                 raise OSError("username/password empty for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
-            if _sock_readn(s, 2) != b"\x01\x00":
+            if _sock_readn(s, 2, deadline=_dl) != b"\x01\x00":
                 raise OSError("authentication failed")
         # 3. CONNECT 请求
-        req = b"\x05\x01\x00"
-        try:
-            req += b"\x01" + socket.inet_pton(socket.AF_INET, dh)
-        except OSError:
-            try:
-                req += b"\x04" + socket.inet_pton(socket.AF_INET6, dh)
-            except OSError:
-                if rdns:
-                    try:
-                        h = dh.encode("idna")
-                    except Exception as e:
-                        raise OSError("hostname idna encoding failed: %s" % e)
-                    if len(h) > 255:
-                        raise OSError("hostname too long for SOCKS5")
-                    req += b"\x03" + bytes([len(h)]) + h
-                else:
-                    # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
-                    # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP（单地址尝试，
-                    # 多地址重试须重建 SOCKS 会话，不在此展开）。
-                    _infos = _getaddrinfo_timed(dh, dp, timeout=timeout)
-                    if not _infos:
-                        raise OSError("DNS resolution failed: %s" % dh)
-                    _fam0, _, _, _, _sa0 = _infos[0]
-                    if _fam0 == socket.AF_INET6:
-                        req += b"\x04" + socket.inet_pton(socket.AF_INET6, _sa0[0])
-                    else:
-                        req += b"\x01" + socket.inet_pton(socket.AF_INET, _sa0[0])
+        if time.monotonic() >= _dl:
+            raise socket.timeout("SOCKS5 handshake deadline exceeded")
+        s.settimeout(max(0.001, _dl - time.monotonic()))
         s.sendall(req + struct.pack(">H", dp))
         # 4. 解析响应
-        ver, rep, _ = _sock_readn(s, 3)
+        ver, rep, _ = _sock_readn(s, 3, deadline=_dl)
         if ver != 0x05 or rep != 0x00:
-            raise OSError("CONNECT failed: %s (%#04x)"
-                          % (_SOCKS5_ERRORS.get(rep, "unknown"), rep))
+            _msg = ("CONNECT failed: %s (%#04x)"
+                    % (_SOCKS5_ERRORS.get(rep, "unknown"), rep))
+            if rep in (0x01, 0x03, 0x04, 0x05):
+                raise _SocksRetryable(_msg)
+            raise OSError(_msg)
         # 5. 排空 BND.ADDR (长度随 ATYP 变化, 不读掉会污染后续数据流)
-        atyp = _sock_readn(s, 1)[0]
+        atyp = _sock_readn(s, 1, deadline=_dl)[0]
         if atyp == 0x01:
-            _sock_readn(s, 6)
+            _sock_readn(s, 6, deadline=_dl)
         elif atyp == 0x04:
-            _sock_readn(s, 18)
+            _sock_readn(s, 18, deadline=_dl)
         elif atyp == 0x03:
-            _sock_readn(s, _sock_readn(s, 1)[0] + 2)
+            _sock_readn(s, _sock_readn(s, 1, deadline=_dl)[0] + 2,
+                        deadline=_dl)
         else:
             raise OSError("invalid ATYP %#04x" % atyp)
+
+    def _attempt(req):
+        """建一次代理会话并握手；成功返 socket，失败关闭会话后抛错。"""
+        s = _open_proxy()
+        try:
+            _handshake(s, req)
+            return s
+        except Exception:
+            try:
+                s.close()
+            except Exception:
+                pass
+            raise
+
+    # CONNECT 请求构造（与旧版同语义；IP 字面量单次尝试，域名按 rdns 分流）。
+    _is_ip = False
+    try:
+        _req = b"\x05\x01\x00\x01" + socket.inet_pton(socket.AF_INET, dh)
+        _is_ip = True
+    except OSError:
+        try:
+            _req = b"\x05\x01\x00\x04" + socket.inet_pton(socket.AF_INET6, dh)
+            _is_ip = True
+        except OSError:
+            _is_ip = False
+    if _is_ip:
+        s = _attempt(_req)
         return s, (time.perf_counter() - t0) * 1000
-    except Exception:
-        s.close()
-        raise
+    if rdns:
+        try:
+            h = dh.encode("idna")
+        except Exception as e:
+            raise OSError("hostname idna encoding failed: %s" % e)
+        if len(h) > 255:
+            raise OSError("hostname too long for SOCKS5")
+        s = _attempt(b"\x05\x01\x00\x03" + bytes([len(h)]) + h)
+        return s, (time.perf_counter() - t0) * 1000
+    # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
+    # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP，逐个尝试（F38）。
+    _rem = _dl - time.monotonic()
+    if _rem <= 0:
+        raise OSError("DNS resolution deadline exceeded: %s" % dh)
+    _infos = _getaddrinfo_timed(dh, dp, timeout=_rem)
+    if not _infos:
+        raise OSError("DNS resolution failed: %s" % dh)
+    _last = None
+    for _fam, _typ, _proto, _canon, _sa in _infos:
+        if time.monotonic() >= _dl:
+            break
+        if _fam == socket.AF_INET6:
+            _req = (b"\x05\x01\x00\x04"
+                    + socket.inet_pton(socket.AF_INET6, _sa[0]))
+        else:
+            _req = (b"\x05\x01\x00\x01"
+                    + socket.inet_pton(socket.AF_INET, _sa[0]))
+        try:
+            s = _attempt(_req)
+            return s, (time.perf_counter() - t0) * 1000
+        except _SocksRetryable as _e:
+            _last = _e
+            continue
+    raise OSError("CONNECT failed for all addresses: %s" % dh) from _last
+
+
 
 
 def socks5_probe(ph, pp, username=None, password=None, timeout=8):
@@ -9343,8 +9578,11 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 先挂 self.sock 再 wrap：覆盖 TLS wrap 阶段，窗口清理能关到它。
         self.sock = raw
         try:
-            _tls = self._context.wrap_socket(raw,
-                                             server_hostname=self.host)
+            # F40：do_handshake_on_connect=False，先拿到实际 SSLSocket
+            # 再握手；握手前即把 _tls 登记进 _hs_box、挂上 self.sock，
+            # 窗口清理才能在握手期间关到它（旧版登记的仍是已脱离的 raw）。
+            _tls = self._context.wrap_socket(
+                raw, server_hostname=self.host, do_handshake_on_connect=False)
         except Exception:
             try:
                 raw.close()
@@ -9352,29 +9590,38 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
             raise
-        if self._hs_closed:
-            # 8-2：wrap 期间已被 close（此时 _hs_box 登记的仍是已脱离
-            # 的原始 socket，关不到实际 TLS socket）：关掉新得的 TLS
-            # socket，不把活 socket 写回已关闭的连接对象。worker 侧
-            # 的窗口复查兜底（GET 前复查）保持在位，不动。
+        self._hs_box.append(_tls)
+        self.sock = _tls
+        try:
+            # 握手超时取当前剩余窗口：_dl_proxy_worker 建连时已按窗口
+            # 剩余封顶 self.timeout，握手即以它为限（非数值哨兵守 10 秒）。
+            _hs_to = self.timeout
+            if not isinstance(_hs_to, (int, float)):
+                _hs_to = 10
+            _tls.settimeout(_hs_to)
+            _tls.do_handshake()
+        except Exception:
+            try:
+                _tls.close()
+            except Exception:
+                pass
+            try:
+                raw.close()
+            except Exception:
+                pass
+            self.sock = None
+            raise
+        if self._hs_closed and self.sock is _tls:
+            # F40/8-2：握手期间已被 close：关掉新得的 TLS socket，
+            # 不把活 socket 写回已关闭的连接对象。worker 侧的窗口
+            # 复查兜底（GET 前复查）保持在位，不动。R6-1 写回后复核
+            # 亦在此：若 close 已清掉 sock，则 self.sock is not _tls，
+            # 自然不再动作。
             try:
                 _tls.close()
             except Exception:
                 pass
             self.sock = None
-        else:
-            self.sock = _tls
-            # R6-1：close 可能落在标记检查与写回之间：写回后再复核
-            # 一次标记；若已关闭，关掉新得的 TLS socket、不让已关闭
-            # 的对象重新持有活 socket。单次检查不可靠：交错下读到
-            # 的可能是旧值，故以写回后的复核为准；复核时若 close
-            # 已清掉 sock，则 self.sock is not _tls，自然不再动作。
-            if self._hs_closed and self.sock is _tls:
-                try:
-                    _tls.close()
-                except Exception:
-                    pass
-                self.sock = None
 
     def close(self):
         # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
