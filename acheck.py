@@ -1605,10 +1605,48 @@ def _resp_shutdown(r):
 
 def _read_limited(resp, cap=1048576, timeout=10):
     """带尺寸上限与全程硬时限的响应体读取：超限或超时抛错，调用方按失败处理。
-    时限为硬上限：每块读经限时单次读按剩余时间 join，超时即抛 TimeoutError。"""
+    时限为硬上限：每块读经限时单次读按剩余时间 join，超时即抛 TimeoutError。
+    F01：有有效 Content-Length 且非 chunked 时，EOF 核对实际长度，不足即抛
+    http.client.IncompleteRead（截断体不得当成功）；无长度、以关闭定界的
+    合法响应仍允许正常 EOF；204/304/1xx 无正文状态不做长度核对。"""
     buf = []
     total = 0
     deadline = time.monotonic() + timeout
+    # 预期长度：仅 CL 有效且非 chunked 时核对（chunked 由 http.client 解帧）。
+    _expected = None
+    try:
+        _status = getattr(resp, "status", None)
+        if _status is None:
+            _status = getattr(resp, "code", None)
+        _no_body = _status is not None and (
+            100 <= int(_status) < 200 or int(_status) in (204, 304))
+    except Exception:
+        _no_body = False
+    if not _no_body:
+        try:
+            _te = None
+            _gh = getattr(resp, "getheader", None)
+            if callable(_gh):
+                _te = _gh("Transfer-Encoding")
+            if _te is None:
+                _hdrs = getattr(resp, "headers", None)
+                if _hdrs is not None:
+                    _te = _hdrs.get("Transfer-Encoding")
+            _chunked = bool(_te) and "chunked" in str(_te).lower()
+            if not _chunked:
+                _cl = None
+                if callable(_gh):
+                    _cl = _gh("Content-Length")
+                if _cl is None:
+                    _hdrs = getattr(resp, "headers", None)
+                    if _hdrs is not None:
+                        _cl = _hdrs.get("Content-Length")
+                if _cl is not None:
+                    _v = str(_cl).strip()
+                    if _v.isdigit():
+                        _expected = int(_v)
+        except Exception:
+            _expected = None
     while True:
         remain = deadline - time.monotonic()
         if remain <= 0:
@@ -1617,6 +1655,10 @@ def _read_limited(resp, cap=1048576, timeout=10):
         if chunk is None:
             raise TimeoutError("response read deadline exceeded")
         if not chunk:
+            if _expected is not None and total < _expected:
+                raise http.client.IncompleteRead(
+                    b"".join(buf),
+                    _expected)
             break
         total += len(chunk)
         if total > cap:
@@ -1625,15 +1667,66 @@ def _read_limited(resp, cap=1048576, timeout=10):
     return b"".join(buf)
 
 
+def _urlopen_deadline(req, timeout):
+    """F02：带绝对截止的 urlopen（建连+读头共享 timeout 预算）。
+    在守护线程里打开，主线程按 deadline 等待；超时返 (None, None, True)；
+    快失败返 (None, err, False)；成功返 (resp, None, False)。
+    与 _open_bounded 不同：错误对象（含 HTTPError）不提前关闭，归调用方
+    读体后再关，错误体内容得以保留。迟到响应由打开线程自行关闭，不泄漏。"""
+    _dl = time.monotonic() + timeout
+    _box = {}
+    _lock = threading.Lock()
+    _done = threading.Event()
+
+    def _run():
+        try:
+            _box["resp"] = urllib.request.urlopen(
+                req, timeout=max(0.1, _dl - time.monotonic()))
+        except Exception as _e:
+            _box["err"] = _e
+        finally:
+            with _lock:
+                _done.set()
+                if _box.get("abandoned"):
+                    _resp = _box.get("resp")
+                    if _resp is not None:
+                        try:
+                            _resp.close()
+                        except Exception:
+                            pass
+
+    _t = threading.Thread(target=_run, daemon=True)
+    _t.start()
+    _done.wait(max(0.0, _dl - time.monotonic()))
+    with _lock:
+        if not _done.is_set():
+            _box["abandoned"] = True
+            return None, None, True
+        if "err" in _box:
+            return None, _box["err"], False
+        return _box["resp"], None, False
+
+
 def _http_fetch_uncached(url, h, timeout, retries):
-    """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。"""
+    """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。
+    F02：每次尝试建绝对截止（建连+读头+读体共享 timeout 预算），剩余预算
+    传给后续阶段；慢速发头 drip 不得拖超 timeout。"""
     last_err = ""
     for _ in range(retries):
+        _dl = time.monotonic() + timeout
         try:
             req = urllib.request.Request(url, headers=h)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            _r, _err, _timed_out = _urlopen_deadline(req, timeout)
+            if _timed_out:
+                last_err = "open deadline exceeded"
+                time.sleep(0.3)
+                continue
+            if _err is not None:
+                raise _err
+            with _r as r:
                 try:
-                    data = _read_limited(r, timeout=timeout).decode(
+                    data = _read_limited(
+                        r, timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     # 异常 unwind 也会走 with 退出关响应：先 shutdown 唤醒 stuck 读者
@@ -1644,7 +1737,8 @@ def _http_fetch_uncached(url, h, timeout, retries):
         except urllib.error.HTTPError as e:
             try:
                 try:
-                    data = _read_limited(e, timeout=timeout).decode(
+                    data = _read_limited(
+                        e, timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     data = ""
