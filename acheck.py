@@ -3999,7 +3999,7 @@ Scoring rules (v4.14.26 Keyless Public Edition):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
-    Shodan 脆弱性 (+5/件, 最大20)，危険タグは別途 +15（それぞれ加算）
+    Shodan 脆弱性 (+5/件, 最大20)、危険タグは別途 +15（それぞれ加算）
     Feodo C2 ボットネット登録         +30
     EmergingThreats 侵害IP登録        +25
     Spamhaus DROP 登録                +25
