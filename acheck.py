@@ -5795,6 +5795,7 @@ def print_report6(res, embedded=False):
 def get_egress_ip(budget=None):
     """出口 IPv4（多源轮询）。budget 为总预算秒数时，每源超时取 min(6, 剩余)，
     预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。
+    F19：budget=None 时打开/读阶段亦各以每源 6 秒 join 为限，不得无限等。
     打开阶段亦受总预算约束：urlopen 的 timeout 不覆盖 DNS 解析（标准库
     getaddrinfo 无超时参数），故打开也在线程内做、按剩余预算 join，超
     时即弃该源（6-1 打开阶段残留；锁保证“主线程标记放弃后 worker 关闭”
@@ -5852,7 +5853,7 @@ def get_egress_ip(budget=None):
 
             _ot = threading.Thread(target=_do_open, daemon=True)
             _ot.start()
-            _orem = (_dl - time.monotonic()) if _dl is not None else None
+            _orem = (_dl - time.monotonic()) if _dl is not None else _to
             _ot.join(_orem)
             if _ot.is_alive():
                 with _olock:
@@ -5879,9 +5880,13 @@ def get_egress_ip(budget=None):
 
                 _rt = threading.Thread(target=_do_read, daemon=True)
                 _rt.start()
-                _rrem = (_dl - time.monotonic()) if _dl is not None else None
+                _rrem = (_dl - time.monotonic()) if _dl is not None else _to
                 _rt.join(_rrem)
                 if _rt.is_alive():
+                    # F20：先 shutdown 唤醒读线程再退 with 调 close()，
+                    # 否则 close() 会等读线程占住的缓冲锁而超窗滞留。
+                    _resp_shutdown(r)
+                    _rt.join(2)
                     continue  # 读已超总预算：弃该源（循环头因预算耗尽而 break）
                 if "err" in _rbox:
                     continue
@@ -6030,8 +6035,23 @@ def get_egress_ip6():
         try:
             req = urllib.request.Request(f"https://{host}{path}",
                                          headers={"User-Agent": UA_BROWSER})
-            with urllib.request.urlopen(req, timeout=6) as r:
-                raw = r.read(512).decode("utf-8", errors="replace")
+            # F19：首选路径亦走绝对截止打开（urlopen 超时不覆 DNS 解析），
+            # 读阶段用剩余预算；超时/失败均进 _https_get_pinned6 备用路径。
+            _dl6 = time.monotonic() + 6
+            _r6 = _open_bounded(
+                lambda: urllib.request.urlopen(
+                    req, timeout=max(0.1, _dl6 - time.monotonic())), _dl6)
+            if _r6 is None:
+                raise TimeoutError("egress6 open deadline exceeded")
+            with _r6 as r:
+                try:
+                    _b6 = _read_timed(r, 512,
+                                      max(0.0, _dl6 - time.monotonic()))
+                finally:
+                    _resp_shutdown(r)
+                if _b6 is None:
+                    raise TimeoutError("egress6 read deadline exceeded")
+                raw = _b6.decode("utf-8", errors="replace")
         except Exception:
             raw = _https_get_pinned6(host, path)
         if not raw:
