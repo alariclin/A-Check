@@ -10896,7 +10896,8 @@ def main():
     if ns.active:
         if ns.ip and not ns.json:
             print(_c(C.yellow, T("active_ip_ignored")))
-        run_active(json_mode=ns.json)
+        if run_active(json_mode=ns.json) is None:
+            sys.exit(1)
         return
 
     if ns.speed:
@@ -10929,8 +10930,11 @@ def main():
             sys.exit(2)
         if ns.ip and not ns.json:
             print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
-        run_proxy_diag(_ph, _pt, username=ns.proxy_user,
-                       password=ns.proxy_pass, json_mode=ns.json)
+        _diag = run_proxy_diag(_ph, _pt, username=ns.proxy_user,
+                               password=ns.proxy_pass, json_mode=ns.json)
+        if not (_diag.get("socks5") or {}).get("ok") \
+                or not _diag.get("egress_ip"):
+            sys.exit(1)
         return
 
     if ns.batch is not None:
