@@ -3631,6 +3631,14 @@ class X4BNetVPN(Provider):
     name = "X4BNet VPN Ranges"
 
     def check(self, ip):
+        # F11: 先定查询地址族, 解析期即只保留同族网络 (与同段
+        # SpamhausDROP 3271-3273 行先例一致); 错族名单零有效记录
+        # 即返 None, 不以"未命中"冒充可用名单。
+        try:
+            addr = ipaddress.ip_address(ip)
+        except Exception:
+            return {"ok": False, "err": "bad ip"}
+
         def _parse(raw):
             nets = []
             for line in raw.splitlines():
@@ -3638,15 +3646,14 @@ class X4BNetVPN(Provider):
                 if not line or line.startswith("#"):
                     continue
                 try:
-                    nets.append(ipaddress.ip_network(line, strict=False))
+                    net = ipaddress.ip_network(line, strict=False)
                 except ValueError:
                     pass
+                else:
+                    if net.version == addr.version:
+                        nets.append(net)
             return nets or None
 
-        try:
-            addr = ipaddress.ip_address(ip)
-        except Exception:
-            return {"ok": False, "err": "bad ip"}
         nets = _get_threat_list(
             f"x4bvpn{addr.version}",
             f"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv{addr.version}.txt",
