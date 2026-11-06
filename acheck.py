@@ -92,6 +92,8 @@ STR = {
         "ipapi_http_note": "注：ip-api 免费源仅支持明文 HTTP 查询",
         "invalid_input": "输入无效，请重新输入",
         "invalid_proxy_format": "代理格式无效，应为 HOST:PORT",
+        "ipv4_ipv6_conflict": "--ipv4-only 与 --ipv6-only 不能同时使用",
+        "no_tty": "无可用终端；交互式菜单需要 TTY。使用 --active 进行非交互式自检。",
         "no_valid_nodes": "无有效节点",
         "heuristic": "启发式",
         "private_ip": "不支持私网/保留地址",
@@ -300,6 +302,8 @@ STR = {
         "ipapi_http_note": "Note: the ip-api free source only supports plaintext HTTP queries",
         "invalid_input": "Invalid input, try again",
         "invalid_proxy_format": "Invalid proxy format, want HOST:PORT",
+        "ipv4_ipv6_conflict": "--ipv4-only and --ipv6-only cannot be used together",
+        "no_tty": "No terminal available; interactive menu requires a TTY. Run with --active for a non-interactive self-check.",
         "no_valid_nodes": "No valid nodes",
         "heuristic": "Heuristic",
         "private_ip": "Private/reserved addresses not supported",
@@ -508,6 +512,8 @@ STR = {
         "ipapi_http_note": "註：ip-api 免費來源僅支援明文 HTTP 查詢",
         "invalid_input": "輸入無效，請重新輸入",
         "invalid_proxy_format": "代理格式無效，應為 HOST:PORT",
+        "ipv4_ipv6_conflict": "--ipv4-only 與 --ipv6-only 不能同時使用",
+        "no_tty": "無可用終端；互動式選單需要 TTY。使用 --active 進行非互動式自檢。",
         "no_valid_nodes": "無有效節點",
         "heuristic": "啟發式",
         "private_ip": "不支援私網/保留地址",
@@ -716,6 +722,8 @@ STR = {
         "ipapi_http_note": "注：ip-api 無料ソースは平文 HTTP クエリのみ対応",
         "invalid_input": "入力が無効です、再入力してください",
         "invalid_proxy_format": "プロキシの形式が無効です、HOST:PORT で指定してください",
+        "ipv4_ipv6_conflict": "--ipv4-only と --ipv6-only は併用できません",
+        "no_tty": "利用可能な端末がありません。対話メニューには TTY が必要です。非対話のセルフチェックには --active を使用してください。",
         "no_valid_nodes": "有効なノードがありません",
         "heuristic": "ヒューリスティック",
         "private_ip": "プライベート/予約済みアドレスはサポート外",
@@ -924,6 +932,8 @@ STR = {
         "ipapi_http_note": "Примечание: бесплатный источник ip-api поддерживает только незашифрованные HTTP-запросы",
         "invalid_input": "Неверный ввод, введите снова",
         "invalid_proxy_format": "Неверный формат прокси, ожидается HOST:PORT",
+        "ipv4_ipv6_conflict": "--ipv4-only и --ipv6-only нельзя использовать вместе",
+        "no_tty": "Терминал недоступен; интерактивное меню требует TTY. Для неинтерактивной самопроверки используйте --active.",
         "no_valid_nodes": "Нет допустимых узлов",
         "heuristic": "Эвристика",
         "private_ip": "Частные/зарезервированные адреса не поддерживаются",
@@ -1132,6 +1142,8 @@ STR = {
         "ipapi_http_note": "توجه: منبع رایگان ip-api فقط از پرسمان‌های HTTP رمزنگاری‌نشده پشتیبانی می‌کند",
         "invalid_input": "ورودی نامعتبر است، دوباره وارد کنید",
         "invalid_proxy_format": "قالب پروکسی نامعتبر است، HOST:PORT مورد انتظار است",
+        "ipv4_ipv6_conflict": "--ipv4-only و --ipv6-only را نمی‌توان با هم استفاده کرد",
+        "no_tty": "پایانه‌ای در دسترس نیست؛ منوی تعاملی به TTY نیاز دارد. برای خودآزمایی غیرتعاملی از --active استفاده کنید.",
         "no_valid_nodes": "گره معتبری وجود ندارد",
         "heuristic": "ابتکاری",
         "private_ip": "آدرس‌های خصوصی/رزرو پشتیبانی نمی‌شوند",
@@ -10973,7 +10985,7 @@ def main():
         if ns.json:
             print(json.dumps({"error": "--ipv4-only and --ipv6-only conflict"}, ensure_ascii=False))
         else:
-            print("[Error] --ipv4-only and --ipv6-only cannot be used together", file=sys.stderr)
+            print("[Error] " + T("ipv4_ipv6_conflict"), file=sys.stderr)
         sys.exit(2)
     _FORCE_STACK = "4" if ns.ipv4_only else ("6" if ns.ipv6_only else None)
 
@@ -11107,9 +11119,7 @@ def main():
         try:
             sys.stdin = open("CONIN$" if sys.platform == "win32" else "/dev/tty", "r", encoding="utf-8", errors="replace")
         except Exception:
-            print("[Info] No terminal available; interactive menu requires "
-                  "a TTY. Run with --active for a non-interactive "
-                  "self-check.", file=sys.stderr)
+            print("[Info] " + T("no_tty"), file=sys.stderr)
             sys.exit(2)  # 交互启动失败：非零退出（避开 130 中断码）
     try:
         _menu_first = True
