@@ -6763,12 +6763,10 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
         if mxs is None:
             mxs = _dns_query_udp(domain, qtype=15, server="1.1.1.1", timeout=2.5)
         if mxs is None:
-            default_mx = {
-                "gmail.com": ["gmail-smtp-in.l.google.com"],
-                "outlook.com": ["outlook-com.olc.protection.outlook.com"],
-                "qq.com": ["mx1.qq.com", "mx2.qq.com"],
-            }
-            mxs = default_mx.get(domain, [domain])
+            # F27：两次 MX 查询均失败时无法确定 MX，返 None 保持“未知”，
+            # 不猜测收件主机；预置 MX 亦不作为失败回退（不得把“预置主机
+            # 连通”与“实时 MX 查询成功”合并为同一个成功结论）。
+            return None
         if mxs == [] and not _MX_NULL.get(domain):
             # 成功查询无记录且非 Null MX：按 RFC 5321 §5.1 隐式 MX，尝试域名自身。
             # Null MX 域不走此分支（标记已置位，仍返 False）。
