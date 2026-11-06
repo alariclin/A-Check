@@ -7401,7 +7401,7 @@ def print_dns_test(results=None):
     _section(T("sec_dns"))
     if results is None:
         print(
-            f"  {_c(C.dim, _L('正在测试全球公共 DNS (传统/DoH/DoT)...', 'Testing global public DNS (Plain/DoH/DoT)...', 'Testing global public DNS (Plain/DoH/DoT)...', 'Testing global public DNS (Plain/DoH/DoT)...', 'Testing global public DNS (Plain/DoH/DoT)...', zhtw='正在測試全球公共 DNS (傳統/DoH/DoT)...'))}"
+            f"  {_c(C.dim, _L('正在测试全球公共 DNS (传统/DoH/DoT)...', 'Testing global public DNS (Plain/DoH/DoT)...', '世界のパブリック DNS（通常の DNS／DoH／DoT）をテスト中...', 'Проверка глобальных публичных DNS (обычный DNS/DoH/DoT)...', 'در حال آزمایش DNSهای عمومی جهانی (سنتی/DoH/DoT)...', zhtw='正在測試全球公共 DNS (傳統/DoH/DoT)...'))}"
         )
         results = test_dns_servers()
     titles = {
