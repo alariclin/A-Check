@@ -9634,11 +9634,14 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     out["throughput"] = {"regions": trows,
                          "best_mbps": tbest["down_mbps"] if tbest else None,
                          "best_region": tbest["region"] if tbest else None}
-    if tbest:
-        _note(_c(C.green, T("diag_speed_ok") % (tbest["region"],
-                                               tbest["down_mbps"])))
-    else:
-        _note(_c(C.dim, T("diag_speed_fail")))
+    # F41: 仅在实际执行过测速时输出成功或失败; --no-speed 跳过后不再把
+    # “未执行”显示为“失败” (tbest=None 在此分支下是跳过, 不是失败)。
+    if not _NO_SPEED:
+        if tbest:
+            _note(_c(C.green, T("diag_speed_ok") % (tbest["region"],
+                                                   tbest["down_mbps"])))
+        else:
+            _note(_c(C.dim, T("diag_speed_fail")))
 
     if json_mode:
         print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
