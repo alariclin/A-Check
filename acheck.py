@@ -4519,9 +4519,13 @@ def _print_streaming_inference(res):
 
     def _consensus(*vals):
         """多源共识: True 票多于 False 票才成立；None 为弃权票（源不可用），
-        不参与比较（单源独标仅在有反票时不成立，其余皆弃权时仍成立）。"""
-        return (sum(1 for v in vals if v is True)
-                > sum(1 for v in vals if v is False))
+        不参与比较；零有效票时返 None（未知），不折叠成 False——全弃权
+        不得当作“已核查为否”（F17）。"""
+        _t = sum(1 for v in vals if v is True)
+        _f = sum(1 for v in vals if v is False)
+        if _t == 0 and _f == 0:
+            return None
+        return _t > _f
 
     is_proxy = _consensus(
         pc.get("proxy") if pc.get("ok") else None,
@@ -4548,11 +4552,12 @@ def _print_streaming_inference(res):
     )
 
     sc = s.get("scamalytics", {})
-    sc_score = sc.get("fraud_score", 0) if sc.get("ok") else 0
+    # F17：欺诈源失败时保留 None，不当作实际零分。
+    sc_score = sc.get("fraud_score") if sc.get("ok") else None
     # 欺诈闸门只认 Scamalytics 本尊: proxycheck 的 risk 是代理风险分,
     # 对云厂商 IP 系统性偏高 (实测 AWS 悉尼 IP risk=66 而 Scamalytics=3),
     # 拿它当欺诈证据会让代理误标二次生效, 故不纳入。
-    high_fraud = sc_score >= 50
+    high_fraud = sc_score is not None and sc_score >= 50
 
     sf = s.get("stopforumspam", {})
     has_abuse = (sf.get("ok") and (sf.get("frequency") or 0) > 0)
@@ -4693,6 +4698,25 @@ def _print_streaming_inference(res):
                 return True
         return False
 
+    # F17：风险情报覆盖率门槛——区分“已核查为否”与“没有有效证据”。
+    # 零有效风险源时“可用”无依据，返 unknown；high 置信须地理已知且
+    # 代理/VPN 共识票、欺诈分、威胁名单三类关键检查均有有效证据。
+    _risk_srcs = (pc, wi, il, iq, fp, ia, xv, sc, fe, et, sp, sh, te, sf)
+    _risk_ok = sum(1 for _s in _risk_srcs
+                   if isinstance(_s, dict) and _s.get("ok"))
+    _proxy_vote_ok = any(isinstance(_s, dict) and _s.get("ok")
+                         for _s in (pc, wi, fp, ia, il, iq))
+    _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok"))
+    _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
+                     for _s in (fe, et, sp, sh, sf))
+
+    def _infer_avail():
+        if _risk_ok == 0:
+            return T("unknown"), "mid"
+        if _geo_known and _proxy_vote_ok and _fraud_ok and _threat_ok:
+            return T("infer_avail"), "high"
+        return T("infer_avail"), "mid"
+
     def _infer_strict(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
@@ -4710,9 +4734,9 @@ def _print_streaming_inference(res):
             if svc_name == "Reddit":
                 _ip = (T("infer_block"), "mid")
             else:
-                _ip = (T("infer_avail"), "mid")
+                _ip = _infer_avail()
         elif is_res:
-            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+            _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
         if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
@@ -4728,9 +4752,9 @@ def _print_streaming_inference(res):
         elif is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
         elif is_dc:
-            _ip = (T("infer_avail"), "mid")
+            _ip = _infer_avail()
         elif is_res:
-            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+            _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
         if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
@@ -4746,9 +4770,9 @@ def _print_streaming_inference(res):
         elif is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
         elif is_dc:
-            _ip = (T("infer_avail"), "mid")
+            _ip = _infer_avail()
         elif is_res:
-            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+            _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
         if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
@@ -4764,7 +4788,7 @@ def _print_streaming_inference(res):
         elif is_tor or is_tor_exit or is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
         elif is_dc or is_res:
-            _ip = (T("infer_avail"), ("high" if _geo_known else "mid"))
+            _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
         if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
