@@ -2461,11 +2461,22 @@ _CITY_L10N = {'zh': {'New York': '纽约', 'Los Angeles': '洛杉矶', 'Chicago'
 
 
 def _any2en(table):
+    """任意语言地名 -> 英文键。英文键恒可自查; 本地化名若被多个英文键共享
+    (如 Oakland/Auckland 五语同译“奥克兰”), 则该歧义名不进反查表
+    (反查不到时调用方原样返回输入), 不静默取其中之一。"""
     m = {}
+    _owner = {}
     for per_lang in table.values():
         for en, name in per_lang.items():
             m[en] = en
-            m[name] = en
+            if name not in _owner:
+                _owner[name] = en
+                m[name] = en
+            elif _owner[name] != en:
+                # 歧义名: 已有另一英文键占用, 撤出反查表并标记为歧义
+                _owner[name] = None
+                m.pop(name, None)
+            # _owner[name] is None: 已是歧义名, 不再收录
     return m
 
 
