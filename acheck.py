@@ -8437,14 +8437,17 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
                 return lst, None
             if not ans:
                 return lst, False  # 空应答（NXDOMAIN/无记录）= 未列入
+            # F34: 先扫描完整应答, 再独立计算黑名单命中与 PBL 命中;
+            # A 记录顺序无优先级语义, 不得遇首个可识别记录即返。
+            is_bl = is_pbl = False
             for a_ip in ans:
-                # F33: 返回码含义由各服务商定义, 不得跨域复用 Spamhaus
-                # 规则; .10/.11 仅在 zen.spamhaus.org 上为 PBL
-                # (如 DroneBL 的 .10 是 ProxyChain, 属普通黑名单命中)。
+                # F33: .10/.11 仅在 zen.spamhaus.org 上为 PBL。
                 if lst == "zen.spamhaus.org" and a_ip in ("127.0.0.10", "127.0.0.11"):
-                    return lst, "pbl"  # Spamhaus PBL: 策略名单, 非垃圾邮件证据
-                if re.match(r"^127\.0\.0\.\d+$", a_ip):
-                    return lst, True
+                    is_pbl = True
+                elif re.match(r"^127\.0\.0\.\d+$", a_ip):
+                    is_bl = True
+            if is_bl or is_pbl:
+                return lst, (is_bl, is_pbl)
             if any(a_ip.startswith("127.255.") for a_ip in ans):
                 return lst, None
             return lst, None  # 非空但无可识别码（劫持/拦截/误配）= 未知，不计 clean
@@ -8461,13 +8464,20 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
         futs = [ex.submit(_check, lst) for lst in lists]
         for fut in as_completed(futs):
             lst, r = fut.result()
-            if r is True:
-                marked += 1
-                bl.append(lst)
-            elif r == "pbl":
-                pbl.append(lst)
-            elif r is None:
+            if r is None:
                 total -= 1
+            elif r is False:
+                pass  # 空应答 = 未列入, total 不变
+            else:
+                # F34: (is_bl, is_pbl) 两个独立标志, 分别入 bl/pbl;
+                # 同一列表 marked 只计一次 (PBL-only 不计 marked,
+                # 与旧口径一致: PBL 是策略名单, 非恶意证据)。
+                is_bl, is_pbl = r
+                if is_bl:
+                    marked += 1
+                    bl.append(lst)
+                if is_pbl:
+                    pbl.append(lst)
 
     if not is_json:
         print(" " * 40, end="\r", flush=True)
