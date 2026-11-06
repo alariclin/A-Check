@@ -4561,9 +4561,13 @@ def _print_streaming_inference(res):
 
     def _consensus(*vals):
         """多源共识: True 票多于 False 票才成立；None 为弃权票（源不可用），
-        不参与比较（单源独标仅在有反票时不成立，其余皆弃权时仍成立）。"""
-        return (sum(1 for v in vals if v is True)
-                > sum(1 for v in vals if v is False))
+        不参与比较；零有效票时返 None（未知），不折叠成 False——全弃权
+        不得当作“已核查为否”（F17）。"""
+        _t = sum(1 for v in vals if v is True)
+        _f = sum(1 for v in vals if v is False)
+        if _t == 0 and _f == 0:
+            return None
+        return _t > _f
 
     is_proxy = _consensus(
         pc.get("proxy") if pc.get("ok") else None,
@@ -4590,11 +4594,12 @@ def _print_streaming_inference(res):
     )
 
     sc = s.get("scamalytics", {})
-    sc_score = sc.get("fraud_score", 0) if sc.get("ok") else 0
+    # F17：欺诈源失败时保留 None，不当作实际零分。
+    sc_score = sc.get("fraud_score") if sc.get("ok") else None
     # 欺诈闸门只认 Scamalytics 本尊: proxycheck 的 risk 是代理风险分,
     # 对云厂商 IP 系统性偏高 (实测 AWS 悉尼 IP risk=66 而 Scamalytics=3),
     # 拿它当欺诈证据会让代理误标二次生效, 故不纳入。
-    high_fraud = sc_score >= 50
+    high_fraud = sc_score is not None and sc_score >= 50
 
     sf = s.get("stopforumspam", {})
     has_abuse = (sf.get("ok") and (sf.get("frequency") or 0) > 0)
@@ -4735,68 +4740,104 @@ def _print_streaming_inference(res):
                 return True
         return False
 
+    # F17：风险情报覆盖率门槛——区分“已核查为否”与“没有有效证据”。
+    # 零有效风险源时“可用”无依据，返 unknown；high 置信须地理已知且
+    # 代理/VPN 共识票、欺诈分、威胁名单三类关键检查均有有效证据。
+    # cap_mid：机房分支封顶 mid（旧口径“可能可用/中置信”，机房 IP
+    # 本身的不确定性不因情报齐全而消失）；住宅分支不限。
+    _risk_srcs = (pc, wi, il, iq, fp, ia, xv, sc, fe, et, sp, sh, te, sf)
+    _risk_ok = sum(1 for _s in _risk_srcs
+                   if isinstance(_s, dict) and _s.get("ok"))
+    _proxy_vote_ok = any(isinstance(_s, dict) and _s.get("ok")
+                         for _s in (pc, wi, fp, ia, il, iq))
+    _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok"))
+    _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
+                     for _s in (fe, et, sp, sh, sf))
+
+    def _infer_avail(cap_mid=False):
+        if _risk_ok == 0:
+            return T("unknown"), "mid"
+        if _geo_known and _proxy_vote_ok and _fraud_ok and _threat_ok:
+            return T("infer_avail"), ("mid" if cap_mid else "high")
+        return T("infer_avail"), "mid"
+
     def _infer_strict(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：先算 IP 风险结论，再合并国家级部分限制——IP 结论已是
+        # block 时不得被国家级 limit 覆盖；只有更宽松时才提升为 limit，
+        # 置信度跟随产生最终结论的证据。
         if is_threat or high_fraud or has_abuse:
-            return T("infer_block"), "low"
-        if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_block"), "low"
-        if is_dc:
+            _ip = (T("infer_block"), "low")
+        elif is_tor or is_tor_exit or is_proxy or is_vpn:
+            _ip = (T("infer_block"), "low")
+        elif is_dc:
             # 机房不等于屏蔽: 主流云 IP 地区解锁多数可用 (用户真机实测
             # AWS 悉尼 IP 连 Disney+ 亦为原生解锁), 判可能可用/中置信;
             # Reddit 例外 (专门封机房段, 实测亦为屏蔽)
             if svc_name == "Reddit":
-                return T("infer_block"), "mid"
-            return T("infer_avail"), "mid"
-        if is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+                _ip = (T("infer_block"), "mid")
+            else:
+                _ip = _infer_avail(cap_mid=True)
+        elif is_res:
+            _ip = _infer_avail()
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     def _infer_moderate(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：同 _infer_strict，先算 IP 结论再合并国家级 limit。
         if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
-            return T("infer_block"), "mid"
-        if is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
-        if is_dc:
-            return T("infer_avail"), "mid"
-        if is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+            _ip = (T("infer_block"), "mid")
+        elif is_proxy or is_vpn:
+            _ip = (T("infer_limit"), "mid")
+        elif is_dc:
+            _ip = _infer_avail(cap_mid=True)
+        elif is_res:
+            _ip = _infer_avail()
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     def _infer_ai(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：同 _infer_strict，先算 IP 结论再合并国家级 limit。
         if is_threat or high_fraud or has_abuse or is_tor or is_tor_exit:
-            return T("infer_block"), "mid"
-        if is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
-        if is_dc:
-            return T("infer_avail"), "mid"
-        if is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+            _ip = (T("infer_block"), "mid")
+        elif is_proxy or is_vpn:
+            _ip = (T("infer_limit"), "mid")
+        elif is_dc:
+            _ip = _infer_avail(cap_mid=True)
+        elif is_res:
+            _ip = _infer_avail()
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     def _infer_lenient(svc_name):
         if _fw_check(svc_name):
             return T("infer_block"), "high"
-        if _fw_limit_check(svc_name):
-            return T("infer_limit"), "high"
+        # F16：同 _infer_strict，先算 IP 结论再合并国家级 limit。
         if is_threat:
-            return T("infer_limit"), "mid"
-        if is_tor or is_tor_exit or is_proxy or is_vpn:
-            return T("infer_limit"), "mid"
-        if is_dc or is_res:
-            return T("infer_avail"), ("high" if _geo_known else "mid")
-        return T("unknown"), "mid"
+            _ip = (T("infer_limit"), "mid")
+        elif is_tor or is_tor_exit or is_proxy or is_vpn:
+            _ip = (T("infer_limit"), "mid")
+        elif is_dc or is_res:
+            _ip = _infer_avail()
+        else:
+            _ip = (T("unknown"), "mid")
+        if _fw_limit_check(svc_name) and _ip[0] != T("infer_block"):
+            return T("infer_limit"), "high"
+        return _ip
 
     svc_map = {
         "TikTok": _infer_moderate("TikTok"),
@@ -6292,9 +6333,9 @@ def get_unlock_type(domain, local_ip=None):
 
     if not sys_ips or not pub_ips:
         res = None
-    elif sys_ns in ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "223.5.5.5", "119.29.29.29"):
-        res = True
     else:
+        # F22：去掉白名单无条件返 True 的分支——解析器地址不能证明查询
+        # 未被透明转发或改写；对所有解析器执行统一的结果比较。
         # 前缀一律经 ipaddress 归一化：v4 /24、v6 /64（禁用字符串 split 切前缀；
         # 压缩格式 IPv6 直接切会把空串当段）。v4 由现行 /16 收紧至 /24。
         def _pfx(_ip):
@@ -6379,6 +6420,12 @@ def test_disney(local_ip=None):
     return T("blocked"), "", None
 
 
+def _netflix_unavailable(final_url, body):
+    """Netflix 不可用信号（两探针共用，F23）：正文含 "Not Available"
+    或最终 URL 含 nsfw；URL 信号不受正文截断影响。"""
+    return "Not Available" in (body or "") or "nsfw" in (final_url or "")
+
+
 def test_netflix(local_ip=None):
     # 70143836 为经典非自制剧 (Breaking Bad)，80018499 为自制剧 (Test Patterns)
     code, body, final_url, complete, hdrs = _active_get("https://www.netflix.com/title/70143836")
@@ -6390,9 +6437,9 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
     # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
-    if code == 200 and not complete and "Not Available" not in body and "nsfw" not in final_url:
+    if code == 200 and not complete and not _netflix_unavailable(final_url, body):
         return T("unknown"), "", None
-    if code == 200 and "Not Available" not in body and "nsfw" not in final_url:
+    if code == 200 and not _netflix_unavailable(final_url, body):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
         )
@@ -6412,9 +6459,9 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
-    if code2 == 200 and not complete2 and "Not Available" not in body2:
+    if code2 == 200 and not complete2 and not _netflix_unavailable(final_url2, body2):
         return T("unknown"), "", None
-    if code2 == 200 and "Not Available" not in body2:
+    if code2 == 200 and not _netflix_unavailable(final_url2, body2):
         m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
             r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
         )
@@ -6497,15 +6544,22 @@ def test_chatgpt(local_ip=None):
     # code is None 在上游已返 failed，不与 unknown 混淆。
     if code != 200 or not _complete or "loc=" not in body:
         return T("unknown"), "", None
-    # loc 须为恰好两字母的独立字段：前视排除字母／数字／下划线相邻
-    # （xloc=、x_loc= 均不得命中），后视排除字母／数字相邻（loc=USA、
-    # loc=CN123 均不得命中；trace 体为 key=value 行格式；F23、6-6）。
-    # 上方 "loc=" 门禁仅为廉价预筛（子串命中如 x_loc= 无害），
-    # 真正的字段校验以本正则为准。
-    m = re.search(r"(?<![A-Za-z0-9_])loc=([A-Z]{2})(?![A-Za-z0-9])", body)
-    if not m:
+    # loc 须为恰好两字母的独立字段：按 trace 的 key=value 行格式解析，
+    # 字段名须恰为 loc、值须恰为两字母（F24）。x-loc=、note=loc=、
+    # loc=US_extra、loc=USA 均不得命中；字段缺失、格式不合法或存在
+    # 冲突值时返 unknown。上方 "loc=" 门禁仅为廉价预筛（子串命中如
+    # x_loc= 无害），真正的字段校验以本解析为准。
+    _loc_vals = []
+    for _ln in body.split("\n"):
+        _ln = _ln.strip()
+        if "=" not in _ln:
+            continue
+        _k, _v = _ln.split("=", 1)
+        if _k.strip() == "loc":
+            _loc_vals.append(_v.strip())
+    if len(_loc_vals) != 1 or not re.fullmatch(r"[A-Z]{2}", _loc_vals[0]):
         return T("unknown"), "", None
-    loc = m.group(1)
+    loc = _loc_vals[0]
     if loc in ("CN", "HK", "MO", "RU", "IR", "KP", "SY", "CU", "BY"):
         return T("blocked"), f"[{loc}]", None
     api_code, api_body, _, _api_complete, api_hdrs = _active_get("https://api.openai.com/v1/models")
@@ -6591,6 +6645,9 @@ def test_instagram(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -6606,6 +6663,9 @@ def test_facebook(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
@@ -6623,7 +6683,14 @@ def test_x(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code in (200, 302):
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 302:
+        # F26：默认跟随重定向时暴露出来的 302 必是重定向未完成
+        #（循环 / 缺可用 Location），不是成功，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200:
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -6655,6 +6722,9 @@ def test_whatsapp(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
     _ft = _http_fallthrough(code)
@@ -6670,6 +6740,9 @@ def test_github(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    if code == 200 and not _complete:
+        # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
@@ -6734,12 +6807,10 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
         if mxs is None:
             mxs = _dns_query_udp(domain, qtype=15, server="1.1.1.1", timeout=2.5)
         if mxs is None:
-            default_mx = {
-                "gmail.com": ["gmail-smtp-in.l.google.com"],
-                "outlook.com": ["outlook-com.olc.protection.outlook.com"],
-                "qq.com": ["mx1.qq.com", "mx2.qq.com"],
-            }
-            mxs = default_mx.get(domain, [domain])
+            # F27：两次 MX 查询均失败时无法确定 MX，返 None 保持“未知”，
+            # 不猜测收件主机；预置 MX 亦不作为失败回退（不得把“预置主机
+            # 连通”与“实时 MX 查询成功”合并为同一个成功结论）。
+            return None
         if mxs == [] and not _MX_NULL.get(domain):
             # 成功查询无记录且非 Null MX：按 RFC 5321 §5.1 隐式 MX，尝试域名自身。
             # Null MX 域不走此分支（标记已置位，仍返 False）。
@@ -7017,7 +7088,9 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）；
     # CONF-15.1：已触顶时以首次触顶时间为有效终点，不按完整窗口摊薄。
     if cap_box[0] is not None:
-        elapsed = max(0.1, cap_box[0] - t0)
+        # F29：用真实的正 elapsed，仅以极小值防除零；不足 100ms 的触顶
+        # 不得按 100ms 计（50ms 触顶按 100ms 计会把速率报成一半）。
+        elapsed = max(1e-6, cap_box[0] - t0)
     else:
         elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:
@@ -7121,7 +7194,7 @@ def _dns_test_ok(d, tid, qpkt):
     不是对本次查询的回答，不得判成功（7a-1）。"""
     if d is None or len(d) < 12:
         return False
-    r_tid, flags, qdcount, ancount, _, _ = struct.unpack(">HHHHHH", d[:12])
+    r_tid, flags, qdcount, ancount, nscount, arcount = struct.unpack(">HHHHHH", d[:12])
     if (r_tid != tid or not (flags & 0x8000) or (flags & 0x7800) != 0
             or (flags & 0x0F) != 0 or qdcount != 1):
         return False
@@ -7151,6 +7224,17 @@ def _dns_test_ok(d, tid, qpkt):
             if _aoff + 10 + _rdlen > len(d):
                 return False
             _answers.append((_an.lower().rstrip("."), _at, _ac, _aoff + 10, _rdlen))
+            _aoff += 10 + _rdlen
+        # F28：继续遍历 Authority／Additional 段，至少验证每条记录的
+        # owner name、固定字段和 RDLENGTH 边界；头部声明存在、实际缺失
+        # 的记录不得通过（这些记录不用于答案匹配，只验结构完整性）。
+        for _n in range(nscount + arcount):
+            _rn, _aoff = _decode_dns_name(d, _aoff)
+            if _rn is None or _aoff + 10 > len(d):
+                return False
+            _rdlen = struct.unpack(">H", d[_aoff + 8:_aoff + 10])[0]
+            if _aoff + 10 + _rdlen > len(d):
+                return False
             _aoff += 10 + _rdlen
         # CNAME 链：从查询名出发跟随 IN 类 CNAME 记录（16 跳上限、防环）
         _owners = {(qname_q or "").lower().rstrip(".")}
@@ -9361,7 +9445,8 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
     # 窗口内速率：超时后滞留不计入时长（单流停滞不压低速率）；
     # CONF-15.1：已触顶时以首次触顶时间为有效终点，不按完整窗口摊薄。
     if cap_box[0] is not None:
-        elapsed = max(0.1, cap_box[0] - t0)
+        # F29（同型，代理测速路径）：用真实的正 elapsed，仅以极小值防除零。
+        elapsed = max(1e-6, cap_box[0] - t0)
     else:
         elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:

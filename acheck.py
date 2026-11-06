@@ -4743,6 +4743,8 @@ def _print_streaming_inference(res):
     # F17：风险情报覆盖率门槛——区分“已核查为否”与“没有有效证据”。
     # 零有效风险源时“可用”无依据，返 unknown；high 置信须地理已知且
     # 代理/VPN 共识票、欺诈分、威胁名单三类关键检查均有有效证据。
+    # cap_mid：机房分支封顶 mid（旧口径“可能可用/中置信”，机房 IP
+    # 本身的不确定性不因情报齐全而消失）；住宅分支不限。
     _risk_srcs = (pc, wi, il, iq, fp, ia, xv, sc, fe, et, sp, sh, te, sf)
     _risk_ok = sum(1 for _s in _risk_srcs
                    if isinstance(_s, dict) and _s.get("ok"))
@@ -4752,11 +4754,11 @@ def _print_streaming_inference(res):
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
                      for _s in (fe, et, sp, sh, sf))
 
-    def _infer_avail():
+    def _infer_avail(cap_mid=False):
         if _risk_ok == 0:
             return T("unknown"), "mid"
         if _geo_known and _proxy_vote_ok and _fraud_ok and _threat_ok:
-            return T("infer_avail"), "high"
+            return T("infer_avail"), ("mid" if cap_mid else "high")
         return T("infer_avail"), "mid"
 
     def _infer_strict(svc_name):
@@ -4776,7 +4778,7 @@ def _print_streaming_inference(res):
             if svc_name == "Reddit":
                 _ip = (T("infer_block"), "mid")
             else:
-                _ip = _infer_avail()
+                _ip = _infer_avail(cap_mid=True)
         elif is_res:
             _ip = _infer_avail()
         else:
@@ -4794,7 +4796,7 @@ def _print_streaming_inference(res):
         elif is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
         elif is_dc:
-            _ip = _infer_avail()
+            _ip = _infer_avail(cap_mid=True)
         elif is_res:
             _ip = _infer_avail()
         else:
@@ -4812,7 +4814,7 @@ def _print_streaming_inference(res):
         elif is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
         elif is_dc:
-            _ip = _infer_avail()
+            _ip = _infer_avail(cap_mid=True)
         elif is_res:
             _ip = _infer_avail()
         else:
