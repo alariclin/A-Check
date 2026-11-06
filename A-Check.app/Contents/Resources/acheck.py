@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.27 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.28 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -26,6 +26,7 @@ IP 信誉检测 v4.14.27 — 全量修复与并发优化公开版 (零 API Key �
     python3 acheck.py --explain              # 输出评分规则说明 (支持 6 种语言)
 """
 import base64
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -33,8 +34,10 @@ import os
 import platform
 import random
 import re
+import shlex
 import shutil
 import socket
+import stat
 import ssl
 import struct
 import subprocess
@@ -46,13 +49,14 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.27"
+VERSION = "4.14.28"
 
 
 def _init_console():
@@ -163,6 +167,7 @@ STR = {
         "m_batch": "批量节点测速优选",
         "m_speed": "网络测速（多地区）",
         "m_update": "检查更新",
+        "m_shortcut": "管理命令入口 (acheck/ac)",
         "upd_latest": "已是最新版本 (v%s)",
         "upd_available": "有新版本: v%s (当前 v%s), 请到 GitHub 下载",
         "upd_failed": "检查更新失败 [无法核实]",
@@ -212,7 +217,7 @@ STR = {
         "m_quit": "退出脚本",
         "cancelled": "已取消",
         "prompt_tcp": "请输入目标 (host:port，b 返回): ",
-        "prompt_choice2": "请求下发执行代号 [0-12]: ",
+        "prompt_choice2": "请求下发执行代号 [0-13]: ",
         "diag_socks5_testing": "正在测试 SOCKS5 握手 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 握手成功，延迟 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 握手失败: %s",
@@ -373,6 +378,7 @@ STR = {
         "m_batch": "Batch node speed test & pick",
         "m_speed": "Speed test (regions)",
         "m_update": "Check for Updates",
+        "m_shortcut": "Manage command shortcuts (acheck/ac)",
         "upd_latest": "Already the latest version (v%s)",
         "upd_available": "New version available: v%s (current v%s), please download from GitHub",
         "upd_failed": "Update check failed [unverifiable]",
@@ -422,7 +428,7 @@ STR = {
         "m_quit": "Exit",
         "cancelled": "Cancelled",
         "prompt_tcp": "Enter target (host:port, b back): ",
-        "prompt_choice2": "Enter command code [0-12]: ",
+        "prompt_choice2": "Enter command code [0-13]: ",
         "diag_socks5_testing": "Testing SOCKS5 handshake %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 handshake OK, latency %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 handshake failed: %s",
@@ -583,6 +589,7 @@ STR = {
         "m_batch": "批量節點測速優選",
         "m_speed": "網路測速（多地區）",
         "m_update": "檢查更新",
+        "m_shortcut": "管理命令入口 (acheck/ac)",
         "upd_latest": "已是最新版本 (v%s)",
         "upd_available": "有新版本: v%s (目前 v%s), 請到 GitHub 下載",
         "upd_failed": "檢查更新失敗 [無法核實]",
@@ -632,7 +639,7 @@ STR = {
         "m_quit": "退出腳本",
         "cancelled": "已取消",
         "prompt_tcp": "請輸入目標 (host:port，b 返回): ",
-        "prompt_choice2": "請求下發執行代號 [0-12]: ",
+        "prompt_choice2": "請求下發執行代號 [0-13]: ",
         "diag_socks5_testing": "正在測試 SOCKS5 握手 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 握手成功，延遲 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5 握手失敗: %s",
@@ -793,6 +800,7 @@ STR = {
         "m_batch": "ノード一括速度テスト",
         "m_speed": "速度テスト（地域別）",
         "m_update": "アップデート確認",
+        "m_shortcut": "コマンド入口の管理 (acheck/ac)",
         "upd_latest": "最新バージョンです (v%s)",
         "upd_available": "新しいバージョンがあります: v%s (現在 v%s), GitHub からダウンロードしてください",
         "upd_failed": "アップデート確認に失敗しました [確認不可]",
@@ -842,7 +850,7 @@ STR = {
         "m_quit": "終了",
         "cancelled": "キャンセルしました",
         "prompt_tcp": "ターゲットを入力 (host:port、b 戻る): ",
-        "prompt_choice2": "実行コードを入力 [0-12]: ",
+        "prompt_choice2": "実行コードを入力 [0-13]: ",
         "diag_socks5_testing": "SOCKS5ハンドシェイクをテスト中 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5ハンドシェイク成功、遅延 %.1f ms",
         "diag_socks5_fail": "✗ SOCKS5ハンドシェイク失敗: %s",
@@ -1003,6 +1011,7 @@ STR = {
         "m_batch": "Пакетный тест узлов",
         "m_speed": "Тест скорости (регионы)",
         "m_update": "Проверить обновления",
+        "m_shortcut": "Управление ярлыками команд (acheck/ac)",
         "upd_latest": "Установлена последняя версия (v%s)",
         "upd_available": "Доступна новая версия: v%s (текущая v%s), скачайте с GitHub",
         "upd_failed": "Не удалось проверить обновления [Не проверено]",
@@ -1052,7 +1061,7 @@ STR = {
         "m_quit": "Выход",
         "cancelled": "Отменено",
         "prompt_tcp": "Введите цель (host:port, b назад): ",
-        "prompt_choice2": "Введите код команды [0-12]: ",
+        "prompt_choice2": "Введите код команды [0-13]: ",
         "diag_socks5_testing": "Тестирование SOCKS5 %s:%s...",
         "diag_socks5_ok": "✓ SOCKS5 рукопожатие успешно, задержка %.1f мс",
         "diag_socks5_fail": "✗ Ошибка SOCKS5: %s",
@@ -1213,6 +1222,7 @@ STR = {
         "m_batch": "تست دسته‌ای گره‌ها",
         "m_speed": "تست سرعت (مناطق)",
         "m_update": "بررسی به‌روزرسانی",
+        "m_shortcut": "مدیریت میانبرهای فرمان (acheck/ac)",
         "upd_latest": "آخرین نسخه نصب است (v%s)",
         "upd_available": "نسخه جدید موجود است: v%s (فعلی v%s)، از GitHub دانلود کنید",
         "upd_failed": "بررسی به‌روزرسانی ناموفق بود [غیرقابل تأیید]",
@@ -1262,7 +1272,7 @@ STR = {
         "m_quit": "خروج",
         "cancelled": "لغو شد",
         "prompt_tcp": "هدف را وارد کنید (host:port، b بازگشت): ",
-        "prompt_choice2": "کد دستور را وارد کنید [0-12]: ",
+        "prompt_choice2": "کد دستور را وارد کنید [0-13]: ",
         "diag_socks5_testing": "در حال تست SOCKS5 %s:%s...",
         "diag_socks5_ok": "✓ اتصال SOCKS5 موفق، تأخیر %.1f میلی‌ثانیه",
         "diag_socks5_fail": "✗ خطای SOCKS5: %s",
@@ -4046,7 +4056,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.27 免 Key 公开版):
+评分规则 (v4.14.28 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4078,7 +4088,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.27 免 Key 公開版):
+評分規則 (v4.14.28 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4110,7 +4120,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.27 Keyless Public Edition):
+Scoring rules (v4.14.28 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4143,7 +4153,7 @@ Scoring rules (v4.14.27 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.27 キー不要公開版):
+スコアリングルール (v4.14.28 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4175,7 +4185,7 @@ Scoring rules (v4.14.27 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.27 Публичная версия без ключей):
+Правила оценки (v4.14.28 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4207,7 +4217,7 @@ Scoring rules (v4.14.27 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.27):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.28):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -10903,6 +10913,7 @@ def print_menu():
         (_menu_item(4, T("m_sysinfo")), _menu_item(10, T("m_explain"))),
         (_menu_item(5, T("m_lang")), _menu_item(11, T("m_batch"))),
         (_menu_item(6, T("m_update")), _menu_item(12, T("m_speed"))),
+        (_menu_item(13, T("m_shortcut")), ""),
     ]
     for left, right in rows:
         print("  " + _pad(left, colw) + right)
@@ -11069,6 +11080,1425 @@ class _CLIArgumentParser(argparse.ArgumentParser):
         raise ValueError(message)
 
 
+# ============================================================
+# 命令入口管理 (快捷键 v4.14.28): acheck / ac 薄启动器
+#
+# 设计 (GPT 比选 (d) 单文件内统一后端, CLI + 菜单共用; 已仲裁):
+# - 默认用户级: 受管理副本 ~/.local/share/acheck/acheck.py
+#   (遵循有效的 XDG_DATA_HOME), 启动器 ~/.local/bin/; 系统级须显式选。
+# - 固定副本: 启动器运行已安装副本, 不是下载目录文件; 下载新版后
+#   重跑安装更新副本, 不暗中复制、不自动联网更新。
+# - 启动器: 薄 POSIX sh, exec + 钉死的解释器绝对路径 (Python 3.8+)
+#   + 受管理副本绝对路径 + "$@"。
+# - 冲突检测顺序: 名字合法性 -> 目标对象 (lstat, 断链也算) -> 全 PATH
+#   扫描 -> 已知系统路径 -> ac 已知风险; 先完成两个名字的检查确认,
+#   再开始写文件; 提交前排他创建 (O_EXCL/link), 不覆盖未知对象。
+# - ac: 已存在系统入口即冲突 (须换名); 尚不存在仍须知情确认未来
+#   风险 (acct/psacct 未来装包可能遮蔽; Windows PowerShell 里 ac 是
+#   Add-Content 内置别名); macOS 自带 BSD ac 一说无现代佐证, 不作
+#   已证实冲突写进提示, 只按"检查已知系统路径"处理。
+# - 状态文件不是删文件的授权书: 移除/改名删旧入口前重核路径范围、
+#   入口类型、归属标识与内容校验 (sha256)。
+# - 承诺口径: 具备合格 Python 3.8+ 环境时支持入口管理; Debian 10
+#   默认官方包不满足, 安装时 <3.8 明确拒绝。首期只承诺 Linux + macOS
+#   同一套 POSIX 代码, Windows 不在本期。
+# - 平时运行 (查 IP、进菜单) 一个字不碰安装逻辑, 只在调用管理入口
+#   (CLI --shortcut / 菜单 13) 时才跑本段代码。
+# - ACHECK_SYSROOT: 仅供测试重定向系统级根目录 (夹具 hermetic 用),
+#   生产环境不设置即为 /usr/local。
+# ============================================================
+SHORTCUT_STATE_VERSION = 1
+SHORTCUT_STATE_FILE = "shortcut-state.json"
+SHORTCUT_MANAGED_SCRIPT = "acheck.py"
+SHORTCUT_DEFAULT_NAMES = ("acheck", "ac")
+SHORTCUT_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+SHORTCUT_KNOWN_SYSTEM_DIRS = ("/usr/bin", "/bin", "/usr/sbin", "/sbin",
+                              "/usr/local/bin", "/usr/local/sbin")
+SHORTCUT_SHELL_WORDS = frozenset((
+    # shell 关键字与内建命令: 明确拒绝, 不许占名
+    "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+    "done", "case", "esac", "function", "select", "time", "coproc", "in",
+    "echo", "cd", "pwd", "export", "alias", "unalias", "set", "unset",
+    "readonly", "shift", "test", "source", "exit", "return", "break",
+    "continue", "exec", "eval", "command", "type", "hash", "umask",
+    "trap", "jobs", "fg", "bg", "kill", "wait", "ulimit", "getopts",
+    "let", "declare", "local", "typeset", "read", "printf", "true",
+    "false", "logout", "history", "dirs", "pushd", "popd", "suspend",
+    "bind", "builtin", "caller", "compgen", "complete", "compopt",
+    "disown", "enable", "help", "mapfile", "readarray", "shopt",
+))
+SHORTCUT_AC_RISK = (
+    "ac is provided by the acct/psacct accounting package; installing "
+    "those packages later may shadow this shortcut. In Windows "
+    "PowerShell, ac is also a built-in alias for Add-Content."
+)
+
+
+class ShortcutError(Exception):
+    """入口管理错误: rc 为建议的进程退出码 (2=用法/冲突, 1=执行失败)。"""
+
+    def __init__(self, message, rc=2):
+        super().__init__(message)
+        self.rc = rc
+
+
+def _shortcut_check_interpreter(version=None):
+    """解释器版本门: Python 3.8+ 才合格 (Debian 10 默认 3.7.3 明确拒绝)。"""
+    ver = tuple(version) if version is not None else sys.version_info[:3]
+    if len(ver) < 2 or ver[:2] < (3, 8):
+        return False, "Python %s < 3.8" % (".".join(str(x) for x in ver),)
+    return True, ""
+
+
+def _shortcut_resolve_interpreter(explicit=None):
+    """返回 (解释器绝对路径, 版本元组); 不合格或无法验证则抛 ShortcutError。"""
+    if explicit:
+        cand = os.path.abspath(os.path.expanduser(explicit))
+        if not (os.path.isfile(cand) and os.access(cand, os.X_OK)):
+            raise ShortcutError("interpreter not executable: %s" % cand)
+        try:
+            r = subprocess.run(
+                [cand, "-c",
+                 "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
+                capture_output=True, text=True, timeout=15)
+        except Exception as e:
+            raise ShortcutError("cannot run interpreter %s: %s" % (cand, e))
+        if r.returncode != 0:
+            raise ShortcutError("interpreter %s failed to report version"
+                                % cand)
+        try:
+            ver = tuple(int(x) for x in r.stdout.strip().split("."))
+        except Exception:
+            raise ShortcutError("interpreter %s returned bad version: %r"
+                                % (cand, r.stdout.strip()))
+        ok, why = _shortcut_check_interpreter(ver)
+        if not ok:
+            raise ShortcutError("interpreter %s refused: %s" % (cand, why))
+        return os.path.realpath(cand), ver
+    exe = sys.executable
+    if not exe or not os.path.isabs(exe):
+        raise ShortcutError("cannot determine interpreter absolute path")
+    ok, why = _shortcut_check_interpreter(sys.version_info[:3])
+    if not ok:
+        raise ShortcutError("running interpreter refused: %s" % why)
+    return os.path.realpath(exe), tuple(sys.version_info[:3])
+
+
+def shortcut_paths(scope, home=None, sysroot=None):
+    """解析入口管理目录。scope ∈ {"user", "system"}。
+    home 显式传入时 (夹具/测试) 以该 home 为准, 不读 XDG_DATA_HOME;
+    home 为空时遵循有效的 XDG_DATA_HOME (须为绝对路径), 否则 ~/.local。"""
+    if scope not in ("user", "system"):
+        raise ShortcutError("unknown scope: %r" % (scope,))
+    if scope == "user":
+        h = home if home is not None else os.path.expanduser("~")
+        if home is None:
+            xdg = os.environ.get("XDG_DATA_HOME", "")
+            base = xdg if xdg and os.path.isabs(xdg) else \
+                os.path.join(h, ".local", "share")
+        else:
+            base = os.path.join(h, ".local", "share")
+        data_dir = os.path.join(base, "acheck")
+        bin_dir = os.path.join(h, ".local", "bin")
+    else:
+        prefix = sysroot or os.environ.get("ACHECK_SYSROOT") or "/usr/local"
+        data_dir = os.path.join(prefix, "share", "acheck")
+        bin_dir = os.path.join(prefix, "bin")
+    return {
+        "scope": scope,
+        "data_dir": data_dir,
+        "bin_dir": bin_dir,
+        "state_path": os.path.join(data_dir, SHORTCUT_STATE_FILE),
+        "managed_script": os.path.join(data_dir, SHORTCUT_MANAGED_SCRIPT),
+    }
+
+
+def shortcut_launcher_content(interpreter, script_path, instance_id):
+    """薄 POSIX sh 启动器: exec + 钉死路径 + "$@" (禁 $*/eval/重拼接/cd)。"""
+    return ("#!/bin/sh\n"
+            "# acheck-managed: %s\n"
+            "exec %s %s \"$@\"\n"
+            % (instance_id, shlex.quote(interpreter),
+               shlex.quote(script_path)))
+
+
+def _shortcut_sha256_bytes(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _shortcut_sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _shortcut_marker(content):
+    m = re.search(r"^# acheck-managed: ([A-Za-z0-9_-]+)$", content, re.M)
+    return m.group(1) if m else None
+
+
+def _shortcut_entry_intact(path, entry, instance_id):
+    """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
+    且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。"""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if not stat.S_ISREG(st.st_mode):
+        return False
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+    if _shortcut_sha256_bytes(data) != entry.get("sha256"):
+        return False
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return False
+    return _shortcut_marker(text) == instance_id
+
+
+def shortcut_check_name(name, bin_dir, own_entry_paths=(),
+                        path_dirs=None, system_dirs=None):
+    """单名全量检查, 返回 findings 列表 (kind ∈ invalid/target_own/
+    target_foreign/path_hit/system_hit/ac_risk)。不写任何文件。"""
+    findings = []
+    if not isinstance(name, str) or not SHORTCUT_NAME_RE.match(name) \
+            or name in SHORTCUT_SHELL_WORDS:
+        findings.append({"kind": "invalid", "name": name,
+                         "detail": "name must match ^[a-z][a-z0-9_-]{0,31}$ "
+                         "and must not be a shell keyword/builtin"})
+        return findings
+    own = {os.path.normpath(p) for p in own_entry_paths}
+    target = os.path.join(bin_dir, name)
+    if os.path.lexists(target):
+        if os.path.normpath(target) in own:
+            findings.append({"kind": "target_own", "name": name,
+                             "path": target})
+        else:
+            if os.path.isdir(target) and not os.path.islink(target):
+                what = "directory"
+            elif os.path.islink(target):
+                what = "symlink"
+            else:
+                what = "file"
+            findings.append({"kind": "target_foreign", "name": name,
+                             "path": target, "detail": "existing %s" % what})
+    # 全 PATH 扫描 (不只 command -v 第一个结果); 只算可执行入口才遮蔽
+    if path_dirs is None:
+        path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+    seen = set()
+    first = True
+    for d in path_dirs:
+        if not d:
+            continue
+        nd = os.path.normpath(d)
+        if nd in seen:
+            continue
+        seen.add(nd)
+        cand = os.path.join(nd, name)
+        if os.path.normpath(cand) in own:
+            continue
+        try:
+            hit = os.path.isfile(cand) and os.access(cand, os.X_OK)
+        except OSError:
+            hit = False
+        if hit:
+            findings.append({"kind": "path_hit", "name": name, "path": cand,
+                             "first": first})
+            first = False
+    # 已知系统路径 (即使不在当前 PATH 也查; 合并目录去重)
+    if system_dirs is None:
+        system_dirs = SHORTCUT_KNOWN_SYSTEM_DIRS
+    seen = set()
+    for d in system_dirs:
+        if not d:
+            continue
+        nd = os.path.normpath(d)
+        if nd in seen:
+            continue
+        seen.add(nd)
+        cand = os.path.join(nd, name)
+        if os.path.normpath(cand) in own:
+            continue
+        try:
+            hit = os.path.isfile(cand) and os.access(cand, os.X_OK)
+        except OSError:
+            hit = False
+        if hit:
+            findings.append({"kind": "system_hit", "name": name,
+                             "path": cand})
+    # ac 已知未来风险: 当前无可执行冲突也须警告 (不以"包没装"证明安全);
+    # 已有真实冲突时只报冲突, 不再叠加未来风险
+    if name == "ac" and not any(f["kind"] in ("path_hit", "system_hit",
+                                              "target_foreign")
+                                for f in findings):
+        findings.append({"kind": "ac_risk", "name": name,
+                         "detail": SHORTCUT_AC_RISK})
+    return findings
+
+
+def _shortcut_blocked(findings):
+    return any(f["kind"] in ("invalid", "target_foreign", "path_hit",
+                             "system_hit") for f in findings)
+
+
+def _shortcut_load_state(paths):
+    """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。"""
+    try:
+        with open(paths["state_path"], "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        return None, False
+    except Exception:
+        return None, True
+    if not isinstance(state, dict) \
+            or state.get("format_version") != SHORTCUT_STATE_VERSION \
+            or not isinstance(state.get("entries"), dict) \
+            or not state.get("instance_id"):
+        return None, True
+    return state, False
+
+
+def _shortcut_save_state(paths, state):
+    os.makedirs(paths["data_dir"], exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".shortcut-state-",
+                               dir=paths["data_dir"])
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, paths["state_path"])
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _shortcut_publish_launcher(bin_dir, name, content_bytes):
+    """排他创建启动器: 目标突然出现即中止, 不覆盖未知对象。"""
+    target = os.path.join(bin_dir, name)
+    fd, tmp = tempfile.mkstemp(prefix=".acheck-launcher-",
+                               dir=bin_dir)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content_bytes)
+        os.chmod(tmp, 0o755)
+        try:
+            os.link(tmp, target)
+        except FileExistsError:
+            raise ShortcutError("target appeared during install: %s "
+                                "(refusing to overwrite)" % target)
+        return target
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _shortcut_verify_launcher(path, timeout=20):
+    """最小启动验证: 入口须能跑出 --help 且退出码 0。"""
+    try:
+        r = subprocess.run([path, "--help"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=timeout)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _shortcut_bin_in_path(bin_dir):
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.normpath(d) == os.path.normpath(bin_dir):
+            return True
+    return False
+
+
+def _shortcut_fmt_findings(findings):
+    parts = []
+    for f in findings:
+        k = f["kind"]
+        if k == "invalid":
+            parts.append("invalid name %r" % f["name"])
+        elif k == "target_foreign":
+            parts.append("target exists (%s): %s"
+                         % (f.get("detail", "?"), f["path"]))
+        elif k == "path_hit":
+            parts.append("PATH hit%s: %s"
+                         % (" (first)" if f.get("first") else "", f["path"]))
+        elif k == "system_hit":
+            parts.append("system path hit: %s" % f["path"])
+        elif k == "ac_risk":
+            parts.append("known future risk for 'ac': %s" % f["detail"])
+        elif k == "target_own":
+            parts.append("already owned: %s" % f["path"])
+    return "; ".join(parts)
+
+
+def shortcut_install(names=None, scope="user", accept_ac_risk=False,
+                     interactive=False, input_fn=None, home=None,
+                     sysroot=None, source_path=None, interpreter=None,
+                     path_dirs=None, system_dirs=None):
+    """安装/更新双入口。先完成全部名字的检查确认, 再开始写文件。
+    返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。"""
+    result = {"ok": False, "rc": 2, "installed": [], "failed": [],
+              "skipped": [], "degraded": False, "errors": [], "scope": scope}
+    want = list(names) if names else list(SHORTCUT_DEFAULT_NAMES)
+    if len(set(want)) != len(want):
+        result["errors"].append("duplicate names: %r" % (want,))
+        return result
+    try:
+        interp, _ver = _shortcut_resolve_interpreter(interpreter)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    try:
+        paths = shortcut_paths(scope, home=home, sysroot=sysroot)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    result.update({"bin_dir": paths["bin_dir"],
+                   "data_dir": paths["data_dir"]})
+    src = os.path.abspath(source_path) if source_path else \
+        os.path.abspath(__file__)
+    if not os.path.isfile(src):
+        result["errors"].append("source script not found: %s" % src)
+        return result
+    try:
+        with open(src, "rb") as f:
+            src_bytes = f.read()
+        src_sha = _shortcut_sha256_bytes(src_bytes)
+    except OSError as e:
+        result["errors"].append("cannot read source script: %s" % e)
+        return result
+    try:
+        os.makedirs(paths["data_dir"], exist_ok=True)
+        os.makedirs(paths["bin_dir"], exist_ok=True)
+    except OSError as e:
+        result["errors"].append("cannot create managed directories: %s" % e)
+        return result
+    state, corrupt = _shortcut_load_state(paths)
+    if corrupt:
+        result["errors"].append(
+            "state file is corrupt: %s (refusing to overwrite or delete "
+            "any launcher; inspect/remove it manually)"
+            % paths["state_path"])
+        return result
+    if state is not None and state.get("scope") != scope:
+        result["errors"].append(
+            "existing install is scope %r, requested %r; remove it first"
+            % (state.get("scope"), scope))
+        return result
+    instance_id = state.get("instance_id") if state else uuid.uuid4().hex
+    own_paths = [e.get("path", "") for e in
+                 (state or {}).get("entries", {}).values()]
+    # ---- 第一阶段: 全部名字检查确认 (不写文件) ----
+    checks = {}
+    for nm in want:
+        checks[nm] = shortcut_check_name(nm, paths["bin_dir"],
+                                         own_entry_paths=own_paths,
+                                         path_dirs=path_dirs,
+                                         system_dirs=system_dirs)
+    risk_names = [nm for nm in want
+                  if any(f["kind"] == "ac_risk" for f in checks[nm])]
+    blocked = {nm: checks[nm] for nm in want
+               if _shortcut_blocked(checks[nm])}
+    risk_unconfirmed = [nm for nm in risk_names
+                        if nm not in blocked and not accept_ac_risk]
+    inp = input_fn or input
+
+    def _ask(prompt):
+        try:
+            return inp(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+    if interactive and (blocked or risk_unconfirmed):
+        # 交互冲突处理: [1] 自定义名字 (重校验一轮) [2] 仅装无冲突入口
+        # (明确标注降级) [3] 取消。不提供强制覆盖/强制遮蔽。
+        print(_L("检测到命令入口冲突：",
+                 "Command shortcut conflicts detected:",
+                 "コマンド入口の競合を検出しました：",
+                 "Обнаружены конфликты ярлыков команд:",
+                 "تداخل در میانبرهای فرمان شناسایی شد:",
+                 "偵測到命令入口衝突："))
+        for nm, fl in blocked.items():
+            print("  %s: %s" % (nm, _shortcut_fmt_findings(fl)))
+        for nm in risk_unconfirmed:
+            print(_L("  %s：已知未来风险——%s" % (nm, SHORTCUT_AC_RISK),
+                     "  %s: known future risk — %s" % (nm, SHORTCUT_AC_RISK),
+                     "  %s：既知の将来リスク — %s" % (nm, SHORTCUT_AC_RISK),
+                     "  %s: известный будущий риск — %s"
+                     % (nm, SHORTCUT_AC_RISK),
+                     "  %s: ریسک آیندهٔ شناخته‌شده — %s"
+                     % (nm, SHORTCUT_AC_RISK),
+                     "  %s：已知未來風險——%s" % (nm, SHORTCUT_AC_RISK)))
+        tries = 0
+        while (blocked or risk_unconfirmed) and tries < 5:
+            tries += 1
+            print(_L("[1] 输入自定义名字 (重新检查)  [2] 仅安装无冲突入口 "
+                     "(降级结果)  [3] 取消",
+                     "[1] Custom name (re-check)  [2] Install only the "
+                     "conflict-free entries (degraded)  [3] Cancel",
+                     "[1] カスタム名を入力 (再検査)  [2] 競合のない入口のみ"
+                     "インストール (縮小結果)  [3] キャンセル",
+                     "[1] Своё имя (повторная проверка)  [2] Установить "
+                     "только неконфликтующие (урезанный результат)  "
+                     "[3] Отмена",
+                     "[1] وارد کردن نام دلخواه (بررسی مجدد)  [2] نصب فقط "
+                     "ورودی‌های بدون تداخل (نتیجهٔ تقلیل‌یافته)  [3] لغو",
+                     "[1] 輸入自訂名字 (重新檢查)  [2] 僅安裝無衝突入口 "
+                     "(降級結果)  [3] 取消"))
+            if risk_unconfirmed:
+                print(_L("[4] 明确接受 ac 已知未来风险，继续安装 ac",
+                         "[4] Explicitly accept the known future risk of "
+                         "ac and install it",
+                         "[4] ac の既知の将来リスクを明確に受け入れて "
+                         "インストールする",
+                         "[4] Явно принять известный будущий риск ac и "
+                         "установить его",
+                         "[4] پذیرش صریح ریسک آیندهٔ شناخته‌شدهٔ ac و نصب آن",
+                         "[4] 明確接受 ac 已知未來風險，繼續安裝 ac"))
+            ans = _ask(_L("请选择 [1/2/3]: ", "Choose [1/2/3]: ",
+                         "選択してください [1/2/3]: ",
+                         "Выберите [1/2/3]: ",
+                         "انتخاب کنید [1/2/3]: ",
+                         "請選擇 [1/2/3]: "))
+            if ans is None or ans == "3":
+                result["errors"].append("cancelled by user")
+                result["rc"] = 1
+                result["failed"] = list(want)
+                return result
+            if ans == "4" and risk_unconfirmed:
+                risk_unconfirmed = []
+                continue
+            if ans == "2":
+                result["degraded"] = True
+                want = [nm for nm in want if nm not in blocked
+                        and nm not in risk_unconfirmed]
+                blocked = {}
+                risk_unconfirmed = []
+                break
+            if ans == "1":
+                first_blocked = next(iter(blocked)) if blocked else \
+                    (risk_unconfirmed[0] if risk_unconfirmed else None)
+                if first_blocked is None:
+                    break
+                new = _ask(_L("为 %s 输入自定义名字 (空=取消): " % first_blocked,
+                             "Custom name for %s (empty=cancel): "
+                             % first_blocked,
+                             "%s のカスタム名を入力 (空=キャンセル): "
+                             % first_blocked,
+                             "Своё имя вместо %s (пусто=отмена): "
+                             % first_blocked,
+                             "نام دلخواه برای %s (خالی=لغو): "
+                             % first_blocked,
+                             "為 %s 輸入自訂名字 (空=取消): " % first_blocked))
+                if new is None or not new:
+                    result["errors"].append("cancelled by user")
+                    result["rc"] = 1
+                    result["failed"] = list(want)
+                    return result
+                if new in want:
+                    print(_L("名字 %s 已在本次安装列表中。" % new,
+                             "Name %s is already in this install list." % new,
+                             "名前 %s は既に今回のリストにあります。" % new,
+                             "Имя %s уже есть в списке установки." % new,
+                             "نام %s از قبل در این فهرست نصب است." % new,
+                             "名字 %s 已在本次安裝清單中。" % new))
+                    continue
+                fl = shortcut_check_name(new, paths["bin_dir"],
+                                         own_entry_paths=own_paths,
+                                         path_dirs=path_dirs,
+                                         system_dirs=system_dirs)
+                if _shortcut_blocked(fl):
+                    print("  %s: %s" % (new, _shortcut_fmt_findings(fl)))
+                    continue
+                want = [new if x == first_blocked else x for x in want]
+                checks[new] = fl
+                checks.pop(first_blocked, None)
+                blocked.pop(first_blocked, None)
+                if first_blocked in risk_unconfirmed:
+                    risk_unconfirmed.remove(first_blocked)
+                if any(f["kind"] == "ac_risk" for f in fl):
+                    risk_unconfirmed.append(new)
+                continue
+            print(T("invalid_input"))
+        if blocked or risk_unconfirmed:
+            result["errors"].append(
+                "conflicts remain after interaction: %s"
+                % ", ".join(list(blocked) + risk_unconfirmed))
+            result["failed"] = list(blocked) + risk_unconfirmed
+            return result
+    elif blocked or risk_unconfirmed:
+        for nm, fl in blocked.items():
+            result["errors"].append("%s: %s"
+                                    % (nm, _shortcut_fmt_findings(fl)))
+        for nm in risk_unconfirmed:
+            result["errors"].append(
+                "%s: known future risk for 'ac' not accepted "
+                "(use --accept-ac-risk in non-interactive mode)" % nm)
+        result["failed"] = list(blocked) + risk_unconfirmed
+        return result
+    if not want:
+        result["errors"].append("no entries left to install")
+        return result
+    # ---- 第二阶段: 写受管理副本 (更新时覆盖自己的副本, 保留入口名) ----
+    # 已安装版本号取自源文件本身的 VERSION (下载版与运行版可能不同)。
+    _mver = re.search(r"^VERSION\s*=\s*\"([^\"]+)\"", src_bytes.decode(
+        "utf-8", errors="replace"), re.M)
+    src_version = _mver.group(1) if _mver else VERSION
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".acheck-script-",
+                                   dir=paths["data_dir"])
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(src_bytes)
+            os.chmod(tmp, 0o755)
+            os.replace(tmp, paths["managed_script"])
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+    except OSError as e:
+        result["errors"].append("cannot write managed script: %s" % e)
+        return result
+    # ---- 第三阶段: 逐个发布启动器 (排他创建 + 最小启动验证) ----
+    entries = dict((state or {}).get("entries", {}))
+    for nm in want:
+        target = os.path.join(paths["bin_dir"], nm)
+        old_entry = entries.get(nm)
+        if old_entry and os.path.lexists(target):
+            if not _shortcut_entry_intact(target, old_entry, instance_id):
+                result["failed"].append(nm)
+                result["errors"].append(
+                    "%s: existing launcher was modified by someone else; "
+                    "not overwriting, handle manually" % nm)
+                continue
+            try:
+                os.unlink(target)
+            except OSError as e:
+                result["failed"].append(nm)
+                result["errors"].append("%s: cannot remove old launcher: %s"
+                                        % (nm, e))
+                continue
+        content = shortcut_launcher_content(
+            interp, paths["managed_script"], instance_id)
+        try:
+            _shortcut_publish_launcher(paths["bin_dir"], nm,
+                                       content.encode("utf-8"))
+        except ShortcutError as e:
+            result["failed"].append(nm)
+            result["errors"].append(str(e))
+            continue
+        if not _shortcut_verify_launcher(target):
+            try:
+                os.unlink(target)
+            except OSError:
+                pass
+            result["failed"].append(nm)
+            result["errors"].append(
+                "%s: launcher failed minimal startup check (--help)" % nm)
+            continue
+        entries[nm] = {"path": target,
+                       "sha256": _shortcut_sha256_bytes(
+                           content.encode("utf-8")),
+                       "marker": instance_id}
+        result["installed"].append(nm)
+    # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
+    new_state = {
+        "format_version": SHORTCUT_STATE_VERSION,
+        "instance_id": instance_id,
+        "scope": scope,
+        "managed_script": paths["managed_script"],
+        "managed_sha256": src_sha,
+        "interpreter": interp,
+        "bin_dir": paths["bin_dir"],
+        "entries": entries,
+        "installed_version": src_version,
+        "source_path": src,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        _shortcut_save_state(paths, new_state)
+    except OSError as e:
+        result["errors"].append("cannot save state: %s" % e)
+        return result
+    result["ok"] = bool(result["installed"]) and not result["failed"]
+    result["rc"] = 0 if result["ok"] else 1
+    if result["failed"]:
+        result["errors"].append(
+            "partial success: installed %s, failed %s (not reported as "
+            "fully successful)" % (result["installed"], result["failed"]))
+    return result
+
+
+def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
+                    system_dirs=None):
+    """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。"""
+    try:
+        paths = shortcut_paths(scope, home=home, sysroot=sysroot)
+    except ShortcutError as e:
+        return str(e), 2
+    state, corrupt = _shortcut_load_state(paths)
+    lines = []
+    if corrupt:
+        return (_L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
+                   "不要直接删除或覆盖入口文件。"
+                   % paths["state_path"],
+                   "State file is corrupt: %s\nInspect it manually before "
+                   "any action; do not delete or overwrite launchers "
+                   "directly." % paths["state_path"],
+                   "状態ファイルが破損しています (corrupt): %s\n手動で確認"
+                   "してから対処してください。ランチャーを直接削除・上書き"
+                   "しないでください。" % paths["state_path"],
+                   "Файл состояния повреждён (corrupt): %s\nПроверьте его "
+                   "вручную; не удаляйте и не перезаписывайте лаунчеры "
+                   "напрямую." % paths["state_path"],
+                   "پروندهٔ وضعیت خراب است (corrupt): %s\nپیش از هر اقدامی "
+                   "آن را دستی بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
+                   "بازنویسی نکنید。" % paths["state_path"],
+                   "狀態檔案已損壞 (corrupt): %s\n請人工檢查後再處理，不要"
+                   "直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
+    lines.append(_L("命令入口状态 (%s):" % scope,
+                   "Command shortcut status (%s):" % scope,
+                   "コマンド入口の状態 (%s):" % scope,
+                   "Состояние ярлыков команд (%s):" % scope,
+                   "وضعیت میانبرهای فرمان (%s):" % scope,
+                   "命令入口狀態 (%s):" % scope))
+    lines.append("  %s: %s" % (_L("受管理目录", "Managed dir", "管理ディレクトリ",
+                                 "Каталог", "پوشهٔ مدیریت‌شده", "受管理目錄"),
+                              paths["data_dir"]))
+    lines.append("  %s: %s" % (_L("启动器目录", "Launcher dir", "ランチャー",
+                                 "Каталог лаунчеров", "پوشهٔ راه‌اندازها",
+                                 "啟動器目錄"), paths["bin_dir"]))
+    if state is None:
+        lines.append("  " + _L("未安装任何入口。",
+                               "No shortcuts installed.",
+                               "入口はインストールされていません。",
+                               "Ярлыки не установлены.",
+                               "هیچ میانبری نصب نشده است.",
+                               "未安裝任何入口。"))
+        if not _shortcut_bin_in_path(paths["bin_dir"]):
+            lines.append("  " + _L("提示：%s 不在 PATH 中，安装后需按提示配置 PATH。"
+                                   % paths["bin_dir"],
+                                   "Note: %s is not in PATH; configure PATH "
+                                   "after installing." % paths["bin_dir"],
+                                   "注意：%s は PATH にありません。インストール"
+                                   "後に PATH を設定してください。"
+                                   % paths["bin_dir"],
+                                   "Примечание: %s нет в PATH; настройте PATH "
+                                   "после установки." % paths["bin_dir"],
+                                   "توجه: %s در PATH نیست؛ پس از نصب PATH را "
+                                   "تنظیم کنید。" % paths["bin_dir"],
+                                   "提示：%s 不在 PATH 中，安裝後需按提示設定 PATH。"
+                                   % paths["bin_dir"]))
+        return "\n".join(lines) + "\n", 0
+    lines.append("  %s: %s" % (_L("已安装脚本版本", "Installed script version",
+                                 "インストール済みスクリプトの版",
+                                 "Версия установленного скрипта",
+                                 "نسخهٔ اسکریپت نصب‌شده", "已安裝指令碼版本"),
+                              state.get("installed_version", "?")))
+    lines.append("  %s: %s" % (_L("当前运行版本", "Running version",
+                                 "実行中の版", "Запущенная версия",
+                                 "نسخهٔ در حال اجرا", "目前執行版本"), VERSION))
+    if state.get("installed_version") != VERSION:
+        lines.append("  " + _L("提示：已安装副本与当前运行版本不同，下载新版后"
+                               "请重跑安装更新副本（入口名保留）。",
+                               "Note: the installed copy differs from the "
+                               "running version; re-run install after "
+                               "downloading a new version to update the copy "
+                               "(entry names are kept).",
+                               "注意：インストール済みコピーと実行中の版が異なり"
+                               "ます。新版を入手したら再インストールしてコピー"
+                               "を更新してください（入口名は維持されます）。",
+                               "Примечание: установленная копия отличается от "
+                               "запущенной версии; после загрузки новой версии "
+                               "повторите установку для обновления копии "
+                               "(имена сохранятся).",
+                               "توجه: نسخهٔ نصب‌شده با نسخهٔ در حال اجرا تفاوت "
+                               "دارد؛ پس از دریافت نسخهٔ جدید، نصب را دوباره "
+                               "اجرا کنید تا نسخه به‌روز شود (نام‌ها حفظ "
+                               "می‌شوند).",
+                               "提示：已安裝副本與目前執行版本不同，下載新版後"
+                               "請重跑安裝更新副本（入口名保留）。"))
+    if state.get("managed_script"):
+        ok_m = os.path.isfile(state["managed_script"])
+        if ok_m:
+            try:
+                ok_m = _shortcut_sha256_file(state["managed_script"]) == \
+                    state.get("managed_sha256")
+            except OSError:
+                ok_m = False
+        lines.append("  %s: %s (%s)" % (_L("受管理脚本", "Managed script",
+                                          "管理スクリプト", "Управляемый скрипт",
+                                          "اسکریپت مدیریت‌شده", "受管理指令碼"),
+                                       state["managed_script"],
+                                       "OK" if ok_m else "CHANGED"))
+    for nm, entry in sorted(state.get("entries", {}).items()):
+        p = entry.get("path", "")
+        intact = _shortcut_entry_intact(p, entry, state["instance_id"])
+        findings = shortcut_check_name(nm, paths["bin_dir"],
+                                       own_entry_paths=[p],
+                                       path_dirs=path_dirs,
+                                       system_dirs=system_dirs)
+        shadow = [f for f in findings
+                  if f["kind"] in ("path_hit", "system_hit")]
+        lines.append("  %s: %s (%s)" % (nm, p, "OK" if intact else "CHANGED"))
+        if shadow:
+            lines.append("    " + _L("警告：出现同名命令：%s，请用管理入口更换短名。"
+                                     % ", ".join(f["path"] for f in shadow),
+                                     "Warning: same-name command appeared: %s; "
+                                     "use the shortcut manager to rename it."
+                                     % ", ".join(f["path"] for f in shadow),
+                                     "警告：同名コマンドが現れました：%s。管理入口"
+                                     "で短名を変更してください。"
+                                     % ", ".join(f["path"] for f in shadow),
+                                     "Предупреждение: появилась одноимённая "
+                                     "команда: %s; переименуйте через "
+                                     "менеджер ярлыков."
+                                     % ", ".join(f["path"] for f in shadow),
+                                     "هشدار: فرمان هم‌نام ظاهر شد: %s؛ با "
+                                     "مدیریت میانبر نام کوتاه را عوض کنید。"
+                                     % ", ".join(f["path"] for f in shadow),
+                                     "警告：出現同名命令：%s，請用管理入口更換短名。"
+                                     % ", ".join(f["path"] for f in shadow)))
+    if not _shortcut_bin_in_path(paths["bin_dir"]):
+        lines.append("  " + _L("提示：%s 不在 PATH 中，入口当前无法直接调用；"
+                               "请把该目录加入 PATH (如在 ~/.bashrc 或 "
+                               "~/.zshrc 中加 export PATH=\"$HOME/.local/bin:"
+                               "$PATH\") 后重开 shell。"
+                               % paths["bin_dir"],
+                               "Note: %s is not in PATH, so the shortcuts "
+                               "cannot be invoked directly yet; add it to "
+                               "PATH (e.g. export PATH=\"$HOME/.local/bin:"
+                               "$PATH\" in ~/.bashrc or ~/.zshrc) and reopen "
+                               "the shell." % paths["bin_dir"],
+                               "注意：%s は PATH にありません。入口はまだ直接"
+                               "呼べません。PATH に追加してください（例："
+                               "~/.bashrc や ~/.zshrc に export PATH="
+                               "\"$HOME/.local/bin:$PATH\" を追加）。"
+                               % paths["bin_dir"],
+                               "Примечание: %s нет в PATH, ярлыки пока нельзя "
+                               "вызывать напрямую; добавьте каталог в PATH "
+                               "(например, export PATH=\"$HOME/.local/bin:"
+                               "$PATH\" в ~/.bashrc или ~/.zshrc) и "
+                               "переоткройте shell." % paths["bin_dir"],
+                               "توجه: %s در PATH نیست و میانبرها هنوز مستقیم "
+                               "قابل فراخوانی نیستند؛ آن را به PATH اضافه کنید "
+                               "(مثلاً export PATH=\"$HOME/.local/bin:$PATH\" "
+                               "در ~/.bashrc یا ~/.zshrc) و پوسته را دوباره "
+                               "باز کنید。" % paths["bin_dir"],
+                               "提示：%s 不在 PATH 中，入口目前無法直接呼叫；"
+                               "請把該目錄加入 PATH (如在 ~/.bashrc 或 "
+                               "~/.zshrc 中加 export PATH=\"$HOME/.local/bin:"
+                               "$PATH\") 後重開 shell。"
+                               % paths["bin_dir"]))
+    return "\n".join(lines) + "\n", 0
+
+
+def shortcut_change(old_name, new_name=None, scope="user",
+                    accept_ac_risk=False, interactive=False, input_fn=None,
+                    home=None, sysroot=None, path_dirs=None,
+                    system_dirs=None):
+    """改名: 新名完整检查 -> 建新入口并最小验证 -> 记录过渡状态 ->
+    删确认仍属自己的旧入口 -> 更新最终状态。默认删除旧入口。"""
+    result = {"ok": False, "rc": 2, "installed": [], "removed": [],
+              "errors": [], "scope": scope}
+    try:
+        paths = shortcut_paths(scope, home=home, sysroot=sysroot)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    state, corrupt = _shortcut_load_state(paths)
+    if corrupt:
+        result["errors"].append("state file is corrupt: %s"
+                                % paths["state_path"])
+        return result
+    if state is None:
+        result["errors"].append("no shortcuts installed (scope %s)" % scope)
+        return result
+    entries = dict(state.get("entries", {}))
+    if old_name not in entries:
+        result["errors"].append("no installed entry named %r" % old_name)
+        return result
+    inp = input_fn or input
+
+    def _ask(prompt):
+        try:
+            return inp(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+    if new_name is None:
+        if not interactive:
+            result["errors"].append("new name required (non-interactive)")
+            return result
+        new_name = _ask(_L("新名字 (空=取消): ", "New name (empty=cancel): ",
+                          "新しい名前 (空=キャンセル): ",
+                          "Новое имя (пусто=отмена): ",
+                          "نام جدید (خالی=لغو): ",
+                          "新名字 (空=取消): "))
+        if not new_name:
+            result["errors"].append("cancelled by user")
+            result["rc"] = 1
+            return result
+    if new_name == old_name:
+        result["errors"].append("new name equals old name")
+        return result
+    if new_name in entries:
+        result["errors"].append("name %r is already installed" % new_name)
+        return result
+    own_paths = [e.get("path", "") for e in entries.values()]
+    findings = shortcut_check_name(new_name, paths["bin_dir"],
+                                   own_entry_paths=own_paths,
+                                   path_dirs=path_dirs,
+                                   system_dirs=system_dirs)
+    if _shortcut_blocked(findings):
+        result["errors"].append("%s: %s"
+                                % (new_name,
+                                   _shortcut_fmt_findings(findings)))
+        return result
+    if any(f["kind"] == "ac_risk" for f in findings) \
+            and not accept_ac_risk:
+        if interactive:
+            print(_L("已知未来风险：%s\n是否明确接受并继续？ [y/N] "
+                     % SHORTCUT_AC_RISK,
+                     "Known future risk: %s\nAccept explicitly and continue? "
+                     "[y/N] " % SHORTCUT_AC_RISK,
+                     "既知の将来リスク：%s\n明確に受け入れて続行しますか？ [y/N] "
+                     % SHORTCUT_AC_RISK,
+                     "Известный будущий риск: %s\nПринять явно и продолжить? "
+                     "[y/N] " % SHORTCUT_AC_RISK,
+                     "ریسک آیندهٔ شناخته‌شده: %s\nبه‌صراحت می‌پذیرید و ادامه "
+                     "می‌دهید؟ [y/N] " % SHORTCUT_AC_RISK,
+                     "已知未來風險：%s\n是否明確接受並繼續？ [y/N] "
+                     % SHORTCUT_AC_RISK))
+            ans = _ask("")
+            if ans is None or ans.lower() not in ("y", "yes"):
+                result["errors"].append("cancelled by user")
+                result["rc"] = 1
+                return result
+        else:
+            result["errors"].append(
+                "new name 'ac' carries a known future risk; use "
+                "--accept-ac-risk to confirm explicitly")
+            return result
+    # 建新入口并最小验证
+    interp = state.get("interpreter", "")
+    if not interp:
+        try:
+            interp, _v = _shortcut_resolve_interpreter()
+        except ShortcutError as e:
+            result["errors"].append(str(e))
+            return result
+    content = shortcut_launcher_content(interp, state["managed_script"],
+                                        state["instance_id"])
+    new_path = os.path.join(paths["bin_dir"], new_name)
+    try:
+        _shortcut_publish_launcher(paths["bin_dir"], new_name,
+                                   content.encode("utf-8"))
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    if not _shortcut_verify_launcher(new_path):
+        try:
+            os.unlink(new_path)
+        except OSError:
+            pass
+        result["errors"].append(
+            "new launcher failed minimal startup check (--help)")
+        result["rc"] = 1
+        return result
+    entries[new_name] = {"path": new_path,
+                         "sha256": _shortcut_sha256_bytes(
+                             content.encode("utf-8")),
+                         "marker": state["instance_id"]}
+    # 记录过渡状态, 再删旧入口 (删前重核归属)
+    trans = dict(state)
+    trans["entries"] = entries
+    trans["pending_rename"] = {"from": old_name, "to": new_name}
+    trans["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        _shortcut_save_state(paths, trans)
+    except OSError as e:
+        result["errors"].append("cannot save transitional state: %s" % e)
+        result["rc"] = 1
+        return result
+    old_path = entries[old_name]["path"]
+    old_entry = entries[old_name]
+    if not _shortcut_entry_intact(old_path, old_entry,
+                                  state["instance_id"]):
+        result["errors"].append(
+            "old launcher %s was modified by someone else; keeping both "
+            "entries, handle the old one manually" % old_path)
+        result["installed"] = [new_name]
+        result["rc"] = 1
+        return result
+    try:
+        os.unlink(old_path)
+    except OSError as e:
+        result["errors"].append("cannot remove old launcher %s: %s"
+                                % (old_path, e))
+        result["installed"] = [new_name]
+        result["rc"] = 1
+        return result
+    del entries[old_name]
+    final = dict(state)
+    final["entries"] = entries
+    final.pop("pending_rename", None)
+    final["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        _shortcut_save_state(paths, final)
+    except OSError as e:
+        result["errors"].append("cannot save final state: %s" % e)
+        result["installed"] = [new_name]
+        result["removed"] = [old_name]
+        result["rc"] = 1
+        return result
+    result["ok"] = True
+    result["rc"] = 0
+    result["installed"] = [new_name]
+    result["removed"] = [old_name]
+    return result
+
+
+def shortcut_remove(scope="user", interactive=False, input_fn=None,
+                    home=None, sysroot=None):
+    """移除: 只删确认属于自己的入口, 不碰系统命令; 删后提示刷新缓存。"""
+    result = {"ok": False, "rc": 2, "removed": [], "kept": [],
+              "errors": [], "scope": scope}
+    try:
+        paths = shortcut_paths(scope, home=home, sysroot=sysroot)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    state, corrupt = _shortcut_load_state(paths)
+    if corrupt:
+        result["errors"].append("state file is corrupt: %s (refusing to "
+                                "delete anything)" % paths["state_path"])
+        return result
+    if state is None:
+        result["ok"] = True
+        result["rc"] = 0
+        result["errors"].append("no shortcuts installed (scope %s)" % scope)
+        return result
+    if interactive:
+        inp = input_fn or input
+        try:
+            ans = inp(_L("确认移除全部已安装入口 %s？ [y/N] "
+                         % sorted(state.get("entries", {})),
+                         "Remove all installed entries %s? [y/N] "
+                         % sorted(state.get("entries", {})),
+                         "インストール済み入口 %s をすべて削除しますか？ [y/N] "
+                         % sorted(state.get("entries", {})),
+                         "Удалить все установленные ярлыки %s? [y/N] "
+                         % sorted(state.get("entries", {})),
+                         "همهٔ ورودی‌های نصب‌شده %s حذف شوند؟ [y/N] "
+                         % sorted(state.get("entries", {})),
+                         "確認移除全部已安裝入口 %s？ [y/N] "
+                         % sorted(state.get("entries", {})))).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = ""
+        if ans not in ("y", "yes"):
+            result["errors"].append("cancelled by user")
+            result["rc"] = 1
+            return result
+    entries = dict(state.get("entries", {}))
+    for nm, entry in sorted(entries.items()):
+        p = entry.get("path", "")
+        if _shortcut_entry_intact(p, entry, state["instance_id"]):
+            try:
+                os.unlink(p)
+                result["removed"].append(nm)
+                del entries[nm]
+            except OSError as e:
+                result["kept"].append(nm)
+                result["errors"].append("cannot remove %s: %s" % (p, e))
+        else:
+            result["kept"].append(nm)
+            result["errors"].append(
+                "%s (%s) is not verifiably ours; kept, handle manually"
+                % (nm, p))
+    if not entries:
+        # 入口清零: 再删受管理副本 (须与状态记录的 sha 一致) 与状态文件
+        ms = state.get("managed_script", "")
+        if ms and os.path.isfile(ms):
+            try:
+                if _shortcut_sha256_file(ms) == \
+                        state.get("managed_sha256"):
+                    os.unlink(ms)
+            except OSError:
+                pass
+        try:
+            os.unlink(paths["state_path"])
+        except OSError:
+            pass
+    else:
+        new_state = dict(state)
+        new_state["entries"] = entries
+        new_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            _shortcut_save_state(paths, new_state)
+        except OSError as e:
+            result["errors"].append("cannot save state: %s" % e)
+            result["rc"] = 1
+            return result
+    result["ok"] = not result["kept"]
+    result["rc"] = 0 if result["ok"] else 1
+    return result
+
+
+def _shortcut_menu():
+    """交互菜单 13: 管理命令入口 (安装/状态/改名/移除, 与 CLI 共用后端)。"""
+    while True:
+        print()
+        print("  " + _c(C.cyan, _L("管理命令入口", "Manage command shortcuts",
+                                  "コマンド入口の管理",
+                                  "Управление ярлыками команд",
+                                  "مدیریت میانبرهای فرمان",
+                                  "管理命令入口")))
+        print("  [1] " + _L("安装 (默认同时装 acheck 与 ac)",
+                            "Install (acheck and ac by default)",
+                            "インストール (既定で acheck と ac)",
+                            "Установить (по умолчанию acheck и ac)",
+                            "نصب (پیش‌فرض acheck و ac)",
+                            "安裝 (預設同時裝 acheck 與 ac)"))
+        print("  [2] " + _L("查看状态", "Show status", "状態確認",
+                            "Показать состояние", "نمایش وضعیت", "查看狀態"))
+        print("  [3] " + _L("修改入口名", "Rename an entry",
+                            "入口名を変更", "Переименовать",
+                            "تغییر نام ورودی", "修改入口名"))
+        print("  [4] " + _L("移除入口", "Remove entries", "入口を削除",
+                            "Удалить", "حذف ورودی‌ها", "移除入口"))
+        print("  [0] " + T("back"))
+        try:
+            sel = input(_L("请选择 [0-4]: ", "Choose [0-4]: ",
+                           "選択してください [0-4]: ",
+                           "Выберите [0-4]: ",
+                           "انتخاب کنید [0-4]: ",
+                           "請選擇 [0-4]: ")).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if sel in ("0", "b", "q"):
+            return
+        if sel == "2":
+            text, _rc = shortcut_status()
+            print(text)
+            continue
+        if sel == "1":
+            print(_L("安装范围：[1] 用户级 (默认，~/.local)  [2] 系统级 "
+                     "(/usr/local，须有相应权限)",
+                     "Scope: [1] User-level (default, ~/.local)  "
+                     "[2] System-wide (/usr/local, needs privileges)",
+                     "範囲：[1] ユーザー単位 (既定、~/.local)  [2] システム全体 "
+                     "(/usr/local、権限が必要)",
+                     "Область: [1] Пользователь (по умолчанию, ~/.local)  "
+                     "[2] Системная (/usr/local, нужны права)",
+                     "محدوده: [1] سطح کاربر (پیش‌فرض، ~/.local)  "
+                     "[2] سیستمی (/usr/local، نیازمند دسترسی)",
+                     "安裝範圍：[1] 使用者級 (預設，~/.local)  [2] 系統級 "
+                     "(/usr/local，須有相應權限)"))
+            try:
+                sc = input(_L("请选择 [1/2] (默认 1): ",
+                              "Choose [1/2] (default 1): ",
+                              "選択してください [1/2] (既定 1): ",
+                              "Выберите [1/2] (по умолчанию 1): ",
+                              "انتخاب کنید [1/2] (پیش‌فرض 1): ",
+                              "請選擇 [1/2] (預設 1): ")).strip()
+            except (EOFError, KeyboardInterrupt):
+                continue
+            scope = "system" if sc == "2" else "user"
+            res = shortcut_install(scope=scope, interactive=True)
+            _shortcut_report_install(res)
+            continue
+        if sel == "3":
+            text, _rc = shortcut_status()
+            print(text)
+            try:
+                old = input(_L("要改哪一个入口 (输入名字，空=取消): ",
+                               "Which entry to rename (name, empty=cancel): ",
+                               "どの入口を変更しますか (名前、空=キャンセル): ",
+                               "Какой ярлык переименовать (имя, пусто=отмена): ",
+                               "کدام ورودی تغییر نام یابد (نام، خالی=لغو): ",
+                               "要改哪一個入口 (輸入名字，空=取消): ")).strip()
+            except (EOFError, KeyboardInterrupt):
+                continue
+            if not old:
+                continue
+            res = shortcut_change(old, None, interactive=True)
+            if res.get("ok"):
+                print(_L("已改名：%s -> %s，旧入口已删除。"
+                         % (old, res["installed"][0]),
+                         "Renamed: %s -> %s; old entry removed."
+                         % (old, res["installed"][0]),
+                         "改名しました：%s -> %s。旧入口は削除されました。"
+                         % (old, res["installed"][0]),
+                         "Переименовано: %s -> %s; старая запись удалена."
+                         % (old, res["installed"][0]),
+                         "تغییر نام داد: %s -> %s؛ ورودی قدیمی حذف شد."
+                         % (old, res["installed"][0]),
+                         "已改名：%s -> %s，舊入口已刪除。"
+                         % (old, res["installed"][0])))
+            else:
+                for e in res.get("errors", []):
+                    print("  " + e)
+            continue
+        if sel == "4":
+            res = shortcut_remove(interactive=True)
+            if res.get("ok"):
+                print(_L("已移除：%s。提示：执行 hash -r (或 rehash) 或重开 "
+                         "shell 以刷新命令缓存。"
+                         % ", ".join(res["removed"]),
+                         "Removed: %s. Tip: run hash -r (or rehash) or "
+                         "reopen the shell to refresh the command cache."
+                         % ", ".join(res["removed"]),
+                         "削除しました：%s。ヒント：hash -r（または rehash）を"
+                         "実行するか、シェルを開き直してコマンドキャッシュを"
+                         "更新してください。" % ", ".join(res["removed"]),
+                         "Удалено: %s. Подсказка: выполните hash -r (или "
+                         "rehash) или переоткройте shell, чтобы обновить "
+                         "кэш команд." % ", ".join(res["removed"]),
+                         "حذف شد: %s. نکته: hash -r (یا rehash) را اجرا کنید "
+                         "یا پوسته را دوباره باز کنید تا حافظهٔ فرمان "
+                         "به‌روز شود。" % ", ".join(res["removed"]),
+                         "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
+                         "shell 以刷新命令快取。" % ", ".join(res["removed"])))
+            else:
+                for e in res.get("errors", []):
+                    print("  " + e)
+            continue
+        print(T("invalid_input"))
+
+
+def _shortcut_report_install(res):
+    """安装结果汇报 (CLI 与菜单共用): 只报实际装好的, 部分成功不报全成功。"""
+    if res.get("installed"):
+        print(_L("已安装命令入口：%s"
+                 % ", ".join(res["installed"]),
+                 "Installed command shortcuts: %s"
+                 % ", ".join(res["installed"]),
+                 "インストール済みコマンド入口：%s"
+                 % ", ".join(res["installed"]),
+                 "Установлены ярлыки команд: %s"
+                 % ", ".join(res["installed"]),
+                 "میانبرهای فرمان نصب شد: %s"
+                 % ", ".join(res["installed"]),
+                 "已安裝命令入口：%s"
+                 % ", ".join(res["installed"])))
+        print(_L("入口运行的是已安装副本（%s），不是下载目录的文件；"
+                 "下载新版后请重跑安装更新副本（入口名保留），不要指望"
+                 "入口自动跟随下载文件更新。"
+                 % res.get("data_dir", ""),
+                 "Shortcuts run the installed copy (%s), not the file in "
+                 "the download directory; after downloading a new version, "
+                 "re-run install to update the copy (entry names are kept)."
+                 % res.get("data_dir", ""),
+                 "入口はダウンロード先のファイルではなく、インストール済み"
+                 "コピー（%s）を実行します。新版を入手したら再インストール"
+                 "してコピーを更新してください（入口名は維持されます）。"
+                 % res.get("data_dir", ""),
+                 "Ярлыки запускают установленную копию (%s), а не файл из "
+                 "каталога загрузки; после загрузки новой версии повторите "
+                 "установку для обновления копии (имена сохранятся)."
+                 % res.get("data_dir", ""),
+                 "میانبرها نسخهٔ نصب‌شده (%s) را اجرا می‌کنند، نه پروندهٔ "
+                 "پوشهٔ دانلود؛ پس از دریافت نسخهٔ جدید، نصب را دوباره "
+                 "اجرا کنید تا نسخه به‌روز شود (نام‌ها حفظ می‌شوند)."
+                 % res.get("data_dir", ""),
+                 "入口執行的是已安裝副本（%s），不是下載目錄的檔案；"
+                 "下載新版後請重跑安裝更新副本（入口名保留）。"
+                 % res.get("data_dir", "")))
+        if res.get("degraded"):
+            print(_L("注意：本次为降级安装（仅装了无冲突入口），不是已满足"
+                     "双入口；请用管理入口为冲突名字换名后补装。",
+                     "Note: this is a degraded install (only conflict-free "
+                     "entries were installed), not the full two-entry setup; "
+                     "rename the conflicting name and install again.",
+                     "注意：今回は縮小インストールです（競合のない入口のみ）。"
+                     "2入口が揃ったわけではありません。競合する名前を変更して"
+                     "から再インストールしてください。",
+                     "Примечание: это урезанная установка (установлены только "
+                     "неконфликтующие ярлыки), а не полный набор из двух; "
+                     "переименуйте конфликтующее имя и установите снова.",
+                     "توجه: این یک نصب تقلیل‌یافته است (فقط ورودی‌های بدون "
+                     "تداخل نصب شدند)، نه راه‌اندازی کامل دو ورودی؛ نام "
+                     "دارای تداخل را تغییر دهید و دوباره نصب کنید.",
+                     "注意：本次為降級安裝（僅裝了無衝突入口），不是已滿足"
+                     "雙入口；請用管理入口為衝突名字換名後補裝。"))
+        if not _shortcut_bin_in_path(res.get("bin_dir", "")):
+            print(_L("提示：%s 不在 PATH 中，入口现在还不能直接调用；"
+                     "请把该目录加入 PATH 后重开 shell（不要只看“安装完成”）。"
+                     % res.get("bin_dir", ""),
+                     "Note: %s is not in PATH, so the shortcuts cannot be "
+                     "invoked directly yet; add it to PATH and reopen the "
+                     "shell." % res.get("bin_dir", ""),
+                     "注意：%s は PATH にありません。入口はまだ直接呼べません。"
+                     "PATH に追加してシェルを開き直してください。"
+                     % res.get("bin_dir", ""),
+                     "Примечание: %s нет в PATH, ярлыки пока нельзя вызывать "
+                     "напрямую; добавьте каталог в PATH и переоткройте shell."
+                     % res.get("bin_dir", ""),
+                     "توجه: %s در PATH نیست و میانبرها هنوز مستقیم قابل "
+                     "فراخوانی نیستند؛ آن را به PATH اضافه کنید و پوسته را "
+                     "دوباره باز کنید。" % res.get("bin_dir", ""),
+                     "提示：%s 不在 PATH 中，入口現在還不能直接呼叫；"
+                     "請把該目錄加入 PATH 後重開 shell。"
+                     % res.get("bin_dir", "")))
+        else:
+            print(_L("提示：在实际 shell 里用 command -v 或 type -a 核验 "
+                     "入口指向的是本次安装（别名/函数/缓存程序发现不了）。"
+                     "装好之后如需改名或移除，用 acheck.py 的管理入口或 "
+                     "acheck/ac 命令操作。",
+                     "Tip: verify in your real shell with command -v or "
+                     "type -a that the entries point to this install "
+                     "(aliases/functions/cache cannot be detected here). "
+                     "To rename or remove later, use the manager in "
+                     "acheck.py.",
+                     "ヒント：実際のシェルで command -v や type -a を使って、"
+                     "入口が今回のインストールを指しているか確認してください"
+                     "（エイリアス・関数・キャッシュはここでは検出できません）。"
+                     "改名・削除は acheck.py の管理入口から行えます。",
+                     "Подсказка: проверьте в своём shell через command -v "
+                     "или type -a, что ярлыки указывают на эту установку "
+                     "(алиасы/функции/кэш здесь не видны). Для переименования "
+                     "или удаления используйте менеджер в acheck.py.",
+                     "نکته: در پوستهٔ واقعی خود با command -v یا type -a "
+                     "بررسی کنید که میانبرها به همین نصب اشاره می‌کنند "
+                     "(نام مستعار/تابع/حافظه در اینجا قابل شناسایی نیست). "
+                     "برای تغییر نام یا حذف بعدی، از مدیریت در acheck.py "
+                     "استفاده کنید.",
+                     "提示：在實際 shell 裡用 command -v 或 type -a 核驗 "
+                     "入口指向的是本次安裝（別名/函數/快取程式發現不了）。"
+                     "裝好之後如需改名或移除，用 acheck.py 的管理入口操作。"))
+    for e in res.get("errors", []):
+        print("  " + e)
+    if res.get("failed"):
+        print(_L("未安装：%s" % ", ".join(res["failed"]),
+                 "Not installed: %s" % ", ".join(res["failed"]),
+                 "未インストール：%s" % ", ".join(res["failed"]),
+                 "Не установлено: %s" % ", ".join(res["failed"]),
+                 "نصب نشد: %s" % ", ".join(res["failed"]),
+                 "未安裝：%s" % ", ".join(res["failed"])))
+
+
+def _cmd_shortcut(ns):
+    """CLI --shortcut 分发, 返回进程退出码。"""
+    scope = "system" if getattr(ns, "system", False) else "user"
+    interactive = sys.stdin.isatty()
+    action = ns.shortcut
+    if action == "status":
+        text, rc = shortcut_status(scope=scope)
+        print(text, end="")
+        return rc
+    if action == "install":
+        names = None
+        if getattr(ns, "names", None):
+            names = [n.strip() for n in ns.names.split(",") if n.strip()]
+        res = shortcut_install(names=names, scope=scope,
+                               accept_ac_risk=getattr(ns, "accept_ac_risk",
+                                                      False),
+                               interactive=interactive)
+        _shortcut_report_install(res)
+        return res.get("rc", 1)
+    if action == "change":
+        old = getattr(ns, "old_name", None)
+        new = getattr(ns, "new_name", None)
+        if old is None and interactive:
+            text, _rc = shortcut_status(scope=scope)
+            print(text, end="")
+            try:
+                old = input(_L("要改哪一个入口 (输入名字): ",
+                               "Which entry to rename (name): ",
+                               "どの入口を変更しますか (名前): ",
+                               "Какой ярлык переименовать (имя): ",
+                               "کدام ورودی تغییر نام یابد (نام): ",
+                               "要改哪一個入口 (輸入名字): ")).strip() or None
+                if old:
+                    new = input(_L("新名字: ", "New name: ",
+                                   "新しい名前: ", "Новое имя: ",
+                                   "نام جدید: ",
+                                   "新名字: ")).strip() or None
+            except (EOFError, KeyboardInterrupt):
+                return 1
+        if not old or not new:
+            print(_L("改名须同时给 --old-name 与 --new-name "
+                     "(交互运行时可直接输入)。",
+                     "Rename needs both --old-name and --new-name "
+                     "(or enter them interactively).",
+                     "改名には --old-name と --new-name の両方が必要です"
+                     "（対話実行時は直接入力できます）。",
+                     "Для переименования нужны --old-name и --new-name "
+                     "(или введите их интерактивно).",
+                     "تغییر نام به --old-name و --new-name هر دو نیاز دارد "
+                     "(یا به‌صورت تعاملی وارد کنید).",
+                     "改名須同時給 --old-name 與 --new-name "
+                     "(互動執行時可直接輸入)。"), file=sys.stderr)
+            return 2
+        res = shortcut_change(old, new, scope=scope,
+                              accept_ac_risk=getattr(ns, "accept_ac_risk",
+                                                     False),
+                              interactive=interactive)
+        if res.get("ok"):
+            print(_L("已改名：%s -> %s，旧入口已删除。"
+                     % (old, res["installed"][0]),
+                     "Renamed: %s -> %s; old entry removed."
+                     % (old, res["installed"][0]),
+                     "改名しました：%s -> %s。旧入口は削除されました。"
+                     % (old, res["installed"][0]),
+                     "Переименовано: %s -> %s; старая запись удалена."
+                     % (old, res["installed"][0]),
+                     "تغییر نام داد: %s -> %s؛ ورودی قدیمی حذف شد."
+                     % (old, res["installed"][0]),
+                     "已改名：%s -> %s，舊入口已刪除。"
+                     % (old, res["installed"][0])))
+        else:
+            for e in res.get("errors", []):
+                print("  " + e)
+        return res.get("rc", 1)
+    if action == "remove":
+        res = shortcut_remove(scope=scope, interactive=interactive)
+        if res.get("ok"):
+            print(_L("已移除：%s。提示：执行 hash -r (或 rehash) 或重开 "
+                     "shell 以刷新命令缓存。"
+                     % (", ".join(res["removed"]) if res["removed"]
+                        else _L("无", "none", "なし", "нет", "هیچ",
+                                "無")),
+                     "Removed: %s. Tip: run hash -r (or rehash) or reopen "
+                     "the shell to refresh the command cache."
+                     % (", ".join(res["removed"]) if res["removed"]
+                        else "none"),
+                     "削除しました：%s。ヒント：hash -r（または rehash）を"
+                     "実行するか、シェルを開き直してください。"
+                     % (", ".join(res["removed"]) if res["removed"]
+                        else "なし"),
+                     "Удалено: %s. Подсказка: выполните hash -r (или "
+                     "rehash) или переоткройте shell."
+                     % (", ".join(res["removed"]) if res["removed"]
+                        else "нет"),
+                     "حذف شد: %s. نکته: hash -r (یا rehash) را اجرا کنید یا "
+                     "پوسته را دوباره باز کنید。"
+                     % (", ".join(res["removed"]) if res["removed"]
+                        else "هیچ"),
+                     "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
+                     "shell 以刷新命令快取。"
+                     % (", ".join(res["removed"]) if res["removed"]
+                        else "無")))
+        else:
+            for e in res.get("errors", []):
+                print("  " + e)
+        return res.get("rc", 1)
+    return 2
+
+
 def _print_cli_help():
     help_zh = f"""用法: python3 acheck.py [选项] [IP 地址]
 
@@ -11092,6 +12522,10 @@ def _print_cli_help():
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
   --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
   --explain       输出评分维度与扣分规则说明
+  --shortcut install|status|change|remove
+                  管理命令入口：安装 / 查看状态 / 改名 / 移除
+  --system        配合 --shortcut 使用系统级位置 (默认用户级)
+  --accept-ac-risk 接受 ac 已知命名风险 (非交互安装 ac 时必填)
   --zh            使用简体中文输出 (默认)
   --zh-tw         使用繁體中文输出
   --en            Use English output
@@ -11122,8 +12556,7 @@ Options:
   --ipv4-only     With --active: IPv4 only (skip IPv6)
   --ipv6-only     With --active: IPv6 only
   --proxy HOST:PORT
-                  Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP
-                  reputation, DNS leak check, TCP latency)
+                  Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP reputation, DNS leak check, TCP latency)
   --proxy-user USER / --proxy-pass PASS
                   Proxy authentication (optional)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
@@ -11132,6 +12565,10 @@ Options:
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy)
   --explain       Show transparent scoring rules and weights
+  --shortcut install|status|change|remove
+                  Manage command shortcuts: install / status / change / remove
+  --system        With --shortcut: use system-wide locations (default is user-level)
+  --accept-ac-risk Accept the known naming risk of ac (required for non-interactive ac install)
   --zh            Use Simplified Chinese output (default)
   --zh-tw         Use Traditional Chinese output
   --en            Use English output
@@ -11147,6 +12584,7 @@ Examples:
   python3 acheck.py --active --json        # Active JSON output
   python3 acheck.py --proxy 127.0.0.1:1080              # Proxy diagnostics
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Proxy diagnostics JSON
+  python3 acheck.py --speed                             # Multi-region speed test
 """
 
     help_zhtw = f"""用法: python3 acheck.py [選項] [IP 位址]
@@ -11171,6 +12609,10 @@ Examples:
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
   --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
   --explain       輸出評分維度與扣分規則說明
+  --shortcut install|status|change|remove
+                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除
+  --system        配合 --shortcut 使用系統級位置 (預設使用者級)
+  --accept-ac-risk 接受 ac 已知命名風險 (非互動安裝 ac 時必填)
   --zh            使用簡體中文輸出 (預設)
   --zh-tw         使用繁體中文輸出
   --en            Use English output
@@ -11186,6 +12628,7 @@ Examples:
   python3 acheck.py --active --json        # 主動模式 JSON 輸出
   python3 acheck.py --proxy 127.0.0.1:1080              # 代理診斷
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理診斷 JSON 輸出
+  python3 acheck.py --speed                             # 多地區測速
 """
     help_ja = f"""使い方: python3 acheck.py [オプション] [IPアドレス]
 
@@ -11209,6 +12652,10 @@ Examples:
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
   --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
   --explain       スコアリングのルールと重みを表示
+  --shortcut install|status|change|remove
+                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
+  --system        --shortcut と併用：システム全体の場所を使用 (既定はユーザー単位)
+  --accept-ac-risk ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須)
   --zh            簡体字中国語で出力 (デフォルト)
   --zh-tw         繁体字中国語で出力
   --en            Use English output
@@ -11224,6 +12671,7 @@ Examples:
   python3 acheck.py --active --json        # アクティブ JSON 出力
   python3 acheck.py --proxy 127.0.0.1:1080              # プロキシ診断
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # プロキシ診断 JSON
+  python3 acheck.py --speed                             # 多地域スピードテスト
 """
     help_ru = f"""Использование: python3 acheck.py [ОПЦИИ] [IP_АДРЕС]
 
@@ -11247,6 +12695,10 @@ Examples:
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
   --json          Вывод в JSON (с IP, --active или --proxy)
   --explain       Правила и веса скоринга
+  --shortcut install|status|change|remove
+                  Управление ярлыками: установка / состояние / переименование / удаление
+  --system        С --shortcut: системные каталоги (по умолчанию — уровень пользователя)
+  --accept-ac-risk Принять известный риск имени ac (обязательно для неинтерактивной установки ac)
   --zh            Вывод на упрощённом китайском (по умолчанию)
   --zh-tw         Вывод на традиционном китайском
   --en            Use English output
@@ -11262,6 +12714,7 @@ Examples:
   python3 acheck.py --active --json        # Активный вывод JSON
   python3 acheck.py --proxy 127.0.0.1:1080              # Диагностика прокси
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Диагностика прокси JSON
+  python3 acheck.py --speed                             # Мультирегиональный тест скорости
 """
     help_fa = f"""کاربرد: python3 acheck.py [گزینه‌ها] [نشانی IP]
 
@@ -11286,6 +12739,10 @@ Examples:
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
   --json          خروجی JSON (با IP، --active یا --proxy)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
+  --shortcut install|status|change|remove
+                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
+  --system        همراه --shortcut: استفاده از مسیرهای سیستمی (پیش‌فرض سطح کاربر)
+  --accept-ac-risk پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است)
   --zh            خروجی به زبان چینی ساده (پیش‌فرض)
   --zh-tw         خروجی به زبان چینی سنتی
   --en            Use English output
@@ -11318,6 +12775,19 @@ def main():
     parser.add_argument("--ipv6-only", action="store_true", dest="ipv6_only")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--explain", action="store_true")
+    parser.add_argument("--shortcut", nargs="?", const="status",
+                        default=None,
+                        choices=["install", "status", "change", "remove"],
+                        help="manage command shortcuts")
+    parser.add_argument("--system", action="store_true",
+                        help="with --shortcut: system-wide locations")
+    parser.add_argument("--accept-ac-risk", action="store_true",
+                        dest="accept_ac_risk",
+                        help="accept the known naming risk of ac")
+    parser.add_argument("--names", default=None,
+                        help="comma-separated shortcut names for install")
+    parser.add_argument("--old-name", default=None, dest="old_name")
+    parser.add_argument("--new-name", default=None, dest="new_name")
     parser.add_argument("--proxy", metavar="HOST:PORT",
                         help="proxy diagnostics via SOCKS5 (e.g. --proxy 127.0.0.1:1080)")
     parser.add_argument("--proxy-user", default=None)
@@ -11385,6 +12855,12 @@ def main():
     if ns.explain:
         rule_txt = SCORING_RULES.get(LANG, SCORING_RULES["en"])
         print(rule_txt)
+        return
+
+    if ns.shortcut is not None:
+        _rc = _cmd_shortcut(ns)
+        if _rc:
+            sys.exit(_rc)
         return
 
     # 模式冲突告警：按既有优先级链（active > speed > proxy > batch），
@@ -11577,6 +13053,8 @@ def main():
             elif choice == "12":
                 print()
                 run_speed_only()
+            elif choice == "13":
+                _shortcut_menu()
             elif choice == "6":
                 print()
                 check_update()
