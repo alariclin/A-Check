@@ -3593,6 +3593,9 @@ class IPsum(Provider):
 
     def check(self, ip):
         def _parse(raw):
+            # F10: 第一列须为合法 IP (以规范化地址作键), 第二列须为
+            # 纯十进制非负计数 (名单格式约束); 任一不合规即跳过该行,
+            # 无有效记录返 None, 不以垃圾集冒充"未命中"。
             out = {}
             for line in raw.splitlines():
                 if not line or line.startswith("#"):
@@ -3600,9 +3603,12 @@ class IPsum(Provider):
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
-                        out[parts[0]] = int(parts[1])
+                        addr = ipaddress.ip_address(parts[0])
                     except ValueError:
-                        pass
+                        continue
+                    if not parts[1].isdigit():
+                        continue
+                    out[str(addr)] = int(parts[1])
             return out or None
 
         lst = _get_threat_list(
@@ -3611,7 +3617,11 @@ class IPsum(Provider):
             _parse)
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        level = lst.get(str(ip), 0)
+        try:
+            _addr = ipaddress.ip_address(str(ip))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        level = lst.get(str(_addr), 0)
         return {"ok": True, "listed": level > 0, "level": level, "ts": now_iso()}
 
 
