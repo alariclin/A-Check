@@ -2742,8 +2742,11 @@ class IPWhoIs(Provider):
             sec = d.get("security") if isinstance(d.get("security"), dict) else {}
 
             def _b(k):
+                # F08: 契约规定 JSON 布尔值, 严格校验类型; 字符串
+                # "false"/数字/null 等非布尔值返 None (未知), 不得
+                # 以 bool(v) 误判 ("false" 为真、0 为假皆错)。
                 v = sec.get(k) if k in sec else conn.get(k)
-                return None if v is None else bool(v)
+                return v if isinstance(v, bool) else None
 
             return {
                 "ok": True,
@@ -2848,10 +2851,14 @@ class GreyNoise(Provider):
             d = json.loads(raw)
             if not isinstance(d, dict) or "noise" not in d or "riot" not in d:
                 return {"ok": False, "err": "missing noise/riot field"}
+            # F08: 契约规定 JSON 布尔值; 必要字段类型无效 (如 null/
+            # 字符串 "false") 即返 ok=False, 未知不得当否定。
+            if not isinstance(d.get("noise"), bool) or not isinstance(d.get("riot"), bool):
+                return {"ok": False, "err": "invalid noise/riot type"}
             return {
                 "ok": True,
-                "noise": bool(d.get("noise")),
-                "riot": bool(d.get("riot")),
+                "noise": d.get("noise"),
+                "riot": d.get("riot"),
                 "classification": d.get("classification", ""),
                 "ts": now_iso(),
             }
@@ -2895,12 +2902,30 @@ class ProxyCheck(Provider):
                 # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
                 # 其余字段继续返回，不丢整源（F05）。
                 _risk = None
+
+            def _yn(v):
+                # F09 三态解析: "yes"->True、"no"->False, 缺失或
+                # 不合法值->None (未知/弃权), 不得默认 False (fail-open)。
+                if v == "yes":
+                    return True
+                if v == "no":
+                    return False
+                return None
+
+            _type = d.get("type", "")
+            _vpn = _yn(d.get("vpn"))
+            _tor = _yn(d.get("tor"))
+            # VPN/Tor 可继续接受明确的 type 正向证据 (与旧 OR 口径一致)。
+            if _type == "VPN":
+                _vpn = True
+            if str(d.get("type") or "").upper() == "TOR":
+                _tor = True
             return {
                 "ok": True,
-                "proxy": d.get("proxy", "") == "yes",
-                "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
-                "type": d.get("type", ""),
-                "tor": d.get("tor", "") == "yes" or str(d.get("type") or "").upper() == "TOR",
+                "proxy": _yn(d.get("proxy")),
+                "vpn": _vpn,
+                "type": _type,
+                "tor": _tor,
                 "risk": _risk,
                 "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
@@ -3568,6 +3593,9 @@ class IPsum(Provider):
 
     def check(self, ip):
         def _parse(raw):
+            # F10: 第一列须为合法 IP (以规范化地址作键), 第二列须为
+            # 纯十进制非负计数 (名单格式约束); 任一不合规即跳过该行,
+            # 无有效记录返 None, 不以垃圾集冒充"未命中"。
             out = {}
             for line in raw.splitlines():
                 if not line or line.startswith("#"):
@@ -3575,9 +3603,12 @@ class IPsum(Provider):
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
-                        out[parts[0]] = int(parts[1])
+                        addr = ipaddress.ip_address(parts[0])
                     except ValueError:
-                        pass
+                        continue
+                    if not parts[1].isdigit():
+                        continue
+                    out[str(addr)] = int(parts[1])
             return out or None
 
         lst = _get_threat_list(
@@ -3586,7 +3617,11 @@ class IPsum(Provider):
             _parse)
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        level = lst.get(str(ip), 0)
+        try:
+            _addr = ipaddress.ip_address(str(ip))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        level = lst.get(str(_addr), 0)
         return {"ok": True, "listed": level > 0, "level": level, "ts": now_iso()}
 
 
@@ -3596,6 +3631,14 @@ class X4BNetVPN(Provider):
     name = "X4BNet VPN Ranges"
 
     def check(self, ip):
+        # F11: 先定查询地址族, 解析期即只保留同族网络 (与同段
+        # SpamhausDROP 3271-3273 行先例一致); 错族名单零有效记录
+        # 即返 None, 不以"未命中"冒充可用名单。
+        try:
+            addr = ipaddress.ip_address(ip)
+        except Exception:
+            return {"ok": False, "err": "bad ip"}
+
         def _parse(raw):
             nets = []
             for line in raw.splitlines():
@@ -3603,15 +3646,14 @@ class X4BNetVPN(Provider):
                 if not line or line.startswith("#"):
                     continue
                 try:
-                    nets.append(ipaddress.ip_network(line, strict=False))
+                    net = ipaddress.ip_network(line, strict=False)
                 except ValueError:
                     pass
+                else:
+                    if net.version == addr.version:
+                        nets.append(net)
             return nets or None
 
-        try:
-            addr = ipaddress.ip_address(ip)
-        except Exception:
-            return {"ok": False, "err": "bad ip"}
         nets = _get_threat_list(
             f"x4bvpn{addr.version}",
             f"https://raw.githubusercontent.com/X4BNet/lists_vpn/main/output/vpn/ipv{addr.version}.txt",
@@ -8395,11 +8437,17 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
                 return lst, None
             if not ans:
                 return lst, False  # 空应答（NXDOMAIN/无记录）= 未列入
+            # F34: 先扫描完整应答, 再独立计算黑名单命中与 PBL 命中;
+            # A 记录顺序无优先级语义, 不得遇首个可识别记录即返。
+            is_bl = is_pbl = False
             for a_ip in ans:
-                if a_ip in ("127.0.0.10", "127.0.0.11"):
-                    return lst, "pbl"  # Spamhaus PBL: 策略名单, 非垃圾邮件证据
-                if re.match(r"^127\.0\.0\.\d+$", a_ip):
-                    return lst, True
+                # F33: .10/.11 仅在 zen.spamhaus.org 上为 PBL。
+                if lst == "zen.spamhaus.org" and a_ip in ("127.0.0.10", "127.0.0.11"):
+                    is_pbl = True
+                elif re.match(r"^127\.0\.0\.\d+$", a_ip):
+                    is_bl = True
+            if is_bl or is_pbl:
+                return lst, (is_bl, is_pbl)
             if any(a_ip.startswith("127.255.") for a_ip in ans):
                 return lst, None
             return lst, None  # 非空但无可识别码（劫持/拦截/误配）= 未知，不计 clean
@@ -8416,13 +8464,20 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
         futs = [ex.submit(_check, lst) for lst in lists]
         for fut in as_completed(futs):
             lst, r = fut.result()
-            if r is True:
-                marked += 1
-                bl.append(lst)
-            elif r == "pbl":
-                pbl.append(lst)
-            elif r is None:
+            if r is None:
                 total -= 1
+            elif r is False:
+                pass  # 空应答 = 未列入, total 不变
+            else:
+                # F34: (is_bl, is_pbl) 两个独立标志, 分别入 bl/pbl;
+                # 同一列表 marked 只计一次 (PBL-only 不计 marked,
+                # 与旧口径一致: PBL 是策略名单, 非恶意证据)。
+                is_bl, is_pbl = r
+                if is_bl:
+                    marked += 1
+                    bl.append(lst)
+                if is_pbl:
+                    pbl.append(lst)
 
     if not is_json:
         print(" " * 40, end="\r", flush=True)
