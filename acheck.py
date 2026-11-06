@@ -8987,10 +8987,23 @@ _SOCKS5_ERRORS = {
 }
 
 
-def _sock_readn(s, n):
-    """精确读 n 字节: recv() 可能短读, 必须循环"""
+class _SocksRetryable(OSError):
+    """F38：CONNECT 应答表明该目标地址不可达，可换下一地址重试。
+    仅地址相关 rep（0x01/0x03/0x04/0x05）用此类；0x02/0x07/0x08 等
+    非地址错误仍走普通 OSError，立即停止。"""
+
+
+def _sock_readn(s, n, deadline=None):
+    """精确读 n 字节: recv() 可能短读, 必须循环。
+    deadline 给定时为单调时钟总截止（F37）：每次 recv 前按剩余重设
+    超时，耗尽即抛 socket.timeout；缺省时沿旧语义（不动 socket 超时）。"""
     d = b""
     while len(d) < n:
+        if deadline is not None:
+            remain = deadline - time.monotonic()
+            if remain <= 0:
+                raise socket.timeout("read deadline exceeded")
+            s.settimeout(remain)
         c = s.recv(n - len(d))
         if not c:
             raise OSError("connection closed by peer")
@@ -9054,20 +9067,58 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
                    timeout=8, rdns=True, sock_box=None):
     """SOCKS5 CONNECT (RFC 1928/1929)。返回 (socket, 握手延迟 ms)。
     rdns=True 即 socks5h: 域名发给代理端解析, 本地不做 DNS。
-    sock_box 非空时建连成功即登记 socket，供窗口清理关断握手中的连接。"""
+    sock_box 非空时建连成功即登记 socket，供窗口清理关断握手中的连接。
+    F36：代理主机亦经 _getaddrinfo_timed 限时解析、逐地址连接，不再以
+    域名调 create_connection。F37：建连+握手共享单调时钟截止 _dl，
+    _sock_readn 每次读前按剩余重设超时。F38：rdns=False 时对解析结果
+    逐个尝试，可重试的 CONNECT 错误关闭当前会话、重建会话再试下一
+    地址；认证失败等非地址错误立即停。"""
     t0 = time.perf_counter()
-    s = socket.create_connection((ph, pp), timeout=timeout)
-    if sock_box is not None:
-        sock_box.append(s)
-    try:
-        s.settimeout(timeout)
+    _dl = time.monotonic() + timeout
+    _has_auth = bool(username) and bool(password)
+
+    def _open_proxy():
+        """F36：限时解析代理主机，逐地址建 socket、剩余时间连接。"""
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            raise OSError("proxy connect deadline exceeded: %s" % ph)
+        _infos = _getaddrinfo_timed(ph, pp, timeout=_rem)
+        if not _infos:
+            raise OSError("DNS resolution failed: %s" % ph)
+        _last = None
+        for _fam, _typ, _proto, _canon, _sa in _infos:
+            _rem = _dl - time.monotonic()
+            if _rem <= 0:
+                break
+            _s = None
+            try:
+                _s = socket.socket(_fam, _typ, _proto)
+                _s.settimeout(_rem)
+                _s.connect(_sa)
+                if sock_box is not None:
+                    sock_box.append(_s)
+                return _s
+            except Exception as _e:
+                _last = _e
+                if _s is not None:
+                    try:
+                        _s.close()
+                    except Exception:
+                        pass
+        raise OSError("proxy connect failed: %s" % ph) from _last
+
+    def _handshake(s, req):
+        """单次会话握手：问候/认证/CONNECT/应答/BND.ADDR 排空。
+        失败时由调用方关闭 s；可重试的 CONNECT 错误抛 _SocksRetryable。"""
+        if time.monotonic() >= _dl:
+            raise socket.timeout("SOCKS5 handshake deadline exceeded")
+        s.settimeout(max(0.001, _dl - time.monotonic()))
         # 1. 问候（RFC 1929 字段长 1..255：任一为空即无有效账密，只提供 0x00；
         # 旧版仅 username 非 None 即协商 0x02，password=None 时 PLEN=0、
         # username="" 时 ULEN=0，严格服务端拒认，旧版仅 0x00 时反可成功，属回归）
-        _has_auth = bool(username) and bool(password)
         s.sendall(b"\x05\x02\x00\x02" if _has_auth
                   else b"\x05\x01\x00")
-        ver, method = _sock_readn(s, 2)
+        ver, method = _sock_readn(s, 2, deadline=_dl)
         if ver != 0x05:
             raise OSError("invalid SOCKS version")
         offered = (0x00, 0x02) if _has_auth else (0x00,)
@@ -9083,56 +9134,96 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
             if len(u) < 1 or len(p) < 1:
                 raise OSError("username/password empty for SOCKS5")
             s.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(p)]) + p)
-            if _sock_readn(s, 2) != b"\x01\x00":
+            if _sock_readn(s, 2, deadline=_dl) != b"\x01\x00":
                 raise OSError("authentication failed")
         # 3. CONNECT 请求
-        req = b"\x05\x01\x00"
-        try:
-            req += b"\x01" + socket.inet_pton(socket.AF_INET, dh)
-        except OSError:
-            try:
-                req += b"\x04" + socket.inet_pton(socket.AF_INET6, dh)
-            except OSError:
-                if rdns:
-                    try:
-                        h = dh.encode("idna")
-                    except Exception as e:
-                        raise OSError("hostname idna encoding failed: %s" % e)
-                    if len(h) > 255:
-                        raise OSError("hostname too long for SOCKS5")
-                    req += b"\x03" + bytes([len(h)]) + h
-                else:
-                    # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
-                    # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP（单地址尝试，
-                    # 多地址重试须重建 SOCKS 会话，不在此展开）。
-                    _infos = _getaddrinfo_timed(dh, dp, timeout=timeout)
-                    if not _infos:
-                        raise OSError("DNS resolution failed: %s" % dh)
-                    _fam0, _, _, _, _sa0 = _infos[0]
-                    if _fam0 == socket.AF_INET6:
-                        req += b"\x04" + socket.inet_pton(socket.AF_INET6, _sa0[0])
-                    else:
-                        req += b"\x01" + socket.inet_pton(socket.AF_INET, _sa0[0])
+        if time.monotonic() >= _dl:
+            raise socket.timeout("SOCKS5 handshake deadline exceeded")
+        s.settimeout(max(0.001, _dl - time.monotonic()))
         s.sendall(req + struct.pack(">H", dp))
         # 4. 解析响应
-        ver, rep, _ = _sock_readn(s, 3)
+        ver, rep, _ = _sock_readn(s, 3, deadline=_dl)
         if ver != 0x05 or rep != 0x00:
-            raise OSError("CONNECT failed: %s (%#04x)"
-                          % (_SOCKS5_ERRORS.get(rep, "unknown"), rep))
+            _msg = ("CONNECT failed: %s (%#04x)"
+                    % (_SOCKS5_ERRORS.get(rep, "unknown"), rep))
+            if rep in (0x01, 0x03, 0x04, 0x05):
+                raise _SocksRetryable(_msg)
+            raise OSError(_msg)
         # 5. 排空 BND.ADDR (长度随 ATYP 变化, 不读掉会污染后续数据流)
-        atyp = _sock_readn(s, 1)[0]
+        atyp = _sock_readn(s, 1, deadline=_dl)[0]
         if atyp == 0x01:
-            _sock_readn(s, 6)
+            _sock_readn(s, 6, deadline=_dl)
         elif atyp == 0x04:
-            _sock_readn(s, 18)
+            _sock_readn(s, 18, deadline=_dl)
         elif atyp == 0x03:
-            _sock_readn(s, _sock_readn(s, 1)[0] + 2)
+            _sock_readn(s, _sock_readn(s, 1, deadline=_dl)[0] + 2,
+                        deadline=_dl)
         else:
             raise OSError("invalid ATYP %#04x" % atyp)
+
+    def _attempt(req):
+        """建一次代理会话并握手；成功返 socket，失败关闭会话后抛错。"""
+        s = _open_proxy()
+        try:
+            _handshake(s, req)
+            return s
+        except Exception:
+            try:
+                s.close()
+            except Exception:
+                pass
+            raise
+
+    # CONNECT 请求构造（与旧版同语义；IP 字面量单次尝试，域名按 rdns 分流）。
+    _is_ip = False
+    try:
+        _req = b"\x05\x01\x00\x01" + socket.inet_pton(socket.AF_INET, dh)
+        _is_ip = True
+    except OSError:
+        try:
+            _req = b"\x05\x01\x00\x04" + socket.inet_pton(socket.AF_INET6, dh)
+            _is_ip = True
+        except OSError:
+            _is_ip = False
+    if _is_ip:
+        s = _attempt(_req)
         return s, (time.perf_counter() - t0) * 1000
-    except Exception:
-        s.close()
-        raise
+    if rdns:
+        try:
+            h = dh.encode("idna")
+        except Exception as e:
+            raise OSError("hostname idna encoding failed: %s" % e)
+        if len(h) > 255:
+            raise OSError("hostname too long for SOCKS5")
+        s = _attempt(b"\x05\x01\x00\x03" + bytes([len(h)]) + h)
+        return s, (time.perf_counter() - t0) * 1000
+    # 本地解析：gethostbyname 只回 IPv4，v6-only 域名恒败；
+    # 改 AF_UNSPEC 取全部地址族，按结果构造 ATYP，逐个尝试（F38）。
+    _rem = _dl - time.monotonic()
+    if _rem <= 0:
+        raise OSError("DNS resolution deadline exceeded: %s" % dh)
+    _infos = _getaddrinfo_timed(dh, dp, timeout=_rem)
+    if not _infos:
+        raise OSError("DNS resolution failed: %s" % dh)
+    _last = None
+    for _fam, _typ, _proto, _canon, _sa in _infos:
+        if time.monotonic() >= _dl:
+            break
+        if _fam == socket.AF_INET6:
+            _req = (b"\x05\x01\x00\x04"
+                    + socket.inet_pton(socket.AF_INET6, _sa[0]))
+        else:
+            _req = (b"\x05\x01\x00\x01"
+                    + socket.inet_pton(socket.AF_INET, _sa[0]))
+        try:
+            s = _attempt(_req)
+            return s, (time.perf_counter() - t0) * 1000
+        except _SocksRetryable as _e:
+            _last = _e
+            continue
+    raise OSError("CONNECT failed for all addresses: %s" % dh) from _last
+
+
 
 
 def socks5_probe(ph, pp, username=None, password=None, timeout=8):
