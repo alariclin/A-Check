@@ -6289,9 +6289,9 @@ def get_unlock_type(domain, local_ip=None):
 
     if not sys_ips or not pub_ips:
         res = None
-    elif sys_ns in ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "223.5.5.5", "119.29.29.29"):
-        res = True
     else:
+        # F22：去掉白名单无条件返 True 的分支——解析器地址不能证明查询
+        # 未被透明转发或改写；对所有解析器执行统一的结果比较。
         # 前缀一律经 ipaddress 归一化：v4 /24、v6 /64（禁用字符串 split 切前缀；
         # 压缩格式 IPv6 直接切会把空串当段）。v4 由现行 /16 收紧至 /24。
         def _pfx(_ip):
