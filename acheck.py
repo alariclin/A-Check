@@ -1794,12 +1794,18 @@ def _encode_dns_name(domain):
     调用方只传 IDNA/纯 ASCII（1819 处已 IDNA 编码，余者皆字面 ASCII），
     故此处非 ASCII 不再静默丢弃，改为严格抛错、由调用方 try 接 None。
     """
-    parts = domain.strip(".").split(".")
+    if domain == ".":
+        return b"\x00"  # 根名称单独处理
+    if domain.endswith("."):
+        domain = domain[:-1]  # 仅移除一个合法的末尾根点
+    parts = domain.split(".")
     out = []
     total = 1  # 结尾零字节
     for p in parts:
         if not p:
-            continue
+            # 前导点、连续点、重复末尾点均为非法空标签，不再静默跳过
+            # （否则 "a..example" 会被改写成 "a.example"）。
+            raise ValueError("DNS empty label")
         enc = p.encode("ascii")  # 非 ASCII 抛 UnicodeEncodeError（ValueError 子类）
         if not 1 <= len(enc) <= 63:
             raise ValueError("DNS label length out of range")
