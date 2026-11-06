@@ -3786,12 +3786,10 @@ def _build_unified_profile(s):
     country = ""
     for _src in (wi, db, fp, ii, pc, wa, ai, gu, gj, il, iq, co, ti, ht, ox):
         _c = _src.get("country")
+        # 非字符串来源 (如数字) 在此被过滤: country 恒为字符串, 无须事后兜底。
         if isinstance(_c, str) and _c.strip():
             country, _country_src = _c, _src
             break
-    if not isinstance(country, str):
-        # 异常源返回非字符串国家名（如数字）：视为无国家名，不让后续 .strip() 崩溃。
-        country = ""
     _cc_raw = (_country_src.get("country_code") or "") if _country_src is not None else ""
     # 空白码与非字符串码均归一为空：空白不阻断后续回填，非字符串不崩溃。
     country_code = _cc_raw.strip() if isinstance(_cc_raw, str) else ""
