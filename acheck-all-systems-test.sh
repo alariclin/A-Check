@@ -11,8 +11,12 @@
 # 覆盖外: 被动/主动网络检测 (由 P1 真机 + 宿主夹具覆盖; 容器内外部 API 波动会让门 flaky,
 #   故不进本 harness)、容器无 systemd 的真实部署层。
 # python3 缺失时尝试按发行版包管理器安装; 装不上则 SKIP (非 FAIL), 如实上报。
+# 本地/容器内层均用 mktemp -d 独占临时目录放副本与缓存, 退出清理; 复制失败为 FAIL, 不记 SKIP。
 # 退出码: FAIL==0 时为 0 (SKIP 不拦门, 但须在回报中说明); 否则为 1。
 # 旧 Debian (buster/bullseye) 的 apt 源已迁 archive.debian.org, 自动改源 + 忽略过期校验。
+# Python 3.8+ 前置条件 (F55): 内层先验版本门, 低于 3.8 记 SKIP (Python 版本低于支持下限);
+# Rocky/Alma 8 改装 AppStream 的 python3.11 跑门禁; Debian 10 无官方 3.8+ 包, 记 SKIP。
+# 接受门禁口径: 13 PASS + 1 SKIP (Debian 10), 不为凑 14/14 伪造结果。
 
 set -u
 ACHEK="${1:-./acheck.py}"
@@ -48,8 +52,21 @@ RESULTS=""
 run_inner() {
     if [ "${ACHECK_LOCAL_ONLY:-0}" = "1" ]; then
         ACHECK_SRC="$ACHEK_ABS" timeout 420 sh -s "$1" "$2" <<'INNER'
-cp "${ACHECK_SRC:-/acheck.py}" /tmp/acheck.py 2>/dev/null || { echo "SKIP: cannot copy acheck.py"; exit 3; }
-if ! command -v python3 >/dev/null 2>&1; then
+WORKDIR="$(mktemp -d)" || { echo "FAIL: cannot create temp dir"; exit 1; }
+trap 'rm -rf "$WORKDIR"' EXIT
+cp "${ACHECK_SRC:-/acheck.py}" "$WORKDIR/acheck.py" || { echo "FAIL: cannot copy acheck.py"; exit 1; }
+# 解释器选择: 落实 Python 3.8+ 前置条件 (F55)。assert 在 PYTHONOPTIMIZE 下会被剥离,
+# 故用不受优化影响的 sys.exit 门判断版本; 只打印 --version 不判版本是不够的。
+_py_ok() {  # $1=命令名: 存在且 >= 3.8 即真
+    command -v "$1" >/dev/null 2>&1 || return 1
+    "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+}
+PYBIN=""
+if _py_ok python3; then
+    PYBIN=python3
+elif _py_ok python3.11; then
+    PYBIN=python3.11
+else
     case "$1" in
         apt)
             if [ "$2" = "1" ]; then
@@ -57,22 +74,55 @@ if ! command -v python3 >/dev/null 2>&1; then
             fi
             apt-get update -o Acquire::Check-Valid-Until=false >/dev/null 2>&1 </dev/null
             apt-get install -y python3 >/dev/null 2>&1 </dev/null
+            if _py_ok python3; then PYBIN=python3; fi
             ;;
-        dnf) dnf install -y python3 >/dev/null 2>&1 </dev/null ;;
-        apk) apk add --no-cache python3 >/dev/null 2>&1 </dev/null ;;
+        dnf)
+            # Rocky/Alma 8 默认 python3 为 3.6: 优先装 AppStream 提供的 python3.11 跑门禁
+            dnf install -y python3.11 >/dev/null 2>&1 </dev/null || dnf install -y python3 >/dev/null 2>&1 </dev/null
+            if _py_ok python3.11; then
+                PYBIN=python3.11
+            elif _py_ok python3; then
+                PYBIN=python3
+            fi
+            ;;
+        apk)
+            apk add --no-cache python3 >/dev/null 2>&1 </dev/null
+            if _py_ok python3; then PYBIN=python3; fi
+            ;;
+        none) : ;;  # 本地模式: 不安装, 只验宿主解释器
     esac
 fi
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 3; }
-python3 --version
-python3 -m py_compile /tmp/acheck.py || { echo "FAIL: py_compile"; exit 1; }
-python3 /tmp/acheck.py --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
-python3 /tmp/acheck.py --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
+if [ -z "$PYBIN" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        echo "SKIP: Python 版本低于支持下限 ($(python3 --version 2>&1))"
+    else
+        echo "SKIP: python3 unavailable"
+    fi
+    exit 3
+fi
+"$PYBIN" --version
+"$PYBIN" -m py_compile "$WORKDIR/acheck.py" || { echo "FAIL: py_compile"; exit 1; }
+"$PYBIN" "$WORKDIR/acheck.py" --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
+"$PYBIN" "$WORKDIR/acheck.py" --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
 echo "PASS"
 INNER
     else
         timeout 420 docker run --rm -i -v "$ACHEK_ABS:/acheck.py:ro" "$3" sh -s "$1" "$2" <<'INNER'
-cp "${ACHECK_SRC:-/acheck.py}" /tmp/acheck.py 2>/dev/null || { echo "SKIP: cannot copy acheck.py"; exit 3; }
-if ! command -v python3 >/dev/null 2>&1; then
+WORKDIR="$(mktemp -d)" || { echo "FAIL: cannot create temp dir"; exit 1; }
+trap 'rm -rf "$WORKDIR"' EXIT
+cp "${ACHECK_SRC:-/acheck.py}" "$WORKDIR/acheck.py" || { echo "FAIL: cannot copy acheck.py"; exit 1; }
+# 解释器选择: 落实 Python 3.8+ 前置条件 (F55)。assert 在 PYTHONOPTIMIZE 下会被剥离,
+# 故用不受优化影响的 sys.exit 门判断版本; 只打印 --version 不判版本是不够的。
+_py_ok() {  # $1=命令名: 存在且 >= 3.8 即真
+    command -v "$1" >/dev/null 2>&1 || return 1
+    "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+}
+PYBIN=""
+if _py_ok python3; then
+    PYBIN=python3
+elif _py_ok python3.11; then
+    PYBIN=python3.11
+else
     case "$1" in
         apt)
             if [ "$2" = "1" ]; then
@@ -80,16 +130,36 @@ if ! command -v python3 >/dev/null 2>&1; then
             fi
             apt-get update -o Acquire::Check-Valid-Until=false >/dev/null 2>&1 </dev/null
             apt-get install -y python3 >/dev/null 2>&1 </dev/null
+            if _py_ok python3; then PYBIN=python3; fi
             ;;
-        dnf) dnf install -y python3 >/dev/null 2>&1 </dev/null ;;
-        apk) apk add --no-cache python3 >/dev/null 2>&1 </dev/null ;;
+        dnf)
+            # Rocky/Alma 8 默认 python3 为 3.6: 优先装 AppStream 提供的 python3.11 跑门禁
+            dnf install -y python3.11 >/dev/null 2>&1 </dev/null || dnf install -y python3 >/dev/null 2>&1 </dev/null
+            if _py_ok python3.11; then
+                PYBIN=python3.11
+            elif _py_ok python3; then
+                PYBIN=python3
+            fi
+            ;;
+        apk)
+            apk add --no-cache python3 >/dev/null 2>&1 </dev/null
+            if _py_ok python3; then PYBIN=python3; fi
+            ;;
+        none) : ;;  # 本地模式: 不安装, 只验宿主解释器
     esac
 fi
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 unavailable"; exit 3; }
-python3 --version
-python3 -m py_compile /tmp/acheck.py || { echo "FAIL: py_compile"; exit 1; }
-python3 /tmp/acheck.py --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
-python3 /tmp/acheck.py --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
+if [ -z "$PYBIN" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        echo "SKIP: Python 版本低于支持下限 ($(python3 --version 2>&1))"
+    else
+        echo "SKIP: python3 unavailable"
+    fi
+    exit 3
+fi
+"$PYBIN" --version
+"$PYBIN" -m py_compile "$WORKDIR/acheck.py" || { echo "FAIL: py_compile"; exit 1; }
+"$PYBIN" "$WORKDIR/acheck.py" --help >/dev/null </dev/null || { echo "FAIL: --help"; exit 1; }
+"$PYBIN" "$WORKDIR/acheck.py" --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
 echo "PASS"
 INNER
     fi

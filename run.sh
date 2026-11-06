@@ -5,7 +5,7 @@ set -e
 PY=""
 for cand in python3 python; do
     if command -v "$cand" >/dev/null 2>&1; then
-        if "$cand" -c "import sys; assert sys.version_info >= (3, 8)" >/dev/null 2>&1; then
+        if "$cand" -c "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)" >/dev/null 2>&1; then
             PY=$(command -v "$cand")
             break
         fi
