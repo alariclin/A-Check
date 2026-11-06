@@ -2902,12 +2902,30 @@ class ProxyCheck(Provider):
                 # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
                 # 其余字段继续返回，不丢整源（F05）。
                 _risk = None
+
+            def _yn(v):
+                # F09 三态解析: "yes"->True、"no"->False, 缺失或
+                # 不合法值->None (未知/弃权), 不得默认 False (fail-open)。
+                if v == "yes":
+                    return True
+                if v == "no":
+                    return False
+                return None
+
+            _type = d.get("type", "")
+            _vpn = _yn(d.get("vpn"))
+            _tor = _yn(d.get("tor"))
+            # VPN/Tor 可继续接受明确的 type 正向证据 (与旧 OR 口径一致)。
+            if _type == "VPN":
+                _vpn = True
+            if str(d.get("type") or "").upper() == "TOR":
+                _tor = True
             return {
                 "ok": True,
-                "proxy": d.get("proxy", "") == "yes",
-                "vpn": d.get("vpn", "") == "yes" or d.get("type", "") == "VPN",
-                "type": d.get("type", ""),
-                "tor": d.get("tor", "") == "yes" or str(d.get("type") or "").upper() == "TOR",
+                "proxy": _yn(d.get("proxy")),
+                "vpn": _vpn,
+                "type": _type,
+                "tor": _tor,
                 "risk": _risk,
                 "asn": _parse_asn(d.get("asn")),
                 "provider": d.get("provider", ""),
