@@ -56,8 +56,18 @@ jobs:
           if not m:
               sys.exit("ERROR: VERSION not found in acheck.py")
           ver = m.group(1)
-          major, minor, _ = ver.split(".")
-          pat = re.compile(r"v?%s\.%s\.\d+" % (re.escape(major), re.escape(minor)))
+          major, minor, patch = ver.split(".")
+          # A version token is a maximal dotted-numeric run (optional "v"
+          # prefix) delimited on both sides: it must not be part of a
+          # longer number, identifier, or dotted quad. Only runs with
+          # exactly three components and the same major as VERSION count
+          # as A-Check versions, so dotted quads (e.g. 192.4.14.29) and
+          # other tools' versions are ignored, while a stale same-major
+          # version (different minor or patch) is caught field by field
+          # instead of only matching the current minor.
+          # NOTE: do not write a stale same-major X.Y.Z literal in this
+          # file's comments -- the gate scans this workflow too.
+          pat = re.compile(r"(?<![0-9A-Za-z.])v?([0-9]+(?:\.[0-9]+)+)(?![0-9])")
           bad = []
           skip = {".git", "__pycache__", ".ruff_cache"}
           for p in pathlib.Path(".").rglob("*"):
@@ -70,7 +80,10 @@ jobs:
               except (UnicodeDecodeError, ValueError):
                   continue
               for hit in pat.finditer(text):
-                  if hit.group(0).lstrip("v") != ver:
+                  parts = hit.group(1).split(".")
+                  if len(parts) != 3 or parts[0] != major:
+                      continue
+                  if parts != [major, minor, patch]:
                       bad.append(f"{p}: {hit.group(0)}")
                       break
           if bad:
@@ -84,13 +97,34 @@ jobs:
         run: |
           python3 - <<'PY'
           data = open("run.bat", "rb").read()
-          lines = data.split(b"\n")
-          if lines and lines[-1] == b"":
-              lines = lines[:-1]
-          bad = [i + 1 for i, ln in enumerate(lines) if not ln.endswith(b"\r")]
-          if bad:
-              raise SystemExit(f"ERROR: run.bat lines not CRLF: {bad[:10]}")
-          print(f"OK: run.bat {len(lines)} lines, all CRLF")
+          # Every line must end with CRLF. Walk the bytes once: a CRLF
+          # pair ends a line, while any lone CR or lone LF is an error
+          # (the old split(b"\n") check hid a lone CR inside a line, so
+          # a file could pass while containing one), and a final line
+          # without a CRLF terminator is an error too.
+          bad = []
+          line_no = 1
+          i = 0
+          n = len(data)
+          while i < n:
+              if data.startswith(b"\r\n", i):
+                  i += 2
+                  line_no += 1
+              elif data[i:i + 1] in (b"\r", b"\n"):
+                  bad.append(line_no)
+                  i += 1
+                  line_no += 1
+              else:
+                  i += 1
+          unterminated = bool(data) and not data.endswith(b"\r\n")
+          if bad or unterminated:
+              msgs = []
+              if bad:
+                  msgs.append("bare CR/LF on lines: %s" % sorted(set(bad))[:10])
+              if unterminated:
+                  msgs.append("last line (line %d) not CRLF-terminated" % line_no)
+              raise SystemExit("ERROR: run.bat " + "; ".join(msgs))
+          print(f"OK: run.bat {data.count(b'\r\n')} lines, all CRLF")
           PY
       - name: Test scripts pass bash -n
         run: |
