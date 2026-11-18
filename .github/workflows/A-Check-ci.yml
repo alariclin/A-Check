@@ -9,6 +9,9 @@ name: A-Check CI
 # 不覆盖：170 份回归夹具（在 ~/workspace/.astra_review/fix-tools/，不在仓库内，
 # 故 CI 跑不到；如要进 CI，须先把夹具审过后提交进仓库，另立项决定）。
 # 也不覆盖：联网行为（被动/主动检测、流媒体探针），由悉尼实机腿覆盖。
+# 注意：harness 矩阵钉在 ubuntu-22.04——setup-python 在 ubuntu-24.04/26.04
+# 上没有 Python 3.8/3.9 的构建（2026-11-18 实测：ubuntu-latest 已是 26.04，
+# 3.8/3.9 报 "was not found for Ubuntu 26.04"），22.04 是仍提供二者的最新镜像。
 
 on:
   push:
@@ -21,7 +24,7 @@ permissions:
 
 jobs:
   harness:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
