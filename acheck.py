@@ -1976,8 +1976,24 @@ def _decode_dns_name(pkt, offset):
     return ".".join(labels), (orig_offset if jumped else offset)
 
 
+def _has_ipv4_egress():
+    """有无 IPv4 出口：UDP connect 只做本地路由查询，不发包；
+    无 IPv4 路由时抛 OSError（纯 IPv6 主机）。"""
+    try:
+        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            _s.connect(("1.1.1.1", 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
 def _get_system_nameservers():
-    """跨平台读取系统默认 IPv4 DNS 服务器列表 (支持 Linux / macOS / Windows)。"""
+    """跨平台读取系统默认 DNS 服务器列表（IPv4/IPv6，支持 Linux / macOS / Windows）。
+    H-07：IPv6 系统 DNS 亦返回；无系统 DNS 时，IPv6 模式或无 IPv4 出口
+    回退 IPv6 公共 DNS，否则回退 IPv4 公共 DNS。"""
     ns = []
     if sys.platform == "win32":
         try:
@@ -1986,16 +2002,19 @@ def _get_system_nameservers():
                 capture_output=True, text=True, timeout=4, errors="replace",
             ).stdout
             in_dns = False
+            _dns_indent = 0
             for line in out.splitlines():
                 if "DNS" in line:
                     in_dns = True
+                    _dns_indent = len(line) - len(line.lstrip())
                     parts = line.split(":", 1)
                     if len(parts) == 2:
-                        cand = parts[1].strip()
+                        # M-07(a)：先剥 %scope_id（Python 3.8 不接受带作用域
+                        # 的地址字面量，3.9+ 原生支持，剥离后两者皆可）。
+                        cand = parts[1].strip().split("%", 1)[0]
                         try:
                             ip = ipaddress.ip_address(cand)
-                            if isinstance(ip, ipaddress.IPv4Address):
-                                ns.append(str(ip))
+                            ns.append(str(ip))
                         except ValueError:
                             pass
                 elif in_dns:
@@ -2004,11 +2023,15 @@ def _get_system_nameservers():
                         in_dns = False
                         continue
                     try:
-                        ip = ipaddress.ip_address(cand.split()[0])
-                        if isinstance(ip, ipaddress.IPv4Address):
-                            ns.append(str(ip))
+                        ip = ipaddress.ip_address(
+                            cand.split()[0].split("%", 1)[0])
+                        ns.append(str(ip))
                     except ValueError:
-                        in_dns = False
+                        # M-07(a)：续行解析失败（如旧版 %scope）不结束 DNS 段；
+                        # 仅缩进回到标题级且含 ':' 的新字段标题行才结束。
+                        _indent = len(line) - len(line.lstrip())
+                        if ":" in line and _indent <= _dns_indent:
+                            in_dns = False
         except Exception:
             pass
     else:
@@ -2022,14 +2045,15 @@ def _get_system_nameservers():
                             if len(parts) >= 2:
                                 try:
                                     ip = ipaddress.ip_address(parts[1])
-                                    if isinstance(ip, ipaddress.IPv4Address):
-                                        ns.append(str(ip))
+                                    ns.append(str(ip))
                                 except ValueError:
                                     pass
             except Exception:
                 pass
-        # systemd-resolved 本地 stub (127.0.0.53) 时读取真实上游
-        if ns == ["127.0.0.53"] or (len(ns) == 1 and ns[0].startswith("127.")):
+        # systemd-resolved 本地 stub (127.0.0.53) 时读取真实上游；
+        # M-07(b)：仅恰为 ["127.0.0.53"] 才替换，用户自设的 127.0.0.1
+        # 本地 DNS（SmartDNS/dnsmasq/Clash/AdGuardHome）不得动。
+        if ns == ["127.0.0.53"]:
             for rp in ("/run/systemd/resolve/resolv.conf", "/run/systemd/resolve/stub-resolv.conf"):
                 try:
                     if os.path.exists(rp):
@@ -2041,7 +2065,7 @@ def _get_system_nameservers():
                                     if len(parts) >= 2:
                                         try:
                                             ip = ipaddress.ip_address(parts[1])
-                                            if isinstance(ip, ipaddress.IPv4Address) and not str(ip).startswith("127."):
+                                            if not str(ip).startswith("127.") and str(ip) != "::1":
                                                 ns.append(str(ip))
                                         except ValueError:
                                             pass
@@ -2059,11 +2083,18 @@ def _get_system_nameservers():
                     ["scutil", "--dns"],
                     capture_output=True, text=True, timeout=4, errors="replace",
                 ).stdout
-                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", out):
-                    ns.append(m.group(1))
+                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[0-9a-fA-F:]+)", out):
+                    try:
+                        ns.append(str(ipaddress.ip_address(m.group(1))))
+                    except ValueError:
+                        pass
             except Exception:
                 pass
-    return ns or ["1.1.1.1", "8.8.8.8"]
+    if not ns:
+        if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
+            return ["2606:4700:4700::1111", "2001:4860:4860::8888"]
+        return ["1.1.1.1", "8.8.8.8"]
+    return ns
 
 
 # Null MX 标记：域名明确声明不收邮件时置位（_dns_query_udp 的 MX 支），
@@ -2077,7 +2108,15 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
       qtype=1 (A), qtype=5 (CNAME), qtype=12 (PTR), qtype=15 (MX), qtype=28 (AAAA)
     校验：发送方地址与端口、QR 位、TC 截断、问题段回显（对所有 rcode 一律先验，
     NXDOMAIN 亦然）、答案 owner 与 CLASS、答案完整性、名称型 RDATA 落在 rdlength 内。
+    H-07：按服务器地址版本选 AF_INET6/AF_INET（纯 IPv6 主机上 IPv6 DNS 可用），
+    源校验亦按地址值比对（展开式与压缩式视为同一地址）。
     """
+    try:
+        _srv_ip = ipaddress.ip_address(server)
+        _srv_is6 = isinstance(_srv_ip, ipaddress.IPv6Address)
+    except ValueError:
+        _srv_ip = None
+        _srv_is6 = False
     sock = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
@@ -2087,7 +2126,9 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
         question = _encode_dns_name(domain_q) + struct.pack(">HH", qtype, 1)
         pkt = header + question
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = socket.socket(
+            socket.AF_INET6 if _srv_is6 else socket.AF_INET,
+            socket.SOCK_DGRAM)
         sock.settimeout(timeout)
         sock.sendto(pkt, (server, 53))
         data, addr = sock.recvfrom(2048)
@@ -2109,7 +2150,15 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     if flags & 0x0200:  # TC 截断：不可信，不当“成功无记录”
         return (None, []) if return_cnames else None
-    if addr[0] != server or addr[1] != 53:  # 发送方必须是被查询的服务器:53
+    if _srv_ip is not None:
+        try:
+            _src_ok = ipaddress.ip_address(addr[0]) == _srv_ip \
+                and addr[1] == 53
+        except ValueError:
+            _src_ok = False
+    else:
+        _src_ok = addr[0] == server and addr[1] == 53
+    if not _src_ok:  # 发送方必须是被查询的服务器:53
         return (None, []) if return_cnames else None
 
     # 问题段回显校验：qdcount 须为 1 且名/类型/类与请求一致（NXDOMAIN 亦先验）
@@ -6253,8 +6302,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener_follow = urllib.request.build_opener()
-_opener_noredir = urllib.request.build_opener(_NoRedirect)
+_opener_follow = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_opener_noredir = urllib.request.build_opener(
+    _NoRedirect, urllib.request.ProxyHandler({}))
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -6368,13 +6418,22 @@ def _pinned_connect(conn, family):
     _to = conn.timeout
     if _to is None or _to is getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None):
         _to = 5
-    infos = _getaddrinfo_timed(conn.host, conn.port, family, timeout=_to)
+    # M-04：F30 同款共享 deadline——解析、每次建连、TLS 握手共用同一预算，
+    # 每步只取剩余时间，不再每地址重获完整 _to。
+    _dl = time.monotonic() + _to
+    _rem = _dl - time.monotonic()
+    if _rem <= 0:
+        raise OSError("connect deadline exceeded: %s" % conn.host)
+    infos = _getaddrinfo_timed(conn.host, conn.port, family, timeout=_rem)
     last = None
     for af, _st, _proto, _nm, sa in infos:
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            break
         _s = None
         try:
             _s = socket.socket(af, socket.SOCK_STREAM)
-            _s.settimeout(_to)
+            _s.settimeout(_rem)
             _s.connect(sa)
             conn.sock = _s
             break
@@ -6388,6 +6447,12 @@ def _pinned_connect(conn, family):
                     pass
     if conn.sock is None:
         raise last if last is not None else OSError("no usable address")
+    # 剩余预算留给 TLS 握手/_tunnel：wrap_socket 沿用 socket 超时，
+    # 故此处把超时改设为剩余时间（_HSC.connect 与本函数共享同一 deadline）。
+    try:
+        conn.sock.settimeout(max(0.1, _dl - time.monotonic()))
+    except Exception:
+        pass
     if conn._tunnel_host:
         try:
             conn._tunnel()
@@ -6467,7 +6532,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     CL 在场时须 len==CL（CL>16384 恒不完整）；IncompleteRead 的 partial 计不完整。
     调用方以“限制串不存在”判解锁时，不完整且未见限制串须判 unknown，
     不得以截断后的前 16KiB 无限制串冒充解锁；恰 16384 字节的体仍判完整
-    （多读 1 字节探 EOF 区分，不以 len==16384 一律判截断）。"""
+    （多读 1 字节探 EOF 区分，不以 len==16384 一律判截断）。
+    M-04：打开与读取共享绝对截止（_open_bounded + _read_timed），慢速滴水
+    不得拖过 timeout；读完前调 _resp_shutdown 唤醒遗留读线程再关响应。"""
     h = {
         "User-Agent": UA_BROWSER,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -6483,34 +6550,57 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         opener = _pinned_opener(_FORCE_FAMILY, follow_redirects)
     else:
         opener = _opener_follow if follow_redirects else _opener_noredir
-    try:
-        req = urllib.request.Request(url, headers=h)
-        with opener.open(req, timeout=timeout) as r:
-            try:
-                raw = r.read(16385)  # 多读 1 字节探 EOF：恰 16384 字节的体仍判完整
-            except http.client.IncompleteRead as e:
-                raw = e.partial
-                return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), False, _lower_headers(getattr(r, "headers", None))
-            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), _resp_complete(raw, getattr(r, "headers", None)), _lower_headers(getattr(r, "headers", None))
-    except urllib.error.HTTPError as e:
+    req = urllib.request.Request(url, headers=h)
+    _dl = time.monotonic() + timeout
+
+    def _do_open():
+        # HTTPError 本身即带正文的错误响应：若任其抛出，_open_bounded 的即时
+        # 失败路径会先 close 再抛，正文丢失、挑战页误判 blocked；故捕获后当
+        # 响应返回，由调用方限期读体后统一关闭。
         try:
-            try:
-                raw = e.read(16385)
-                body = raw[:16384].decode("utf-8", errors="replace")
-                complete = _resp_complete(raw, getattr(e, "headers", None))
-            except http.client.IncompleteRead as e2:
-                body, complete = e2.partial[:16384].decode("utf-8", errors="replace"), False
-            except Exception:
-                body, complete = "", False
-        finally:
-            try:
-                e.close()
-            except Exception:
-                pass
-        loc = e.headers.get("Location", "") if e.headers else ""
-        return e.code, body, loc, complete, _lower_headers(getattr(e, "headers", None))
+            return opener.open(req, timeout=max(0.1, _dl - time.monotonic()))
+        except urllib.error.HTTPError as e:
+            return e
+
+    try:
+        r = _open_bounded(_do_open, _dl)
     except Exception as e:
         return None, str(e)[:100], "", False, {}
+    if r is None:
+        return None, "open deadline exceeded", "", False, {}
+    _is_err = isinstance(r, urllib.error.HTTPError)
+    _status = getattr(r, "status", None)
+    if _status is None:
+        _status = getattr(r, "code", None)
+    if _is_err:
+        _loc = r.headers.get("Location", "") if getattr(r, "headers", None) else ""
+    else:
+        try:
+            _loc = r.geturl()
+        except Exception:
+            _loc = ""
+    _hdrs = _lower_headers(getattr(r, "headers", None))
+    try:
+        try:
+            raw = _read_timed(r, 16385, max(0.0, _dl - time.monotonic()))
+        except http.client.IncompleteRead as e:
+            raw = e.partial
+            return _status, raw[:16384].decode("utf-8", errors="replace"), _loc, False, _hdrs
+        except Exception as e:
+            if _is_err:
+                return _status, "", _loc, False, _hdrs
+            return None, str(e)[:100], "", False, {}
+        if raw is None:
+            if _is_err:
+                return _status, "", _loc, False, _hdrs
+            return None, "read deadline exceeded", "", False, {}
+        return _status, raw[:16384].decode("utf-8", errors="replace"), _loc, _resp_complete(raw, getattr(r, "headers", None)), _hdrs
+    finally:
+        _resp_shutdown(r)
+        try:
+            r.close()
+        except Exception:
+            pass
 
 
 _unlock_cache = {}
@@ -6532,8 +6622,26 @@ def get_unlock_type(domain, local_ip=None):
             return _unlock_cache[cache_key]
 
     sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=sys_ns, timeout=2.5, return_cnames=True)
-    pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
-    pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+    if not sys_ips:
+        # OPT-02 短路：sys 为空时下行 `if not sys_ips or not pub_ips` 必返
+        # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
+        return None
+    if sys_ns == "1.1.1.1":
+        # OPT-02 复用：sys 查询与 1.1.1.1 公共查询是同一服务器、同一域名、
+        # 同一 qtype，结果直接复用，不再重复查。
+        pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
+        pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+    elif sys_ns == "8.8.8.8":
+        pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
+        pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+    else:
+        # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
+        # socket），并行发，最坏 7.5 秒 -> 2.5 秒。
+        with ThreadPoolExecutor(max_workers=2) as _ex:
+            _f1 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+            _f2 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+            pub_ips_1, pub_cnames_1 = _f1.result()
+            pub_ips_2, pub_cnames_2 = _f2.result()
 
     pub_ips = (pub_ips_1 or []) + (pub_ips_2 or [])
     pub_cnames = set((pub_cnames_1 or []) + (pub_cnames_2 or []))
@@ -8933,6 +9041,9 @@ def _run_active6(json_mode, egress6):
         mx6_ok = sum(1 for r in mx6_results if r is True)
         if mx6_ok == len(mx_domains6):
             print(f"  {T('mx_port25')}: {_c(C.green, T('normal'))}")
+        elif all(r is None for r in mx6_results):
+            # H-07：三次 MX 查询全失败是“无法核实”，不是“异常”。
+            print(f"  {T('mx_port25')}: {_c(C.yellow, T('unverifiable'))}")
         elif mx6_ok == 0:
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
@@ -9060,7 +9171,7 @@ def run_active(json_mode=False, stack=None):
                      sysinfo=(si, io_res), tail_completeness=False)
         _section(T("sec_stream"))
 
-    streaming_json = _run_streaming_table(egress, json_mode=json_mode)
+    streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
     if not json_mode:
         dns_res = print_dns_test(None)
     else:
@@ -9075,7 +9186,7 @@ def run_active(json_mode=False, stack=None):
 
     total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
 
-    st_res = print_speed_section(json_mode=json_mode, gated=True)
+    st_res = print_speed_section(json_mode=json_mode, family=4, gated=True)
 
     if not json_mode:
         _section(T("sec_mail"))
@@ -9092,6 +9203,9 @@ def run_active(json_mode=False, stack=None):
         mx_total = len(mx_domains)
         if mx_ok == mx_total:
             print(f"  {T('mx_port25')}: {_c(C.green, T('normal'))}")
+        elif all(r is None for r in mx_results):
+            # H-07：三次 MX 查询全失败是“无法核实”，不是“异常”。
+            print(f"  {T('mx_port25')}: {_c(C.yellow, T('unverifiable'))}")
         elif mx_ok == 0:
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
@@ -10939,16 +11053,27 @@ def _parse_version(v):
 def check_update():
     """菜单 6: 对比 GitHub 最新 Release 与本地版本。"""
     cause = None
+    tag = ""
     try:
         req = urllib.request.Request(
             "https://api.github.com/repos/alariclin/A-Check/releases/latest",
             headers={"User-Agent": "acheck/%s" % VERSION})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            try:
-                tag = json.loads(_read_limited(r, timeout=8).decode(
-                    "utf-8")).get("tag_name", "")
-            finally:
-                _resp_shutdown(r)
+        # M-04：经 _urlopen_deadline 打开（建连+读头共享 8s 预算，DNS 解析
+        # 亦受截止约束）；错误对象不提前关闭，归调用方读体后再关。
+        r, _err, _timed_out = _urlopen_deadline(req, 8)
+        if _timed_out:
+            cause = "timeout"
+        elif _err is not None:
+            raise _err
+        elif r is None:
+            cause = "unknown"
+        else:
+            with r:
+                try:
+                    tag = json.loads(_read_limited(r, timeout=8).decode(
+                        "utf-8")).get("tag_name", "")
+                finally:
+                    _resp_shutdown(r)
     except (TimeoutError, socket.timeout):
         # F47: 3.8/3.9 下 socket.timeout 是独立的 OSError 子类 (3.10 起才
         # 是 TimeoutError 别名), 须与 TimeoutError 并列捕获, 否则误分类。
@@ -11004,7 +11129,9 @@ def check_update():
 
 def run_speed_only(json_mode=False):
     """菜单/CLI 入口: 多地区下载测速表。"""
-    rows = print_speed_section(json_mode=json_mode)
+    # H-05：独立入口亦遵循 _FORCE_STACK（4/6 钉死地址族，默认 0 不变）。
+    _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
+    rows = print_speed_section(json_mode=json_mode, family=_fam)
     if json_mode:
         print(json.dumps({"regions": rows}, indent=2, default=str,
                          ensure_ascii=False))
@@ -11022,7 +11149,9 @@ def run_streaming_only():
         return
     print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
     _section(T("sec_stream"))
-    _run_streaming_table(egress)
+    # H-05：独立入口亦遵循 _FORCE_STACK（4/6 钉死地址族，默认 0 不变）。
+    _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
+    _run_streaming_table(egress, family=_fam)
 
 
 def run_dnsleak_only():
