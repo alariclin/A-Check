@@ -12417,7 +12417,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
         return str(e), 2
     try:
         state, corrupt = _shortcut_load_state(paths)
-    except ShortcutError as e:
+    except ShortcutError:
         return (_L("无权限读取状态文件：%s\n请检查该文件权限，"
                    "不要直接删除或覆盖入口文件。"
                    % paths["state_path"],
@@ -13221,7 +13221,7 @@ def _shortcut_menu():
                              "No shortcuts installed.",
                              "入口はインストールされていません。",
                              "Ярлыки не установлены.",
-                             "هیچ میانبری نصب نشده است。",
+                             "هیچ میانبری نصب نشده است.",
                              "未安裝任何入口。"))
             else:
                 for e in res.get("errors", []):
@@ -14091,7 +14091,7 @@ def main():
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
-                    _u = input(T("prompt_proxy_user")).strip()
+                    _u = input(T("prompt_proxy_user"))
                     if _u:
                         puser = _u
                         import getpass
