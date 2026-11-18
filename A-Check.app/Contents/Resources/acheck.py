@@ -98,6 +98,8 @@ STR = {
         "invalid_input": "输入无效，请重新输入",
         "invalid_proxy_format": "代理格式无效，应为 HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only 与 --ipv6-only 不能同时使用",
+        "no_speed_with_speed_conflict": "--no-speed 与 --with-speed 不能同时使用",
+        "proxy_auth_one_sided": "代理认证须同时给出 --proxy-user 与 --proxy-pass",
         "no_tty": "无可用终端；交互式菜单需要 TTY。使用 --active 进行非交互式自检。",
         "no_valid_nodes": "无有效节点",
         "heuristic": "启发式",
@@ -308,6 +310,8 @@ STR = {
         "invalid_input": "Invalid input, try again",
         "invalid_proxy_format": "Invalid proxy format, want HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only and --ipv6-only cannot be used together",
+        "no_speed_with_speed_conflict": "--no-speed and --with-speed cannot be used together",
+        "proxy_auth_one_sided": "Proxy auth needs both --proxy-user and --proxy-pass",
         "no_tty": "No terminal available; interactive menu requires a TTY. Run with --active for a non-interactive self-check.",
         "no_valid_nodes": "No valid nodes",
         "heuristic": "Heuristic",
@@ -518,6 +522,8 @@ STR = {
         "invalid_input": "輸入無效，請重新輸入",
         "invalid_proxy_format": "代理格式無效，應為 HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only 與 --ipv6-only 不能同時使用",
+        "no_speed_with_speed_conflict": "--no-speed 與 --with-speed 不能同時使用",
+        "proxy_auth_one_sided": "代理驗證須同時給出 --proxy-user 與 --proxy-pass",
         "no_tty": "無可用終端；互動式選單需要 TTY。使用 --active 進行非互動式自檢。",
         "no_valid_nodes": "無有效節點",
         "heuristic": "啟發式",
@@ -728,6 +734,8 @@ STR = {
         "invalid_input": "入力が無効です、再入力してください",
         "invalid_proxy_format": "プロキシの形式が無効です、HOST:PORT で指定してください",
         "ipv4_ipv6_conflict": "--ipv4-only と --ipv6-only は併用できません",
+        "no_speed_with_speed_conflict": "--no-speed と --with-speed は併用できません",
+        "proxy_auth_one_sided": "プロキシ認証には --proxy-user と --proxy-pass の両方が必要です",
         "no_tty": "利用可能な端末がありません。対話メニューには TTY が必要です。非対話のセルフチェックには --active を使用してください。",
         "no_valid_nodes": "有効なノードがありません",
         "heuristic": "ヒューリスティック",
@@ -938,6 +946,8 @@ STR = {
         "invalid_input": "Неверный ввод, введите снова",
         "invalid_proxy_format": "Неверный формат прокси, ожидается HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only и --ipv6-only нельзя использовать вместе",
+        "no_speed_with_speed_conflict": "--no-speed и --with-speed нельзя использовать вместе",
+        "proxy_auth_one_sided": "Для аутентификации прокси нужны и --proxy-user, и --proxy-pass",
         "no_tty": "Терминал недоступен; интерактивное меню требует TTY. Для неинтерактивной самопроверки используйте --active.",
         "no_valid_nodes": "Нет допустимых узлов",
         "heuristic": "Эвристика",
@@ -1148,6 +1158,8 @@ STR = {
         "invalid_input": "ورودی نامعتبر است، دوباره وارد کنید",
         "invalid_proxy_format": "قالب پروکسی نامعتبر است، HOST:PORT مورد انتظار است",
         "ipv4_ipv6_conflict": "--ipv4-only و --ipv6-only را نمی‌توان با هم استفاده کرد",
+        "no_speed_with_speed_conflict": "--no-speed و --with-speed را نمی‌توان با هم استفاده کرد",
+        "proxy_auth_one_sided": "احراز هویت پروکسی به هر دو گزینه --proxy-user و --proxy-pass نیاز دارد",
         "no_tty": "پایانه‌ای در دسترس نیست؛ منوی تعاملی به TTY نیاز دارد. برای خودآزمایی غیرتعاملی از --active استفاده کنید.",
         "no_valid_nodes": "گره معتبری وجود ندارد",
         "heuristic": "ابتکاری",
@@ -4122,7 +4134,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    多源共識代理 +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery 多數認定），VPN +40（proxycheck/ipwho.is/iplocate/ipquery/X4BNet 多數認定）：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計）
+    多源共識代理 +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery 多數認定），VPN +40（proxycheck/ipwho.is/iplocate/ipquery/X4BNet 多數認定）：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -9511,6 +9523,10 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         return {"ok": False, "error": str(e),
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
     try:
+        # M-08(b)：握手结束时 _sock_readn 按剩余时间重设过超时，残留值可
+        # 近乎为零；发探测前先恢复到完整 timeout，否则 sendall/recv
+        # 会立即超时。
+        s.settimeout(timeout)
         s.sendall(b"GET /generate_204 HTTP/1.1\r\n"
                   b"Host: clients3.google.com\r\n"
                   b"User-Agent: A-Check/%s\r\n\r\n" % VERSION.encode())
@@ -9535,20 +9551,21 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         s.close()
 
 
-def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
-    """经 SOCKS5 代理获取出口 IP (走代理查 api.ipify.org)。
-    返回 (ip, None) 或 (None, error)。"""
+def _proxy_egress_ip_once(ph, pp, username, password, timeout, host):
+    """经 SOCKS5 代理向单个端点查出口 IP。返回 (ip, None) 或 (None, error)。"""
     try:
-        s, _ = socks5_connect(ph, pp, "api.ipify.org", 443,
+        s, _ = socks5_connect(ph, pp, host, 443,
                               username=username, password=password,
                               timeout=timeout, rdns=True)
     except Exception as e:
         return None, str(e)
     try:
+        # M-08(b)：握手残留超时可近乎为零，TLS 握手前先恢复完整 timeout。
+        s.settimeout(timeout)
         ctx = ssl.create_default_context()
-        tls = ctx.wrap_socket(s, server_hostname="api.ipify.org")
+        tls = ctx.wrap_socket(s, server_hostname=host)
         try:
-            tls.sendall(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\n"
+            tls.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\n"
                         b"Connection: close\r\n\r\n")
             raw = b""
             eof = False
@@ -9588,8 +9605,10 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
                     body_b = body_b[:cl]
             body = body_b.decode("utf-8", errors="replace").strip()
             ip = body.splitlines()[0].strip() if body else ""
-            if ip and validate_ip(ip):
-                return str(ip), None
+            # M-08(c)：用 parse_any_ip 校验，双栈/IPv6 出口亦可接受。
+            _pip, _ver = parse_any_ip(ip) if ip else (None, None)
+            if _pip is not None:
+                return str(_pip), None
             return None, "invalid response: %r" % body[:60]
         finally:
             tls.close()
@@ -9597,6 +9616,20 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
         return None, str(e)
     finally:
         s.close()
+
+
+def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
+    """经 SOCKS5 代理获取出口 IP。
+    先查 api.ipify.org，失败时回退到双栈端点 api64.ipify.org（纯 IPv6
+    出口只有后者可达）。返回 (ip, None) 或 (None, error)。"""
+    _last_err = None
+    for _host in ("api.ipify.org", "api64.ipify.org"):
+        _ip, _err = _proxy_egress_ip_once(ph, pp, username, password,
+                                          timeout, _host)
+        if _ip is not None:
+            return _ip, None
+        _last_err = _err
+    return None, _last_err
 
 
 class _SocksHTTPS(http.client.HTTPSConnection):
@@ -9999,6 +10032,34 @@ def tcp_ping_stats(host, port, count=10, timeout=3, family=0):
             "samples": [round(x, 1) for x in samples]}
 
 
+def _resolve_proxy_auth(username, password):
+    """M-08(a)：单边账密不得静默降级为无认证。
+    双方齐全或双方皆无时原样返回（用户名去首尾空白）；仅一边给出时，
+    交互终端追问缺失的一项（密码走 getpass），非交互终端抛 ValueError，
+    调用方将其转为参数错误（exit 2）。"""
+    _u = username.strip() if isinstance(username, str) else username
+    _p = password
+    _has_u = bool(_u)
+    _has_p = bool(_p)
+    if _has_u == _has_p:
+        return (_u if _has_u else None), (_p if _has_p else None)
+    if not sys.stdin.isatty():
+        raise ValueError("proxy auth needs both --proxy-user and "
+                         "--proxy-pass")
+    if _has_u:
+        import getpass
+        _p = getpass.getpass(T("prompt_proxy_pass"))
+        if not _p:
+            raise ValueError("proxy auth needs both --proxy-user and "
+                             "--proxy-pass")
+        return _u, _p
+    _u = (input(T("prompt_proxy_user")) or "").strip()
+    if not _u:
+        raise ValueError("proxy auth needs both --proxy-user and "
+                         "--proxy-pass")
+    return _u, _p
+
+
 def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
                    json_mode=False):
     """代理诊断主流程: SOCKS5 握手 -> 出口 IP -> 出口 IP 信誉 ->
@@ -10032,18 +10093,22 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     else:
         _note(_c(C.red, T("diag_egress_fail") % (eerr or "?")))
 
-    # 3. 出口 IP 信誉 (复用现有被动检测)
-    if eip and validate_ip(eip):
+    # 3. 出口 IP 信誉 (复用现有被动检测；IPv6 出口走 v6 路径)
+    _eip, _ever = parse_any_ip(eip) if eip else (None, None)
+    if _eip is not None:
         _note(T("diag_reputation_testing"))
         try:
-            res = run_passive(eip)
+            res = run_passive6(eip) if _ever == 6 else run_passive(eip)
             out["egress_reputation"] = {
                 "risk_level": res.get("verdict"),
                 "threat_score": res.get("scores", {}).get("threat", (None,))[0],
                 "fraud_score": res.get("scores", {}).get("fraud", (None,))[0],
             }
             if not json_mode:
-                print_report(res)
+                if _ever == 6:
+                    print_report6(res)
+                else:
+                    print_report(res)
         except Exception as e:
             _note(_c(C.dim, T("diag_reputation_fail") % e))
 
@@ -13417,6 +13482,9 @@ def _print_cli_help():
                   管理命令入口：安装 / 查看状态 / 改名 / 移除
   --system        配合 --shortcut 使用系统级位置 (默认用户级)
   --accept-ac-risk 接受 ac 已知命名风险 (非交互安装 ac 时必填)
+  --names 名称列表  配合 --shortcut install：指定安装的入口名（逗号分隔）
+  --old-name 旧名  配合 --shortcut change：待改名的入口
+  --new-name 新名  配合 --shortcut change：改名后的入口
   --zh            使用简体中文输出 (默认)
   --zh-tw         使用繁體中文输出
   --en            Use English output
@@ -13433,6 +13501,7 @@ def _print_cli_help():
   python3 acheck.py --proxy 127.0.0.1:1080              # 代理诊断
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理诊断 JSON 输出
   python3 acheck.py --speed                             # 多地区测速
+  python3 acheck.py --shortcut install --names acheck,ac  # 安装命令入口
 """
     help_en = f"""Usage: python3 acheck.py [OPTIONS] [IP_ADDRESS]
 
@@ -13460,6 +13529,9 @@ Options:
                   Manage command shortcuts: install / status / change / remove
   --system        With --shortcut: use system-wide locations (default is user-level)
   --accept-ac-risk Accept the known naming risk of ac (required for non-interactive ac install)
+  --names NAMES     With --shortcut install: shortcut names to install (comma-separated)
+  --old-name NAME   With --shortcut change: the shortcut to rename
+  --new-name NAME   With --shortcut change: the new name
   --zh            Use Simplified Chinese output (default)
   --zh-tw         Use Traditional Chinese output
   --en            Use English output
@@ -13476,6 +13548,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # Proxy diagnostics
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Proxy diagnostics JSON
   python3 acheck.py --speed                             # Multi-region speed test
+  python3 acheck.py --shortcut install --names acheck,ac  # Install command shortcuts
 """
 
     help_zhtw = f"""用法: python3 acheck.py [選項] [IP 位址]
@@ -13504,6 +13577,9 @@ Examples:
                   管理命令入口：安裝 / 查看狀態 / 改名 / 移除
   --system        配合 --shortcut 使用系統級位置 (預設使用者級)
   --accept-ac-risk 接受 ac 已知命名風險 (非互動安裝 ac 時必填)
+  --names 名稱清單  配合 --shortcut install：指定安裝的入口名（逗號分隔）
+  --old-name 舊名  配合 --shortcut change：待改名的入口
+  --new-name 新名  配合 --shortcut change：改名後的入口
   --zh            使用簡體中文輸出 (預設)
   --zh-tw         使用繁體中文輸出
   --en            Use English output
@@ -13520,6 +13596,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # 代理診斷
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理診斷 JSON 輸出
   python3 acheck.py --speed                             # 多地區測速
+  python3 acheck.py --shortcut install --names acheck,ac  # 安裝命令入口
 """
     help_ja = f"""使い方: python3 acheck.py [オプション] [IPアドレス]
 
@@ -13547,6 +13624,9 @@ Examples:
                   コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
   --system        --shortcut と併用：システム全体の場所を使用 (既定はユーザー単位)
   --accept-ac-risk ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須)
+  --names 名前一覧  --shortcut install と併用：インストールする入口名（カンマ区切り）
+  --old-name 旧名  --shortcut change と併用：改名する入口
+  --new-name 新名  --shortcut change と併用：改名後の入口
   --zh            簡体字中国語で出力 (デフォルト)
   --zh-tw         繁体字中国語で出力
   --en            Use English output
@@ -13563,6 +13643,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # プロキシ診断
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # プロキシ診断 JSON
   python3 acheck.py --speed                             # 多地域スピードテスト
+  python3 acheck.py --shortcut install --names acheck,ac  # コマンド入口をインストール
 """
     help_ru = f"""Использование: python3 acheck.py [ОПЦИИ] [IP_АДРЕС]
 
@@ -13590,6 +13671,9 @@ Examples:
                   Управление ярлыками: установка / состояние / переименование / удаление
   --system        С --shortcut: системные каталоги (по умолчанию — уровень пользователя)
   --accept-ac-risk Принять известный риск имени ac (обязательно для неинтерактивной установки ac)
+  --names ИМЕНА     С --shortcut install: имена ярлыков через запятую
+  --old-name СТАРОЕ С --shortcut change: переименовываемый ярлык
+  --new-name НОВОЕ  С --shortcut change: новое имя
   --zh            Вывод на упрощённом китайском (по умолчанию)
   --zh-tw         Вывод на традиционном китайском
   --en            Use English output
@@ -13606,6 +13690,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # Диагностика прокси
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Диагностика прокси JSON
   python3 acheck.py --speed                             # Мультирегиональный тест скорости
+  python3 acheck.py --shortcut install --names acheck,ac  # Установка ярлыков команд
 """
     help_fa = f"""کاربرد: python3 acheck.py [گزینه‌ها] [نشانی IP]
 
@@ -13634,6 +13719,9 @@ Examples:
                   مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
   --system        همراه --shortcut: استفاده از مسیرهای سیستمی (پیش‌فرض سطح کاربر)
   --accept-ac-risk پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است)
+  --names نام‌ها     همراه --shortcut install: نام میانبرها (جدا شده با کاما)
+  --old-name نام قدیمی همراه --shortcut change: میانبری که تغییر نام می‌دهد
+  --new-name نام جدید همراه --shortcut change: نام جدید
   --zh            خروجی به زبان چینی ساده (پیش‌فرض)
   --zh-tw         خروجی به زبان چینی سنتی
   --en            Use English output
@@ -13649,6 +13737,7 @@ Examples:
   python3 acheck.py --active --json        # خروجی JSON فعال
   python3 acheck.py --proxy 127.0.0.1:1080              # عیب‌یابی پروکسی
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # عیب‌یابی پروکسی JSON
+  python3 acheck.py --speed                             # تست سرعت چندمنطقه‌ای
 """
     _helps = {"zh": help_zh, "zh-TW": help_zhtw, "en": help_en,
               "ja": help_ja, "ru": help_ru, "fa": help_fa}
@@ -13737,6 +13826,12 @@ def main():
         else:
             print("[Error] " + T("ipv4_ipv6_conflict"), file=sys.stderr)
         sys.exit(2)
+    if ns.no_speed and ns.with_speed:
+        if ns.json:
+            print(json.dumps({"error": "--no-speed and --with-speed conflict"}, ensure_ascii=False))
+        else:
+            print("[Error] " + T("no_speed_with_speed_conflict"), file=sys.stderr)
+        sys.exit(2)
     _FORCE_STACK = "4" if ns.ipv4_only else ("6" if ns.ipv6_only else None)
 
     if ns.help:
@@ -13820,8 +13915,20 @@ def main():
             sys.exit(2)
         if ns.ip and not ns.json:
             print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
-        _diag = run_proxy_diag(_ph, _pt, username=ns.proxy_user,
-                               password=ns.proxy_pass, json_mode=ns.json)
+        # M-08(a)：单边账密不得静默降级为无认证；交互追问、非交互报参数错误。
+        try:
+            _pu, _ppw = _resolve_proxy_auth(ns.proxy_user, ns.proxy_pass)
+        except ValueError:
+            if ns.json:
+                print(json.dumps({"error": "proxy auth needs both "
+                                           "--proxy-user and --proxy-pass"},
+                                 ensure_ascii=False))
+            else:
+                print("[Error] " + T("proxy_auth_one_sided"),
+                      file=sys.stderr)
+            sys.exit(2)
+        _diag = run_proxy_diag(_ph, _pt, username=_pu,
+                               password=_ppw, json_mode=ns.json)
         if not (_diag.get("socks5") or {}).get("ok") \
                 or not _diag.get("egress_ip"):
             sys.exit(1)
@@ -13984,7 +14091,7 @@ def main():
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
-                    _u = input(T("prompt_proxy_user"))
+                    _u = input(T("prompt_proxy_user")).strip()
                     if _u:
                         puser = _u
                         import getpass

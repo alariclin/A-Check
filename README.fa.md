@@ -22,7 +22,7 @@
 
 ## پیش‌نمایش رابط
 
-منوی اصلی (بنر، وضعیت سیستم / سخت‌افزار / شبکه را زنده نشان می‌دهد؛ ۱۲ قابلیت در چهار گروه):
+منوی اصلی (بنر، وضعیت سیستم / سخت‌افزار / شبکه را زنده نشان می‌دهد؛ ۱۳ قابلیت در چهار گروه):
 
 ![منوی اصلی](docs/showcase-menu-fa.png)
 
@@ -66,7 +66,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 در حالت خودآزمایی نیز بخش‌ها شماره‌دارند. IPv4 شامل **[1]–[8]** است: تست واقعی استریم [4]، تست کامل DNS (۲۶ سنتی / ۱۵ DoH / ۱۲ DoT، با رتبه‌بندی تأخیر و نشان سریع‌ترین) و پیشنهادها [5]، تست سرعت [6]، بررسی پورت ۲۵ و DNSBL [7] و کامل بودن [8]. اگر خروجی IPv6 وجود داشته باشد، داوری دوپشته و پشته کامل IPv6 در **[9]–[17]** می‌آید — گزارش IPv6 با سیگنال‌های اعتبار به تفکیک منبع، تست DNS IPv6 (سنتی / DoH / DoT با نشان سریع‌ترین)، استریم IPv6 و سرعت IPv6 — و دو خروجی از نظر نشت مقایسه می‌شوند.
 
-## ۱۲ قابلیت منوی اصلی
+## ۱۳ قابلیت منوی اصلی
 
 | # | قابلیت | توضیح |
 |---|---|---|
@@ -82,6 +82,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 | 10 | توضیح قواعد امتیازدهی | شرح کامل ابعاد امتیاز، کسرها و سطوح |
 | 11 | تست سرعت دسته‌ای گره‌ها | چند host:port یا پروکسی SOCKS5 بچسبانید؛ سنجش هم‌زمان تأخیر و دسترس‌پذیری، خروجی رتبه‌بندی‌شده با بهترین گره به رنگ سبز، به‌همراه سرعت دانلود واقعی بهترین پروکسی |
 | 12 | تست سرعت شبکه (مناطق) | جدول دانلود ۲۸ گره منطقه‌ای (اوج چنداتصاله) به‌همراه سرعت ارسال/دریافت محلی |
+| 13 | مدیریت میانبرهای فرمان | نصب / وضعیت / تغییر نام / حذف میانبرهای فرمان `acheck` / `ac` (`--shortcut`، `--names` / `--old-name` / `--new-name`) |
 
 تست واقعی استریم ۱۸ پلتفرم را پوشش می‌دهد: هوش مصنوعی (ChatGPT / Gemini / Claude / Grok / DeepSeek)، ویدیو (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+)، اجتماعی و دیگر (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub)، با تمایز میان رفع مسدودیت بومی و رفع مسدودیت DNS ‏(Smart DNS).
 
@@ -147,6 +148,8 @@ python3 acheck.py [IP] [گزینه‌ها]
 | `--batch فهرست` | رتبه‌بندی دسته‌ای گره‌ها (host:port یا پروکسی‌های socks5:// با جداکننده کاما) |
 | `--speed` | جدول سرعت چندمنطقه‌ای |
 | `--no-speed` | همراه `--active`: رد کردن تست سرعت (خودآزمایی تعاملی به‌طور پیش‌فرض ابتدا می‌پرسد) |
+| `--with-speed` | همراه `--active`: اجرای اجباری تست سرعت (خودآزمایی تعاملی به‌طور پیش‌فرض ابتدا می‌پرسد) |
+| `--shortcut install/status/change/remove` | مدیریت میانبرهای فرمان (برای نصب `--names`، برای تغییر نام `--old-name` / `--new-name`؛ `--system` برای مسیرهای سیستمی) |
 | `--explain` | چاپ قواعد امتیازدهی |
 | `--json` | خروجی JSON (قابل ترکیب با IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | زبان خروجی |
@@ -155,7 +158,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 تجمیع چندمنبعی با ذکر هر منبع، از جمله:
 
-- **جغرافیا و مالکیت**: ip-api.com، ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، iplocate.io، ipquery.io، ipapi.co، 2ip.io، HackerTarget، country.is، RDAP، جستجوی معکوس PTR/FCrDNS
+- **جغرافیا و مالکیت**: ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، iplocate.io، ipquery.io، ipapi.co، 2ip.io، HackerTarget، country.is، RDAP، جستجوی معکوس PTR/FCrDNS
 - **اعتبار و کلاهبرداری**: Scamalytics، proxycheck.io، Shodan InternetDB، GreyNoise، SANS ISC، StopForumSpam، urlscan.io، AlienVault OTX، blocklist.de
 - **تهدیدها و فهرست‌ها**: Spamhaus DROP، Feodo Tracker، Emerging Threats، فهرست گره‌های خروجی Tor، IPsum، X4BNet VPN ranges
 
