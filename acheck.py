@@ -1542,16 +1542,37 @@ def _truncate_disp(s, max_width):
         return s
     if max_width <= 3:
         # 无空间放正文 + 省略号：只截取 max_width 列宽，不加省略号。
+        # ANSI 序列原样透传（与主循环同一解析规则），截断时未闭合 SGR 补复位；
+        # 旧实现遇 ESC 即 break，ANSI 打头的串直接返回 ""（r2b5a D-3.6b/D-3.7/C6）。
         w = 0
         out = []
-        for ch in s:
-            if ch == "\x1b":
-                break
+        i = 0
+        sgr_open = False
+        while i < len(s):
+            if s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
+                j = i + 2
+                while j < len(s) and not (0x40 <= ord(s[j]) <= 0x7E):
+                    j += 1
+                if j < len(s):
+                    seq = s[i:j + 1]
+                    out.append(seq)
+                    if seq.endswith("m"):
+                        try:
+                            _is_reset = all(p == "" or int(p) == 0 for p in seq[2:-1].split(";"))
+                        except ValueError:
+                            _is_reset = False
+                        sgr_open = not _is_reset
+                    i = j + 1
+                    continue
+            ch = s[i]
             cw = 0 if _is_zero_width(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
             if w + cw > max_width:
                 break
             out.append(ch)
             w += cw
+            i += 1
+        if sgr_open:
+            out.append("\x1b[0m")
         return "".join(out)
     w = 0
     out = []
