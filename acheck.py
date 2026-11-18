@@ -1460,6 +1460,27 @@ def _clean_str(v):
     return _strip_cc(v).strip()
 
 
+def _strict_bool(v):
+    """严格布尔清洗 (R4-H-04)：仅 JSON 真布尔值保留；字符串 "false"/"true"、
+    数字、null 等非布尔值一律返 None（未知/弃权），不得以 bool(v) 误判
+    （"false" 为真、0 为假皆错）。与 IPWhoIs._b 的 F08 口径一致，
+    抽为共用函数供各情报源入库与评分层调用。"""
+    return v if isinstance(v, bool) else None
+
+
+def _clamp_score(v):
+    """风险分清洗 (R4-H-04)：有限数值钳制到 [0, 100]（整值返 int）；
+    非数值/非有限数（NaN/Inf/字符串）返 None（未知）。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(f):
+        return None
+    f = max(0.0, min(100.0, f))
+    return int(f) if f == int(f) else f
+
+
 def _clean_coord(v, lo, hi):
     """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
     1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
@@ -1511,12 +1532,32 @@ def _disp_width(s):
 
 def _truncate_disp(s, max_width):
     """按终端显示列宽安全截断字符串，防止中日韩双宽字符溢出折行。
-    ANSI 转义序列原样透传、不计宽度、不被拦腰截断；截断时若有未闭合 SGR 补复位。"""
+    ANSI 转义序列原样透传、不计宽度、不被拦腰截断；截断时若有未闭合 SGR 补复位。
+    省略号 "..." 计入 max_width：总宽恒 <= max_width（旧实现截到 max_width
+    后无条件再加 "..."，总宽 = max_width+3）。"""
+    if max_width <= 0:
+        return ""
+    s = str(s)
+    if _disp_width(s) <= max_width:
+        return s
+    if max_width <= 3:
+        # 无空间放正文 + 省略号：只截取 max_width 列宽，不加省略号。
+        w = 0
+        out = []
+        for ch in s:
+            if ch == "\x1b":
+                break
+            cw = 0 if _is_zero_width(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
+            if w + cw > max_width:
+                break
+            out.append(ch)
+            w += cw
+        return "".join(out)
     w = 0
     out = []
     i = 0
-    s = str(s)
     sgr_open = False
+    _budget = max_width - 3  # 为 "..." 预留 3 列
     while i < len(s):
         if s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
             j = i + 2
@@ -1535,7 +1576,11 @@ def _truncate_disp(s, max_width):
                 continue
         ch = s[i]
         cw = 0 if _is_zero_width(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
-        if w + cw > max_width:
+        if w + cw > _budget:
+            # 双宽字符凑不满预算时用空格补齐到预算，截断结果恒为 max_width 列
+            #（固定宽进度栏对齐用；调用方 _render_progress_locked 本就会补空格到 _lim）。
+            if _budget > w:
+                out.append(" " * (_budget - w))
             out.append("...")
             if sgr_open:
                 out.append("\x1b[0m")
@@ -1553,9 +1598,10 @@ def _pad(s, width):
 _progress_lock = threading.Lock()
 
 
-def _render_progress_locked(current, total, name=""):
-    """渲染进度条；必须持有 _progress_lock 时调用。JSON 模式下静默。"""
-    if "--json" in sys.argv:
+def _render_progress_locked(current, total, name="", json_mode=False):
+    """渲染进度条；必须持有 _progress_lock 时调用。JSON 模式下静默。
+    R3-M-17：json_mode 由调用方参数传入，不再硬读 sys.argv。"""
+    if json_mode:
         return
     bar_len = 28
     filled = int(bar_len * current / max(total, 1))
@@ -1563,15 +1609,16 @@ def _render_progress_locked(current, total, name=""):
     msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
     _lim = max(10, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
     if _disp_width(msg) > _lim:
-        msg = _truncate_disp(msg, _lim - 3)
+        # _truncate_disp 已把 "..." 计入 max_width 内，直接按 _lim 截断。
+        msg = _truncate_disp(msg, _lim)
     pad_spaces = " " * max(0, _lim - _disp_width(msg))
     print(msg + pad_spaces, end="", flush=True)
 
 
-def _print_progress(current, total, name=""):
+def _print_progress(current, total, name="", json_mode=False):
     """线程安全地打印检测进度条（其它调用点继续用它）。"""
     with _progress_lock:
-        _render_progress_locked(current, total, name)
+        _render_progress_locked(current, total, name, json_mode=json_mode)
 
 
 # ============================================================
@@ -2746,7 +2793,12 @@ class PTRCheck(Provider):
 
 
 # ---- 显示层本地化查表 (数据源无语言参数时, 国家名/时区名按界面语言呈现) ----
-_CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA', 'germany': 'DE', 'france': 'FR', 'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'singapore': 'SG', 'india': 'IN', 'brazil': 'BR', 'russia': 'RU', 'united kingdom': 'GB', 'netherlands': 'NL', 'switzerland': 'CH', 'sweden': 'SE', 'norway': 'NO', 'finland': 'FI', 'denmark': 'DK', 'austria': 'AT', 'belgium': 'BE', 'ireland': 'IE', 'poland': 'PL', 'turkey': 'TR', 'mexico': 'MX', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO', 'peru': 'PE', 'egypt': 'EG', 'nigeria': 'NG', 'kenya': 'KE', 'morocco': 'MA', 'israel': 'IL', 'united arab emirates': 'AE', 'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'thailand': 'TH', 'vietnam': 'VN', 'indonesia': 'ID', 'malaysia': 'MY', 'philippines': 'PH', 'taiwan': 'TW', 'hong kong': 'HK', 'china': 'CN', 'australia': 'AU', 'new zealand': 'NZ', 'south africa': 'ZA', 'greece': 'GR', 'portugal': 'PT', 'czechia': 'CZ', 'hungary': 'HU', 'romania': 'RO', 'ukraine': 'UA', 'italy': 'IT', 'spain': 'ES', 'китай': 'CN', '中國': 'CN', 'çin': 'CN'}
+_CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA', 'germany': 'DE', 'france': 'FR', 'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'singapore': 'SG', 'india': 'IN', 'brazil': 'BR', 'russia': 'RU', 'united kingdom': 'GB', 'netherlands': 'NL', 'switzerland': 'CH', 'sweden': 'SE', 'norway': 'NO', 'finland': 'FI', 'denmark': 'DK', 'austria': 'AT', 'belgium': 'BE', 'ireland': 'IE', 'poland': 'PL', 'turkey': 'TR', 'mexico': 'MX', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO', 'peru': 'PE', 'egypt': 'EG', 'nigeria': 'NG', 'kenya': 'KE', 'morocco': 'MA', 'israel': 'IL', 'united arab emirates': 'AE', 'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'thailand': 'TH', 'vietnam': 'VN', 'indonesia': 'ID', 'malaysia': 'MY', 'philippines': 'PH', 'taiwan': 'TW', 'hong kong': 'HK', 'china': 'CN', 'australia': 'AU', 'new zealand': 'NZ', 'south africa': 'ZA', 'greece': 'GR', 'portugal': 'PT', 'czechia': 'CZ', 'hungary': 'HU', 'romania': 'RO', 'ukraine': 'UA', 'italy': 'IT', 'spain': 'ES', 'китай': 'CN', '中國': 'CN', 'çin': 'CN',
+# R3-M-10：本地化别名（简体中文名 + 日语名）。此前只有繁体 '中國'，首选源
+# 返回简体 "中国"/"德国" 或日语 "ドイツ" 时反查不到代码，同名借用循环又因
+# 名称不一致排除了他源，country_code 整批清空。键一律小写（查表前 lower）。
+'中国': 'CN', '美国': 'US', '加拿大': 'CA', '德国': 'DE', '法国': 'FR', '日本': 'JP', '韩国': 'KR', '新加坡': 'SG', '印度': 'IN', '巴西': 'BR', '俄罗斯': 'RU', '英国': 'GB', '荷兰': 'NL', '瑞士': 'CH', '瑞典': 'SE', '挪威': 'NO', '芬兰': 'FI', '丹麦': 'DK', '奥地利': 'AT', '比利时': 'BE', '爱尔兰': 'IE', '波兰': 'PL', '土耳其': 'TR', '墨西哥': 'MX', '阿根廷': 'AR', '智利': 'CL', '哥伦比亚': 'CO', '秘鲁': 'PE', '埃及': 'EG', '尼日利亚': 'NG', '肯尼亚': 'KE', '摩洛哥': 'MA', '以色列': 'IL', '阿联酋': 'AE', '沙特阿拉伯': 'SA', '卡塔尔': 'QA', '科威特': 'KW', '伊朗': 'IR', '伊拉克': 'IQ', '巴基斯坦': 'PK', '孟加拉国': 'BD', '泰国': 'TH', '越南': 'VN', '印度尼西亚': 'ID', '马来西亚': 'MY', '菲律宾': 'PH', '台湾': 'TW', '香港': 'HK', '澳大利亚': 'AU', '新西兰': 'NZ', '南非': 'ZA', '希腊': 'GR', '葡萄牙': 'PT', '捷克': 'CZ', '匈牙利': 'HU', '罗马尼亚': 'RO', '乌克兰': 'UA', '意大利': 'IT', '西班牙': 'ES',
+'ドイツ': 'DE', 'フランス': 'FR', 'イギリス': 'GB', 'アメリカ': 'US', 'カナダ': 'CA', 'オーストラリア': 'AU', 'ニュージーランド': 'NZ', 'オランダ': 'NL', 'イタリア': 'IT', 'スペイン': 'ES', 'ロシア': 'RU', 'スイス': 'CH', 'スウェーデン': 'SE', 'ノルウェー': 'NO', 'フィンランド': 'FI', 'デンマーク': 'DK', 'オーストリア': 'AT', 'ベルギー': 'BE', 'アイルランド': 'IE', 'ポーランド': 'PL', 'トルコ': 'TR', 'メキシコ': 'MX', 'ブラジル': 'BR', 'インド': 'IN', 'シンガポール': 'SG', 'タイ': 'TH', 'ベトナム': 'VN', 'インドネシア': 'ID', 'マレーシア': 'MY', 'フィリピン': 'PH', '韓国': 'KR', '中国': 'CN', '台湾': 'TW', '香港': 'HK', '南アフリカ': 'ZA', 'ギリシャ': 'GR', 'ポルトガル': 'PT', 'チェコ': 'CZ', 'ハンガリー': 'HU', 'ルーマニア': 'RO', 'ウクライナ': 'UA', 'エジプト': 'EG', 'ナイジェリア': 'NG', 'ケニア': 'KE', 'モロッコ': 'MA', 'イスラエル': 'IL', 'サウジアラビア': 'SA', 'カタール': 'QA', 'クウェート': 'KW', 'イラン': 'IR', 'イラク': 'IQ', 'パキスタン': 'PK', 'バングラデシュ': 'BD'}
 _COUNTRY_NAMES = {'zh': {'US': '美国', 'CA': '加拿大', 'DE': '德国', 'FR': '法国', 'JP': '日本', 'KR': '韩国', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄罗斯', 'GB': '英国', 'NL': '荷兰', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬兰', 'DK': '丹麦', 'AT': '奥地利', 'BE': '比利时', 'IE': '爱尔兰', 'PL': '波兰', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥伦比亚', 'PE': '秘鲁', 'EG': '埃及', 'NG': '尼日利亚', 'KE': '肯尼亚', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿联酋', 'SA': '沙特阿拉伯', 'QA': '卡塔尔', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉国', 'TH': '泰国', 'VN': '越南', 'ID': '印度尼西亚', 'MY': '马来西亚', 'PH': '菲律宾', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': '澳大利亚', 'NZ': '新西兰', 'ZA': '南非', 'GR': '希腊', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '罗马尼亚', 'UA': '乌克兰', 'IT': '意大利', 'ES': '西班牙'}, 'zh-TW': {'US': '美國', 'CA': '加拿大', 'DE': '德國', 'FR': '法國', 'JP': '日本', 'KR': '韓國', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄羅斯', 'GB': '英國', 'NL': '荷蘭', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬蘭', 'DK': '丹麥', 'AT': '奧地利', 'BE': '比利時', 'IE': '愛爾蘭', 'PL': '波蘭', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥倫比亞', 'PE': '秘魯', 'EG': '埃及', 'NG': '奈及利亞', 'KE': '肯亞', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿聯酋', 'SA': '沙烏地阿拉伯', 'QA': '卡達', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉國', 'TH': '泰國', 'VN': '越南', 'ID': '印度尼西亞', 'MY': '馬來西亞', 'PH': '菲律賓', 'TW': '台灣', 'HK': '香港', 'CN': '中國', 'AU': '澳大利亞', 'NZ': '紐西蘭', 'ZA': '南非', 'GR': '希臘', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '羅馬尼亞', 'UA': '烏克蘭', 'IT': '義大利', 'ES': '西班牙'}, 'ja': {'US': 'アメリカ', 'CA': 'カナダ', 'DE': 'ドイツ', 'FR': 'フランス', 'JP': '日本', 'KR': '韓国', 'SG': 'シンガポール', 'IN': 'インド', 'BR': 'ブラジル', 'RU': 'ロシア', 'GB': 'イギリス', 'NL': 'オランダ', 'CH': 'スイス', 'SE': 'スウェーデン', 'NO': 'ノルウェー', 'FI': 'フィンランド', 'DK': 'デンマーク', 'AT': 'オーストリア', 'BE': 'ベルギー', 'IE': 'アイルランド', 'PL': 'ポーランド', 'TR': 'トルコ', 'MX': 'メキシコ', 'AR': 'アルゼンチン', 'CL': 'チリ', 'CO': 'コロンビア', 'PE': 'ペルー', 'EG': 'エジプト', 'NG': 'ナイジェリア', 'KE': 'ケニア', 'MA': 'モロッコ', 'IL': 'イスラエル', 'AE': 'アラブ首長国連邦', 'SA': 'サウジアラビア', 'QA': 'カタール', 'KW': 'クウェート', 'IR': 'イラン', 'IQ': 'イラク', 'PK': 'パキスタン', 'BD': 'バングラデシュ', 'TH': 'タイ', 'VN': 'ベトナム', 'ID': 'インドネシア', 'MY': 'マレーシア', 'PH': 'フィリピン', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': 'オーストラリア', 'NZ': 'ニュージーランド', 'ZA': '南アフリカ', 'GR': 'ギリシャ', 'PT': 'ポルトガル', 'CZ': 'チェコ', 'HU': 'ハンガリー', 'RO': 'ルーマニア', 'UA': 'ウクライナ', 'IT': 'イタリア', 'ES': 'スペイン'}, 'ru': {'US': 'США', 'CA': 'Канада', 'DE': 'Германия', 'FR': 'Франция', 'JP': 'Япония', 'KR': 'Южная Корея', 'SG': 'Сингапур', 'IN': 'Индия', 'BR': 'Бразилия', 'RU': 'Россия', 'GB': 'Великобритания', 'NL': 'Нидерланды', 'CH': 'Швейцария', 'SE': 'Швеция', 'NO': 'Норвегия', 'FI': 'Финляндия', 'DK': 'Дания', 'AT': 'Австрия', 'BE': 'Бельгия', 'IE': 'Ирландия', 'PL': 'Польша', 'TR': 'Турция', 'MX': 'Мексика', 'AR': 'Аргентина', 'CL': 'Чили', 'CO': 'Колумбия', 'PE': 'Перу', 'EG': 'Египет', 'NG': 'Нигерия', 'KE': 'Кения', 'MA': 'Марокко', 'IL': 'Израиль', 'AE': 'ОАЭ', 'SA': 'Саудовская Аравия', 'QA': 'Катар', 'KW': 'Кувейт', 'IR': 'Иран', 'IQ': 'Ирак', 'PK': 'Пакистан', 'BD': 'Бангладеш', 'TH': 'Таиланд', 'VN': 'Вьетнам', 'ID': 'Индонезия', 'MY': 'Малайзия', 'PH': 'Филиппины', 'TW': 'Тайвань', 'HK': 'Гонконг', 'CN': 'Китай', 'AU': 'Австралия', 'NZ': 'Новая Зеландия', 'ZA': 'ЮАР', 'GR': 'Греция', 'PT': 'Португалия', 'CZ': 'Чехия', 'HU': 'Венгрия', 'RO': 'Румыния', 'UA': 'Украина', 'IT': 'Италия', 'ES': 'Испания'}, 'fa': {'US': 'آمریکا', 'CA': 'کانادا', 'DE': 'آلمان', 'FR': 'فرانسه', 'JP': 'ژاپن', 'KR': 'کره جنوبی', 'SG': 'سنگاپور', 'IN': 'هند', 'BR': 'برزیل', 'RU': 'روسیه', 'GB': 'بریتانیا', 'NL': 'هلند', 'CH': 'سوئیس', 'SE': 'سوئد', 'NO': 'نروژ', 'FI': 'فنلاند', 'DK': 'دانمارک', 'AT': 'اتریش', 'BE': 'بلژیک', 'IE': 'ایرلند', 'PL': 'لهستان', 'TR': 'ترکیه', 'MX': 'مکزیک', 'AR': 'آرژانتین', 'CL': 'شیلی', 'CO': 'کلمبیا', 'PE': 'پرو', 'EG': 'مصر', 'NG': 'نیجریه', 'KE': 'کنیا', 'MA': 'مراکش', 'IL': 'اسرائیل', 'AE': 'امارات', 'SA': 'عربستان سعودی', 'QA': 'قطر', 'KW': 'کویت', 'IR': 'ایران', 'IQ': 'عراق', 'PK': 'پاکستان', 'BD': 'بنگلادش', 'TH': 'تایلند', 'VN': 'ویتنام', 'ID': 'اندونزی', 'MY': 'مالزی', 'PH': 'فیلیپین', 'TW': 'تایوان', 'HK': 'هنگ\u200cکنگ', 'CN': 'چین', 'AU': 'استرالیا', 'NZ': 'نیوزیلند', 'ZA': 'آفریقای جنوبی', 'GR': 'یونان', 'PT': 'پرتغال', 'CZ': 'چک', 'HU': 'مجارستان', 'RO': 'رومانی', 'UA': 'اوکراین', 'IT': 'ایتالیا', 'ES': 'اسپانیا'}}
 _CC_EN.update({'afghanistan': 'AF', 'albania': 'AL', 'algeria': 'DZ', 'american samoa': 'AS', 'andorra': 'AD', 'angola': 'AO', 'anguilla': 'AI', 'antarctica': 'AQ', 'antigua and barbuda': 'AG', 'armenia': 'AM', 'aruba': 'AW', 'azerbaijan': 'AZ', 'bahamas': 'BS', 'bahrain': 'BH', 'barbados': 'BB', 'belarus': 'BY', 'belize': 'BZ', 'benin': 'BJ', 'bermuda': 'BM', 'bhutan': 'BT', 'bolivia': 'BO', 'bosnia and herzegovina': 'BA', 'botswana': 'BW', 'brunei': 'BN', 'bulgaria': 'BG', 'burkina faso': 'BF', 'burundi': 'BI', 'cambodia': 'KH', 'cameroon': 'CM', 'cape verde': 'CV', 'cayman islands': 'KY', 'central african republic': 'CF', 'chad': 'TD', 'comoros': 'KM', 'congo': 'CG', 'congo (democratic republic)': 'CD', 'cook islands': 'CK', 'costa rica': 'CR', 'croatia': 'HR', 'cuba': 'CU', 'cyprus': 'CY', 'djibouti': 'DJ', 'dominica': 'DM', 'dominican republic': 'DO', 'ecuador': 'EC', 'el salvador': 'SV', 'equatorial guinea': 'GQ', 'eritrea': 'ER', 'estonia': 'EE', 'eswatini': 'SZ', 'ethiopia': 'ET', 'falkland islands': 'FK', 'faroe islands': 'FO', 'fiji': 'FJ', 'gabon': 'GA', 'gambia': 'GM', 'georgia': 'GE', 'ghana': 'GH', 'gibraltar': 'GI', 'greenland': 'GL', 'grenada': 'GD', 'guam': 'GU', 'guatemala': 'GT', 'guinea': 'GN', 'guinea-bissau': 'GW', 'guyana': 'GY', 'haiti': 'HT', 'honduras': 'HN', 'iceland': 'IS', 'jamaica': 'JM', 'jordan': 'JO', 'kazakhstan': 'KZ', 'kiribati': 'KI', 'kosovo': 'XK', 'kyrgyzstan': 'KG', 'laos': 'LA', 'latvia': 'LV', 'lebanon': 'LB', 'lesotho': 'LS', 'liberia': 'LR', 'libya': 'LY', 'liechtenstein': 'LI', 'lithuania': 'LT', 'luxembourg': 'LU', 'macau': 'MO', 'madagascar': 'MG', 'malawi': 'MW', 'maldives': 'MV', 'mali': 'ML', 'malta': 'MT', 'marshall islands': 'MH', 'mauritania': 'MR', 'mauritius': 'MU', 'micronesia': 'FM', 'moldova': 'MD', 'monaco': 'MC', 'mongolia': 'MN', 'montenegro': 'ME', 'mozambique': 'MZ', 'myanmar': 'MM', 'namibia': 'NA', 'nepal': 'NP', 'nicaragua': 'NI', 'niger': 'NE', 'north korea': 'KP', 'north macedonia': 'MK', 'northern mariana islands': 'MP', 'oman': 'OM', 'palau': 'PW', 'palestine': 'PS', 'panama': 'PA', 'papua new guinea': 'PG', 'paraguay': 'PY', 'puerto rico': 'PR', 'rwanda': 'RW', 'saint kitts and nevis': 'KN', 'saint lucia': 'LC', 'samoa': 'WS', 'san marino': 'SM', 'sao tome and principe': 'ST', 'senegal': 'SN', 'serbia': 'RS', 'seychelles': 'SC', 'sierra leone': 'SL', 'slovakia': 'SK', 'slovenia': 'SI', 'solomon islands': 'SB', 'somalia': 'SO', 'south sudan': 'SS', 'sri lanka': 'LK', 'sudan': 'SD', 'suriname': 'SR', 'syria': 'SY', 'tajikistan': 'TJ', 'tanzania': 'TZ', 'timor-leste': 'TL', 'togo': 'TG', 'tonga': 'TO', 'trinidad and tobago': 'TT', 'tunisia': 'TN', 'turkmenistan': 'TM', 'tuvalu': 'TV', 'uganda': 'UG', 'uruguay': 'UY', 'uzbekistan': 'UZ', 'vanuatu': 'VU', 'venezuela': 'VE', 'yemen': 'YE', 'zambia': 'ZM', 'zimbabwe': 'ZW', 'guernsey': 'GG', 'jersey': 'JE', 'isle of man': 'IM', 'aland': 'AX', 'curacao': 'CW', 'sint maarten': 'SX', 'bonaire': 'BQ', 'saint barthelemy': 'BL', 'saint martin': 'MF', 'mayotte': 'YT', 'reunion': 'RE', 'martinique': 'MQ', 'guadeloupe': 'GP', 'french guiana': 'GF', 'french polynesia': 'PF', 'new caledonia': 'NC', 'niue': 'NU', 'norfolk island': 'NF', 'christmas island': 'CX', 'pitcairn': 'PN', 'saint helena': 'SH', 'montserrat': 'MS', 'british virgin islands': 'VG', 'u.s. virgin islands': 'VI', 'turks and caicos': 'TC', 'cote d\'ivoire': 'CI', 'côte d\'ivoire': 'CI', 'ivory coast': 'CI', 'saint vincent and the grenadines': 'VC', 'czech republic': 'CZ'})
 _EXTRA_CN = {'zh': {'AF': '阿富汗', 'AL': '阿尔巴尼亚', 'DZ': '阿尔及利亚', 'AS': '美属萨摩亚', 'AD': '安道尔', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南极洲', 'AG': '安提瓜和巴布达', 'AM': '亚美尼亚', 'AW': '阿鲁巴', 'AZ': '阿塞拜疆', 'BS': '巴哈马', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄罗斯', 'BZ': '伯利兹', 'BJ': '贝宁', 'BM': '百慕大', 'BT': '不丹', 'BO': '玻利维亚', 'BA': '波黑', 'BW': '博茨瓦纳', 'BN': '文莱', 'BG': '保加利亚', 'BF': '布基纳法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麦隆', 'CV': '佛得角', 'KY': '开曼群岛', 'CF': '中非共和国', 'TD': '乍得', 'KM': '科摩罗', 'CG': '刚果（布）', 'CD': '刚果（金）', 'CK': '库克群岛', 'CR': '哥斯达黎加', 'HR': '克罗地亚', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多米尼加', 'EC': '厄瓜多尔', 'SV': '萨尔瓦多', 'GQ': '赤道几内亚', 'ER': '厄立特里亚', 'EE': '爱沙尼亚', 'SZ': '斯威士兰', 'ET': '埃塞俄比亚', 'FK': '福克兰群岛', 'FO': '法罗群岛', 'FJ': '斐济', 'GA': '加蓬', 'GM': '冈比亚', 'GE': '格鲁吉亚', 'GH': '加纳', 'GI': '直布罗陀', 'GL': '格陵兰', 'GD': '格林纳达', 'GU': '关岛', 'GT': '危地马拉', 'GN': '几内亚', 'GW': '几内亚比绍', 'GY': '圭亚那', 'HT': '海地', 'HN': '洪都拉斯', 'IS': '冰岛', 'JM': '牙买加', 'JO': '约旦', 'KZ': '哈萨克斯坦', 'KI': '基里巴斯', 'XK': '科索沃', 'KG': '吉尔吉斯斯坦', 'LA': '老挝', 'LV': '拉脱维亚', 'LB': '黎巴嫩', 'LS': '莱索托', 'LR': '利比里亚', 'LY': '利比亚', 'LI': '列支敦士登', 'LT': '立陶宛', 'LU': '卢森堡', 'MO': '澳门', 'MG': '马达加斯加', 'MW': '马拉维', 'MV': '马尔代夫', 'ML': '马里', 'MT': '马耳他', 'MH': '马绍尔群岛', 'MR': '毛里塔尼亚', 'MU': '毛里求斯', 'FM': '密克罗尼西亚', 'MD': '摩尔多瓦', 'MC': '摩纳哥', 'MN': '蒙古', 'ME': '黑山', 'MZ': '莫桑比克', 'MM': '缅甸', 'NA': '纳米比亚', 'NP': '尼泊尔', 'NI': '尼加拉瓜', 'NE': '尼日尔', 'KP': '朝鲜', 'MK': '北马其顿', 'MP': '北马里亚纳群岛', 'OM': '阿曼', 'PW': '帕劳', 'PS': '巴勒斯坦', 'PA': '巴拿马', 'PG': '巴布亚新几内亚', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '卢旺达', 'KN': '圣基茨和尼维斯', 'LC': '圣卢西亚', 'WS': '萨摩亚', 'SM': '圣马力诺', 'ST': '圣多美和普林西比', 'SN': '塞内加尔', 'RS': '塞尔维亚', 'SC': '塞舌尔', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛文尼亚', 'SB': '所罗门群岛', 'SO': '索马里', 'SS': '南苏丹', 'LK': '斯里兰卡', 'SD': '苏丹', 'SR': '苏里南', 'SY': '叙利亚', 'TJ': '塔吉克斯坦', 'TZ': '坦桑尼亚', 'TL': '东帝汶', 'TG': '多哥', 'TO': '汤加', 'TT': '特立尼达和多巴哥', 'TN': '突尼斯', 'TM': '土库曼斯坦', 'TV': '图瓦卢', 'UG': '乌干达', 'UY': '乌拉圭', 'UZ': '乌兹别克斯坦', 'VU': '瓦努阿图', 'VE': '委内瑞拉', 'YE': '也门', 'ZM': '赞比亚', 'ZW': '津巴布韦', 'GG': '根西岛', 'JE': '泽西岛', 'IM': '马恩岛', 'AX': '奥兰群岛', 'CW': '库拉索', 'SX': '圣马丁（荷属）', 'BQ': '博奈尔、圣尤斯特歇斯和萨巴', 'BL': '圣巴泰勒米', 'MF': '圣马丁（法属）', 'YT': '马约特', 'RE': '留尼汪', 'MQ': '马提尼克', 'GP': '瓜德罗普', 'GF': '法属圭亚那', 'PF': '法属波利尼西亚', 'NC': '新喀里多尼亚', 'NU': '纽埃', 'NF': '诺福克岛', 'CX': '圣诞岛', 'PN': '皮特凯恩群岛', 'SH': '圣赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英属维尔京群岛', 'VI': '美属维尔京群岛', 'TC': '特克斯和凯科斯群岛', 'CI': '科特迪瓦', 'VC': '圣文森特和格林纳丁斯'}, 'zh-TW': {'AF': '阿富汗', 'AL': '阿爾巴尼亞', 'DZ': '阿爾及利亞', 'AS': '美屬薩摩亞', 'AD': '安道爾', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南極洲', 'AG': '安提瓜和巴布達', 'AM': '亞美尼亞', 'AW': '阿魯巴', 'AZ': '亞塞拜然', 'BS': '巴哈馬', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄羅斯', 'BZ': '貝里斯', 'BJ': '貝南', 'BM': '百慕達', 'BT': '不丹', 'BO': '玻利維亞', 'BA': '波赫', 'BW': '波札那', 'BN': '汶萊', 'BG': '保加利亞', 'BF': '布基納法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麥隆', 'CV': '維德角', 'KY': '開曼群島', 'CF': '中非共和國', 'TD': '查德', 'KM': '葛摩', 'CG': '剛果（布）', 'CD': '剛果（金）', 'CK': '庫克群島', 'CR': '哥斯大黎加', 'HR': '克羅埃西亞', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多明尼加', 'EC': '厄瓜多', 'SV': '薩爾瓦多', 'GQ': '赤道幾內亞', 'ER': '厄利垂亞', 'EE': '愛沙尼亞', 'SZ': '史瓦帝尼', 'ET': '衣索比亞', 'FK': '福克蘭群島', 'FO': '法羅群島', 'FJ': '斐濟', 'GA': '加彭', 'GM': '甘比亞', 'GE': '喬治亞', 'GH': '迦納', 'GI': '直布羅陀', 'GL': '格陵蘭', 'GD': '格瑞那達', 'GU': '關島', 'GT': '瓜地馬拉', 'GN': '幾內亞', 'GW': '幾內亞比索', 'GY': '蓋亞那', 'HT': '海地', 'HN': '宏都拉斯', 'IS': '冰島', 'JM': '牙買加', 'JO': '約旦', 'KZ': '哈薩克斯坦', 'KI': '吉里巴斯', 'XK': '科索沃', 'KG': '吉爾吉斯斯坦', 'LA': '寮國', 'LV': '拉脫維亞', 'LB': '黎巴嫩', 'LS': '賴索托', 'LR': '賴比瑞亞', 'LY': '利比亞', 'LI': '列支敦斯登', 'LT': '立陶宛', 'LU': '盧森堡', 'MO': '澳門', 'MG': '馬達加斯加', 'MW': '馬拉威', 'MV': '馬爾地夫', 'ML': '馬利', 'MT': '馬耳他', 'MH': '馬紹爾群島', 'MR': '茅利塔尼亞', 'MU': '模里西斯', 'FM': '密克羅尼西亞', 'MD': '摩爾多瓦', 'MC': '摩納哥', 'MN': '蒙古', 'ME': '蒙特內哥羅', 'MZ': '莫三比克', 'MM': '緬甸', 'NA': '納米比亞', 'NP': '尼泊爾', 'NI': '尼加拉瓜', 'NE': '尼日', 'KP': '北韓', 'MK': '北馬其頓', 'MP': '北馬里亞納群島', 'OM': '阿曼', 'PW': '帛琉', 'PS': '巴勒斯坦', 'PA': '巴拿馬', 'PG': '巴布亞紐幾內亞', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '盧安達', 'KN': '聖基茨和尼維斯', 'LC': '聖露西亞', 'WS': '薩摩亞', 'SM': '聖馬利諾', 'ST': '聖多美和普林西比', 'SN': '塞內加爾', 'RS': '塞爾維亞', 'SC': '塞舌爾', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛維尼亞', 'SB': '所羅門群島', 'SO': '索馬利亞', 'SS': '南蘇丹', 'LK': '斯里蘭卡', 'SD': '蘇丹', 'SR': '蘇利南', 'SY': '敘利亞', 'TJ': '塔吉克斯坦', 'TZ': '坦尚尼亞', 'TL': '東帝汶', 'TG': '多哥', 'TO': '東加', 'TT': '特立尼達和多巴哥', 'TN': '突尼西亞', 'TM': '土庫曼斯坦', 'TV': '圖瓦盧', 'UG': '烏干達', 'UY': '烏拉圭', 'UZ': '烏茲別克斯坦', 'VU': '瓦努阿圖', 'VE': '委內瑞拉', 'YE': '葉門', 'ZM': '贊比亞', 'ZW': '津巴布韋', 'GG': '根西島', 'JE': '澤西島', 'IM': '馬恩島', 'AX': '奧蘭群島', 'CW': '庫拉索', 'SX': '聖馬丁（荷屬）', 'BQ': '博奈爾、聖尤斯特歇斯和薩巴', 'BL': '聖巴泰勒米', 'MF': '聖馬丁（法屬）', 'YT': '馬約特', 'RE': '留尼汪', 'MQ': '馬提尼克', 'GP': '瓜德羅普', 'GF': '法屬圭亞那', 'PF': '法屬波利尼西亞', 'NC': '新喀里多尼亞', 'NU': '紐埃', 'NF': '諾福克島', 'CX': '聖誕島', 'PN': '皮特凱恩群島', 'SH': '聖赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英屬維爾京群島', 'VI': '美屬維爾京群島', 'TC': '特克斯和凱科斯群島', 'CI': '科特迪瓦', 'VC': '聖文森特和格林納丁斯'}, 'ja': {'AF': 'アフガニスタン', 'AL': 'アルバニア', 'DZ': 'アルジェリア', 'AS': '米領サモア', 'AD': 'アンドラ', 'AO': 'アンゴラ', 'AI': 'アンギラ', 'AQ': '南極', 'AG': 'アンティグア・バーブーダ', 'AM': 'アルメニア', 'AW': 'アルバ', 'AZ': 'アゼルバイジャン', 'BS': 'バハマ', 'BH': 'バーレーン', 'BB': 'バルバドス', 'BY': 'ベラルーシ', 'BZ': 'ベリーズ', 'BJ': 'ベナン', 'BM': 'バミューダ', 'BT': 'ブータン', 'BO': 'ボリビア', 'BA': 'ボスニア・ヘルツェゴビナ', 'BW': 'ボツワナ', 'BN': 'ブルネイ', 'BG': 'ブルガリア', 'BF': 'ブルキナファソ', 'BI': 'ブルンジ', 'KH': 'カンボジア', 'CM': 'カメルーン', 'CV': 'カーボベルデ', 'KY': 'ケイマン諸島', 'CF': '中央アフリカ', 'TD': 'チャド', 'KM': 'コモロ', 'CG': 'コンゴ共和国', 'CD': 'コンゴ民主共和国', 'CK': 'クック諸島', 'CR': 'コスタリカ', 'HR': 'クロアチア', 'CU': 'キューバ', 'CY': 'キプロス', 'DJ': 'ジブチ', 'DM': 'ドミニカ国', 'DO': 'ドミニカ共和国', 'EC': 'エクアドル', 'SV': 'エルサルバドル', 'GQ': '赤道ギニア', 'ER': 'エリトリア', 'EE': 'エストニア', 'SZ': 'エスワティニ', 'ET': 'エチオピア', 'FK': 'フォークランド諸島', 'FO': 'フェロー諸島', 'FJ': 'フィジー', 'GA': 'ガボン', 'GM': 'ガンビア', 'GE': 'ジョージア', 'GH': 'ガーナ', 'GI': 'ジブラルタル', 'GL': 'グリーンランド', 'GD': 'グレナダ', 'GU': 'グアム', 'GT': 'グアテマラ', 'GN': 'ギニア', 'GW': 'ギニアビサウ', 'GY': 'ガイアナ', 'HT': 'ハイチ', 'HN': 'ホンジュラス', 'IS': 'アイスランド', 'JM': 'ジャマイカ', 'JO': 'ヨルダン', 'KZ': 'カザフスタン', 'KI': 'キリバス', 'XK': 'コソボ', 'KG': 'キルギス', 'LA': 'ラオス', 'LV': 'ラトビア', 'LB': 'レバノン', 'LS': 'レソト', 'LR': 'リベリア', 'LY': 'リビア', 'LI': 'リヒテンシュタイン', 'LT': 'リトアニア', 'LU': 'ルクセンブルク', 'MO': 'マカオ', 'MG': 'マダガスカル', 'MW': 'マラウイ', 'MV': 'モルディブ', 'ML': 'マリ', 'MT': 'マルタ', 'MH': 'マーシャル諸島', 'MR': 'モーリタニア', 'MU': 'モーリシャス', 'FM': 'ミクロネシア', 'MD': 'モルドバ', 'MC': 'モナコ', 'MN': 'モンゴル', 'ME': 'モンテネグロ', 'MZ': 'モザンビーク', 'MM': 'ミャンマー', 'NA': 'ナミビア', 'NP': 'ネパール', 'NI': 'ニカラグア', 'NE': 'ニジェール', 'KP': '北朝鮮', 'MK': '北マケドニア', 'MP': '北マリアナ諸島', 'OM': 'オマーン', 'PW': 'パラオ', 'PS': 'パレスチナ', 'PA': 'パナマ', 'PG': 'パプアニューギニア', 'PY': 'パラグアイ', 'PR': 'プエルトリコ', 'RW': 'ルワンダ', 'KN': 'セントクリストファー・ネイビス', 'LC': 'セントルシア', 'WS': 'サモア', 'SM': 'サンマリノ', 'ST': 'サントメ・プリンシペ', 'SN': 'セネガル', 'RS': 'セルビア', 'SC': 'セーシェル', 'SL': 'シエラレオネ', 'SK': 'スロバキア', 'SI': 'スロベニア', 'SB': 'ソロモン諸島', 'SO': 'ソマリア', 'SS': '南スーダン', 'LK': 'スリランカ', 'SD': 'スーダン', 'SR': 'スリナム', 'SY': 'シリア', 'TJ': 'タジキスタン', 'TZ': 'タンザニア', 'TL': '東ティモール', 'TG': 'トーゴ', 'TO': 'トンガ', 'TT': 'トリニダード・トバゴ', 'TN': 'チュニジア', 'TM': 'トルクメニスタン', 'TV': 'ツバル', 'UG': 'ウガンダ', 'UY': 'ウルグアイ', 'UZ': 'ウズベキスタン', 'VU': 'バヌアツ', 'VE': 'ベネズエラ', 'YE': 'イエメン', 'ZM': 'ザンビア', 'ZW': 'ジンバブエ', 'GG': 'ガーンジー', 'JE': 'ジャージー', 'IM': 'マン島', 'AX': 'オーランド諸島', 'CW': 'キュラソー', 'SX': 'シント・マールテン', 'BQ': 'ボネール、シント・ユースタティウス、サバ', 'BL': 'サン・バルテルミー', 'MF': 'サン・マルタン', 'YT': 'マヨット', 'RE': 'レユニオン', 'MQ': 'マルティニーク', 'GP': 'グアドループ', 'GF': 'フランス領ギアナ', 'PF': 'フランス領ポリネシア', 'NC': 'ニューカレドニア', 'NU': 'ニウエ', 'NF': 'ノーフォーク島', 'CX': 'クリスマス島', 'PN': 'ピトケアン諸島', 'SH': 'セントヘレナ', 'MS': 'モントセラト', 'VG': '英領バージン諸島', 'VI': '米領バージン諸島', 'TC': 'タークス・カイコス諸島', 'CI': 'コートジボワール', 'VC': 'セントビンセント・グレナディーン'}, 'ru': {'AF': 'Афганистан', 'AL': 'Албания', 'DZ': 'Алжир', 'AS': 'Американское Самоа', 'AD': 'Андорра', 'AO': 'Ангола', 'AI': 'Ангилья', 'AQ': 'Антарктида', 'AG': 'Антигуа и Барбуда', 'AM': 'Армения', 'AW': 'Аруба', 'AZ': 'Азербайджан', 'BS': 'Багамы', 'BH': 'Бахрейн', 'BB': 'Барбадос', 'BY': 'Беларусь', 'BZ': 'Белиз', 'BJ': 'Бенин', 'BM': 'Бермуды', 'BT': 'Бутан', 'BO': 'Боливия', 'BA': 'Босния и Герцеговина', 'BW': 'Ботсвана', 'BN': 'Бруней', 'BG': 'Болгария', 'BF': 'Буркина-Фасо', 'BI': 'Бурунди', 'KH': 'Камбоджа', 'CM': 'Камерун', 'CV': 'Кабо-Верде', 'KY': 'Каймановы острова', 'CF': 'ЦАР', 'TD': 'Чад', 'KM': 'Коморы', 'CG': 'Конго', 'CD': 'ДР Конго', 'CK': 'Острова Кука', 'CR': 'Коста-Рика', 'HR': 'Хорватия', 'CU': 'Куба', 'CY': 'Кипр', 'DJ': 'Джибути', 'DM': 'Доминика', 'DO': 'Доминиканская Республика', 'EC': 'Эквадор', 'SV': 'Сальвадор', 'GQ': 'Экваториальная Гвинея', 'ER': 'Эритрея', 'EE': 'Эстония', 'SZ': 'Эсватини', 'ET': 'Эфиопия', 'FK': 'Фолклендские острова', 'FO': 'Фарерские острова', 'FJ': 'Фиджи', 'GA': 'Габон', 'GM': 'Гамбия', 'GE': 'Грузия', 'GH': 'Гана', 'GI': 'Гибралтар', 'GL': 'Гренландия', 'GD': 'Гренада', 'GU': 'Гуам', 'GT': 'Гватемала', 'GN': 'Гвинея', 'GW': 'Гвинея-Бисау', 'GY': 'Гайана', 'HT': 'Гаити', 'HN': 'Гондурас', 'IS': 'Исландия', 'JM': 'Ямайка', 'JO': 'Иордания', 'KZ': 'Казахстан', 'KI': 'Кирибати', 'XK': 'Косово', 'KG': 'Киргизия', 'LA': 'Лаос', 'LV': 'Латвия', 'LB': 'Ливан', 'LS': 'Лесото', 'LR': 'Либерия', 'LY': 'Ливия', 'LI': 'Лихтенштейн', 'LT': 'Литва', 'LU': 'Люксембург', 'MO': 'Макао', 'MG': 'Мадагаскар', 'MW': 'Малави', 'MV': 'Мальдивы', 'ML': 'Мали', 'MT': 'Мальта', 'MH': 'Маршалловы Острова', 'MR': 'Мавритания', 'MU': 'Маврикий', 'FM': 'Микронезия', 'MD': 'Молдова', 'MC': 'Монако', 'MN': 'Монголия', 'ME': 'Черногория', 'MZ': 'Мозамбик', 'MM': 'Мьянма', 'NA': 'Намибия', 'NP': 'Непал', 'NI': 'Никарагуа', 'NE': 'Нигер', 'KP': 'Северная Корея', 'MK': 'Северная Македония', 'MP': 'Северные Марианские острова', 'OM': 'Оман', 'PW': 'Палау', 'PS': 'Палестина', 'PA': 'Панама', 'PG': 'Папуа — Новая Гвинея', 'PY': 'Парагвай', 'PR': 'Пуэрто-Рико', 'RW': 'Руанда', 'KN': 'Сент-Китс и Невис', 'LC': 'Сент-Люсия', 'WS': 'Самоа', 'SM': 'Сан-Марино', 'ST': 'Сан-Томе и Принсипи', 'SN': 'Сенегал', 'RS': 'Сербия', 'SC': 'Сейшелы', 'SL': 'Сьерра-Леоне', 'SK': 'Словакия', 'SI': 'Словения', 'SB': 'Соломоновы Острова', 'SO': 'Сомали', 'SS': 'Южный Судан', 'LK': 'Шри-Ланка', 'SD': 'Судан', 'SR': 'Суринам', 'SY': 'Сирия', 'TJ': 'Таджикистан', 'TZ': 'Танзания', 'TL': 'Восточный Тимор', 'TG': 'Того', 'TO': 'Тонга', 'TT': 'Тринидад и Тобаго', 'TN': 'Тунис', 'TM': 'Туркменистан', 'TV': 'Тувалу', 'UG': 'Уганда', 'UY': 'Уругвай', 'UZ': 'Узбекистан', 'VU': 'Вануату', 'VE': 'Венесуэла', 'YE': 'Йемен', 'ZM': 'Замбия', 'ZW': 'Зимбабве', 'GG': 'Гернси', 'JE': 'Джерси', 'IM': 'Остров Мэн', 'AX': 'Аландские острова', 'CW': 'Кюрасао', 'SX': 'Синт-Мартен', 'BQ': 'Бонайре, Синт-Эстатиус и Саба', 'BL': 'Сен-Бартелеми', 'MF': 'Сен-Мартен', 'YT': 'Майотта', 'RE': 'Реюньон', 'MQ': 'Мартиника', 'GP': 'Гваделупа', 'GF': 'Французская Гвиана', 'PF': 'Французская Полинезия', 'NC': 'Новая Каледония', 'NU': 'Ниуэ', 'NF': 'Остров Норфолк', 'CX': 'Остров Рождества', 'PN': 'Питкэрн', 'SH': 'Остров Святой Елены', 'MS': 'Монтсеррат', 'VG': 'Британские Виргинские острова', 'VI': 'Американские Виргинские острова', 'TC': 'Теркс и Кайкос', 'CI': 'Кот-д’Ивуар', 'VC': 'Сент-Винсент и Гренадины'}, 'fa': {'AF': 'افغانستان', 'AL': 'آلبانی', 'DZ': 'الجزایر', 'AS': 'ساموآی آمریکا', 'AD': 'آندورا', 'AO': 'آنگولا', 'AI': 'آنگویلا', 'AQ': 'جنوبگان', 'AG': 'آنتیگوا و باربودا', 'AM': 'ارمنستان', 'AW': 'آروبا', 'AZ': 'آذربایجان', 'BS': 'باهاما', 'BH': 'بحرین', 'BB': 'باربادوس', 'BY': 'بلاروس', 'BZ': 'بلیز', 'BJ': 'بنین', 'BM': 'برمودا', 'BT': 'بوتان', 'BO': 'بولیوی', 'BA': 'بوسنی و هرزگوین', 'BW': 'بوتسوانا', 'BN': 'برونئی', 'BG': 'بلغارستان', 'BF': 'بورکینافاسو', 'BI': 'بوروندی', 'KH': 'کامبوج', 'CM': 'کامرون', 'CV': 'کیپ ورد', 'KY': 'جزایر کیمن', 'CF': 'جمهوری آفریقای مرکزی', 'TD': 'چاد', 'KM': 'کومور', 'CG': 'کنگو', 'CD': 'جمهوری دموکراتیک کنگو', 'CK': 'جزایر کوک', 'CR': 'کاستاریکا', 'HR': 'کرواسی', 'CU': 'کوبا', 'CY': 'قبرس', 'DJ': 'جیبوتی', 'DM': 'دومینیکا', 'DO': 'جمهوری دومینیکن', 'EC': 'اکوادور', 'SV': 'السالوادور', 'GQ': 'گینه استوایی', 'ER': 'اریتره', 'EE': 'استونی', 'SZ': 'اسواتینی', 'ET': 'اتیوپی', 'FK': 'جزایر فالکلند', 'FO': 'جزایر فارو', 'FJ': 'فیجی', 'GA': 'گابن', 'GM': 'گامبیا', 'GE': 'گرجستان', 'GH': 'غنا', 'GI': 'جبل\u200cالطارق', 'GL': 'گرینلند', 'GD': 'گرنادا', 'GU': 'گوام', 'GT': 'گواتمالا', 'GN': 'گینه', 'GW': 'گینه بیسائو', 'GY': 'گویان', 'HT': 'هائیتی', 'HN': 'هندوراس', 'IS': 'ایسلند', 'JM': 'جامائیکا', 'JO': 'اردن', 'KZ': 'قزاقستان', 'KI': 'کیریباتی', 'XK': 'کوزوو', 'KG': 'قرقیزستان', 'LA': 'لائوس', 'LV': 'لتونی', 'LB': 'لبنان', 'LS': 'لسوتو', 'LR': 'لیبریا', 'LY': 'لیبی', 'LI': 'لیختن\u200cاشتاین', 'LT': 'لیتوانی', 'LU': 'لوکزامبورگ', 'MO': 'ماکائو', 'MG': 'ماداگاسکار', 'MW': 'مالاوی', 'MV': 'مالدیو', 'ML': 'مالی', 'MT': 'مالت', 'MH': 'جزایر مارشال', 'MR': 'موریتانی', 'MU': 'موریس', 'FM': 'میکرونزی', 'MD': 'مولداوی', 'MC': 'موناکو', 'MN': 'مغولستان', 'ME': 'مونته\u200cنگرو', 'MZ': 'موزامبیک', 'MM': 'میانمار', 'NA': 'نامیبیا', 'NP': 'نپال', 'NI': 'نیکاراگوئه', 'NE': 'نیجر', 'KP': 'کره شمالی', 'MK': 'مقدونیه شمالی', 'MP': 'جزایر ماریانای شمالی', 'OM': 'عمان', 'PW': 'پالائو', 'PS': 'فلسطین', 'PA': 'پاناما', 'PG': 'پاپوا گینه نو', 'PY': 'پاراگوئه', 'PR': 'پورتوریکو', 'RW': 'رواندا', 'KN': 'سنت کیتس و نویس', 'LC': 'سنت لوسیا', 'WS': 'ساموآ', 'SM': 'سن مارینو', 'ST': 'سائوتومه و پرنسیپ', 'SN': 'سنگال', 'RS': 'صربستان', 'SC': 'سیشل', 'SL': 'سیرالئون', 'SK': 'اسلواکی', 'SI': 'اسلوونی', 'SB': 'جزایر سلیمان', 'SO': 'سومالی', 'SS': 'سودان جنوبی', 'LK': 'سری\u200cلانکا', 'SD': 'سودان', 'SR': 'سورینام', 'SY': 'سوریه', 'TJ': 'تاجیکستان', 'TZ': 'تانزانیا', 'TL': 'تیمور شرقی', 'TG': 'توگو', 'TO': 'تونگا', 'TT': 'ترینیداد و توباگو', 'TN': 'تونس', 'TM': 'ترکمنستان', 'TV': 'تووالو', 'UG': 'اوگاندا', 'UY': 'اروگوئه', 'UZ': 'ازبکستان', 'VU': 'وانواتو', 'VE': 'ونزوئلا', 'YE': 'یمن', 'ZM': 'زامبیا', 'ZW': 'زیمبابوه', 'GG': 'گرنزی', 'JE': 'جرزی', 'IM': 'جزیره من', 'AX': 'جزایر الند', 'CW': 'کوراسائو', 'SX': 'سینت مارتن', 'BQ': 'بونیر، سینت یوستاتیوس و سابا', 'BL': 'سن بارتلمی', 'MF': 'سن مارتن', 'YT': 'مایوت', 'RE': 'رئونیون', 'MQ': 'مارتینیک', 'GP': 'گوادلوپ', 'GF': 'گویان فرانسه', 'PF': 'پلی\u200cنزی فرانسه', 'NC': 'کالدونیای جدید', 'NU': 'نیوئه', 'NF': 'جزیره نورفک', 'CX': 'جزیره کریسمس', 'PN': 'پیتکرن', 'SH': 'سنت هلنا', 'MS': 'مونتسرات', 'VG': 'جزایر ویرجین بریتانیا', 'VI': 'جزایر ویرجین آمریکا', 'TC': 'جزایر تورکس و کایکوس', 'CI': 'ساحل عاج', 'VC': 'سنت وینسنت و گرنادین‌ها'}}
@@ -3276,6 +3328,9 @@ class ProxyCheck(Provider):
                 # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
                 # 其余字段继续返回，不丢整源（F05）。
                 _risk = None
+            # R4-H-04：风险分钳制到 [0, 100]（150 只溢出进度条，不崩溃）。
+            if _risk is not None:
+                _risk = max(0, min(100, _risk))
 
             def _yn(v):
                 # F09 三态解析: "yes"->True、"no"->False, 缺失或
@@ -3286,13 +3341,15 @@ class ProxyCheck(Provider):
                     return False
                 return None
 
-            _type = d.get("type", "")
+            # R4-H-04：type 只认字符串，非字符串（list/dict/数字）一律视为空，
+            # 防下游 score_fraud / _type_block / _factor_rows 误读。
+            _type = d.get("type") if isinstance(d.get("type"), str) else ""
             _vpn = _yn(d.get("vpn"))
             _tor = _yn(d.get("tor"))
             # VPN/Tor 可继续接受明确的 type 正向证据 (与旧 OR 口径一致)。
             if _type == "VPN":
                 _vpn = True
-            if str(d.get("type") or "").upper() == "TOR":
+            if _type.upper() == "TOR":
                 _tor = True
             return {
                 "ok": True,
@@ -3331,6 +3388,7 @@ class DBIP(Provider):
             return {
                 "ok": True,
                 "country": _cn.strip(),
+                "country_code": _clean_str(d.get("countryCode")),
                 "state": d.get("stateProv") or "",
                 "city": d.get("city") or "",
                 "ts": now_iso(),
@@ -3364,8 +3422,9 @@ class FreeIPAPI(Provider):
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "proxy": d.get("isProxy"),
+                "proxy": _strict_bool(d.get("isProxy")),
                 "country": _cn.strip(),
+                "country_code": _clean_str(d.get("countryCode")),
                 "city": d.get("cityName", ""),
                 "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
@@ -3400,11 +3459,11 @@ class ShodanInternetDB(Provider):
                 return {"ok": False, "err": str(d["error"])[:80]}
             return {
                 "ok": True,
-                "ports": d.get("ports", []),
-                "vulns": d.get("vulns", []),
-                "tags": d.get("tags", []),
-                "hostnames": d.get("hostnames", []),
-                "cpes": d.get("cpes", []),
+                "ports": d.get("ports") if isinstance(d.get("ports"), list) else [],
+                "vulns": d.get("vulns") if isinstance(d.get("vulns"), list) else [],
+                "tags": d.get("tags") if isinstance(d.get("tags"), list) else [],
+                "hostnames": d.get("hostnames") if isinstance(d.get("hostnames"), list) else [],
+                "cpes": d.get("cpes") if isinstance(d.get("cpes"), list) else [],
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3421,7 +3480,10 @@ class FeodoTracker(Provider):
             arr = json.loads(raw)
             if not isinstance(arr, list):
                 return None
-            return {e.get("ip_address") for e in arr if isinstance(e, dict) and e.get("ip_address")}
+            # R4-M-06：空集即解析失败（弃权而非假阴性），与其余 5 个威胁源
+            # 保持一致（_get_threat_list 遇 None 驱逐并返失败）。
+            out = {e.get("ip_address") for e in arr if isinstance(e, dict) and e.get("ip_address")}
+            return out or None
 
         lst = _get_threat_list(
             "feodo",
@@ -3708,11 +3770,14 @@ class IPLocate(Provider):
                 "timezone": d.get("time_zone", ""),
                 "asn": _parse_asn(asn.get("asn")), "asn_type": asn.get("type", ""),
                 "isp": asn.get("name", ""), "org": asn.get("name", ""),
-                "proxy": pv.get("is_proxy"), "vpn": pv.get("is_vpn"),
-                "tor": pv.get("is_tor"), "hosting": pv.get("is_hosting"),
-                "is_abuser": pv.get("is_abuser"),
-                "is_anycast": d.get("is_anycast"), "is_satellite": d.get("is_satellite"),
-                "is_icloud_relay": pv.get("is_icloud_relay"),
+                "proxy": _strict_bool(pv.get("is_proxy")),
+                "vpn": _strict_bool(pv.get("is_vpn")),
+                "tor": _strict_bool(pv.get("is_tor")),
+                "hosting": _strict_bool(pv.get("is_hosting")),
+                "is_abuser": _strict_bool(pv.get("is_abuser")),
+                "is_anycast": _strict_bool(d.get("is_anycast")),
+                "is_satellite": _strict_bool(d.get("is_satellite")),
+                "is_icloud_relay": _strict_bool(pv.get("is_icloud_relay")),
                 "cloud_provider": ho.get("provider", ""),
                 "network": ho.get("network") or asn.get("route", ""),
                 "ts": now_iso(),
@@ -3744,9 +3809,13 @@ class IPQuery(Provider):
                 "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
                 "timezone": loc.get("timezone", ""),
                 "asn": _parse_asn(isp.get("asn")), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
-                "proxy": risk.get("is_proxy"), "vpn": risk.get("is_vpn"),
-                "tor": risk.get("is_tor"), "datacenter": risk.get("is_datacenter"),
-                "mobile": risk.get("is_mobile"), "risk_score": risk.get("risk_score"),
+                "proxy": _strict_bool(risk.get("is_proxy")),
+                "vpn": _strict_bool(risk.get("is_vpn")),
+                "tor": _strict_bool(risk.get("is_tor")),
+                "datacenter": _strict_bool(risk.get("is_datacenter")),
+                "mobile": _strict_bool(risk.get("is_mobile")),
+                # R4-H-04：风险分只认有限数值并钳制到 [0, 100]。
+                "risk_score": _clamp_score(risk.get("risk_score")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3803,7 +3872,7 @@ class TwoIp(Provider):
                 "latitude": d.get("lat"), "longitude": d.get("lon"),
                 "timezone": d.get("timezone", ""),
                 "asn": _parse_asn(asn.get("id")), "isp": asn.get("name", ""),
-                "hosting": asn.get("hosting"),
+                "hosting": _strict_bool(asn.get("hosting")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4156,7 +4225,9 @@ def _build_unified_profile(s):
         country_code = _CC_EN.get(country.strip().lower(), "")
     if not country_code and country:
         _cn = country.strip().lower()
-        for _cand in (wi, wa, gj, il, iq, co, ti):
+        # R3-M-10：db/fp 现已补 country_code 字段，纳入同名借用循环；
+        # 名称不在 _CC_EN 时（如 "Deutschland"），同名源的代码仍可借用。
+        for _cand in (wi, db, fp, wa, gj, il, iq, co, ti):
             _cc_name = _cand.get("country")
             if isinstance(_cc_name, str) and _cc_name.strip().lower() == _cn:
                 _cc_code = _cand.get("country_code")
@@ -4476,7 +4547,7 @@ def score_threat(s):
             pts += add
             ev.append(f"Shodan {len(sh['vulns'])} vulns +{add}")
         bad_tags = {"compromised", "malware", "c2", "botnet", "scanner"} & {
-            str(t).lower() for t in sh.get("tags", [])
+            str(t).lower() for t in (sh.get("tags") or [])
         }
         if bad_tags:
             pts += 15
@@ -4512,7 +4583,9 @@ def score_fraud(s):
     pc = s.get("proxycheck", {})
     if pc.get("ok") and (pc.get("risk") or 0) > 0:
         r_score = pc["risk"]
-        if pc.get("tor") or (pc.get("type") or "").upper() == "TOR":
+        # R4-H-04：type 经 check() 已清洗为字符串，手造 sources 仍以 str() 兜底，
+        # 防 list/dict type 在 .upper() 抛错。
+        if pc.get("tor") or (str(pc.get("type") or "").upper() == "TOR"):
             eff = r_score
             ev.append(f"proxycheck risk {r_score}/100 (Tor)")
         else:
@@ -4643,11 +4716,12 @@ def score_platform(s):
     if dc:
         pts += 30
         ev.append(f"DC keyword '{pat}' +30")
-    elif ((wi.get("ok") and wi.get("hosting")) or ("hosting" in pc_type)
-          or (il.get("ok") and (il.get("hosting")
+    elif ((wi.get("ok") and _strict_bool(wi.get("hosting")))
+          or ("hosting" in pc_type)
+          or (il.get("ok") and (_strict_bool(il.get("hosting"))
                                 or il.get("asn_type") == "hosting"))
-          or (iq.get("ok") and iq.get("datacenter"))
-          or (ti.get("ok") and ti.get("hosting"))):
+          or (iq.get("ok") and _strict_bool(iq.get("datacenter")))
+          or (ti.get("ok") and _strict_bool(ti.get("hosting")))):
         pts += 30
         ev.append("Hosting/DC trait +30")
 
@@ -4662,26 +4736,27 @@ def score_platform(s):
     def _p(d):
         # 缺失票约定：源不可用计 None；字段缺失亦计 None（弃权），不计入比较；
         # 已判定才计 True/False。fp/il/iq 与其余源同口径。
+        # R4-H-04：经 _strict_bool 清洗，非布尔值一律弃权（"false" 不得判真）。
         if not d.get("ok"):
             return None
-        return d.get("proxy")
+        return _strict_bool(d.get("proxy"))
 
     def _v(d):
         if not d.get("ok"):
             return None
-        return d.get("vpn")
+        return _strict_bool(d.get("vpn"))
 
     is_prx = _consensus(
         _p(pc), _p(wi),
-        None if (not fp.get("ok") or fp.get("proxy") is None) else bool(fp.get("proxy")),
-        None if (not il.get("ok") or il.get("proxy") is None) else bool(il.get("proxy")),
-        None if (not iq.get("ok") or iq.get("proxy") is None) else bool(iq.get("proxy")),
+        None if (not fp.get("ok") or fp.get("proxy") is None) else _strict_bool(fp.get("proxy")),
+        None if (not il.get("ok") or il.get("proxy") is None) else _strict_bool(il.get("proxy")),
+        None if (not iq.get("ok") or iq.get("proxy") is None) else _strict_bool(iq.get("proxy")),
     )
     is_vpn = _consensus(
         _v(pc), _v(wi),
-        None if (not il.get("ok") or il.get("vpn") is None) else bool(il.get("vpn")),
-        None if (not iq.get("ok") or iq.get("vpn") is None) else bool(iq.get("vpn")),
-        None if (not xv.get("ok") or xv.get("listed") is None) else bool(xv.get("listed")),
+        None if (not il.get("ok") or il.get("vpn") is None) else _strict_bool(il.get("vpn")),
+        None if (not iq.get("ok") or iq.get("vpn") is None) else _strict_bool(iq.get("vpn")),
+        None if (not xv.get("ok") or xv.get("listed") is None) else _strict_bool(xv.get("listed")),
     )
     if is_prx:
         pts += 40
@@ -4690,10 +4765,10 @@ def score_platform(s):
         pts += 40
         ev.append("VPN detected +40")
     if ((te.get("ok") and te.get("is_tor_exit"))
-            or (wi.get("ok") and wi.get("tor")) or ("tor" in pc_type)
-            or (pc.get("ok") and pc.get("tor"))
-            or (il.get("ok") and il.get("tor"))
-            or (iq.get("ok") and iq.get("tor"))):
+            or (wi.get("ok") and _strict_bool(wi.get("tor"))) or ("tor" in pc_type)
+            or (pc.get("ok") and _strict_bool(pc.get("tor")))
+            or (il.get("ok") and _strict_bool(il.get("tor")))
+            or (iq.get("ok") and _strict_bool(iq.get("tor")))):
         pts += 30
         ev.append("Tor node +30")
     return min(pts, 100), ev
@@ -4712,6 +4787,11 @@ def _bar_label_width():
 
 
 def _risk_bar(v, width=30):
+    # R4-H-04：入口兜底——非数值/非有限数守 0，越界钳制到 [0, 100]，
+    # 条长恒为 width，不溢出、不抛错。
+    v = _clamp_score(v)
+    if v is None:
+        v = 0
     filled = int(v / 100 * width)
     bar = "█" * filled + "░" * (width - filled)
     if v < 25:
@@ -4754,7 +4834,7 @@ _V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不
 _V6_POOL = None  # run_passive6 同上
 
 
-def run_passive(ip):
+def run_passive(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
     avail_providers = [p for p in PROVIDERS if p.available()]
@@ -4771,7 +4851,8 @@ def run_passive(ip):
             with _progress_lock:
                 done_cnt[0] += 1
                 if not progress_closed[0]:
-                    _render_progress_locked(done_cnt[0], total_p, p.name)
+                    _render_progress_locked(done_cnt[0], total_p, p.name,
+                                            json_mode=json_mode)
         except Exception:
             pass
         return p.key, res
@@ -4800,7 +4881,7 @@ def run_passive(ip):
             progress_closed[0] = True
         # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
-    if "--json" not in sys.argv:
+    if not json_mode:
         with _progress_lock:
             print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
@@ -4983,9 +5064,11 @@ def _print_streaming_inference(res):
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
-        or (bool(wi.get("tor")) if wi.get("ok") else False)
-        or (bool(il.get("tor")) if il.get("ok") else False)
-        or (bool(iq.get("tor")) if iq.get("ok") else False)
+        # R4-H-04：同 score_platform，Tor 票须经 _strict_bool 清洗，
+        # "false" 字符串不得判真（仲裁 [4] 节的 is_tor 分支）。
+        or (_strict_bool(wi.get("tor")) is True if wi.get("ok") else False)
+        or (_strict_bool(il.get("tor")) is True if il.get("ok") else False)
+        or (_strict_bool(iq.get("tor")) is True if iq.get("ok") else False)
         or bool(is_tor_exit)
     )
 
@@ -5068,7 +5151,7 @@ def _print_streaming_inference(res):
         (fe.get("ok") and fe.get("listed"))
         or (et.get("ok") and et.get("listed"))
         or (sp.get("ok") and sp.get("listed"))
-        or (sh.get("ok") and len(sh.get("vulns", [])) > 0)
+        or (sh.get("ok") and len(sh.get("vulns") or []) > 0)
     )
     is_tor_exit = te.get("ok") and te.get("is_tor_exit")
 
@@ -5609,16 +5692,16 @@ def _factor_rows(s, wi_server, v6=False):
         ("GreyNoise", [None, None, None, None, None,
                        _h(gn, gn.get("classification") == "malicious")]),
         ("Feodo", [None, None, None, None,
-                   _h(fe, bool(fe.get("listed"))), None]),
+                   _h(fe, _strict_bool(fe.get("listed")) is True), None]),
         ("EmergingThreats", [None, None, None, None,
-                             _h(et, bool(et.get("listed"))), None]),
+                             _h(et, _strict_bool(et.get("listed")) is True), None]),
         ("Spamhaus DROP", [None, None, None, None,
-                           _h(sp, bool(sp.get("listed"))), None]),
-        ("Tor Exit", [None, None, _h(te, bool(te.get("is_tor_exit"))),
+                           _h(sp, _strict_bool(sp.get("listed")) is True), None]),
+        ("Tor Exit", [None, None, _h(te, _strict_bool(te.get("is_tor_exit")) is True),
                       None, None, None]),
         ("proxycheck", [
-            None if pc.get("proxy") is None else _h(pc, bool(pc.get("proxy"))),
-            None if pc.get("vpn") is None else _h(pc, bool(pc.get("vpn"))),
+            None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
+            None if pc.get("vpn") is None else _h(pc, _strict_bool(pc.get("vpn")) is True),
             None if pc.get("type") is None else _h(pc, "tor" in str(pc.get("type")).lower()),
             None if pc.get("type") is None else _h(pc, "hosting" in str(pc.get("type")).lower()),
             None, None]),
@@ -5628,29 +5711,29 @@ def _factor_rows(s, wi_server, v6=False):
             wi.get("tor") if wi.get("ok") else None,
             wi_server, None, None]),
         ("freeipapi", [
-            None if fp.get("proxy") is None else _h(fp, bool(fp.get("proxy"))),
+            None if fp.get("proxy") is None else _h(fp, _strict_bool(fp.get("proxy")) is True),
             None, None, None, None, None]),
         ("iplocate.io", [
-            None if il.get("proxy") is None else _h(il, bool(il.get("proxy"))),
-            None if il.get("vpn") is None else _h(il, bool(il.get("vpn"))),
-            None if il.get("tor") is None else _h(il, bool(il.get("tor"))),
+            None if il.get("proxy") is None else _h(il, _strict_bool(il.get("proxy")) is True),
+            None if il.get("vpn") is None else _h(il, _strict_bool(il.get("vpn")) is True),
+            None if il.get("tor") is None else _h(il, _strict_bool(il.get("tor")) is True),
             None if (il.get("hosting") is None and il.get("asn_type") is None)
-            else _h(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting"),
+            else _h(il, _strict_bool(il.get("hosting")) is True or il.get("asn_type") == "hosting"),
             None,
-            None if il.get("is_abuser") is None else _h(il, bool(il.get("is_abuser")))]),
+            None if il.get("is_abuser") is None else _h(il, _strict_bool(il.get("is_abuser")) is True)]),
         ("ipquery.io", [
-            None if iq.get("proxy") is None else _h(iq, bool(iq.get("proxy"))),
-            None if iq.get("vpn") is None else _h(iq, bool(iq.get("vpn"))),
-            None if iq.get("tor") is None else _h(iq, bool(iq.get("tor"))),
-            None if iq.get("datacenter") is None else _h(iq, bool(iq.get("datacenter"))),
+            None if iq.get("proxy") is None else _h(iq, _strict_bool(iq.get("proxy")) is True),
+            None if iq.get("vpn") is None else _h(iq, _strict_bool(iq.get("vpn")) is True),
+            None if iq.get("tor") is None else _h(iq, _strict_bool(iq.get("tor")) is True),
+            None if iq.get("datacenter") is None else _h(iq, _strict_bool(iq.get("datacenter")) is True),
             None, None]),
         ("2ip.io", [
             None, None, None,
-            None if ti.get("hosting") is None else _h(ti, bool(ti.get("hosting"))),
+            None if ti.get("hosting") is None else _h(ti, _strict_bool(ti.get("hosting")) is True),
             None, None]),
         ("X4BNet VPN", [
             None,
-            _h(xv, bool(xv.get("listed"))),
+            _h(xv, _strict_bool(xv.get("listed")) is True),
             None, None, None, None]),
         ("IPsum", [
             None, None, None, None,
@@ -5672,7 +5755,7 @@ def _factor_rows(s, wi_server, v6=False):
 
 
 def print_report(res, include_streaming_inference=True, sysinfo=None,
-                 tail_completeness=True, dns_rec=False):
+                 tail_completeness=True, dns_rec=False, footnote="passive"):
     _sec_begin()
     s = res["sources"]
     prof = res.get("profile") or _build_unified_profile(s)
@@ -5816,8 +5899,17 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     if include_streaming_inference:
         _done_txt = "✓ " + T("done")
         print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
-        print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+        if footnote == "proxy_diag":
+            # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
+            # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
+            print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
+        else:
+            print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
+            print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+    # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
+    # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
+    # 显式恢复 _SEC["on"]=True（计数保留）。
+    _SEC["on"] = False
 
 
 # ============================================================
@@ -5841,7 +5933,7 @@ V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapiis", "ipinfo",
                     "ipsum", "blocklistde")
 
 
-def run_passive6(ip):
+def run_passive6(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
     avail = [p for p in PROVIDERS if p.key in V6_PROVIDER_KEYS and p.available()]
@@ -5858,7 +5950,8 @@ def run_passive6(ip):
             with _progress_lock:
                 done_cnt[0] += 1
                 if not progress_closed[0]:
-                    _render_progress_locked(done_cnt[0], total_p, p.name)
+                    _render_progress_locked(done_cnt[0], total_p, p.name,
+                                            json_mode=json_mode)
         except Exception:
             pass
         return p.key, res
@@ -5887,7 +5980,7 @@ def run_passive6(ip):
             progress_closed[0] = True
         # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
-    if "--json" not in sys.argv:
+    if not json_mode:
         with _progress_lock:
             print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
@@ -6139,6 +6232,8 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     # [5] 完整度
     if tail_completeness:
         _print_report6_tail(res)
+    # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
+    _SEC["on"] = False
 
 
 def get_egress_ip(budget=None):
@@ -6562,10 +6657,15 @@ def _is_challenge(code, body, headers=None):
 
 def _http_fallthrough(code):
     """test_* 落空分支共用状态分类：5xx/429/网络错误不是地区封锁证据。
+    3xx 重定向残留（跟随未完成 / 循环）同样不是地区封锁证据，判 unknown；
+    显式检查 final_url 锁区关键词的分支须排在本函数之前，先验命中锁区
+    URL 的 3xx 仍判 blocked（R4-M-07）。
     返回应判状态（T 值），无明确限制证据时返回 None（调用方再判 blocked）。"""
     if code is None:
         return T("failed")
     if code == 429 or 500 <= code <= 599:
+        return T("unknown")
+    if 300 <= code <= 399:
         return T("unknown")
     return None
 
@@ -7078,6 +7178,13 @@ def _unlock_label(v):
     return T("unknown")
 
 
+def _tiktok_denied(body):
+    """TikTok "Access Denied" 只认短错误页（R4-H-01）：正常大型 SSR JSON
+    的用户内容字段也可能含该短语，不得误判。短页 < 16 KiB 才算错误页。"""
+    b = body or ""
+    return len(b) < 16384 and "Access Denied" in b
+
+
 def test_tiktok(local_ip=None):
     code, body, _, complete, hdrs = _active_get("https://www.tiktok.com/")
     if code is None:
@@ -7086,9 +7193,9 @@ def test_tiktok(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "Access Denied" not in body:
+    if code == 200 and not complete and not _tiktok_denied(body):
         return T("unknown"), "", None
-    if code == 200 and "Access Denied" not in body:
+    if code == 200 and not _tiktok_denied(body):
         m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.tiktok.com", local_ip)
@@ -7096,6 +7203,27 @@ def test_tiktok(local_ip=None):
     if _ft is not None:
         return _ft, "", None
     return T("blocked"), "", None
+
+
+def _disney_url_blocked(final_url):
+    """Disney+ 锁区 URL 信号（R4-H-01）：最终 URL 来自重定向链，不受正文
+    截断影响。"""
+    u = (final_url or "").lower()
+    return "/unavailable" in u or "preview.disneyplus.com/unavailable" in u
+
+
+def _disney_head_blocked(body):
+    """Disney+ 锁区正文信号（R4-H-01）：只认 <title> 或前 8 KiB 头部里的
+    明确锁区短语。页脚法律文案（如 "Not available in U.S. territories."）
+    在 512 KiB 采样深处，不在此列，不得误判。"""
+    b = body or ""
+    head = b[:8192]
+    m = re.search(r"<title[^>]*>(.*?)</title>", b, re.IGNORECASE | re.DOTALL)
+    title = m.group(1) if m else ""
+    hay = (head + "\n" + title).lower()
+    return ("disney+ is not available" in hay
+            or "not available in your region" in hay
+            or "not available in your country" in hay)
 
 
 def test_disney(local_ip=None):
@@ -7106,11 +7234,17 @@ def test_disney(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    # 最终 URL 来自重定向链、不受正文截断影响：URL 已含 blocked 信号时
-    # 不因正文不完整判 unknown，落入正常分类（6-3）。
-    if code == 200 and not complete and "not available" not in body.lower() and "unavailable" not in final_url.lower():
+    # 最终 URL 来自重定向链、不受正文截断影响：200 与 3xx 命中 /unavailable
+    # 即判 blocked（6-3；M-07 先验 URL 分支须排在 fallthrough 之前）。
+    if (code == 200 or 300 <= code <= 399) and _disney_url_blocked(final_url):
+        return T("blocked"), "", None
+    # 采样不完整：已读部分出现锁区短语也只判 unknown（短语可能来自页脚等
+    # 非锁区文案，见 H-01 加重情节），不判 blocked。
+    if code == 200 and not complete:
         return T("unknown"), "", None
-    if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
+    if code == 200 and _disney_head_blocked(body):
+        return T("blocked"), "", None
+    if code == 200:
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -7146,6 +7280,9 @@ def test_netflix(local_ip=None):
     # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
     # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
     # 次探针 403 会被误判 blocked）。
+    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code <= 399 and "nsfw" in (final_url or "").lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
@@ -7166,6 +7303,9 @@ def test_netflix(local_ip=None):
         orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?", zhtw="自製?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
+    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code2 <= 399 and "nsfw" in (final_url2 or "").lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code2)
     if _ft is not None:
         return _ft, "", None
@@ -7296,6 +7436,9 @@ def test_gemini(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
+    # M-07：3xx 先验命中锁区 URL（faq）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code <= 399 and "faq" in final_url.lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
@@ -7314,6 +7457,9 @@ def test_claude(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
+    # M-07：3xx 先验命中锁区 URL（app-unavailable）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code <= 399 and "app-unavailable" in final_url.lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
@@ -9249,7 +9395,7 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     pbl = []
     done = [0]
     sys_ns_list = _get_system_nameservers()[:3]
-    is_json = json_mode or "--json" in sys.argv
+    is_json = json_mode  # R3-M-17：json_mode 由参数传入，不再硬读 sys.argv
 
     def _check(lst):
         qname = f"{rev}.{lst}"
@@ -9384,7 +9530,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
     streaming_json = {}
     for cat_key, cat_name, tests in categories:
         if not json_mode:
-            _print_progress(0, len(tests), cat_name)
+            _print_progress(0, len(tests), cat_name, json_mode=json_mode)
 
         def _run_one(item):
             n, fn = item
@@ -9421,12 +9567,14 @@ def _run_streaming_table_impl(egress, json_mode=False):
 
 def _run_active6(json_mode, egress6):
     """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速 + 系统/磁盘/25 端口/DNSBL"""
-    res6 = run_passive6(egress6)
+    res6 = run_passive6(egress6, json_mode=json_mode)
     dns6_res = test_dns_servers6()
     si6 = get_system_info()
     io6 = disk_io_test()
     if not json_mode:
         print_report6(res6, sysinfo=(si6, io6), tail_completeness=False)
+        # R3-M-17：报告出口已重置 _SEC，主动流程内继续编号须显式恢复（计数保留）。
+        _SEC["on"] = True
         _section(T("sec_dns") + " (IPv6)")
         print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
@@ -9472,6 +9620,8 @@ def _run_active6(json_mode, egress6):
                 print(f"    {_c(C.yellow, '- ' + b)}")
             print(f"    {_c(C.dim, _L('※ PBL 为策略名单：表示该地址段按策略不应直接发信，非垃圾邮件证据', '※ PBL is a policy list: the range should not send mail directly; not evidence of spam', '※ PBL はポリシーリストです：このアドレス範囲は直接送信すべきでなく、スパムの証拠ではありません', '※ PBL — список политик: диапазон не должен отправлять почту напрямую, это не свидетельство спама', '※ PBL فهرست سیاست است: این بازه نباید مستقیماً نامه ارسال کند؛ مدرکی بر اسپم بودن نیست', zhtw='※ PBL 為策略名單：表示該位址段按策略不應直接發信，非垃圾郵件證據'))}")
         _print_report6_tail(res6)
+        # R3-M-17：流程出口重置章节编号状态，防编号泄漏到后续菜单段落。
+        _SEC["on"] = False
     _dnsbl6 = {
         "valid": dnsbl6_total,
         "clean": dnsbl6_clean,
@@ -9577,12 +9727,14 @@ def run_active(json_mode=False, stack=None):
     if stack == "6":
         return _run_active6(json_mode, egress6)
 
-    res = run_passive(egress)
+    res = run_passive(egress, json_mode=json_mode)
     si = get_system_info()
     io_res = disk_io_test()
     if not json_mode:
         print_report(res, include_streaming_inference=False,
                      sysinfo=(si, io_res), tail_completeness=False)
+        # R3-M-17：报告出口已重置 _SEC，主动流程内继续编号须显式恢复（计数保留）。
+        _SEC["on"] = True
         _section(T("sec_stream"))
 
     streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
@@ -9653,7 +9805,7 @@ def run_active(json_mode=False, stack=None):
     speed6_res = None
     dns6_res = None
     if egress6:
-        res6 = run_passive6(egress6)
+        res6 = run_passive6(egress6, json_mode=json_mode)
         dns6_res = test_dns_servers6()
         if not json_mode:
             _section(T("sec_ipv6"))
@@ -9664,6 +9816,8 @@ def run_active(json_mode=False, stack=None):
             elif _a4 and _a6:
                 print(f"  {_c(C.green, T('v6_same_exit').format(a=_a4))}")
             print_report6(res6, embedded=True, tail_completeness=False)
+            # R3-M-17：报告出口已重置 _SEC，主动流程内继续编号须显式恢复（计数保留）。
+            _SEC["on"] = True
             _section(T("sec_dns") + " (IPv6)")
             print_dns6_test(dns6_res)
             _section(T("sec_stream") + " (IPv6)")
@@ -9730,6 +9884,8 @@ def run_active(json_mode=False, stack=None):
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
         # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
         print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
+    # R3-M-17：流程出口重置章节编号状态，防编号泄漏到后续菜单段落。
+    _SEC["on"] = False
     return res
 
 
@@ -10602,7 +10758,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     if _eip is not None:
         _note(T("diag_reputation_testing"))
         try:
-            res = run_passive6(eip) if _ever == 6 else run_passive(eip)
+            res = run_passive6(eip, json_mode=json_mode) if _ever == 6 else run_passive(eip, json_mode=json_mode)
             out["egress_reputation"] = {
                 "risk_level": res.get("verdict"),
                 "threat_score": res.get("scores", {}).get("threat", (None,))[0],
@@ -10612,7 +10768,8 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
                 if _ever == 6:
                     print_report6(res)
                 else:
-                    print_report(res)
+                    # R3-M-17：嵌在主动代理诊断里的信誉报告走 diag 分支脚注。
+                    print_report(res, footnote="proxy_diag")
         except Exception as e:
             _note(_c(C.dim, T("diag_reputation_fail") % e))
 
@@ -10683,6 +10840,40 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
 # ============================================================
 # 批量节点测速优选 (借鉴 yonggekkk 节点优选: 一批节点并发测速排名)
 # ============================================================
+def _parse_host_port_strict(spec):
+    """严格解析 host:port / [ipv6]:port（R4-M-05，--proxy、菜单 7、菜单 9 共用）。
+    显式拒绝含 @（裸 userinfo 账密）、/（scheme 残留）、空白符或控制字符
+    （ord < 32 或 == 127）的 host——socks5://user:pass@host:port 此前靠
+    附带冒号检查才被拒，此处改为显式拦截。
+    注意与 _parse_node_line 的行为差异：后者只拦 Cc/Cf 控制字符与 @，
+    空格（Unicode Zs 类）不拦；本函数明确拦截一切空白符。
+    返回 (host, port) 或 None。"""
+    s = (spec or "").strip()
+    if not s:
+        return None
+    try:
+        if s.startswith("["):
+            hend = s.index("]")
+            if hend + 1 >= len(s) or s[hend + 1] != ":":
+                return None
+            host = s[1:hend]
+            port = int(s[hend + 2:])
+        else:
+            host, _p = s.rsplit(":", 1)
+            port = int(_p)
+            if ":" in host:
+                return None  # 裸 IPv6 须用 [v6]:port
+    except Exception:
+        return None
+    if not host or not (0 < port < 65536):
+        return None
+    if "@" in host or "/" in host:
+        return None  # 裸 userinfo / scheme 残留：账密不得落入 host
+    if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in host):
+        return None  # 空白符与控制字符：防凭据/转义落入 host/标签
+    return (host, port)
+
+
 def _parse_node_line(line):
     """解析一行节点: host:port / [ipv6]:port / socks5://[user:pass@]host:port。
     返回 {host, port, proto, user, pass, raw} 或 None。"""
@@ -11084,14 +11275,22 @@ def _banner_net_info():
                                                   errors="replace"))
                     finally:
                         _resp_shutdown(r)
-                conn = d.get("connection") or {}
+                # R4-L-01：先校验 success（失败体不得填地理字段并缓存），
+                # 再按字典类型取值；conn 非字典的 AttributeError 会被下方
+                # except 吞掉，故校验须在取值之前，不依赖“会抛错”。
+                if not isinstance(d, dict) or not d.get("success", True):
+                    raise ValueError("ipwho.is query failed")
+                conn = d.get("connection") if isinstance(d.get("connection"), dict) else {}
+                sec = d.get("security") if isinstance(d.get("security"), dict) else {}
                 org = (conn.get("org") or conn.get("isp") or "").strip()
                 # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
                 info["geo_country"] = d.get("country") or ""
                 info["geo_city"] = d.get("city") or ""
                 # M-11: 保留机房标记精度: connection 透传 hosting 时认它,
-                # 否则按 org 启发式判定。
-                if conn.get("hosting") or is_datacenter_heuristic(org, org)[0]:
+                # 否则按 org 启发式判定。R4-L-01：security/connection 的
+                # hosting 均须严格布尔判真（字符串 "false" 不得判真），
+                # security 优先于 connection（与 IPWhoIs.check 同口径）。
+                if (sec.get("hosting") is True) or (conn.get("hosting") is True) or is_datacenter_heuristic(org, org)[0]:
                     info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
                     info["geo_net"] = "residential"
@@ -11635,8 +11834,11 @@ def run_dnsleak_only():
     if asn_mismatch is True:
         print(f"  {_c(C.red, T('diag_dns_leaked'))}")
         for r in dinfo.get("resolvers", []):
-            print("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
-                                         r.get("asn") or "?"))
+            # R4-M-05：与 run_proxy_diag 的 10293 行同款 _strip_cc，
+            # org/resolver/asn 为上游外部文本，防终端转义注入。
+            print("    %s (%s, AS%s)" % (_strip_cc(r["resolver"]),
+                                         _strip_cc(r.get("org") or "?"),
+                                         _strip_cc(r.get("asn") or "?")))
     elif asn_mismatch is False:
         print(f"  {_c(C.green, T('diag_dns_clean'))}")
     else:
@@ -11649,22 +11851,12 @@ def run_tcpping_only():
         tinp = input(T("prompt_tcp")).strip()
         if tinp.lower() in ("b", "q", ""):
             return
-        try:
-            if tinp.startswith("["):
-                hend = tinp.index("]")
-                if hend + 1 >= len(tinp) or tinp[hend + 1] != ":":
-                    raise ValueError("missing ':' after ']'")
-                th, tp_ = tinp[1:hend], int(tinp[hend + 2:])
-            else:
-                th, tp_ = tinp.rsplit(":", 1)
-                tp_ = int(tp_)
-                if ":" in th:
-                    raise ValueError("bare IPv6 needs brackets")
-            if not th or not (0 < tp_ < 65536):
-                raise ValueError("bad host/port")
-        except Exception:
+        # R4-M-05：走严格解析器，@ / 空白符 / 控制字符一律拒。
+        _hp = _parse_host_port_strict(tinp)
+        if _hp is None:
             print(T("invalid_input"))
             continue
+        th, tp_ = _hp
         tp = tcp_ping_stats(th, tp_)
         if tp["ok"]:
             print("  " + T("diag_tcp_ok") % (tp["avg_ms"], tp["jitter_ms"],
@@ -12964,20 +13156,27 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
 
 
 def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
-                    system_dirs=None):
-    """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。"""
+                    system_dirs=None, as_json=False):
+    """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。
+    as_json=True 时返回 (JSON 文本, rc)，供 --shortcut status --json。"""
     try:
         _shortcut_require_posix()
     except ShortcutError as e:
+        if as_json:
+            return (json.dumps({"scope": scope, "error": str(e)},
+                               ensure_ascii=False) + "\n", 2)
         return str(e), 2
     try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
+        if as_json:
+            return (json.dumps({"scope": scope, "error": str(e)},
+                               ensure_ascii=False) + "\n", 2)
         return str(e), 2
     try:
         state, corrupt = _shortcut_load_state(paths)
     except ShortcutError:
-        return (_L("无权限读取状态文件：%s\n请检查该文件权限，"
+        _msg = _L("无权限读取状态文件：%s\n请检查该文件权限，"
                    "不要直接删除或覆盖入口文件。"
                    % paths["state_path"],
                    "Permission denied reading state file: %s\nCheck the file "
@@ -12993,10 +13192,54 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "پرونده را بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
                    "بازنویسی نکنید." % paths["state_path"],
                    "無權限讀取狀態檔案：%s\n請檢查該檔案權限，"
-                   "不要直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
+                   "不要直接刪除或覆寫入口檔案。" % paths["state_path"])
+        if as_json:
+            return (json.dumps({"scope": scope, "error": _msg},
+                               ensure_ascii=False) + "\n", 1)
+        return (_msg, 1)
     lines = []
+    def _status_doc():
+        # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
+        doc = {"scope": scope,
+               "managed_dir": paths["data_dir"],
+               "launcher_dir": paths["bin_dir"],
+               "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"]),
+               "installed": state is not None}
+        if state is None:
+            doc["entries"] = []
+            return doc
+        doc["installed_version"] = state.get("installed_version")
+        doc["running_version"] = VERSION
+        doc["version_mismatch"] = \
+            state.get("installed_version") != VERSION
+        if state.get("managed_script"):
+            ok_m = os.path.isfile(state["managed_script"])
+            if ok_m:
+                try:
+                    ok_m = _shortcut_sha256_file(
+                        state["managed_script"]) == state.get("managed_sha256")
+                except OSError:
+                    ok_m = False
+            doc["managed_script"] = {
+                "path": state["managed_script"],
+                "status": "OK" if ok_m else "CHANGED"}
+        entries = []
+        for nm, entry in sorted(state.get("entries", {}).items()):
+            p = entry.get("path", "")
+            intact = _shortcut_entry_intact(p, entry, state["instance_id"])
+            findings = shortcut_check_name(
+                nm, paths["bin_dir"], own_entry_paths=[p],
+                path_dirs=path_dirs, system_dirs=system_dirs)
+            shadow = [f for f in findings
+                      if f["kind"] in ("path_hit", "system_hit")]
+            entries.append({"name": nm, "path": p,
+                            "status": "OK" if intact else "CHANGED",
+                            "warnings": [f["path"] for f in shadow]})
+        doc["entries"] = entries
+        return doc
+
     if corrupt:
-        return (_L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
+        _msg = _L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
                    "不要直接删除或覆盖入口文件。"
                    % paths["state_path"],
                    "State file is corrupt: %s\nInspect it manually before "
@@ -13012,7 +13255,12 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "آن را دستی بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
                    "بازنویسی نکنید." % paths["state_path"],
                    "狀態檔案已損壞 (corrupt): %s\n請人工檢查後再處理，不要"
-                   "直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
+                   "直接刪除或覆寫入口檔案。" % paths["state_path"])
+        if as_json:
+            return (json.dumps({"scope": scope, "corrupt": True,
+                                "error": _msg}, ensure_ascii=False)
+                    + "\n", 1)
+        return (_msg, 1)
     lines.append(_L("命令入口状态 (%s):" % scope,
                    "Command shortcut status (%s):" % scope,
                    "コマンド入口の状態 (%s):" % scope,
@@ -13046,6 +13294,9 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                    "تنظیم کنید." % paths["bin_dir"],
                                    "提示：%s 不在 PATH 中，安裝後需按提示設定 PATH。"
                                    % paths["bin_dir"]))
+        if as_json:
+            return (json.dumps(_status_doc(), ensure_ascii=False)
+                    + "\n", 0)
         return "\n".join(lines) + "\n", 0
     if state.get("install_status") == "failed":
         return (_L("上次安装失败，未装好任何入口（状态文件 %s）。"
@@ -13201,6 +13452,9 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                "~/.zshrc 中加 export PATH=\"$HOME/.local/bin:"
                                "$PATH\") 後重開 shell。"
                                % paths["bin_dir"]))
+    if as_json:
+        return (json.dumps(_status_doc(), ensure_ascii=False)
+                + "\n", 0)
     return "\n".join(lines) + "\n", 0
 
 
@@ -13969,7 +14223,8 @@ def _cmd_shortcut(ns):
     interactive = sys.stdin.isatty()
     action = ns.shortcut
     if action == "status":
-        text, rc = shortcut_status(scope=scope)
+        text, rc = shortcut_status(
+            scope=scope, as_json=getattr(ns, "json", False))
         print(text, end="")
         return rc
     if action == "install":
@@ -14457,7 +14712,12 @@ def main():
 
     if ns.explain:
         rule_txt = SCORING_RULES.get(LANG, SCORING_RULES["en"])
-        print(rule_txt)
+        if ns.json:
+            # R3-M-17：--explain --json 输出合法 JSON。
+            print(json.dumps({"explain": rule_txt, "language": LANG},
+                             ensure_ascii=False))
+        else:
+            print(rule_txt)
         return
 
     if ns.shortcut is not None:
@@ -14510,26 +14770,15 @@ def main():
 
     if ns.proxy is not None:
         _pp = ns.proxy.strip()
-        try:
-            if not _pp:
-                raise ValueError("empty --proxy")
-            if _pp.startswith("["):
-                _hend = _pp.index("]")
-                if _hend + 1 >= len(_pp) or _pp[_hend + 1] != ":":
-                    raise ValueError("missing ':' after ']'")
-                _ph, _pt = _pp[1:_hend], int(_pp[_hend + 2:])
-            else:
-                _ph, _pt = _pp.rsplit(":", 1)
-                _pt = int(_pt)
-                if ":" in _ph:
-                    raise ValueError("bare IPv6 needs brackets")
-            if not _ph or not (0 < _pt < 65536):
-                raise ValueError("bad host/port")
-        except Exception:
+        # R4-M-05：走严格解析器，@ / 空白符 / 控制字符一律拒
+        #（socks5://user:pass@host:port 此前靠附带冒号检查才被拒）。
+        _hp = _parse_host_port_strict(_pp)
+        if _hp is None:
             print(json.dumps({"error": "invalid --proxy format, want HOST:PORT"},
                              ensure_ascii=False) if ns.json
                   else T("invalid_proxy_format"))
             sys.exit(2)
+        _ph, _pt = _hp
         if ns.ip and not ns.json:
             print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
         # M-08(a)：单边账密不得静默降级为无认证；交互追问、非交互报参数错误。
@@ -14688,27 +14937,15 @@ def main():
                         return
                     if pinp.lower() == "b" or pinp == "":
                         break
-                    # 解析 host:port
+                    # 解析 host:port（R4-M-05：走严格解析器，
+                    # @ / 空白符 / 控制字符一律拒）。
                     puser, ppass = None, None
                     phost, pport = None, None
-                    try:
-                        if pinp.startswith("["):
-                            # [ipv6]:port
-                            hend = pinp.index("]")
-                            if hend + 1 >= len(pinp) or pinp[hend + 1] != ":":
-                                raise ValueError("missing ':' after ']'")
-                            phost = pinp[1:hend]
-                            pport = int(pinp[hend + 2:])
-                        elif pinp.count(":") == 1:
-                            phost, _pp = pinp.rsplit(":", 1)
-                            pport = int(_pp)
-                        else:
-                            raise ValueError("bad format")
-                        if not phost or not (0 < pport < 65536):
-                            raise ValueError("bad host/port")
-                    except Exception:
+                    _hp = _parse_host_port_strict(pinp)
+                    if _hp is None:
                         print(T("invalid_proxy_format"))
                         continue
+                    phost, pport = _hp
                     _u = input(T("prompt_proxy_user")).strip()
                     if _u:
                         puser = _u
