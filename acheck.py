@@ -11212,13 +11212,28 @@ def _batch_best_throughput(results):
             continue
         print(T("batch_tp_testing"))
         try:
-            # M-03：最佳节点宿主为 IPv6 字面量时，测速走 IPv6 代表点
-            # （批量流不测出口 IP，以节点宿主族为准）。
-            _bip, _bver = parse_any_ip(nd["host"])
+            # M-03（.31）：批量流加出口族探测——经最优节点查出口 IP
+            # （与 run_proxy_diag 同款 proxy_egress_ip），按出口族选
+            # 枢纽，不再只按节点宿主族；探测失败／出口不明时回退宿主
+            # 族（旧行为）。IPv4 接入＋纯 IPv6 出口的节点至此走 v6 枢纽。
+            _efam = None
+            try:
+                _eip, _eerr = proxy_egress_ip(
+                    nd["host"], nd["port"], username=nd["user"],
+                    password=nd["pass"], timeout=5)
+                if _eip is not None:
+                    _pip, _pver = parse_any_ip(_eip)
+                    if _pver in (4, 6):
+                        _efam = 6 if _pver == 6 else 0
+            except Exception:
+                _efam = None
+            if _efam is None:
+                _bip, _bver = parse_any_ip(nd["host"])
+                _efam = 6 if _bver == 6 else 0
             _, tbest = proxy_speed_regions(nd["host"], nd["port"],
                                            username=nd["user"],
                                            password=nd["pass"], duration=4,
-                                           family=6 if _bver == 6 else 0)
+                                           family=_efam)
         except Exception:
             tbest = None
         if tbest:
