@@ -32,6 +32,7 @@ import hashlib
 import http.client
 import ipaddress
 import json
+import math
 import os
 import platform
 import random
@@ -1449,6 +1450,42 @@ def _strip_cc(s):
     return "".join(ch for ch in s if unicodedata.category(ch) != "Cc")
 
 
+def _clean_str(v):
+    """外部文本字段清洗 (H-10)：仅字符串保留，且剥离终端控制字符后去空白；
+    非字符串（dict/list/int/float/None）一律丢弃为空串，不原样透传进画像
+    或打印（dict/int 透传会在 _print_basic_block 抛 TypeError）。"""
+    if not isinstance(v, str):
+        return ""
+    return _strip_cc(v).strip()
+
+
+def _clean_coord(v, lo, hi):
+    """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
+    1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
+    float('nan')/float('inf') 本身不抛错，故须 math.isfinite 显式拦截。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f) or not (lo <= f <= hi):
+        return None
+    return f
+
+
+def _json_safe(obj):
+    """JSON 输出边界清洗 (H-10)：递归把非有限 float（NaN/Infinity，
+    上游 JSON 字面量 NaN/Infinity/1e309 均可解析为此类值）转 None，
+    保证 dumps 输出为标准 JSON。只转 float，不碰其他类型；
+    不用 allow_nan=False（它遇非有限值直接抛 ValueError，会让 --json 崩溃）。"""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def _c(fn, s):
     s = _strip_cc(s)
     return fn(s) if _use_color() else str(s)
@@ -2635,6 +2672,9 @@ _ZH_NAME2CODE = {v: k for k, v in _COUNTRY_NAMES["zh"].items()}
 
 def _loc_country_name(text):
     """国家名/代码 -> 界面语言国家名 (en 界面或查不到时原样)。"""
+    # H-10: 入口清洗——查表不到的回退分支原样返回 text，须先剥离终端控制字符；
+    # 非字符串输入直接置空（不把 dict/int 透传给调用方打印）。
+    text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
@@ -2809,7 +2849,9 @@ def _resolve_geo_online(jobs):
         _GEO_EXTRA.update({"lang": LANG, "city": {}, "region": {}})
     todo, seen = [], set()
     for kind, name, ctx in jobs:
-        name = (name or "").strip()
+        # H-10: name 可能为非字符串（上游 city/region 直传 dict/list 时经
+        # _gjobs 流入）；非字符串直接跳过，不调 .strip() 抛 AttributeError。
+        name = name.strip() if isinstance(name, str) else ""
         if not name or len(name) < 3 or any(ch.isdigit() for ch in name):
             continue
         if name.lower() == "none":
@@ -2883,6 +2925,8 @@ def _extra_sub(disp, kind, ctx_text=None):
 
 def _loc_region(text):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。"""
+    # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
+    text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
@@ -2899,6 +2943,8 @@ def _loc_region(text):
 
 def _loc_city(text):
     """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。"""
+    # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
+    text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
@@ -2934,6 +2980,8 @@ def _localize_profile_copy(prof):
 
 def _loc_tz(tz):
     """IANA 时区名 -> 界面语言 (洲/城查表; 未收录时原样)。"""
+    # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
+    tz = _clean_str(tz)
     if LANG == "en" or not tz:
         return tz
     if tz == "UTC":
@@ -3476,10 +3524,13 @@ class GeoJS(Provider):
                 return {"ok": False, "err": "empty country"}
 
             def _f(v):
+                # H-10: float('nan')/float('inf')/float('1e309') 不抛错，
+                # 非有限值须在此拦截（否则经画像进 --json 输出裸 NaN/Infinity）。
                 try:
-                    return float(v)
+                    _fv = float(v)
                 except (TypeError, ValueError):
                     return None
+                return _fv if math.isfinite(_fv) else None
 
             return {
                 "ok": True,
@@ -3627,7 +3678,10 @@ class IpapiCo(Provider):
                 "ok": True,
                 "country": d.get("country_name", ""), "country_code": d.get("country_code", ""),
                 "region": d.get("region", ""), "city": d.get("city", ""),
-                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
+                # H-10: 经纬度须经有限性/范围校验；限流提示串（如 "Sign up to access"）
+                # 未转 float 会原样流入画像并拼进 Nominatim URL。
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
                 "timezone": d.get("timezone", ""),
                 "asn": _parse_asn(d.get("asn")), "org": d.get("org", ""), "isp": d.get("org", ""),
                 "ts": now_iso(),
@@ -3921,10 +3975,12 @@ class HackerTarget(Provider):
                 if len(parts) >= 4:
                     asn, prefix, netname = parts[1], parts[2], parts[3]
             def _f(x):
+                # H-10: 同 GeoJS._f，非有限值拦截（float('1e309') 为 inf 不抛错）。
                 try:
-                    return float(x)
+                    _fx = float(x)
                 except (TypeError, ValueError):
                     return None
+                return _fx if math.isfinite(_fx) else None
 
             def _s(x):
                 return "" if x in (None, "None", "N/A") else x
@@ -3979,8 +4035,10 @@ def _build_unified_profile(s):
     ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
     rd = s.get("rdap", {}) if s.get("rdap", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ox.get("isp") or gu.get("isp") or gj.get("isp") or co.get("isp") or ""
-    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or rd.get("org") or rd.get("netname") or ""
+    # H-10: 文本字段逐源清洗后取首个非空；非字符串源（dict/list/int）在清洗
+    # 时即被丢弃为空，不再靠 `or` 链把原始对象透传进画像。
+    isp = _clean_str(wi.get("isp")) or _clean_str(pc.get("provider")) or _clean_str(ii.get("org")) or _clean_str(ai.get("isp")) or _clean_str(il.get("isp")) or _clean_str(iq.get("isp")) or _clean_str(ti.get("isp")) or _clean_str(ox.get("isp")) or _clean_str(gu.get("isp")) or _clean_str(gj.get("isp")) or _clean_str(co.get("isp")) or ""
+    org = _clean_str(wi.get("org")) or _clean_str(ii.get("org")) or _clean_str(pc.get("provider")) or _clean_str(ai.get("org")) or _clean_str(gu.get("org")) or _clean_str(gj.get("org")) or _clean_str(il.get("org")) or _clean_str(iq.get("org")) or _clean_str(co.get("org")) or _clean_str(rd.get("org")) or _clean_str(rd.get("netname")) or ""
     _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ox.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
@@ -3989,14 +4047,14 @@ def _build_unified_profile(s):
     _country_src = None
     country = ""
     for _src in (wi, db, fp, ii, pc, wa, ai, gu, gj, il, iq, co, ti, ht, ox):
-        _c = _src.get("country")
-        # 非字符串来源 (如数字) 在此被过滤: country 恒为字符串, 无须事后兜底。
-        if isinstance(_c, str) and _c.strip():
+        _c = _clean_str(_src.get("country"))
+        # 非字符串来源 (如数字/dict) 在清洗时被过滤: country 恒为干净字符串, 无须事后兜底。
+        if _c:
             country, _country_src = _c, _src
             break
     _cc_raw = (_country_src.get("country_code") or "") if _country_src is not None else ""
     # 空白码与非字符串码均归一为空：空白不阻断后续回填，非字符串不崩溃。
-    country_code = _cc_raw.strip() if isinstance(_cc_raw, str) else ""
+    country_code = _clean_str(_cc_raw)
     _ct = country.strip()
     if not country_code and len(_ct) == 2 and _ct.isalpha() and _ct.isascii():
         country_code = _ct.upper()
@@ -4010,7 +4068,7 @@ def _build_unified_profile(s):
             _cc_name = _cand.get("country")
             if isinstance(_cc_name, str) and _cc_name.strip().lower() == _cn:
                 _cc_code = _cand.get("country_code")
-                country_code = _cc_code.strip() if isinstance(_cc_code, str) else ""
+                country_code = _clean_str(_cc_code)
                 if country_code:
                     break
     if not country_code and not country:
@@ -4019,7 +4077,7 @@ def _build_unified_profile(s):
         # 丢弃后续源的有效码）；非字符串源视为空。
         def _cc_stripped(d, k="country_code"):
             _v = d.get(k)
-            return _v.strip() if isinstance(_v, str) else ""
+            return _clean_str(_v)
         country_code = (_cc_stripped(wi) or _cc_stripped(wa) or _cc_stripped(gj)
                         or _cc_stripped(il) or _cc_stripped(iq) or _cc_stripped(co)
                         or _cc_stripped(ti) or _cc_stripped(ci)
@@ -4064,25 +4122,26 @@ def _build_unified_profile(s):
                 return _v
         return ""
 
-    region = _first_consistent([(wi, wi.get("region")), (ii, ii.get("region")),
-                                (db, db.get("state")), (wa, wa.get("region")),
-                                (ai, ai.get("region")), (il, il.get("region")),
-                                (iq, iq.get("region")), (co, co.get("region")),
-                                (ti, ti.get("region")), (ht, ht.get("region")),
-                                (gj, gj.get("region"))])
-    city = _first_consistent([(wi, wi.get("city")), (ii, ii.get("city")),
-                              (db, db.get("city")), (pc, pc.get("city")),
-                              (fp, fp.get("city")), (wa, wa.get("city")),
-                              (ai, ai.get("city")), (gu, gu.get("city")),
-                              (gj, gj.get("city")), (il, il.get("city")),
-                              (iq, iq.get("city")), (co, co.get("city")),
-                              (ti, ti.get("city")), (ht, ht.get("city")),
-                              (ox, ox.get("city"))])
+    region = _first_consistent([(wi, _clean_str(wi.get("region"))), (ii, _clean_str(ii.get("region"))),
+                                (db, _clean_str(db.get("state"))), (wa, _clean_str(wa.get("region"))),
+                                (ai, _clean_str(ai.get("region"))), (il, _clean_str(il.get("region"))),
+                                (iq, _clean_str(iq.get("region"))), (co, _clean_str(co.get("region"))),
+                                (ti, _clean_str(ti.get("region"))), (ht, _clean_str(ht.get("region"))),
+                                (gj, _clean_str(gj.get("region")))])
+    city = _first_consistent([(wi, _clean_str(wi.get("city"))), (ii, _clean_str(ii.get("city"))),
+                              (db, _clean_str(db.get("city"))), (pc, _clean_str(pc.get("city"))),
+                              (fp, _clean_str(fp.get("city"))), (wa, _clean_str(wa.get("city"))),
+                              (ai, _clean_str(ai.get("city"))), (gu, _clean_str(gu.get("city"))),
+                              (gj, _clean_str(gj.get("city"))), (il, _clean_str(il.get("city"))),
+                              (iq, _clean_str(iq.get("city"))), (co, _clean_str(co.get("city"))),
+                              (ti, _clean_str(ti.get("city"))), (ht, _clean_str(ht.get("city"))),
+                              (ox, _clean_str(ox.get("city")))])
     _lat, _lon = None, None
     for _src in (wi, wa, ai, gu, gj, il, iq, co, ti, ht):
-        _la, _lo = _src.get("latitude"), _src.get("longitude")
-        if (_la is not None and _la != "" and _lo is not None and _lo != ""
-                and _same_country(_src)):
+        # H-10: 经纬度须有限且在范围内才采纳；非法源跳过、由后源补位，不取半截值。
+        _la = _clean_coord(_src.get("latitude"), -90, 90)
+        _lo = _clean_coord(_src.get("longitude"), -180, 180)
+        if _la is not None and _lo is not None and _same_country(_src):
             _lat, _lon = _la, _lo
             break
     return {
@@ -4096,7 +4155,7 @@ def _build_unified_profile(s):
         "city": city,
         "latitude": _lat,
         "longitude": _lon,
-        "timezone": _first_consistent([(wi, wi.get("timezone")), (wa, wa.get("timezone")), (ai, ai.get("timezone")), (gu, gu.get("timezone")), (gj, gj.get("timezone")), (il, il.get("timezone")), (iq, iq.get("timezone")), (co, co.get("timezone")), (ti, ti.get("timezone"))]),
+        "timezone": _first_consistent([(wi, _clean_str(wi.get("timezone"))), (wa, _clean_str(wa.get("timezone"))), (ai, _clean_str(ai.get("timezone"))), (gu, _clean_str(gu.get("timezone"))), (gj, _clean_str(gj.get("timezone"))), (il, _clean_str(il.get("timezone"))), (iq, _clean_str(iq.get("timezone"))), (co, _clean_str(co.get("timezone"))), (ti, _clean_str(ti.get("timezone")))]),
     }
 
 
@@ -5182,8 +5241,10 @@ def _print_basic_block(s, prof):
             age = f"{rs['age_years']} {(_ru_plural(rs['age_years'], 'год', 'года', 'лет') if LANG == 'ru' else T('years'))}"
         else:
             age = T("unverifiable")
-        vis = rs.get("visibility") or "?"
-        first = rs.get("first_seen") or "?"
+        # H-10: visibility/first_seen 为上游外部文本，未包在 _c() 内须先 _strip_cc，
+        # 否则终端转义/换行直达输出（first_seen 换行注入可伪造行）。
+        vis = _strip_cc(rs.get("visibility") or "?")
+        first = _strip_cc(rs.get("first_seen") or "?")
         print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
     pt = s.get("ptr", {})
     if pt.get("ok"):
@@ -5213,54 +5274,54 @@ def _print_basic_block(s, prof):
         return any(str(v or "").strip() for v in vals)
 
     locs = []
-    if wi.get("ok") and _has_loc(wi.get("country"), wi.get("region"), wi.get("city")):
-        locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
-                     wi.get("country"), wi.get("city")))
-    if ii.get("ok") and _has_loc(ii.get("country"), ii.get("region"), ii.get("city")):
-        locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
-                     ii.get("country"), ii.get("city")))
-    if db.get("ok") and _has_loc(db.get("country"), db.get("state"), db.get("city")):
-        locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
-                     db.get("country"), db.get("city")))
-    if pc.get("ok") and _has_loc(pc.get("country"), pc.get("city")):
-        locs.append(("proxycheck", _join_nonempty(pc.get("country"), pc.get("city")),
-                     pc.get("country"), pc.get("city")))
+    if wi.get("ok") and _has_loc(_clean_str(wi.get("country")), _clean_str(wi.get("region")), _clean_str(wi.get("city"))):
+        locs.append(("ipwho.is", _join_nonempty(_clean_str(wi.get("country")), _clean_str(wi.get("region")), _clean_str(wi.get("city"))),
+                     _clean_str(wi.get("country")), _clean_str(wi.get("city"))))
+    if ii.get("ok") and _has_loc(_clean_str(ii.get("country")), _clean_str(ii.get("region")), _clean_str(ii.get("city"))):
+        locs.append(("ipinfo.io", _join_nonempty(_clean_str(ii.get("country")), _clean_str(ii.get("region")), _clean_str(ii.get("city"))),
+                     _clean_str(ii.get("country")), _clean_str(ii.get("city"))))
+    if db.get("ok") and _has_loc(_clean_str(db.get("country")), _clean_str(db.get("state")), _clean_str(db.get("city"))):
+        locs.append(("DB-IP", _join_nonempty(_clean_str(db.get("country")), _clean_str(db.get("state")), _clean_str(db.get("city"))),
+                     _clean_str(db.get("country")), _clean_str(db.get("city"))))
+    if pc.get("ok") and _has_loc(_clean_str(pc.get("country")), _clean_str(pc.get("city"))):
+        locs.append(("proxycheck", _join_nonempty(_clean_str(pc.get("country")), _clean_str(pc.get("city"))),
+                     _clean_str(pc.get("country")), _clean_str(pc.get("city"))))
     fp = s.get("freeipapi", {})
-    if fp.get("ok") and _has_loc(fp.get("country"), fp.get("city")):
-        locs.append(("freeipapi", _join_nonempty(fp.get("country"), fp.get("city")),
-                     fp.get("country"), fp.get("city")))
+    if fp.get("ok") and _has_loc(_clean_str(fp.get("country")), _clean_str(fp.get("city"))):
+        locs.append(("freeipapi", _join_nonempty(_clean_str(fp.get("country")), _clean_str(fp.get("city"))),
+                     _clean_str(fp.get("country")), _clean_str(fp.get("city"))))
     wap = s.get("ipwhoisapp", {})
-    if wap.get("ok") and _has_loc(wap.get("country"), wap.get("region"), wap.get("city")):
-        locs.append(("ipwhois.app", _join_nonempty(wap.get("country"), wap.get("region"), wap.get("city")),
-                     wap.get("country"), wap.get("city")))
+    if wap.get("ok") and _has_loc(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))):
+        locs.append(("ipwhois.app", _join_nonempty(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))),
+                     _clean_str(wap.get("country")), _clean_str(wap.get("city"))))
     ais = s.get("ipapiis", {})
-    if ais.get("ok") and _has_loc(ais.get("country"), ais.get("region"), ais.get("city")):
-        locs.append(("ipapi.is", _join_nonempty(ais.get("country"), ais.get("region"), ais.get("city")),
-                     ais.get("country"), ais.get("city")))
+    if ais.get("ok") and _has_loc(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))):
+        locs.append(("ipapi.is", _join_nonempty(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))),
+                     _clean_str(ais.get("country")), _clean_str(ais.get("city"))))
     igd = s.get("ipguide", {})
-    if igd.get("ok") and _has_loc(igd.get("country"), igd.get("city")):
-        locs.append(("ip.guide", _join_nonempty(igd.get("country"), igd.get("city")),
-                     igd.get("country"), igd.get("city")))
+    if igd.get("ok") and _has_loc(_clean_str(igd.get("country")), _clean_str(igd.get("city"))):
+        locs.append(("ip.guide", _join_nonempty(_clean_str(igd.get("country")), _clean_str(igd.get("city"))),
+                     _clean_str(igd.get("country")), _clean_str(igd.get("city"))))
     ilc = s.get("iplocate", {})
-    if ilc.get("ok") and _has_loc(ilc.get("country"), ilc.get("region"), ilc.get("city")):
-        locs.append(("iplocate.io", _join_nonempty(ilc.get("country"), ilc.get("region"), ilc.get("city")),
-                     ilc.get("country"), ilc.get("city")))
+    if ilc.get("ok") and _has_loc(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))):
+        locs.append(("iplocate.io", _join_nonempty(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))),
+                     _clean_str(ilc.get("country")), _clean_str(ilc.get("city"))))
     iqc = s.get("ipquery", {})
-    if iqc.get("ok") and _has_loc(iqc.get("country"), iqc.get("region"), iqc.get("city")):
-        locs.append(("ipquery.io", _join_nonempty(iqc.get("country"), iqc.get("region"), iqc.get("city")),
-                     iqc.get("country"), iqc.get("city")))
+    if iqc.get("ok") and _has_loc(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))):
+        locs.append(("ipquery.io", _join_nonempty(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))),
+                     _clean_str(iqc.get("country")), _clean_str(iqc.get("city"))))
     coc = s.get("ipapico", {})
-    if coc.get("ok") and _has_loc(coc.get("country"), coc.get("region"), coc.get("city")):
-        locs.append(("ipapi.co", _join_nonempty(coc.get("country"), coc.get("region"), coc.get("city")),
-                     coc.get("country"), coc.get("city")))
+    if coc.get("ok") and _has_loc(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))):
+        locs.append(("ipapi.co", _join_nonempty(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))),
+                     _clean_str(coc.get("country")), _clean_str(coc.get("city"))))
     tic = s.get("twoip", {})
-    if tic.get("ok") and _has_loc(tic.get("country"), tic.get("region"), tic.get("city")):
-        locs.append(("2ip.io", _join_nonempty(tic.get("country"), tic.get("region"), tic.get("city")),
-                     tic.get("country"), tic.get("city")))
+    if tic.get("ok") and _has_loc(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))):
+        locs.append(("2ip.io", _join_nonempty(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))),
+                     _clean_str(tic.get("country")), _clean_str(tic.get("city"))))
     gjs = s.get("geojs", {})
-    if gjs.get("ok") and _has_loc(gjs.get("country"), gjs.get("region"), gjs.get("city")):
-        locs.append(("GeoJS", _join_nonempty(gjs.get("country"), gjs.get("region"), gjs.get("city")),
-                     gjs.get("country"), gjs.get("city")))
+    if gjs.get("ok") and _has_loc(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))):
+        locs.append(("GeoJS", _join_nonempty(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))),
+                     _clean_str(gjs.get("country")), _clean_str(gjs.get("city"))))
     _gjobs = []
     if prof.get("city"):
         _gjobs.append(("city", prof["city"],
@@ -5385,7 +5446,9 @@ def _print_basic_block(s, prof):
             print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {_loc_tz(prof['timezone'])}")
         if prof.get("latitude") is not None and prof.get("longitude") is not None:
             _cf = _fl(_cg.get("cc") if _cg.get("ok") else _pcc)
-            print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {prof['latitude']}, {prof['longitude']}")
+            # H-10: 坐标行未包在 _c() 内；画像本应只含 float，但手改/陈旧 profile
+            # 仍可能带入脏串，此处 _strip_cc 兜底（float 时为无操作）。
+            print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {_strip_cc(prof['latitude'])}, {_strip_cc(prof['longitude'])}")
             print(f"  {_cf}{_c(C.dim, T('map') + ':')} {_c(C.cyan, 'https://www.google.com/maps?q=%s,%s' % (prof['latitude'], prof['longitude']))}")
         if _cg.get("ok"):
             print(f"  {_fl(_cg.get('cc'))}{_c(C.dim, T('coord_country') + ':')} {_loc_country_name(_cg.get('country'))}")
@@ -5935,7 +5998,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
         print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
     if sh.get("ok"):
         _ports = sh.get("ports") or []
-        _ptxt = ", ".join(str(p) for p in _ports[:12]) if _ports else T("none")
+        # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+        # 打印前逐个 _strip_cc，防终端转义注入。
+        _ptxt = ", ".join(_strip_cc(p) for p in _ports[:12]) if _ports else T("none")
         print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
     # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
@@ -9042,7 +9107,8 @@ def _run_active6(json_mode, egress6):
                      "dnsbl_ipv6": _dnsbl6}
     if json_mode:
         out["profile"] = _localize_profile_copy(out.get("profile") or {})
-        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+        # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
+        print(json.dumps(_json_safe(out), indent=2, default=str, ensure_ascii=False))
     return out
 
 
@@ -9276,7 +9342,8 @@ def run_active(json_mode=False, stack=None):
     if json_mode:
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
-        print(json.dumps(_res_json, indent=2, default=str, ensure_ascii=False))
+        # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
+        print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
     return res
 
 
@@ -10139,8 +10206,10 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     if asn_mismatch is True:
         _note(_c(C.red, T("diag_dns_leaked")))
         for r in dinfo.get("resolvers", []):
-            _note("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
-                                        r.get("asn") or "?"))
+            # H-10: org/resolver/asn 为上游外部文本，_note() 为纯 print，
+            # 插值前须 _strip_cc，防终端转义注入。
+            _note("    %s (%s, AS%s)" % (_strip_cc(r["resolver"]), _strip_cc(r.get("org") or "?"),
+                                        _strip_cc(r.get("asn") or "?")))
     elif asn_mismatch is False:
         _note(_c(C.green, T("diag_dns_clean")))
     else:
@@ -13989,7 +14058,8 @@ def main():
         res = run_passive6(ip) if ver == 6 else run_passive(ip)
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
-        print(json.dumps(_res_json, indent=2, default=str, ensure_ascii=False))
+        # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
+        print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
         return
 
     if ns.ip is not None:
