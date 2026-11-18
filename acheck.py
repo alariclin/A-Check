@@ -2927,6 +2927,15 @@ _WD_PLACE_QIDS = frozenset({"Q515", "Q486972", "Q3957", "Q532", "Q15284",
                             "Q1549591", "Q200250", "Q208511", "Q174844",
                             "Q51929311", "Q1093829", "Q2264924", "Q15063611"})
 _WD_PLACE_ROOT_QIDS = frozenset()
+# S6-N2：context 国家/行政区简称 -> 国家 QID（裸名回退校验用）：
+# 英格兰/苏格兰/威尔士/北爱尔兰的 P17 均为英国 Q145；America/USA/US
+# 的 P17 均为美国 Q30。仅作国家级等价，不含行政区级映射。
+_WD_COUNTRY_ALIASES = {"us": "Q30", "usa": "Q30", "u.s.": "Q30",
+                       "u.s.a.": "Q30", "america": "Q30",
+                       "uk": "Q145", "great britain": "Q145",
+                       "britain": "Q145", "england": "Q145",
+                       "scotland": "Q145", "wales": "Q145",
+                       "northern ireland": "Q145"}
 
 
 def _wd_claim_ids(ent, prop):
@@ -2956,7 +2965,10 @@ def _wd_label(name, kind, context):
     候选须经实体类型校验 (P31, 必要时沿 P279 上溯一级): 描述子串匹配
     不可作类型依据 ("state" 会命中 "city in the united states of america",
     同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
-    时返 None。"""
+    时返 None。S6-N2: 裸名回退的候选另须验证国家/行政区与 context 一致
+    (P17 国家、P131 行政归属上溯一级), 无法确认时返 None——回退不
+    得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
+    (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
         def _search(term):
             q = urllib.parse.quote(term)
@@ -2969,6 +2981,33 @@ def _wd_label(name, kind, context):
                     if (c.get("label") or "").lower() == name.lower()
                     and c.get("id")]
 
+        def _resolve_qid(term):
+            """context 成分 (国家/州名) -> QID：简称查表，余者按 label/
+            alias 精确匹配检索；解不出时返 None（即无法确认）。"""
+            low = (term or "").strip().lower()
+            if not low:
+                return None
+            if low in _WD_COUNTRY_ALIASES:
+                return _WD_COUNTRY_ALIASES[low]
+            q = urllib.parse.quote(term.strip())
+            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                               f"&search={q}&language=en&format=json&limit=5&type=item",
+                               timeout=5, retries=1, use_cache=False)
+            if not ok:
+                return None
+            try:
+                items = json.loads(raw).get("search", [])
+            except Exception:
+                return None
+            for c in items:
+                if (c.get("label") or "").lower() == low:
+                    return c.get("id")
+                for al in c.get("aliases") or []:
+                    if isinstance(al, str) and al.lower() == low:
+                        return c.get("id")
+            return None
+
+        _fallback = False
         cands = _search(context or name)
         if cands is None:
             return None
@@ -2977,6 +3016,7 @@ def _wd_label(name, kind, context):
             # wbsearchentities 常返空 (或仅返 "X, USA" 式 label 失配项),
             # 以裸名重查一次; context 命中时不触发 (保留城市消歧收益)。
             cands = _search(name)
+            _fallback = True
             if cands is None:
                 return None
         if not cands:
@@ -2994,11 +3034,42 @@ def _wd_label(name, kind, context):
             return None
         entities = json.loads(raw).get("entities", {})
         want = _WD_ADMIN_QIDS if kind == "region" else _WD_PLACE_QIDS
+
+        def _context_ok(eid):
+            """裸名回退校验：实体 P17 国家 / P131 行政归属（上溯一级）
+            须与 context 某一成分的 QID 相符；非回退路径恒真；实体无
+            P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            if not _fallback:
+                return True
+            ent = entities.get(eid, {})
+            countries = set(_wd_claim_ids(ent, "P17"))
+            placed = _wd_claim_ids(ent, "P131")
+            if placed:
+                ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                     f"&ids={'|'.join(placed)}&props=claims&format=json",
+                                     timeout=5, retries=1, use_cache=False)
+                if ok2:
+                    try:
+                        for tent in json.loads(raw2).get("entities", {}).values():
+                            placed.extend(_wd_claim_ids(tent, "P131"))
+                    except Exception:
+                        pass
+            placed = set(placed)
+            if not countries and not placed:
+                return False
+            toks = [t.strip() for t in (context or "").split(",")]
+            toks = [t for t in toks if t and t.lower() != name.lower()]
+            for tok in toks:
+                qid = _resolve_qid(tok)
+                if qid and (qid in countries or qid in placed):
+                    return True
+            return False
+
         p31_map = {}
         for c in cands:
             p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
             p31_map[c["id"]] = p31s
-            if any(p in want for p in p31s):
+            if any(p in want for p in p31s) and _context_ok(c["id"]):
                 return _wd_pick_label(entities.get(c["id"], {}), langs)
         # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
         all_p31 = sorted({p for ps in p31_map.values() for p in ps})
@@ -3015,7 +3086,8 @@ def _wd_label(name, kind, context):
             ps = []
             for p in p31_map.get(c["id"], []):
                 ps.extend(parents.get(p, []))
-            if any(p in want or p in roots for p in ps):
+            if any(p in want or p in roots for p in ps) \
+                    and _context_ok(c["id"]):
                 return _wd_pick_label(entities.get(c["id"], {}), langs)
         return None
     except Exception:
