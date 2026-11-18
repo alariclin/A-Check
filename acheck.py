@@ -1916,7 +1916,10 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True,
         h.update(headers)
     if not use_cache:
         return _http_fetch_uncached(url, h, timeout, retries, cap=cap)
-    key = (url, tuple(sorted(h.items())))
+    # S6-N1：cap 纳入缓存键——不同上限取到的正文不同（大 cap 可返回超
+    # 1 MiB 体），同 URL/同头不同 cap 不得共用同一缓存条目；cap=None
+    #（取体时默认 1 MiB）与显式 cap 各占独立键，互不串扰。
+    key = (url, tuple(sorted(h.items())), cap)
     with _cache_lock:
         if key in _cache:
             return True, _cache[key]
@@ -1933,13 +1936,16 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True,
 
 
 def _http_cache_evict(url, headers=None):
-    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。"""
+    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。
+    S6-N1：缓存键含 cap，驱逐时按 (url, 头) 前缀扫清全部 cap 变体，
+    否则 16 MiB 名单解析失败后同 URL 的 cap 条目排毒不净。"""
     h = {"User-Agent": UA_BROWSER}
     if headers:
         h.update(headers)
-    key = (url, tuple(sorted(h.items())))
+    _prefix = (url, tuple(sorted(h.items())))
     with _cache_lock:
-        _cache.pop(key, None)
+        for _k in [k for k in _cache if k[:2] == _prefix]:
+            _cache.pop(_k, None)
 
 
 _threat_lists = {}
@@ -2921,6 +2927,15 @@ _WD_PLACE_QIDS = frozenset({"Q515", "Q486972", "Q3957", "Q532", "Q15284",
                             "Q1549591", "Q200250", "Q208511", "Q174844",
                             "Q51929311", "Q1093829", "Q2264924", "Q15063611"})
 _WD_PLACE_ROOT_QIDS = frozenset()
+# S6-N2：context 国家/行政区简称 -> 国家 QID（裸名回退校验用）：
+# 英格兰/苏格兰/威尔士/北爱尔兰的 P17 均为英国 Q145；America/USA/US
+# 的 P17 均为美国 Q30。仅作国家级等价，不含行政区级映射。
+_WD_COUNTRY_ALIASES = {"us": "Q30", "usa": "Q30", "u.s.": "Q30",
+                       "u.s.a.": "Q30", "america": "Q30",
+                       "uk": "Q145", "great britain": "Q145",
+                       "britain": "Q145", "england": "Q145",
+                       "scotland": "Q145", "wales": "Q145",
+                       "northern ireland": "Q145"}
 
 
 def _wd_claim_ids(ent, prop):
@@ -2950,7 +2965,10 @@ def _wd_label(name, kind, context):
     候选须经实体类型校验 (P31, 必要时沿 P279 上溯一级): 描述子串匹配
     不可作类型依据 ("state" 会命中 "city in the united states of america",
     同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
-    时返 None。"""
+    时返 None。S6-N2: 裸名回退的候选另须验证国家/行政区与 context 一致
+    (P17 国家、P131 行政归属上溯一级), 无法确认时返 None——回退不
+    得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
+    (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
         def _search(term):
             q = urllib.parse.quote(term)
@@ -2963,6 +2981,33 @@ def _wd_label(name, kind, context):
                     if (c.get("label") or "").lower() == name.lower()
                     and c.get("id")]
 
+        def _resolve_qid(term):
+            """context 成分 (国家/州名) -> QID：简称查表，余者按 label/
+            alias 精确匹配检索；解不出时返 None（即无法确认）。"""
+            low = (term or "").strip().lower()
+            if not low:
+                return None
+            if low in _WD_COUNTRY_ALIASES:
+                return _WD_COUNTRY_ALIASES[low]
+            q = urllib.parse.quote(term.strip())
+            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                               f"&search={q}&language=en&format=json&limit=5&type=item",
+                               timeout=5, retries=1, use_cache=False)
+            if not ok:
+                return None
+            try:
+                items = json.loads(raw).get("search", [])
+            except Exception:
+                return None
+            for c in items:
+                if (c.get("label") or "").lower() == low:
+                    return c.get("id")
+                for al in c.get("aliases") or []:
+                    if isinstance(al, str) and al.lower() == low:
+                        return c.get("id")
+            return None
+
+        _fallback = False
         cands = _search(context or name)
         if cands is None:
             return None
@@ -2971,6 +3016,7 @@ def _wd_label(name, kind, context):
             # wbsearchentities 常返空 (或仅返 "X, USA" 式 label 失配项),
             # 以裸名重查一次; context 命中时不触发 (保留城市消歧收益)。
             cands = _search(name)
+            _fallback = True
             if cands is None:
                 return None
         if not cands:
@@ -2988,11 +3034,42 @@ def _wd_label(name, kind, context):
             return None
         entities = json.loads(raw).get("entities", {})
         want = _WD_ADMIN_QIDS if kind == "region" else _WD_PLACE_QIDS
+
+        def _context_ok(eid):
+            """裸名回退校验：实体 P17 国家 / P131 行政归属（上溯一级）
+            须与 context 某一成分的 QID 相符；非回退路径恒真；实体无
+            P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            if not _fallback:
+                return True
+            ent = entities.get(eid, {})
+            countries = set(_wd_claim_ids(ent, "P17"))
+            placed = _wd_claim_ids(ent, "P131")
+            if placed:
+                ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                     f"&ids={'|'.join(placed)}&props=claims&format=json",
+                                     timeout=5, retries=1, use_cache=False)
+                if ok2:
+                    try:
+                        for tent in json.loads(raw2).get("entities", {}).values():
+                            placed.extend(_wd_claim_ids(tent, "P131"))
+                    except Exception:
+                        pass
+            placed = set(placed)
+            if not countries and not placed:
+                return False
+            toks = [t.strip() for t in (context or "").split(",")]
+            toks = [t for t in toks if t and t.lower() != name.lower()]
+            for tok in toks:
+                qid = _resolve_qid(tok)
+                if qid and (qid in countries or qid in placed):
+                    return True
+            return False
+
         p31_map = {}
         for c in cands:
             p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
             p31_map[c["id"]] = p31s
-            if any(p in want for p in p31s):
+            if any(p in want for p in p31s) and _context_ok(c["id"]):
                 return _wd_pick_label(entities.get(c["id"], {}), langs)
         # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
         all_p31 = sorted({p for ps in p31_map.values() for p in ps})
@@ -3009,7 +3086,8 @@ def _wd_label(name, kind, context):
             ps = []
             for p in p31_map.get(c["id"], []):
                 ps.extend(parents.get(p, []))
-            if any(p in want or p in roots for p in ps):
+            if any(p in want or p in roots for p in ps) \
+                    and _context_ok(c["id"]):
                 return _wd_pick_label(entities.get(c["id"], {}), langs)
         return None
     except Exception:
@@ -11211,6 +11289,12 @@ _LOGO_LINES = [
 _LOGO_PALETTE = [26, 27, 32, 33, 39, 39, 39]  # 按字母: 纯蓝阶 (R=0, 同 A-BOX 标题配色)
 
 _banner_net_cache = None
+# S5 L-01 残留：地理失败的取数结果不进永久缓存，但留一份最近结果与
+# 取数时间供横幅在重试间隔内展示（否则 async 尾部回退会丢出口信息），
+# 间隔过后横幅重取一次。直接调 _banner_net_info() 不节流，每次都重取。
+_banner_net_last_info = None
+_banner_net_last_attempt = 0.0
+_BANNER_NET_RETRY_AFTER = 60  # 地理失败后横幅重试间隔（秒）
 _banner_net_budget = 15  # 横幅网络信息整条任务总截止（秒；裁定未定量，我方取 15）
 _banner_net_started = [False]
 _banner_net_lock = threading.Lock()
@@ -11353,11 +11437,14 @@ def _urlopen_bounded(req, budget):
 def _banner_net_info():
     """横幅网络信息 (进程内缓存, 只查一次): 出口地理 (缓存英文原始字段,
     渲染时按界面语言本地化) + IPv6 出口地址。
-    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。"""
-    global _banner_net_cache
+    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。
+    S5 L-01 残留：地理取数失败（限流/超时/坏体）时不写入永久缓存，
+    下次调用重取；地理未尝试（无出口 IP）时仍按旧行为缓存。"""
+    global _banner_net_cache, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
-    _deadline = time.monotonic() + _banner_net_budget
+    _t0 = time.monotonic()
+    _deadline = _t0 + _banner_net_budget
 
     def _rem():
         return max(0.0, _deadline - time.monotonic())
@@ -11372,6 +11459,9 @@ def _banner_net_info():
                                                       timeout=min(5, _rem())))
         except Exception:
             info["dns_ok"] = False
+    # S5 L-01 残留：地理失败标记——仅地理步抛错/失败体时置真，末尾
+    # 凭此决定是否写入永久缓存；无出口 IP 时地理步未跑，不置真。
+    _geo_failed = False
     try:
         egress = get_egress_ip(budget=_rem()) if _rem() > 0 else None
         info["egress"] = egress
@@ -11420,7 +11510,9 @@ def _banner_net_info():
                     info["geo_net"] = ""
                 info["geo_org"] = org
             except Exception:
-                pass
+                # S5 L-01 残留：失败体/超时/坏 JSON 均记地理失败，不再
+                # 走末尾无条件缓存（原 `except: pass` 吞错后照常缓存空地理）。
+                _geo_failed = True
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
@@ -11465,7 +11557,12 @@ def _banner_net_info():
                     pass
     info["ipv6_addr"] = _v6addr
     info["ipv6"] = bool(_v6addr)
-    _banner_net_cache = info
+    _banner_net_last_info = info
+    _banner_net_last_attempt = _t0
+    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；其余情形
+    # （成功、无出口 IP）仍缓存。
+    if not _geo_failed:
+        _banner_net_cache = info
     return info
 
 
@@ -11728,6 +11825,13 @@ def _banner_net_info_async():
         return _banner_net_info()
     if _banner_net_cache is not None:
         return _banner_net_cache
+    # S5 L-01 残留：首轮取数已完成但地理失败、缓存未写时——重试间隔内
+    # 展示上次结果（带出口/IP，不重复发请求）；间隔已过则重取一次。
+    # 上次结果为空说明首轮仍在另一线程进行中，保持旧行为（空回退）。
+    if _banner_net_last_info is not None:
+        if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
+            return _banner_net_last_info
+        return _banner_net_info()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 
