@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.28-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.29-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -22,7 +22,7 @@
 
 ## Screenshots
 
-Main menu (the banner shows live system / hardware / network status; 12 features in four groups):
+Main menu (the banner shows live system / hardware / network status; 13 features in four groups):
 
 ![Main menu](docs/showcase-menu-en.png)
 
@@ -66,7 +66,7 @@ A passive report is printed in numbered sections:
 
 Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured streaming [4], a full DNS test (26 UDP / 15 DoH / 12 DoT resolvers, latency-ranked with a fastest pick) plus recommendations [5], the speed test [6], port 25 & DNSBL checks [7] and completeness [8]. When an IPv6 egress exists, a dual-stack verdict and a complete IPv6 stack follow as **[9]–[17]** — the IPv6 report with per-source reputation signals, an IPv6 DNS test (UDP / DoH / DoT, fastest pick included), IPv6 streaming and IPv6 speed — and the two egresses are compared for leak risk.
 
-## The 12 menu features
+## The 13 menu features
 
 | # | Feature | Description |
 |---|---|---|
@@ -82,6 +82,7 @@ Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured stre
 | 10 | Scoring rules | Full explanation of score dimensions, deductions and levels |
 | 11 | Batch node speed ranking | Paste multiple host:port entries or SOCKS5 proxies; concurrent latency & availability checks, ranked output with the best node in green, plus a measured download throughput for the best proxy |
 | 12 | Network speed test (regions) | Download table for 28 regional nodes (multi-connection peak), plus local up/down speeds |
+| 13 | Manage command shortcuts | Install / check / rename / remove the `acheck` / `ac` command shortcuts (`--shortcut`, `--names` / `--old-name` / `--new-name`) |
 
 Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), distinguishing native unlocks from Smart DNS unlocks.
 
@@ -97,32 +98,32 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
 gh-proxy (mainland China direct):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 Or run the script directly (Python 3.8+):
 
@@ -147,6 +148,8 @@ python3 acheck.py [IP] [options]
 | `--batch LIST` | Batch node ranking (comma-separated host:port or socks5:// proxies) |
 | `--speed` | Multi-region speed table |
 | `--no-speed` | With `--active`: skip the speed test (interactive self-checks ask first by default) |
+| `--with-speed` | With `--active`: force the speed test (interactive self-checks ask first by default) |
+| `--shortcut install/status/change/remove` | Manage command shortcuts (add `--names` for install, `--old-name` / `--new-name` for change; `--system` for system-wide locations) |
 | `--explain` | Print the scoring rules |
 | `--json` | JSON output (combinable with an IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | Output language |
@@ -155,7 +158,7 @@ python3 acheck.py [IP] [options]
 
 Multi-source aggregation with per-source attribution, mainly:
 
-- **Geolocation & ownership**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, PTR/FCrDNS reverse lookup
+- **Geolocation & ownership**: ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, PTR/FCrDNS reverse lookup
 - **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
 - **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list, IPsum, X4BNet VPN ranges
 

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.28-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.29-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -22,7 +22,7 @@
 
 ## 画面プレビュー
 
-メインメニュー（バナーにシステム / ハードウェア / ネットワーク状態をリアルタイム表示、12 機能を 4 グループに配置）：
+メインメニュー（バナーにシステム / ハードウェア / ネットワーク状態をリアルタイム表示、13 機能を 4 グループに配置）：
 
 ![メインメニュー](docs/showcase-menu-ja.png)
 
@@ -66,7 +66,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 セルフチェックも番号付きです。IPv4 は **[1]–[8]**（ストリーミング実測 [4]、DNS 完全テスト（従来 26 / DoH 15 / DoT 12、遅延ランキングと最速表示付き）と推奨 [5]、速度テスト [6]、25 番ポートと DNSBL [7]、完全性 [8]）。IPv6 出口がある場合はデュアルスタック判定と IPv6 の完全なスタック **[9]–[17]**（ソース別レピュテーション信号付き IPv6 レポート、IPv6 DNS テスト（従来 / DoH / DoT、最速表示付き）、IPv6 ストリーミング、IPv6 速度）が続き、両出口のリーク判定も行います。
 
-## メインメニュー 12 機能
+## メインメニュー 13 機能
 
 | # | 機能 | 説明 |
 |---|---|---|
@@ -82,6 +82,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 | 10 | スコアリングルール | スコア次元、減点項目、レベル区分の完全な説明 |
 | 11 | ノード一括スピード優選 | 複数の host:port や SOCKS5 プロキシを貼り付け、遅延と可用性を並行測定。ランキング表示、最良ノードを緑色表示し、そのプロキシの実測ダウンロード速度も表示 |
 | 12 | ネットワーク速度（地域別） | 28 地域ノードのダウンロード表（複数接続ピーク方式）、自機の上下速度付き |
+| 13 | コマンド入口の管理 | `acheck` / `ac` コマンド入口のインストール / 状態確認 / 改名 / 削除（`--shortcut`、`--names` / `--old-name` / `--new-name`） |
 
 ストリーミング実測は 18 プラットフォームに対応：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、動画（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、SNS その他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub）。ネイティブ解錠と DNS 解錠（Smart DNS）を区別します。
 
@@ -97,32 +98,32 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN ミラー：GitHub へ直接つながりにくい地域（中国本土など）向け。単一ファイル版、機能は同一です：**
 gh-proxy（中国本土から直接）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 スクリプトを直接実行することもできます（Python 3.8+）：
 
@@ -147,6 +148,8 @@ python3 acheck.py [IP] [オプション]
 | `--batch リスト` | ノード一括優選（カンマ区切りの host:port または socks5:// プロキシ） |
 | `--speed` | 地域別スピード表 |
 | `--no-speed` | `--active` と併用：速度テストを省略（対話型セルフチェックでは既定で先に確認） |
+| `--with-speed` | `--active` と併用：速度テストを強制実行（対話型セルフチェックでは既定で先に確認） |
+| `--shortcut install/status/change/remove` | コマンド入口の管理（インストール時は `--names`、改名時は `--old-name` / `--new-name`、システム全体では `--system`） |
 | `--explain` | スコアリングルールを出力 |
 | `--json` | JSON 出力（IP / --active / --proxy と組合せ可） |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | 出力言語を指定 |
@@ -155,7 +158,7 @@ python3 acheck.py [IP] [オプション]
 
 マルチソース集約・ソース明記。主なもの：
 
-- **地理と帰属**：ip-api.com、ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 逆引き
+- **地理と帰属**：ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 逆引き
 - **レピュテーションと詐欺**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
 - **脅威とリスト**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口ノードリスト、IPsum、X4BNet VPN ranges
 

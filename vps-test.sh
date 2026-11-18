@@ -12,8 +12,22 @@ TDIR=$(mktemp -d /tmp/ipcheck-test-XXXXXX)
 trap "rm -rf $TDIR; echo '[清理] 临时文件已删除'" EXIT
 cd $TDIR
 
+SRC="${1:-}"
 echo "=== [1/10] [联网] 下载发布代码 ==="
-curl -fSL --connect-timeout 10 --max-time 60 -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
+if [ -n "$SRC" ]; then
+    # 显式传入本地脚本：直接复制，不联网
+    [ -f "$SRC" ] || { echo "FAIL: [本地] 本地脚本不存在: $SRC"; exit 1; }
+    cp "$SRC" acheck.py || { echo "FAIL: [本地] 复制本地脚本失败"; exit 1; }
+    echo "本地脚本 OK: $SRC"
+elif [ -n "$VPS_TEST_LOCAL_ONLY" ]; then
+    # 本地回归模式：复制脚本所在仓库的 acheck.py，不联网
+    _LOCAL="$(cd "$(dirname "$0")" && pwd)/acheck.py"
+    [ -f "$_LOCAL" ] || { echo "FAIL: [本地] 本地仓库无 acheck.py: $_LOCAL"; exit 1; }
+    cp "$_LOCAL" acheck.py || { echo "FAIL: [本地] 复制本地脚本失败"; exit 1; }
+    echo "本地仓库脚本 OK: $_LOCAL"
+else
+    curl -fSL --connect-timeout 10 --max-time 60 -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
+fi
 python3 -m py_compile acheck.py || { echo "FAIL: [本地] 编译失败"; exit 1; }
 echo "编译 OK"
 
@@ -87,6 +101,7 @@ echo "DNSBL=29 OK"
 echo "=== [8/10] [本地] 代理诊断模块 ==="
 python3 << 'PYEOF' || { echo "FAIL: [本地] 代理诊断模块失败"; exit 1; }
 import acheck
+import os
 import socket
 import threading
 # 受控本地服务：接受连接后直接关闭（非 SOCKS5 响应），负向断言不依赖固定端口占用
@@ -109,9 +124,12 @@ srv.close()
 # TCP 延迟统计
 r = acheck.tcp_ping_stats("127.0.0.1", 22, count=2, timeout=2)
 assert "avg_ms" in r or "loss_pct" in r, "TCP 统计应返回字段"
-# DNS 解析器检测
-rips = acheck.get_resolver_ips(probes=1, timeout=5)
-assert isinstance(rips, list), "应返回列表"
+# DNS 解析器检测（VPS_TEST_LOCAL_ONLY=1 时跳过联网解析）
+if os.environ.get("VPS_TEST_LOCAL_ONLY"):
+    print("SKIP: get_resolver_ips（VPS_TEST_LOCAL_ONLY=1）")
+else:
+    rips = acheck.get_resolver_ips(probes=1, timeout=5)
+    assert isinstance(rips, list), "应返回列表"
 print("代理诊断模块 OK")
 PYEOF
 

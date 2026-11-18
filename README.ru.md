@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.28-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.29-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -22,7 +22,7 @@
 
 ## Скриншоты
 
-Главное меню (баннер в реальном времени показывает систему / железо / сеть; 12 функций в четырёх группах):
+Главное меню (баннер в реальном времени показывает систему / железо / сеть; 13 функций в четырёх группах):
 
 ![Главное меню](docs/showcase-menu-ru.png)
 
@@ -66,7 +66,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 В режиме самопроверки разделы также пронумерованы. IPv4 — это **[1]–[8]**: фактический стриминг [4], полный тест DNS (26 обычных / 15 DoH / 12 DoT, ранжирование по задержке и отметка самого быстрого) и рекомендации [5], тест скорости [6], проверки порта 25 и DNSBL [7], полнота [8]. При наличии выходного IPv6 далее идут вердикт о двухстечности и полный стек IPv6 **[9]–[17]** — отчёт IPv6 с сигналами репутации по источникам, тест IPv6 DNS (обычный / DoH / DoT, с отметкой самого быстрого), стриминг IPv6 и скорость IPv6, — а два выхода сравниваются на предмет утечки.
 
-## 12 функций главного меню
+## 13 функций главного меню
 
 | # | Функция | Описание |
 |---|---|---|
@@ -82,6 +82,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 | 10 | Правила оценки | Полное объяснение измерений оценки, вычетов и уровней |
 | 11 | Пакетный тест узлов | Вставьте несколько host:port или SOCKS5-прокси; параллельная проверка задержки и доступности, рейтинг с лучшим узлом зелёным, плюс фактическая скорость загрузки лучшего прокси |
 | 12 | Тест скорости (регионы) | Таблица загрузки для 28 региональных узлов (пик по нескольким соединениям) и скорости вашего канала |
+| 13 | Управление ярлыками команд | Установка / проверка / переименование / удаление ярлыков `acheck` / `ac` (`--shortcut`, `--names` / `--old-name` / `--new-name`) |
 
 Фактические тесты стриминга охватывают 18 платформ: ИИ (ChatGPT / Gemini / Claude / Grok / DeepSeek), видео (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), соцсети и прочее (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), с различением нативной разблокировки и разблокировки через DNS (Smart DNS).
 
@@ -97,32 +98,32 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.28/A-Check-v4.14.28-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **Зеркало CDN — для регионов, где GitHub труднодоступен (например, материковый Китай). Один файл, полный функционал:**
 gh-proxy (прямой доступ из Китая):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.28/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.29/acheck.py -o acheck.py && python3 acheck.py
 ```
 Или запустите скрипт напрямую (нужен Python 3.8+):
 
@@ -147,6 +148,8 @@ python3 acheck.py [IP] [опции]
 | `--batch СПИСОК` | Пакетный рейтинг узлов (host:port или socks5:// через запятую) |
 | `--speed` | Таблица скорости по регионам |
 | `--no-speed` | С `--active`: пропустить тест скорости (интерактивная самопроверка по умолчанию сначала спрашивает) |
+| `--with-speed` | С `--active`: принудительно выполнять тест скорости (интерактивная самопроверка по умолчанию сначала спрашивает) |
+| `--shortcut install/status/change/remove` | Управление ярлыками команд (для установки — `--names`, для переименования — `--old-name` / `--new-name`; `--system` — системные каталоги) |
 | `--explain` | Вывести правила оценки |
 | `--json` | Вывод в JSON (сочетается с IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | Язык вывода |
@@ -155,7 +158,7 @@ python3 acheck.py [IP] [опции]
 
 Агрегация многих источников с указанием каждого:
 
-- **Геолокация и принадлежность**: ip-api.com, ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, обратный PTR/FCrDNS
+- **Геолокация и принадлежность**: ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, обратный PTR/FCrDNS
 - **Репутация и мошенничество**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
 - **Угрозы и списки**: Spamhaus DROP, Feodo Tracker, Emerging Threats, список выходных узлов Tor, IPsum, X4BNet VPN ranges
 

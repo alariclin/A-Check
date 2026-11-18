@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.28 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.29 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -26,10 +26,13 @@ IP 信誉检测 v4.14.28 — 全量修复与并发优化公开版 (零 API Key �
     python3 acheck.py --explain              # 输出评分规则说明 (支持 6 种语言)
 """
 import base64
+import bisect
+import errno
 import hashlib
 import http.client
 import ipaddress
 import json
+import math
 import os
 import platform
 import random
@@ -50,13 +53,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.28"
+VERSION = "4.14.29"
 
 
 def _init_console():
@@ -93,10 +97,11 @@ STR = {
         "prompt_ip": "请输入公网 IP (b 返回，q 退出): ",
         "invalid_ip": "无效的 IP 地址，请重新输入",
         "upd_ahead": "本地版本高于最新发布 (v%s)",
-        "ipapi_http_note": "注：ip-api 免费源仅支持明文 HTTP 查询",
         "invalid_input": "输入无效，请重新输入",
         "invalid_proxy_format": "代理格式无效，应为 HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only 与 --ipv6-only 不能同时使用",
+        "no_speed_with_speed_conflict": "--no-speed 与 --with-speed 不能同时使用",
+        "proxy_auth_one_sided": "代理认证须同时给出 --proxy-user 与 --proxy-pass",
         "no_tty": "无可用终端；交互式菜单需要 TTY。使用 --active 进行非交互式自检。",
         "no_valid_nodes": "无有效节点",
         "heuristic": "启发式",
@@ -125,7 +130,7 @@ STR = {
         "stack_auto": "自动 (IPv4 + IPv6 全部检测；无 IPv6 时只测 IPv4)",
         "stack_v4": "仅 IPv4",
         "stack_v6": "仅 IPv6",
-        "stack_prompt": "请选择 [1-3] (回车=自动): ",
+        "stack_prompt": "请选择 [1-3] (回车=自动, b=返回): ",
         "egress6_fail": "未检测到 IPv6 出口 (本机可能只有 IPv4)",
         "v6_prefix_note": "IPv6 为前缀/运营商粒度数据，无单个地址的信誉记录",
         "v6_op_est": "运营商级估计",
@@ -304,10 +309,11 @@ STR = {
         "prompt_ip": "Enter public IP (b back, q quit): ",
         "invalid_ip": "Invalid IP address, try again",
         "upd_ahead": "Local version is newer than the latest release (v%s)",
-        "ipapi_http_note": "Note: the ip-api free source only supports plaintext HTTP queries",
         "invalid_input": "Invalid input, try again",
         "invalid_proxy_format": "Invalid proxy format, want HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only and --ipv6-only cannot be used together",
+        "no_speed_with_speed_conflict": "--no-speed and --with-speed cannot be used together",
+        "proxy_auth_one_sided": "Proxy auth needs both --proxy-user and --proxy-pass",
         "no_tty": "No terminal available; interactive menu requires a TTY. Run with --active for a non-interactive self-check.",
         "no_valid_nodes": "No valid nodes",
         "heuristic": "Heuristic",
@@ -332,7 +338,7 @@ STR = {
         "stack_auto": "Auto (test both IPv4 + IPv6; IPv4 only when no IPv6)",
         "stack_v4": "IPv4 only",
         "stack_v6": "IPv6 only",
-        "stack_prompt": "Choose [1-3] (Enter=Auto): ",
+        "stack_prompt": "Choose [1-3] (Enter=Auto, b=Back): ",
         "egress6_fail": "No IPv6 egress detected (this host may be IPv4-only)",
         "sec_signals6": "Reputation Signals (per source)",
         "v6_score_note": "※ IPv6 scores use the IPv4 formula with IPv6-capable sources only (less threat/reputation data); prefix/operator-level estimates",
@@ -515,10 +521,11 @@ STR = {
         "prompt_ip": "請輸入公網 IP (b 返回，q 退出): ",
         "invalid_ip": "無效的 IP 地址，請重新輸入",
         "upd_ahead": "本地版本高於最新發布 (v%s)",
-        "ipapi_http_note": "註：ip-api 免費來源僅支援明文 HTTP 查詢",
         "invalid_input": "輸入無效，請重新輸入",
         "invalid_proxy_format": "代理格式無效，應為 HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only 與 --ipv6-only 不能同時使用",
+        "no_speed_with_speed_conflict": "--no-speed 與 --with-speed 不能同時使用",
+        "proxy_auth_one_sided": "代理驗證須同時給出 --proxy-user 與 --proxy-pass",
         "no_tty": "無可用終端；互動式選單需要 TTY。使用 --active 進行非互動式自檢。",
         "no_valid_nodes": "無有效節點",
         "heuristic": "啟發式",
@@ -541,7 +548,7 @@ STR = {
         "stack_auto": "自動 (IPv4 + IPv6 全部檢測；無 IPv6 時只測 IPv4)",
         "stack_v4": "僅 IPv4",
         "stack_v6": "僅 IPv6",
-        "stack_prompt": "請選擇 [1-3] (Enter=自動): ",
+        "stack_prompt": "請選擇 [1-3] (Enter=自動, b=返回): ",
         "egress6_fail": "未偵測到 IPv6 出口 (本機可能只有 IPv4)",
         "geo_group": "地理位置",
         "sec_signals6": "信譽信號 (逐源)",
@@ -726,10 +733,11 @@ STR = {
         "prompt_ip": "パブリックIPを入力 (b 戻る、q 終了): ",
         "invalid_ip": "無効なIPアドレスです、再入力してください",
         "upd_ahead": "ローカルバージョンが最新リリースより新しいです (v%s)",
-        "ipapi_http_note": "注：ip-api 無料ソースは平文 HTTP クエリのみ対応",
         "invalid_input": "入力が無効です、再入力してください",
         "invalid_proxy_format": "プロキシの形式が無効です、HOST:PORT で指定してください",
         "ipv4_ipv6_conflict": "--ipv4-only と --ipv6-only は併用できません",
+        "no_speed_with_speed_conflict": "--no-speed と --with-speed は併用できません",
+        "proxy_auth_one_sided": "プロキシ認証には --proxy-user と --proxy-pass の両方が必要です",
         "no_tty": "利用可能な端末がありません。対話メニューには TTY が必要です。非対話のセルフチェックには --active を使用してください。",
         "no_valid_nodes": "有効なノードがありません",
         "heuristic": "ヒューリスティック",
@@ -750,7 +758,7 @@ STR = {
         "stack_auto": "自動 (IPv4 + IPv6 の両方を測定；IPv6 が無い場合は IPv4 のみ)",
         "stack_v4": "IPv4 のみ",
         "stack_v6": "IPv6 のみ",
-        "stack_prompt": "選択 [1-3] (Enter=自動): ",
+        "stack_prompt": "選択 [1-3] (Enter=自動, b=戻る): ",
         "egress6_fail": "IPv6 出口が検出されませんでした (このホストは IPv4 のみの可能性があります)",
         "sec_type": "IPタイプ属性",
         "sec_loc": "複数ソース位置比較",
@@ -937,10 +945,11 @@ STR = {
         "prompt_ip": "Введите публичный IP (b назад, q выход): ",
         "invalid_ip": "Недействительный IP-адрес, введите снова",
         "upd_ahead": "Локальная версия новее последнего релиза (v%s)",
-        "ipapi_http_note": "Примечание: бесплатный источник ip-api поддерживает только незашифрованные HTTP-запросы",
         "invalid_input": "Неверный ввод, введите снова",
         "invalid_proxy_format": "Неверный формат прокси, ожидается HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only и --ipv6-only нельзя использовать вместе",
+        "no_speed_with_speed_conflict": "--no-speed и --with-speed нельзя использовать вместе",
+        "proxy_auth_one_sided": "Для аутентификации прокси нужны и --proxy-user, и --proxy-pass",
         "no_tty": "Терминал недоступен; интерактивное меню требует TTY. Для неинтерактивной самопроверки используйте --active.",
         "no_valid_nodes": "Нет допустимых узлов",
         "heuristic": "Эвристика",
@@ -959,7 +968,7 @@ STR = {
         "stack_auto": "Авто (IPv4 + IPv6; если IPv6 нет — только IPv4)",
         "stack_v4": "Только IPv4",
         "stack_v6": "Только IPv6",
-        "stack_prompt": "Выбор [1-3] (Enter=Авто): ",
+        "stack_prompt": "Выбор [1-3] (Enter=Авто, b=Назад): ",
         "egress6_fail": "Выход IPv6 не обнаружен (возможно, у хоста только IPv4)",
         "checking": "Проверка",
         "sec_basic": "Основная информация и ASN/BGP",
@@ -1148,10 +1157,11 @@ STR = {
         "prompt_ip": "IP عمومی وارد کنید (b بازگشت، q خروج): ",
         "invalid_ip": "آدرس IP نامعتبر است، دوباره وارد کنید",
         "upd_ahead": "نسخه محلی جدیدتر از آخرین انتشار است (v%s)",
-        "ipapi_http_note": "توجه: منبع رایگان ip-api فقط از پرسمان‌های HTTP رمزنگاری‌نشده پشتیبانی می‌کند",
         "invalid_input": "ورودی نامعتبر است، دوباره وارد کنید",
         "invalid_proxy_format": "قالب پروکسی نامعتبر است، HOST:PORT مورد انتظار است",
         "ipv4_ipv6_conflict": "--ipv4-only و --ipv6-only را نمی‌توان با هم استفاده کرد",
+        "no_speed_with_speed_conflict": "--no-speed و --with-speed را نمی‌توان با هم استفاده کرد",
+        "proxy_auth_one_sided": "احراز هویت پروکسی به هر دو گزینه --proxy-user و --proxy-pass نیاز دارد",
         "no_tty": "پایانه‌ای در دسترس نیست؛ منوی تعاملی به TTY نیاز دارد. برای خودآزمایی غیرتعاملی از --active استفاده کنید.",
         "no_valid_nodes": "گره معتبری وجود ندارد",
         "heuristic": "ابتکاری",
@@ -1169,7 +1179,7 @@ STR = {
         "stack_auto": "خودکار (آزمایش هر دو IPv4 + IPv6؛ بدون IPv6 فقط IPv4)",
         "stack_v4": "فقط IPv4",
         "stack_v6": "فقط IPv6",
-        "stack_prompt": "انتخاب [1-3] (Enter=خودکار): ",
+        "stack_prompt": "انتخاب [1-3] (Enter=خودکار, b=بازگشت): ",
         "egress6_fail": "خروجی IPv6 شناسایی نشد (ممکن است این میزبان فقط IPv4 داشته باشد)",
         "back": "بازگشت",
         "checking": "در حال بررسی",
@@ -1441,6 +1451,42 @@ def _strip_cc(s):
     return "".join(ch for ch in s if unicodedata.category(ch) != "Cc")
 
 
+def _clean_str(v):
+    """外部文本字段清洗 (H-10)：仅字符串保留，且剥离终端控制字符后去空白；
+    非字符串（dict/list/int/float/None）一律丢弃为空串，不原样透传进画像
+    或打印（dict/int 透传会在 _print_basic_block 抛 TypeError）。"""
+    if not isinstance(v, str):
+        return ""
+    return _strip_cc(v).strip()
+
+
+def _clean_coord(v, lo, hi):
+    """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
+    1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
+    float('nan')/float('inf') 本身不抛错，故须 math.isfinite 显式拦截。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f) or not (lo <= f <= hi):
+        return None
+    return f
+
+
+def _json_safe(obj):
+    """JSON 输出边界清洗 (H-10)：递归把非有限 float（NaN/Infinity，
+    上游 JSON 字面量 NaN/Infinity/1e309 均可解析为此类值）转 None，
+    保证 dumps 输出为标准 JSON。只转 float，不碰其他类型；
+    不用 allow_nan=False（它遇非有限值直接抛 ValueError，会让 --json 崩溃）。"""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def _c(fn, s):
     s = _strip_cc(s)
     return fn(s) if _use_color() else str(s)
@@ -1694,7 +1740,8 @@ def _urlopen_deadline(req, timeout):
     在守护线程里打开，主线程按 deadline 等待；超时返 (None, None, True)；
     快失败返 (None, err, False)；成功返 (resp, None, False)。
     与 _open_bounded 不同：错误对象（含 HTTPError）不提前关闭，归调用方
-    读体后再关，错误体内容得以保留。迟到响应由打开线程自行关闭，不泄漏。"""
+    读体后再关，错误体内容得以保留。迟到响应与迟到错误响应 (HTTPError)
+    由打开线程自行关闭，不泄漏。"""
     _dl = time.monotonic() + timeout
     _box = {}
     _lock = threading.Lock()
@@ -1714,6 +1761,12 @@ def _urlopen_deadline(req, timeout):
                     if _resp is not None:
                         try:
                             _resp.close()
+                        except Exception:
+                            pass
+                    _err = _box.get("err")
+                    if isinstance(_err, urllib.error.HTTPError):
+                        try:
+                            _err.close()
                         except Exception:
                             pass
 
@@ -1846,6 +1899,35 @@ def _get_threat_list(name, url, parser):
             return None
 
 
+# OPT-05: 网络段二分索引。SpamhausDROP / X4BNet 的网络列表以
+# collapse_addresses 合并为不重叠区间, 按 (starts, ends) 整数元组缓存
+# (每名单一 IP 一次建索引)；查询用 bisect_right 定位候选区间 O(log n)。
+# 线性 any(addr in net) 在数万条 /24 上每次查询须全扫, 二分后等价且更快。
+_threat_net_index = {}
+
+
+def _threat_net_index_for(name, nets):
+    """取（或建）某网络列表的 (starts, ends) 区间索引, 按列表名缓存。"""
+    idx = _threat_net_index.get(name)
+    if idx is None:
+        with _threat_lists_lock:
+            idx = _threat_net_index.get(name)
+            if idx is None:
+                collapsed = list(ipaddress.collapse_addresses(nets))
+                starts = [int(n.network_address) for n in collapsed]
+                ends = [int(n.broadcast_address) for n in collapsed]
+                idx = (starts, ends)
+                _threat_net_index[name] = idx
+    return idx
+
+
+def _net_index_lookup(idx, addr):
+    """addr 是否落在任一区间内 (starts 已排序, ends 与之对齐)。"""
+    starts, ends = idx
+    i = bisect.bisect_right(starts, int(addr)) - 1
+    return i >= 0 and int(addr) <= ends[i]
+
+
 def validate_ip(s):
     try:
         ip = ipaddress.ip_address(str(s).strip())
@@ -1868,11 +1950,28 @@ def validate_ip(s):
         return None
 
 
+def _q_ip(ip):
+    """上游 URL 拼接用 IP 编码: 只编 % & # ? / 等注入字符, 保留 ':'。
+    合法 IPv4/IPv6 (数字、点、十六进制、冒号) 编码后与原文完全相同,
+    故对正常查询零行为变化; 含 %scope_id 的注入串则被中和
+    (% -> %25, & -> %26, # -> %23, / -> %2F)。path 与 query 位置通用。
+    不用 safe='': 那会把 IPv6 的 ':' 编成 %3A, 部分上游按原样路由
+    path 段可能 404; ':' 在 path/query 中均为合法字符 (R3-H07)。"""
+    return urllib.parse.quote(str(ip), safe=":")
+
+
 def parse_any_ip(s):
-    """解析任意公网 IP: 返回 (ip对象, 4|6); 失败返回 (None, 错误i18n键)。"""
+    """解析任意公网 IP: 返回 (ip对象, 4|6); 失败返回 (None, 错误i18n键)。
+    含 '%' 的地址一律拒绝: IPv6 scope_id (%en0 / %00&ip=...# 等)
+    不属于本工具公网查询的合法输入, 且 '%' 可向 27 处上游 URL 注入
+    第二参数或截断查询串 (R3-H07)。"""
+    if "%" in str(s):
+        return None, "invalid_ip"
     try:
         ip = ipaddress.ip_address(str(s).strip())
     except Exception:
+        return None, "invalid_ip"
+    if getattr(ip, "scope_id", None) is not None:
         return None, "invalid_ip"
     if isinstance(ip, ipaddress.IPv6Address):
         _mapped = ip.ipv4_mapped
@@ -1976,8 +2075,24 @@ def _decode_dns_name(pkt, offset):
     return ".".join(labels), (orig_offset if jumped else offset)
 
 
+def _has_ipv4_egress():
+    """有无 IPv4 出口：UDP connect 只做本地路由查询，不发包；
+    无 IPv4 路由时抛 OSError（纯 IPv6 主机）。"""
+    try:
+        _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            _s.connect(("1.1.1.1", 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
 def _get_system_nameservers():
-    """跨平台读取系统默认 IPv4 DNS 服务器列表 (支持 Linux / macOS / Windows)。"""
+    """跨平台读取系统默认 DNS 服务器列表（IPv4/IPv6，支持 Linux / macOS / Windows）。
+    H-07：IPv6 系统 DNS 亦返回；无系统 DNS 时，IPv6 模式或无 IPv4 出口
+    回退 IPv6 公共 DNS，否则回退 IPv4 公共 DNS。"""
     ns = []
     if sys.platform == "win32":
         try:
@@ -1986,16 +2101,19 @@ def _get_system_nameservers():
                 capture_output=True, text=True, timeout=4, errors="replace",
             ).stdout
             in_dns = False
+            _dns_indent = 0
             for line in out.splitlines():
                 if "DNS" in line:
                     in_dns = True
+                    _dns_indent = len(line) - len(line.lstrip())
                     parts = line.split(":", 1)
                     if len(parts) == 2:
-                        cand = parts[1].strip()
+                        # M-07(a)：先剥 %scope_id（Python 3.8 不接受带作用域
+                        # 的地址字面量，3.9+ 原生支持，剥离后两者皆可）。
+                        cand = parts[1].strip().split("%", 1)[0]
                         try:
                             ip = ipaddress.ip_address(cand)
-                            if isinstance(ip, ipaddress.IPv4Address):
-                                ns.append(str(ip))
+                            ns.append(str(ip))
                         except ValueError:
                             pass
                 elif in_dns:
@@ -2004,11 +2122,15 @@ def _get_system_nameservers():
                         in_dns = False
                         continue
                     try:
-                        ip = ipaddress.ip_address(cand.split()[0])
-                        if isinstance(ip, ipaddress.IPv4Address):
-                            ns.append(str(ip))
+                        ip = ipaddress.ip_address(
+                            cand.split()[0].split("%", 1)[0])
+                        ns.append(str(ip))
                     except ValueError:
-                        in_dns = False
+                        # M-07(a)：续行解析失败（如旧版 %scope）不结束 DNS 段；
+                        # 仅缩进回到标题级且含 ':' 的新字段标题行才结束。
+                        _indent = len(line) - len(line.lstrip())
+                        if ":" in line and _indent <= _dns_indent:
+                            in_dns = False
         except Exception:
             pass
     else:
@@ -2022,14 +2144,15 @@ def _get_system_nameservers():
                             if len(parts) >= 2:
                                 try:
                                     ip = ipaddress.ip_address(parts[1])
-                                    if isinstance(ip, ipaddress.IPv4Address):
-                                        ns.append(str(ip))
+                                    ns.append(str(ip))
                                 except ValueError:
                                     pass
             except Exception:
                 pass
-        # systemd-resolved 本地 stub (127.0.0.53) 时读取真实上游
-        if ns == ["127.0.0.53"] or (len(ns) == 1 and ns[0].startswith("127.")):
+        # systemd-resolved 本地 stub (127.0.0.53) 时读取真实上游；
+        # M-07(b)：仅恰为 ["127.0.0.53"] 才替换，用户自设的 127.0.0.1
+        # 本地 DNS（SmartDNS/dnsmasq/Clash/AdGuardHome）不得动。
+        if ns == ["127.0.0.53"]:
             for rp in ("/run/systemd/resolve/resolv.conf", "/run/systemd/resolve/stub-resolv.conf"):
                 try:
                     if os.path.exists(rp):
@@ -2041,7 +2164,7 @@ def _get_system_nameservers():
                                     if len(parts) >= 2:
                                         try:
                                             ip = ipaddress.ip_address(parts[1])
-                                            if isinstance(ip, ipaddress.IPv4Address) and not str(ip).startswith("127."):
+                                            if not str(ip).startswith("127.") and str(ip) != "::1":
                                                 ns.append(str(ip))
                                         except ValueError:
                                             pass
@@ -2059,11 +2182,18 @@ def _get_system_nameservers():
                     ["scutil", "--dns"],
                     capture_output=True, text=True, timeout=4, errors="replace",
                 ).stdout
-                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)", out):
-                    ns.append(m.group(1))
+                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[0-9a-fA-F:]+)", out):
+                    try:
+                        ns.append(str(ipaddress.ip_address(m.group(1))))
+                    except ValueError:
+                        pass
             except Exception:
                 pass
-    return ns or ["1.1.1.1", "8.8.8.8"]
+    if not ns:
+        if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
+            return ["2606:4700:4700::1111", "2001:4860:4860::8888"]
+        return ["1.1.1.1", "8.8.8.8"]
+    return ns
 
 
 # Null MX 标记：域名明确声明不收邮件时置位（_dns_query_udp 的 MX 支），
@@ -2077,7 +2207,15 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
       qtype=1 (A), qtype=5 (CNAME), qtype=12 (PTR), qtype=15 (MX), qtype=28 (AAAA)
     校验：发送方地址与端口、QR 位、TC 截断、问题段回显（对所有 rcode 一律先验，
     NXDOMAIN 亦然）、答案 owner 与 CLASS、答案完整性、名称型 RDATA 落在 rdlength 内。
+    H-07：按服务器地址版本选 AF_INET6/AF_INET（纯 IPv6 主机上 IPv6 DNS 可用），
+    源校验亦按地址值比对（展开式与压缩式视为同一地址）。
     """
+    try:
+        _srv_ip = ipaddress.ip_address(server)
+        _srv_is6 = isinstance(_srv_ip, ipaddress.IPv6Address)
+    except ValueError:
+        _srv_ip = None
+        _srv_is6 = False
     sock = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
@@ -2087,7 +2225,9 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
         question = _encode_dns_name(domain_q) + struct.pack(">HH", qtype, 1)
         pkt = header + question
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = socket.socket(
+            socket.AF_INET6 if _srv_is6 else socket.AF_INET,
+            socket.SOCK_DGRAM)
         sock.settimeout(timeout)
         sock.sendto(pkt, (server, 53))
         data, addr = sock.recvfrom(2048)
@@ -2109,7 +2249,15 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     if flags & 0x0200:  # TC 截断：不可信，不当“成功无记录”
         return (None, []) if return_cnames else None
-    if addr[0] != server or addr[1] != 53:  # 发送方必须是被查询的服务器:53
+    if _srv_ip is not None:
+        try:
+            _src_ok = ipaddress.ip_address(addr[0]) == _srv_ip \
+                and addr[1] == 53
+        except ValueError:
+            _src_ok = False
+    else:
+        _src_ok = addr[0] == server and addr[1] == 53
+    if not _src_ok:  # 发送方必须是被查询的服务器:53
         return (None, []) if return_cnames else None
 
     # 问题段回显校验：qdcount 须为 1 且名/类型/类与请求一致（NXDOMAIN 亦先验）
@@ -2297,7 +2445,7 @@ class Scamalytics(Provider):
     name = "Scamalytics"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://scamalytics.com/ip/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://scamalytics.com/ip/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         m = (
@@ -2317,7 +2465,7 @@ class StopForumSpam(Provider):
     name = "StopForumSpam"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.stopforumspam.org/api?ip={ip}&json", use_cache=False)
+        ok, raw = http_get(f"https://api.stopforumspam.org/api?ip={_q_ip(ip)}&json", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -2375,7 +2523,7 @@ class RIPEstat(Provider):
 
     def check(self, ip):
         ok, raw = http_get(
-            f"https://stat.ripe.net/data/prefix-overview/data.json?resource={ip}",
+            f"https://stat.ripe.net/data/prefix-overview/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
         if not ok:
@@ -2389,7 +2537,7 @@ class RIPEstat(Provider):
             announced = d.get("announced", False)
             age_years, first_seen, visibility = None, None, None
             ok2, raw2 = http_get(
-                f"https://stat.ripe.net/data/routing-history/data.json?resource={ip}",
+                f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
                 use_cache=False,
             )
             if ok2:
@@ -2525,6 +2673,9 @@ _ZH_NAME2CODE = {v: k for k, v in _COUNTRY_NAMES["zh"].items()}
 
 def _loc_country_name(text):
     """国家名/代码 -> 界面语言国家名 (en 界面或查不到时原样)。"""
+    # H-10: 入口清洗——查表不到的回退分支原样返回 text，须先剥离终端控制字符；
+    # 非字符串输入直接置空（不把 dict/int 透传给调用方打印）。
+    text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
@@ -2540,36 +2691,6 @@ def _loc_country_name(text):
     if code:
         return _COUNTRY_NAMES.get(LANG, {}).get(code, text)
     return text
-
-
-def _loc_display(disp):
-    """多源对比行: 把开头的国家 (代码或英文名) 换成本地化国家名, 其余原样。"""
-    if LANG == "en" or not disp:
-        return disp
-    m = re.match(r"^([A-Z]{2})\s+(.*)$", disp)
-    if m:
-        code = "GB" if m.group(1) == "UK" else m.group(1)
-        loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
-        if loc:
-            return f"{loc} {m.group(2)}"
-    if re.fullmatch(r"[A-Z]{2}", disp):
-        # 裸国家代码：无后续字段时亦本地化（UK→GB 查表）。
-        code = "GB" if disp == "UK" else disp
-        loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
-        if loc:
-            return loc
-    if LANG == "zh-TW":
-        for zh_name, code in sorted(_ZH_NAME2CODE.items(), key=lambda kv: -len(kv[0])):
-            if disp.startswith(zh_name):
-                return _COUNTRY_NAMES["zh-TW"][code] + disp[len(zh_name):]
-    low = disp.lower()
-    for name, code in sorted(_CC_EN.items(), key=lambda kv: -len(kv[0])):
-        if low.startswith(name + " ") or low == name:
-            loc = _COUNTRY_NAMES.get(LANG, {}).get(code)
-            if loc:
-                return loc + disp[len(name):]
-    return disp
-
 
 
 _REGION_L10N = {'zh': {'Alabama': '阿拉巴马州', 'Alaska': '阿拉斯加州', 'Arizona': '亚利桑那州', 'Arkansas': '阿肯色州', 'California': '加利福尼亚州', 'Colorado': '科罗拉多州', 'Connecticut': '康涅狄格州', 'Delaware': '特拉华州', 'Florida': '佛罗里达州', 'Georgia': '佐治亚州', 'Hawaii': '夏威夷州', 'Idaho': '爱达荷州', 'Illinois': '伊利诺伊州', 'Indiana': '印第安纳州', 'Iowa': '艾奥瓦州', 'Kansas': '堪萨斯州', 'Kentucky': '肯塔基州', 'Louisiana': '路易斯安那州', 'Maine': '缅因州', 'Maryland': '马里兰州', 'Massachusetts': '马萨诸塞州', 'Michigan': '密歇根州', 'Minnesota': '明尼苏达州', 'Mississippi': '密西西比州', 'Missouri': '密苏里州', 'Montana': '蒙大拿州', 'Nebraska': '内布拉斯加州', 'Nevada': '内华达州', 'New Hampshire': '新罕布什尔州', 'New Jersey': '新泽西州', 'New Mexico': '新墨西哥州', 'New York': '纽约州', 'North Carolina': '北卡罗来纳州', 'North Dakota': '北达科他州', 'Ohio': '俄亥俄州', 'Oklahoma': '俄克拉荷马州', 'Oregon': '俄勒冈州', 'Pennsylvania': '宾夕法尼亚州', 'Rhode Island': '罗得岛州', 'South Carolina': '南卡罗来纳州', 'South Dakota': '南达科他州', 'Tennessee': '田纳西州', 'Texas': '得克萨斯州', 'Utah': '犹他州', 'Vermont': '佛蒙特州', 'Virginia': '弗吉尼亚州', 'Washington': '华盛顿州', 'West Virginia': '西弗吉尼亚州', 'Wisconsin': '威斯康星州', 'Wyoming': '怀俄明州', 'District of Columbia': '哥伦比亚特区', 'New South Wales': '新南威尔士州', 'Victoria': '维多利亚州', 'Queensland': '昆士兰州', 'Western Australia': '西澳大利亚州', 'South Australia': '南澳大利亚州', 'Tasmania': '塔斯马尼亚州', 'Northern Territory': '北领地', 'Australian Capital Territory': '首都领地', 'Ontario': '安大略省', 'Quebec': '魁北克省', 'British Columbia': '不列颠哥伦比亚省', 'Alberta': '艾伯塔省', 'Manitoba': '曼尼托巴省', 'Saskatchewan': '萨斯喀彻温省', 'Nova Scotia': '新斯科舍省', 'New Brunswick': '新不伦瑞克省', 'Newfoundland and Labrador': '纽芬兰与拉布拉多省', 'Prince Edward Island': '爱德华王子岛省', 'England': '英格兰', 'Scotland': '苏格兰', 'Wales': '威尔士', 'Bavaria': '巴伐利亚州'}, 'zh-TW': {'Alabama': '阿拉巴馬州', 'Alaska': '阿拉斯加州', 'Arizona': '亞利桑那州', 'Arkansas': '阿肯色州', 'California': '加利福尼亞州', 'Colorado': '科羅拉多州', 'Connecticut': '康涅狄格州', 'Delaware': '德拉瓦州', 'Florida': '佛羅里達州', 'Georgia': '喬治亞州', 'Hawaii': '夏威夷州', 'Idaho': '愛達荷州', 'Illinois': '伊利諾州', 'Indiana': '印第安納州', 'Iowa': '愛荷華州', 'Kansas': '堪薩斯州', 'Kentucky': '肯塔基州', 'Louisiana': '路易斯安那州', 'Maine': '緬因州', 'Maryland': '馬里蘭州', 'Massachusetts': '麻薩諸塞州', 'Michigan': '密西根州', 'Minnesota': '明尼蘇達州', 'Mississippi': '密西西比州', 'Missouri': '密蘇里州', 'Montana': '蒙大拿州', 'Nebraska': '內布拉斯加州', 'Nevada': '內華達州', 'New Hampshire': '新罕布夏州', 'New Jersey': '紐澤西州', 'New Mexico': '新墨西哥州', 'New York': '紐約州', 'North Carolina': '北卡羅來納州', 'North Dakota': '北達科他州', 'Ohio': '俄亥俄州', 'Oklahoma': '奧克拉荷馬州', 'Oregon': '俄勒岡州', 'Pennsylvania': '賓夕法尼亞州', 'Rhode Island': '羅得島州', 'South Carolina': '南卡羅來納州', 'South Dakota': '南達科他州', 'Tennessee': '田納西州', 'Texas': '德克薩斯州', 'Utah': '猶他州', 'Vermont': '佛蒙特州', 'Virginia': '維吉尼亞州', 'Washington': '華盛頓州', 'West Virginia': '西維吉尼亞州', 'Wisconsin': '威斯康辛州', 'Wyoming': '懷俄明州', 'District of Columbia': '哥倫比亞特區', 'New South Wales': '新南威爾士州', 'Victoria': '維多利亞州', 'Queensland': '昆士蘭州', 'Western Australia': '西澳大利亞州', 'South Australia': '南澳大利亞州', 'Tasmania': '塔斯馬尼亞州', 'Northern Territory': '北領地', 'Australian Capital Territory': '首都領地', 'Ontario': '安大略省', 'Quebec': '魁北克省', 'British Columbia': '卑詩省', 'Alberta': '亞伯達省', 'Manitoba': '曼尼托巴省', 'Saskatchewan': '薩斯喀徹溫省', 'Nova Scotia': '新斯科細亞省', 'New Brunswick': '新布藍茲維省', 'Newfoundland and Labrador': '紐芬蘭與拉布拉多省', 'Prince Edward Island': '愛德華王子島省', 'England': '英格蘭', 'Scotland': '蘇格蘭', 'Wales': '威爾斯', 'Bavaria': '巴伐利亞州'}, 'ja': {'Alabama': 'アラバマ州', 'Alaska': 'アラスカ州', 'Arizona': 'アリゾナ州', 'Arkansas': 'アーカンソー州', 'California': 'カリフォルニア州', 'Colorado': 'コロラド州', 'Connecticut': 'コネチカット州', 'Delaware': 'デラウェア州', 'Florida': 'フロリダ州', 'Georgia': 'ジョージア州', 'Hawaii': 'ハワイ州', 'Idaho': 'アイダホ州', 'Illinois': 'イリノイ州', 'Indiana': 'インディアナ州', 'Iowa': 'アイオワ州', 'Kansas': 'カンザス州', 'Kentucky': 'ケンタッキー州', 'Louisiana': 'ルイジアナ州', 'Maine': 'メイン州', 'Maryland': 'メリーランド州', 'Massachusetts': 'マサチューセッツ州', 'Michigan': 'ミシガン州', 'Minnesota': 'ミネソタ州', 'Mississippi': 'ミシシッピ州', 'Missouri': 'ミズーリ州', 'Montana': 'モンタナ州', 'Nebraska': 'ネブラスカ州', 'Nevada': 'ネバダ州', 'New Hampshire': 'ニューハンプシャー州', 'New Jersey': 'ニュージャージー州', 'New Mexico': 'ニューメキシコ州', 'New York': 'ニューヨーク州', 'North Carolina': 'ノースカロライナ州', 'North Dakota': 'ノースダコタ州', 'Ohio': 'オハイオ州', 'Oklahoma': 'オクラホマ州', 'Oregon': 'オレゴン州', 'Pennsylvania': 'ペンシルベニア州', 'Rhode Island': 'ロードアイランド州', 'South Carolina': 'サウスカロライナ州', 'South Dakota': 'サウスダコタ州', 'Tennessee': 'テネシー州', 'Texas': 'テキサス州', 'Utah': 'ユタ州', 'Vermont': 'バーモント州', 'Virginia': 'バージニア州', 'Washington': 'ワシントン州', 'West Virginia': 'ウェストバージニア州', 'Wisconsin': 'ウィスコンシン州', 'Wyoming': 'ワイオミング州', 'District of Columbia': 'コロンビア特別区', 'New South Wales': 'ニューサウスウェールズ州', 'Victoria': 'ビクトリア州', 'Queensland': 'クイーンズランド州', 'Western Australia': '西オーストラリア州', 'South Australia': '南オーストラリア州', 'Tasmania': 'タスマニア州', 'Northern Territory': 'ノーザンテリトリー', 'Australian Capital Territory': '首都特別地域', 'Ontario': 'オンタリオ州', 'Quebec': 'ケベック州', 'British Columbia': 'ブリティッシュコロンビア州', 'Alberta': 'アルバータ州', 'Manitoba': 'マニトバ州', 'Saskatchewan': 'サスカチュワン州', 'Nova Scotia': 'ノバスコシア州', 'New Brunswick': 'ニューブランズウィック州', 'Newfoundland and Labrador': 'ニューファンドランド・ラブラドール州', 'Prince Edward Island': 'プリンスエドワード島州', 'England': 'イングランド', 'Scotland': 'スコットランド', 'Wales': 'ウェールズ', 'Bavaria': 'バイエルン州'}, 'ru': {'Alabama': 'Алабама', 'Alaska': 'Аляска', 'Arizona': 'Аризона', 'Arkansas': 'Арканзас', 'California': 'Калифорния', 'Colorado': 'Колорадо', 'Connecticut': 'Коннектикут', 'Delaware': 'Делавэр', 'Florida': 'Флорида', 'Georgia': 'Джорджия', 'Hawaii': 'Гавайи', 'Idaho': 'Айдахо', 'Illinois': 'Иллинойс', 'Indiana': 'Индиана', 'Iowa': 'Айова', 'Kansas': 'Канзас', 'Kentucky': 'Кентукки', 'Louisiana': 'Луизиана', 'Maine': 'Мэн', 'Maryland': 'Мэриленд', 'Massachusetts': 'Массачусетс', 'Michigan': 'Мичиган', 'Minnesota': 'Миннесота', 'Mississippi': 'Миссисипи', 'Missouri': 'Миссури', 'Montana': 'Монтана', 'Nebraska': 'Небраска', 'Nevada': 'Невада', 'New Hampshire': 'Нью-Гэмпшир', 'New Jersey': 'Нью-Джерси', 'New Mexico': 'Нью-Мексико', 'New York': 'штат Нью-Йорк', 'North Carolina': 'Северная Каролина', 'North Dakota': 'Северная Дакота', 'Ohio': 'Огайо', 'Oklahoma': 'Оклахома', 'Oregon': 'Орегон', 'Pennsylvania': 'Пенсильвания', 'Rhode Island': 'Род-Айленд', 'South Carolina': 'Южная Каролина', 'South Dakota': 'Южная Дакота', 'Tennessee': 'Теннесси', 'Texas': 'Техас', 'Utah': 'Юта', 'Vermont': 'Вермонт', 'Virginia': 'Вирджиния', 'Washington': 'штат Вашингтон', 'West Virginia': 'Западная Вирджиния', 'Wisconsin': 'Висконсин', 'Wyoming': 'Вайоминг', 'District of Columbia': 'Округ Колумбия', 'New South Wales': 'Новый Южный Уэльс', 'Victoria': 'Виктория', 'Queensland': 'Квинсленд', 'Western Australia': 'Западная Австралия', 'South Australia': 'Южная Австралия', 'Tasmania': 'Тасмания', 'Northern Territory': 'Северная территория', 'Australian Capital Territory': 'Столичная территория', 'Ontario': 'Онтарио', 'Quebec': 'Квебек', 'British Columbia': 'Британская Колумбия', 'Alberta': 'Альберта', 'Manitoba': 'Манитоба', 'Saskatchewan': 'Саскачеван', 'Nova Scotia': 'Новая Шотландия', 'New Brunswick': 'Нью-Брансуик', 'Newfoundland and Labrador': 'Ньюфаундленд и Лабрадор', 'Prince Edward Island': 'Остров Принца Эдуарда', 'England': 'Англия', 'Scotland': 'Шотландия', 'Wales': 'Уэльс', 'Bavaria': 'Бавария'}, 'fa': {'Alabama': 'آلاباما', 'Alaska': 'آلاسکا', 'Arizona': 'آریزونا', 'Arkansas': 'آرکانزاس', 'California': 'کالیفرنیا', 'Colorado': 'کلرادو', 'Connecticut': 'کنتیکت', 'Delaware': 'دلاویر', 'Florida': 'فلوریدا', 'Georgia': 'جورجیا', 'Hawaii': 'هاوایی', 'Idaho': 'آیداهو', 'Illinois': 'ایلینوی', 'Indiana': 'ایندیانا', 'Iowa': 'آیووا', 'Kansas': 'کانزاس', 'Kentucky': 'کنتاکی', 'Louisiana': 'لوئیزیانا', 'Maine': 'مین', 'Maryland': 'مریلند', 'Massachusetts': 'ماساچوست', 'Michigan': 'میشیگان', 'Minnesota': 'مینه\u200cسوتا', 'Mississippi': 'میسیسیپی', 'Missouri': 'میسوری', 'Montana': 'مونتانا', 'Nebraska': 'نبراسکا', 'Nevada': 'نوادا', 'New Hampshire': 'نیوهمپشایر', 'New Jersey': 'نیوجرسی', 'New Mexico': 'نیومکزیکو', 'New York': 'ایالت نیویورک', 'North Carolina': 'کارولینای شمالی', 'North Dakota': 'داکوتای شمالی', 'Ohio': 'اوهایو', 'Oklahoma': 'اکلاهما', 'Oregon': 'اورگن', 'Pennsylvania': 'پنسیلوانیا', 'Rhode Island': 'رود آیلند', 'South Carolina': 'کارولینای جنوبی', 'South Dakota': 'داکوتای جنوبی', 'Tennessee': 'تنسی', 'Texas': 'تگزاس', 'Utah': 'یوتا', 'Vermont': 'ورمانت', 'Virginia': 'ویرجینیا', 'Washington': 'ایالت واشینگتن', 'West Virginia': 'ویرجینیای غربی', 'Wisconsin': 'ویسکانسین', 'Wyoming': 'وایومینگ', 'District of Columbia': 'ناحیه کلمبیا', 'New South Wales': 'نیو ساوت ولز', 'Victoria': 'ویکتوریا', 'Queensland': 'کوئینزلند', 'Western Australia': 'استرالیای غربی', 'South Australia': 'استرالیای جنوبی', 'Tasmania': 'تاسمانی', 'Northern Territory': 'قلمرو شمالی', 'Australian Capital Territory': 'قلمرو پایتختی', 'Ontario': 'انتاریو', 'Quebec': 'کبک', 'British Columbia': 'بریتیش کلمبیا', 'Alberta': 'آلبرتا', 'Manitoba': 'مانیتوبا', 'Saskatchewan': 'ساسکاچوان', 'Nova Scotia': 'نوا اسکوشیا', 'New Brunswick': 'نیوبرانزویک', 'Newfoundland and Labrador': 'نیوفاندلند و لابرادور', 'Prince Edward Island': 'جزیره پرنس ادوارد', 'England': 'انگلستان', 'Scotland': 'اسکاتلند', 'Wales': 'ولز', 'Bavaria': 'باواریا'}}
@@ -2729,7 +2850,9 @@ def _resolve_geo_online(jobs):
         _GEO_EXTRA.update({"lang": LANG, "city": {}, "region": {}})
     todo, seen = [], set()
     for kind, name, ctx in jobs:
-        name = (name or "").strip()
+        # H-10: name 可能为非字符串（上游 city/region 直传 dict/list 时经
+        # _gjobs 流入）；非字符串直接跳过，不调 .strip() 抛 AttributeError。
+        name = name.strip() if isinstance(name, str) else ""
         if not name or len(name) < 3 or any(ch.isdigit() for ch in name):
             continue
         if name.lower() == "none":
@@ -2803,6 +2926,8 @@ def _extra_sub(disp, kind, ctx_text=None):
 
 def _loc_region(text):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。"""
+    # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
+    text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
@@ -2819,6 +2944,8 @@ def _loc_region(text):
 
 def _loc_city(text):
     """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。"""
+    # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
+    text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
@@ -2852,42 +2979,10 @@ def _localize_profile_copy(prof):
     return out
 
 
-def _loc_sub_in(disp, any2en, table):
-    """在对比行整串里按最长变体匹配替换一个地名 (州/省或城市)。
-    ASCII 变体须词边界匹配（避免 London 命中 Londonderry），替换落在边界匹配处；
-    非 ASCII 变体沿现有子串语义。"""
-    best = None
-    best_start = None
-    best_end = None
-    for variant, en in any2en.items():
-        if not variant:
-            continue
-        if variant.isascii():
-            m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
-            if not m:
-                continue
-            start, end = m.start(), m.end()
-        else:
-            idx = disp.find(variant)
-            if idx < 0:
-                continue
-            start, end = idx, idx + len(variant)
-        # 不可译候选（无静态表项，或译文等于自身即已本地化名）不得遮蔽
-        # 其余可译名：选 best 时直接跳过，取最长可译项。
-        loc = table.get(LANG, {}).get(en)
-        if not loc or loc == variant:
-            continue
-        if best is None or len(variant) > len(best[0]):
-            best = (variant, en)
-            best_start, best_end = start, end
-    if best:
-        loc = table.get(LANG, {}).get(best[1])
-        return disp[:best_start] + loc + disp[best_end:]
-    return disp
-
-
 def _loc_tz(tz):
     """IANA 时区名 -> 界面语言 (洲/城查表; 未收录时原样)。"""
+    # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
+    tz = _clean_str(tz)
     if LANG == "en" or not tz:
         return tz
     if tz == "UTC":
@@ -2918,7 +3013,7 @@ class IPWhoIs(Provider):
 
     def check(self, ip):
         _l = _ipwho_lang()
-        ok, raw = http_get(f"https://ipwho.is/{ip}" + (f"?lang={_l}" if _l else ""),
+        ok, raw = http_get(f"https://ipwho.is/{_q_ip(ip)}" + (f"?lang={_l}" if _l else ""),
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2968,7 +3063,7 @@ class IPInfo(Provider):
     name = "ipinfo.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
+        ok, raw = http_get(f"https://ipinfo.io/{_q_ip(ip)}/json",
                            headers={"User-Agent": "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
@@ -2997,7 +3092,7 @@ class SANSISC(Provider):
     name = "SANS ISC"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://isc.sans.edu/api/ip/{ip}?json", use_cache=False)
+        ok, raw = http_get(f"https://isc.sans.edu/api/ip/{_q_ip(ip)}?json", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3022,7 +3117,7 @@ class GreyNoise(Provider):
 
     def check(self, ip):
         # 免费版 Community 限 25 次/周，进程内缓存减少重复消耗
-        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{ip}", use_cache=True)
+        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{_q_ip(ip)}", use_cache=True)
         if not ok:
             # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
             # 404 表示该 IP 未被观测到扫描，视为非噪音（正常）
@@ -3074,7 +3169,7 @@ class ProxyCheck(Provider):
     name = "proxycheck.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://proxycheck.io/v2/{ip}?vpn=1&asn=1&risk=1", use_cache=False)
+        ok, raw = http_get(f"https://proxycheck.io/v2/{_q_ip(ip)}?vpn=1&asn=1&risk=1", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3132,7 +3227,7 @@ class DBIP(Provider):
     name = "DB-IP"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.db-ip.com/v2/free/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.db-ip.com/v2/free/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3159,9 +3254,9 @@ class FreeIPAPI(Provider):
     name = "freeipapi"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://free.freeipapi.com/api/json/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
         if not ok:
-            ok, raw = http_get(f"https://freeipapi.com/api/json/{ip}", use_cache=False)
+            ok, raw = http_get(f"https://freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3194,7 +3289,7 @@ class ShodanInternetDB(Provider):
     name = "Shodan InternetDB"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://internetdb.shodan.io/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://internetdb.shodan.io/{_q_ip(ip)}", use_cache=False)
         if not ok:
             if raw.startswith("HTTP 404:"):
                 return {
@@ -3312,7 +3407,7 @@ class IPWhoisApp(Provider):
     name = "ipwhois.app"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipwhois.app/json/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://ipwhois.app/json/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3344,7 +3439,7 @@ class IPApiIs(Provider):
     name = "ipapi.is"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.ipapi.is/?ip={ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.ipapi.is/?ip={_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3382,7 +3477,7 @@ class IPGuide(Provider):
     name = "ip.guide"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ip.guide/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://ip.guide/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3418,7 +3513,7 @@ class GeoJS(Provider):
     name = "GeoJS"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://get.geojs.io/v1/ip/geo/{ip}.json",
+        ok, raw = http_get(f"https://get.geojs.io/v1/ip/geo/{_q_ip(ip)}.json",
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3430,10 +3525,13 @@ class GeoJS(Provider):
                 return {"ok": False, "err": "empty country"}
 
             def _f(v):
+                # H-10: float('nan')/float('inf')/float('1e309') 不抛错，
+                # 非有限值须在此拦截（否则经画像进 --json 输出裸 NaN/Infinity）。
                 try:
-                    return float(v)
+                    _fv = float(v)
                 except (TypeError, ValueError):
                     return None
+                return _fv if math.isfinite(_fv) else None
 
             return {
                 "ok": True,
@@ -3488,7 +3586,7 @@ class SpamhausDROP(Provider):
         lst = _get_threat_list(f"spamhaus{addr.version}", url, _parse)
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        listed = any(addr in net for net in lst)
+        listed = _net_index_lookup(_threat_net_index_for(f"spamhaus{addr.version}", lst), addr)
         return {"ok": True, "listed": listed, "ts": now_iso()}
 
 
@@ -3501,7 +3599,7 @@ class IPLocate(Provider):
     name = "iplocate.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://iplocate.io/api/lookup/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://iplocate.io/api/lookup/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3538,7 +3636,7 @@ class IPQuery(Provider):
     name = "ipquery.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.ipquery.io/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.ipquery.io/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3570,7 +3668,7 @@ class IpapiCo(Provider):
     name = "ipapi.co"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipapi.co/{ip}/json/", use_cache=False)
+        ok, raw = http_get(f"https://ipapi.co/{_q_ip(ip)}/json/", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3581,7 +3679,10 @@ class IpapiCo(Provider):
                 "ok": True,
                 "country": d.get("country_name", ""), "country_code": d.get("country_code", ""),
                 "region": d.get("region", ""), "city": d.get("city", ""),
-                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
+                # H-10: 经纬度须经有限性/范围校验；限流提示串（如 "Sign up to access"）
+                # 未转 float 会原样流入画像并拼进 Nominatim URL。
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
                 "timezone": d.get("timezone", ""),
                 "asn": _parse_asn(d.get("asn")), "org": d.get("org", ""), "isp": d.get("org", ""),
                 "ts": now_iso(),
@@ -3596,7 +3697,7 @@ class TwoIp(Provider):
     name = "2ip.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.2ip.io/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.2ip.io/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3629,7 +3730,7 @@ class OTX(Provider):
         except Exception:
             ver = 4
         ok, raw = http_get(
-            f"https://otx.alienvault.com/api/v1/indicators/IPv{ver}/{ip}/general",
+            f"https://otx.alienvault.com/api/v1/indicators/IPv{ver}/{_q_ip(ip)}/general",
             use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3661,7 +3762,7 @@ class BlocklistDE(Provider):
     name = "blocklist.de"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.blocklist.de/api.php?ip={ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.blocklist.de/api.php?ip={_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3688,7 +3789,7 @@ class RDAP(Provider):
         d = None
         for base in ("https://rdap.arin.net/registry/ip/",
                      "https://rdap.db.ripe.net/ip/"):
-            ok, raw = http_get(base + ip, use_cache=False)
+            ok, raw = http_get(base + _q_ip(ip), use_cache=False)
             if not ok:
                 continue
             try:
@@ -3848,7 +3949,7 @@ class X4BNetVPN(Provider):
             _parse)
         if nets is None:
             return {"ok": False, "err": "list download failed"}
-        listed = any(addr in n for n in nets if n.version == addr.version)
+        listed = _net_index_lookup(_threat_net_index_for(f"x4bvpn{addr.version}", nets), addr)
         return {"ok": True, "listed": listed, "ts": now_iso()}
 
 
@@ -3858,7 +3959,7 @@ class HackerTarget(Provider):
     name = "HackerTarget"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.hackertarget.com/geoip/?q={ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.hackertarget.com/geoip/?q={_q_ip(ip)}", use_cache=False)
         if not ok or "Country:" not in raw:
             return {"ok": False, "err": raw if not ok else "unexpected response"}
         try:
@@ -3868,17 +3969,19 @@ class HackerTarget(Provider):
                     k, v = line.split(":", 1)
                     kv[k.strip().lower()] = v.strip()
             asn = prefix = netname = ""
-            ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={ip}",
+            ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={_q_ip(ip)}",
                                  use_cache=False)
             if ok2:
                 parts = [p.strip() for p in raw2.strip().strip('"').split('","')]
                 if len(parts) >= 4:
                     asn, prefix, netname = parts[1], parts[2], parts[3]
             def _f(x):
+                # H-10: 同 GeoJS._f，非有限值拦截（float('1e309') 为 inf 不抛错）。
                 try:
-                    return float(x)
+                    _fx = float(x)
                 except (TypeError, ValueError):
                     return None
+                return _fx if math.isfinite(_fx) else None
 
             def _s(x):
                 return "" if x in (None, "None", "N/A") else x
@@ -3900,7 +4003,7 @@ class CountryIs(Provider):
     name = "country.is"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.country.is/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.country.is/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3933,8 +4036,10 @@ def _build_unified_profile(s):
     ci = s.get("countryis", {}) if s.get("countryis", {}).get("ok") else {}
     rd = s.get("rdap", {}) if s.get("rdap", {}).get("ok") else {}
 
-    isp = wi.get("isp") or pc.get("provider") or ii.get("org") or ai.get("isp") or il.get("isp") or iq.get("isp") or ti.get("isp") or ox.get("isp") or gu.get("isp") or gj.get("isp") or co.get("isp") or ""
-    org = wi.get("org") or ii.get("org") or pc.get("provider") or ai.get("org") or gu.get("org") or gj.get("org") or il.get("org") or iq.get("org") or co.get("org") or rd.get("org") or rd.get("netname") or ""
+    # H-10: 文本字段逐源清洗后取首个非空；非字符串源（dict/list/int）在清洗
+    # 时即被丢弃为空，不再靠 `or` 链把原始对象透传进画像。
+    isp = _clean_str(wi.get("isp")) or _clean_str(pc.get("provider")) or _clean_str(ii.get("org")) or _clean_str(ai.get("isp")) or _clean_str(il.get("isp")) or _clean_str(iq.get("isp")) or _clean_str(ti.get("isp")) or _clean_str(ox.get("isp")) or _clean_str(gu.get("isp")) or _clean_str(gj.get("isp")) or _clean_str(co.get("isp")) or ""
+    org = _clean_str(wi.get("org")) or _clean_str(ii.get("org")) or _clean_str(pc.get("provider")) or _clean_str(ai.get("org")) or _clean_str(gu.get("org")) or _clean_str(gj.get("org")) or _clean_str(il.get("org")) or _clean_str(iq.get("org")) or _clean_str(co.get("org")) or _clean_str(rd.get("org")) or _clean_str(rd.get("netname")) or ""
     _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ox.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
@@ -3943,14 +4048,14 @@ def _build_unified_profile(s):
     _country_src = None
     country = ""
     for _src in (wi, db, fp, ii, pc, wa, ai, gu, gj, il, iq, co, ti, ht, ox):
-        _c = _src.get("country")
-        # 非字符串来源 (如数字) 在此被过滤: country 恒为字符串, 无须事后兜底。
-        if isinstance(_c, str) and _c.strip():
+        _c = _clean_str(_src.get("country"))
+        # 非字符串来源 (如数字/dict) 在清洗时被过滤: country 恒为干净字符串, 无须事后兜底。
+        if _c:
             country, _country_src = _c, _src
             break
     _cc_raw = (_country_src.get("country_code") or "") if _country_src is not None else ""
     # 空白码与非字符串码均归一为空：空白不阻断后续回填，非字符串不崩溃。
-    country_code = _cc_raw.strip() if isinstance(_cc_raw, str) else ""
+    country_code = _clean_str(_cc_raw)
     _ct = country.strip()
     if not country_code and len(_ct) == 2 and _ct.isalpha() and _ct.isascii():
         country_code = _ct.upper()
@@ -3964,7 +4069,7 @@ def _build_unified_profile(s):
             _cc_name = _cand.get("country")
             if isinstance(_cc_name, str) and _cc_name.strip().lower() == _cn:
                 _cc_code = _cand.get("country_code")
-                country_code = _cc_code.strip() if isinstance(_cc_code, str) else ""
+                country_code = _clean_str(_cc_code)
                 if country_code:
                     break
     if not country_code and not country:
@@ -3973,7 +4078,7 @@ def _build_unified_profile(s):
         # 丢弃后续源的有效码）；非字符串源视为空。
         def _cc_stripped(d, k="country_code"):
             _v = d.get(k)
-            return _v.strip() if isinstance(_v, str) else ""
+            return _clean_str(_v)
         country_code = (_cc_stripped(wi) or _cc_stripped(wa) or _cc_stripped(gj)
                         or _cc_stripped(il) or _cc_stripped(iq) or _cc_stripped(co)
                         or _cc_stripped(ti) or _cc_stripped(ci)
@@ -4018,25 +4123,26 @@ def _build_unified_profile(s):
                 return _v
         return ""
 
-    region = _first_consistent([(wi, wi.get("region")), (ii, ii.get("region")),
-                                (db, db.get("state")), (wa, wa.get("region")),
-                                (ai, ai.get("region")), (il, il.get("region")),
-                                (iq, iq.get("region")), (co, co.get("region")),
-                                (ti, ti.get("region")), (ht, ht.get("region")),
-                                (gj, gj.get("region"))])
-    city = _first_consistent([(wi, wi.get("city")), (ii, ii.get("city")),
-                              (db, db.get("city")), (pc, pc.get("city")),
-                              (fp, fp.get("city")), (wa, wa.get("city")),
-                              (ai, ai.get("city")), (gu, gu.get("city")),
-                              (gj, gj.get("city")), (il, il.get("city")),
-                              (iq, iq.get("city")), (co, co.get("city")),
-                              (ti, ti.get("city")), (ht, ht.get("city")),
-                              (ox, ox.get("city"))])
+    region = _first_consistent([(wi, _clean_str(wi.get("region"))), (ii, _clean_str(ii.get("region"))),
+                                (db, _clean_str(db.get("state"))), (wa, _clean_str(wa.get("region"))),
+                                (ai, _clean_str(ai.get("region"))), (il, _clean_str(il.get("region"))),
+                                (iq, _clean_str(iq.get("region"))), (co, _clean_str(co.get("region"))),
+                                (ti, _clean_str(ti.get("region"))), (ht, _clean_str(ht.get("region"))),
+                                (gj, _clean_str(gj.get("region")))])
+    city = _first_consistent([(wi, _clean_str(wi.get("city"))), (ii, _clean_str(ii.get("city"))),
+                              (db, _clean_str(db.get("city"))), (pc, _clean_str(pc.get("city"))),
+                              (fp, _clean_str(fp.get("city"))), (wa, _clean_str(wa.get("city"))),
+                              (ai, _clean_str(ai.get("city"))), (gu, _clean_str(gu.get("city"))),
+                              (gj, _clean_str(gj.get("city"))), (il, _clean_str(il.get("city"))),
+                              (iq, _clean_str(iq.get("city"))), (co, _clean_str(co.get("city"))),
+                              (ti, _clean_str(ti.get("city"))), (ht, _clean_str(ht.get("city"))),
+                              (ox, _clean_str(ox.get("city")))])
     _lat, _lon = None, None
     for _src in (wi, wa, ai, gu, gj, il, iq, co, ti, ht):
-        _la, _lo = _src.get("latitude"), _src.get("longitude")
-        if (_la is not None and _la != "" and _lo is not None and _lo != ""
-                and _same_country(_src)):
+        # H-10: 经纬度须有限且在范围内才采纳；非法源跳过、由后源补位，不取半截值。
+        _la = _clean_coord(_src.get("latitude"), -90, 90)
+        _lo = _clean_coord(_src.get("longitude"), -180, 180)
+        if _la is not None and _lo is not None and _same_country(_src):
             _lat, _lon = _la, _lo
             break
     return {
@@ -4050,13 +4156,13 @@ def _build_unified_profile(s):
         "city": city,
         "latitude": _lat,
         "longitude": _lon,
-        "timezone": _first_consistent([(wi, wi.get("timezone")), (wa, wa.get("timezone")), (ai, ai.get("timezone")), (gu, gu.get("timezone")), (gj, gj.get("timezone")), (il, il.get("timezone")), (iq, iq.get("timezone")), (co, co.get("timezone")), (ti, ti.get("timezone"))]),
+        "timezone": _first_consistent([(wi, _clean_str(wi.get("timezone"))), (wa, _clean_str(wa.get("timezone"))), (ai, _clean_str(ai.get("timezone"))), (gu, _clean_str(gu.get("timezone"))), (gj, _clean_str(gj.get("timezone"))), (il, _clean_str(il.get("timezone"))), (iq, _clean_str(iq.get("timezone"))), (co, _clean_str(co.get("timezone"))), (ti, _clean_str(ti.get("timezone")))]),
     }
 
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.28 免 Key 公开版):
+评分规则 (v4.14.29 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4088,7 +4194,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.28 免 Key 公開版):
+評分規則 (v4.14.29 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4105,7 +4211,7 @@ SCORING_RULES = {
     無 PTR 反向解析記錄               +5
   [平台相容 0-100] 機房/代理屬性 (非惡意分)
     ISP/組織含機房關鍵詞或託管屬性    +30
-    多源共識代理 +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery 多數認定），VPN +40（proxycheck/ipwho.is/iplocate/ipquery/X4BNet 多數認定）：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計）
+    多源共識代理 +40（proxycheck/ipwho.is/freeipapi/iplocate/ipquery 多數認定），VPN +40（proxycheck/ipwho.is/iplocate/ipquery/X4BNet 多數認定）：True 票多於 False 票即成立，源不可用或字段缺失計棄權票；分別累計
     Tor 節點                          +30
   [綜合] = 威脅×0.4 + 欺詐×0.3 + 聲譽×0.15 + 平台×0.15
   [純淨度] = 100 - 綜合 (本工具自有換算，非第三方評分)
@@ -4120,7 +4226,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.28 Keyless Public Edition):
+Scoring rules (v4.14.29 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4153,7 +4259,7 @@ Scoring rules (v4.14.28 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.28 キー不要公開版):
+スコアリングルール (v4.14.29 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4185,7 +4291,7 @@ Scoring rules (v4.14.28 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.28 Публичная версия без ключей):
+Правила оценки (v4.14.29 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4217,7 +4323,7 @@ Scoring rules (v4.14.28 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.28):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.29):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -4251,13 +4357,21 @@ Scoring rules (v4.14.28 Keyless Public Edition):
 }
 
 
+def _sfs_hit(sf):
+    """StopForumSpam 阳性谓词 (M-06): appears>=1 即阳性, frequency 缺失
+    不得抹成干净；score_threat / _print_streaming_inference / _factor_rows
+    三处消费端共用此一谓词。"""
+    return bool(sf.get("appears")) or (sf.get("frequency") or 0) > 0
+
+
 def score_threat(s):
     pts, ev = 0, []
     f = s.get("stopforumspam", {})
-    if f.get("ok") and (f.get("frequency") or 0) > 0:
-        add = min(f["frequency"] * 3, 25)
+    if f.get("ok") and _sfs_hit(f):
+        eff_freq = f.get("frequency") or (1 if f.get("appears") else 0)
+        add = min(eff_freq * 3, 25)
         pts += add
-        ev.append(f"SFS {f['frequency']} hits +{add}")
+        ev.append(f"SFS {eff_freq} hits +{add}")
     si = s.get("sansisc", {})
     if si.get("ok") and (si.get("attack_count") or 0) > 0:
         cnt = si["attack_count"]
@@ -4429,6 +4543,7 @@ def score_platform(s):
     # 弃权 None；删除该死票（本函数内唯一 ia 用处），生产计分不变。
     il = s.get("iplocate", {})
     iq = s.get("ipquery", {})
+    ti = s.get("twoip", {})
     xv = s.get("x4bvpn", {})
     te = s.get("tor_exit", {})
 
@@ -4437,7 +4552,11 @@ def score_platform(s):
     if dc:
         pts += 30
         ev.append(f"DC keyword '{pat}' +30")
-    elif (wi.get("ok") and wi.get("hosting")) or ("hosting" in pc_type):
+    elif ((wi.get("ok") and wi.get("hosting")) or ("hosting" in pc_type)
+          or (il.get("ok") and (il.get("hosting")
+                                or il.get("asn_type") == "hosting"))
+          or (iq.get("ok") and iq.get("datacenter"))
+          or (ti.get("ok") and ti.get("hosting"))):
         pts += 30
         ev.append("Hosting/DC trait +30")
 
@@ -4479,7 +4598,11 @@ def score_platform(s):
     if is_vpn:
         pts += 40
         ev.append("VPN detected +40")
-    if (te.get("ok") and te.get("is_tor_exit")) or (wi.get("ok") and wi.get("tor")) or ("tor" in pc_type) or (pc.get("ok") and pc.get("tor")):
+    if ((te.get("ok") and te.get("is_tor_exit"))
+            or (wi.get("ok") and wi.get("tor")) or ("tor" in pc_type)
+            or (pc.get("ok") and pc.get("tor"))
+            or (il.get("ok") and il.get("tor"))
+            or (iq.get("ok") and iq.get("tor"))):
         pts += 30
         ev.append("Tor node +30")
     return min(pts, 100), ev
@@ -4730,7 +4853,6 @@ def _print_streaming_inference(res):
     iq = s.get("ipquery", {})
     xv = s.get("x4bvpn", {})
     fp = s.get("freeipapi", {})
-    ia = s.get("ipapi", {})
     ti = s.get("twoip", {})
     if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
@@ -4739,8 +4861,6 @@ def _print_streaming_inference(res):
     if il.get("ok") and (il.get("hosting") or il.get("asn_type") == "hosting"):
         is_dc = True
     if iq.get("ok") and iq.get("datacenter"):
-        is_dc = True
-    if ia.get("ok") and ia.get("hosting"):
         is_dc = True
     if ti.get("ok") and ti.get("hosting"):
         is_dc = True
@@ -4759,7 +4879,6 @@ def _print_streaming_inference(res):
         pc.get("proxy") if pc.get("ok") else None,
         wi.get("proxy") if wi.get("ok") else None,
         fp.get("proxy") if fp.get("ok") else None,
-        ia.get("proxy") if ia.get("ok") else None,
         il.get("proxy") if il.get("ok") else None,
         iq.get("proxy") if iq.get("ok") else None,
     )
@@ -4788,7 +4907,7 @@ def _print_streaming_inference(res):
     high_fraud = sc_score is not None and sc_score >= 50
 
     sf = s.get("stopforumspam", {})
-    has_abuse = (sf.get("ok") and (sf.get("frequency") or 0) > 0)
+    has_abuse = (sf.get("ok") and _sfs_hit(sf))
 
     print(f"  {T('location')}: {_loc_country_name(country) or '?'}")
     if is_proxy or is_vpn:
@@ -4931,11 +5050,11 @@ def _print_streaming_inference(res):
     # 代理/VPN 共识票、欺诈分、威胁名单三类关键检查均有有效证据。
     # cap_mid：机房分支封顶 mid（旧口径“可能可用/中置信”，机房 IP
     # 本身的不确定性不因情报齐全而消失）；住宅分支不限。
-    _risk_srcs = (pc, wi, il, iq, fp, ia, xv, sc, fe, et, sp, sh, te, sf)
+    _risk_srcs = (pc, wi, il, iq, fp, xv, sc, fe, et, sp, sh, te, sf)
     _risk_ok = sum(1 for _s in _risk_srcs
                    if isinstance(_s, dict) and _s.get("ok"))
     _proxy_vote_ok = any(isinstance(_s, dict) and _s.get("ok")
-                         for _s in (pc, wi, fp, ia, il, iq))
+                         for _s in (pc, wi, fp, il, iq))
     _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok"))
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
                      for _s in (fe, et, sp, sh, sf))
@@ -5123,8 +5242,10 @@ def _print_basic_block(s, prof):
             age = f"{rs['age_years']} {(_ru_plural(rs['age_years'], 'год', 'года', 'лет') if LANG == 'ru' else T('years'))}"
         else:
             age = T("unverifiable")
-        vis = rs.get("visibility") or "?"
-        first = rs.get("first_seen") or "?"
+        # H-10: visibility/first_seen 为上游外部文本，未包在 _c() 内须先 _strip_cc，
+        # 否则终端转义/换行直达输出（first_seen 换行注入可伪造行）。
+        vis = _strip_cc(rs.get("visibility") or "?")
+        first = _strip_cc(rs.get("first_seen") or "?")
         print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
     pt = s.get("ptr", {})
     if pt.get("ok"):
@@ -5154,54 +5275,54 @@ def _print_basic_block(s, prof):
         return any(str(v or "").strip() for v in vals)
 
     locs = []
-    if wi.get("ok") and _has_loc(wi.get("country"), wi.get("region"), wi.get("city")):
-        locs.append(("ipwho.is", _join_nonempty(wi.get("country"), wi.get("region"), wi.get("city")),
-                     wi.get("country"), wi.get("city")))
-    if ii.get("ok") and _has_loc(ii.get("country"), ii.get("region"), ii.get("city")):
-        locs.append(("ipinfo.io", _join_nonempty(ii.get("country"), ii.get("region"), ii.get("city")),
-                     ii.get("country"), ii.get("city")))
-    if db.get("ok") and _has_loc(db.get("country"), db.get("state"), db.get("city")):
-        locs.append(("DB-IP", _join_nonempty(db.get("country"), db.get("state"), db.get("city")),
-                     db.get("country"), db.get("city")))
-    if pc.get("ok") and _has_loc(pc.get("country"), pc.get("city")):
-        locs.append(("proxycheck", _join_nonempty(pc.get("country"), pc.get("city")),
-                     pc.get("country"), pc.get("city")))
+    if wi.get("ok") and _has_loc(_clean_str(wi.get("country")), _clean_str(wi.get("region")), _clean_str(wi.get("city"))):
+        locs.append(("ipwho.is", _join_nonempty(_clean_str(wi.get("country")), _clean_str(wi.get("region")), _clean_str(wi.get("city"))),
+                     _clean_str(wi.get("country")), _clean_str(wi.get("city"))))
+    if ii.get("ok") and _has_loc(_clean_str(ii.get("country")), _clean_str(ii.get("region")), _clean_str(ii.get("city"))):
+        locs.append(("ipinfo.io", _join_nonempty(_clean_str(ii.get("country")), _clean_str(ii.get("region")), _clean_str(ii.get("city"))),
+                     _clean_str(ii.get("country")), _clean_str(ii.get("city"))))
+    if db.get("ok") and _has_loc(_clean_str(db.get("country")), _clean_str(db.get("state")), _clean_str(db.get("city"))):
+        locs.append(("DB-IP", _join_nonempty(_clean_str(db.get("country")), _clean_str(db.get("state")), _clean_str(db.get("city"))),
+                     _clean_str(db.get("country")), _clean_str(db.get("city"))))
+    if pc.get("ok") and _has_loc(_clean_str(pc.get("country")), _clean_str(pc.get("city"))):
+        locs.append(("proxycheck", _join_nonempty(_clean_str(pc.get("country")), _clean_str(pc.get("city"))),
+                     _clean_str(pc.get("country")), _clean_str(pc.get("city"))))
     fp = s.get("freeipapi", {})
-    if fp.get("ok") and _has_loc(fp.get("country"), fp.get("city")):
-        locs.append(("freeipapi", _join_nonempty(fp.get("country"), fp.get("city")),
-                     fp.get("country"), fp.get("city")))
+    if fp.get("ok") and _has_loc(_clean_str(fp.get("country")), _clean_str(fp.get("city"))):
+        locs.append(("freeipapi", _join_nonempty(_clean_str(fp.get("country")), _clean_str(fp.get("city"))),
+                     _clean_str(fp.get("country")), _clean_str(fp.get("city"))))
     wap = s.get("ipwhoisapp", {})
-    if wap.get("ok") and _has_loc(wap.get("country"), wap.get("region"), wap.get("city")):
-        locs.append(("ipwhois.app", _join_nonempty(wap.get("country"), wap.get("region"), wap.get("city")),
-                     wap.get("country"), wap.get("city")))
+    if wap.get("ok") and _has_loc(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))):
+        locs.append(("ipwhois.app", _join_nonempty(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))),
+                     _clean_str(wap.get("country")), _clean_str(wap.get("city"))))
     ais = s.get("ipapiis", {})
-    if ais.get("ok") and _has_loc(ais.get("country"), ais.get("region"), ais.get("city")):
-        locs.append(("ipapi.is", _join_nonempty(ais.get("country"), ais.get("region"), ais.get("city")),
-                     ais.get("country"), ais.get("city")))
+    if ais.get("ok") and _has_loc(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))):
+        locs.append(("ipapi.is", _join_nonempty(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))),
+                     _clean_str(ais.get("country")), _clean_str(ais.get("city"))))
     igd = s.get("ipguide", {})
-    if igd.get("ok") and _has_loc(igd.get("country"), igd.get("city")):
-        locs.append(("ip.guide", _join_nonempty(igd.get("country"), igd.get("city")),
-                     igd.get("country"), igd.get("city")))
+    if igd.get("ok") and _has_loc(_clean_str(igd.get("country")), _clean_str(igd.get("city"))):
+        locs.append(("ip.guide", _join_nonempty(_clean_str(igd.get("country")), _clean_str(igd.get("city"))),
+                     _clean_str(igd.get("country")), _clean_str(igd.get("city"))))
     ilc = s.get("iplocate", {})
-    if ilc.get("ok") and _has_loc(ilc.get("country"), ilc.get("region"), ilc.get("city")):
-        locs.append(("iplocate.io", _join_nonempty(ilc.get("country"), ilc.get("region"), ilc.get("city")),
-                     ilc.get("country"), ilc.get("city")))
+    if ilc.get("ok") and _has_loc(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))):
+        locs.append(("iplocate.io", _join_nonempty(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))),
+                     _clean_str(ilc.get("country")), _clean_str(ilc.get("city"))))
     iqc = s.get("ipquery", {})
-    if iqc.get("ok") and _has_loc(iqc.get("country"), iqc.get("region"), iqc.get("city")):
-        locs.append(("ipquery.io", _join_nonempty(iqc.get("country"), iqc.get("region"), iqc.get("city")),
-                     iqc.get("country"), iqc.get("city")))
+    if iqc.get("ok") and _has_loc(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))):
+        locs.append(("ipquery.io", _join_nonempty(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))),
+                     _clean_str(iqc.get("country")), _clean_str(iqc.get("city"))))
     coc = s.get("ipapico", {})
-    if coc.get("ok") and _has_loc(coc.get("country"), coc.get("region"), coc.get("city")):
-        locs.append(("ipapi.co", _join_nonempty(coc.get("country"), coc.get("region"), coc.get("city")),
-                     coc.get("country"), coc.get("city")))
+    if coc.get("ok") and _has_loc(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))):
+        locs.append(("ipapi.co", _join_nonempty(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))),
+                     _clean_str(coc.get("country")), _clean_str(coc.get("city"))))
     tic = s.get("twoip", {})
-    if tic.get("ok") and _has_loc(tic.get("country"), tic.get("region"), tic.get("city")):
-        locs.append(("2ip.io", _join_nonempty(tic.get("country"), tic.get("region"), tic.get("city")),
-                     tic.get("country"), tic.get("city")))
+    if tic.get("ok") and _has_loc(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))):
+        locs.append(("2ip.io", _join_nonempty(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))),
+                     _clean_str(tic.get("country")), _clean_str(tic.get("city"))))
     gjs = s.get("geojs", {})
-    if gjs.get("ok") and _has_loc(gjs.get("country"), gjs.get("region"), gjs.get("city")):
-        locs.append(("GeoJS", _join_nonempty(gjs.get("country"), gjs.get("region"), gjs.get("city")),
-                     gjs.get("country"), gjs.get("city")))
+    if gjs.get("ok") and _has_loc(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))):
+        locs.append(("GeoJS", _join_nonempty(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))),
+                     _clean_str(gjs.get("country")), _clean_str(gjs.get("city"))))
     _gjobs = []
     if prof.get("city"):
         _gjobs.append(("city", prof["city"],
@@ -5326,7 +5447,9 @@ def _print_basic_block(s, prof):
             print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {_loc_tz(prof['timezone'])}")
         if prof.get("latitude") is not None and prof.get("longitude") is not None:
             _cf = _fl(_cg.get("cc") if _cg.get("ok") else _pcc)
-            print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {prof['latitude']}, {prof['longitude']}")
+            # H-10: 坐标行未包在 _c() 内；画像本应只含 float，但手改/陈旧 profile
+            # 仍可能带入脏串，此处 _strip_cc 兜底（float 时为无操作）。
+            print(f"  {_cf}{_c(C.dim, T('coords') + ':')} {_strip_cc(prof['latitude'])}, {_strip_cc(prof['longitude'])}")
             print(f"  {_cf}{_c(C.dim, T('map') + ':')} {_c(C.cyan, 'https://www.google.com/maps?q=%s,%s' % (prof['latitude'], prof['longitude']))}")
         if _cg.get("ok"):
             print(f"  {_fl(_cg.get('cc'))}{_c(C.dim, T('coord_country') + ':')} {_loc_country_name(_cg.get('country'))}")
@@ -5351,9 +5474,6 @@ def _print_basic_block(s, prof):
             print(f"  {T('no_loc_data')}")
     elif not locs:
         print(f"  {T('no_loc_data')}")
-
-    if "ipapi" in s:
-        print(f"  {_c(C.dim, T('ipapi_http_note'))}")
 
 
 
@@ -5380,7 +5500,6 @@ def _factor_rows(s, wi_server, v6=False):
     pc = s.get("proxycheck", {})
     wi = s.get("ipwhois", {})
     fp = s.get("freeipapi", {})
-    ia = s.get("ipapi", {})
     il = s.get("iplocate", {})
     iq = s.get("ipquery", {})
     ti = s.get("twoip", {})
@@ -5390,7 +5509,7 @@ def _factor_rows(s, wi_server, v6=False):
     ox = s.get("otx", {})
     rows = [
         ("StopForumSpam", [None, None, None, None,
-                           _h(sf, (sf.get("frequency") or 0) > 0), None]),
+                           _h(sf, _sfs_hit(sf)), None]),
         ("urlscan.io", [None, None, None, None, None,
                         _h(us, (us.get("total") or 0) > 0)]),
         ("SANS ISC", [None, None, None, None, None,
@@ -5420,11 +5539,6 @@ def _factor_rows(s, wi_server, v6=False):
         ("freeipapi", [
             None if fp.get("proxy") is None else _h(fp, bool(fp.get("proxy"))),
             None, None, None, None, None]),
-        ("ip-api.com", [
-            None if ia.get("proxy") is None else _h(ia, bool(ia.get("proxy"))),
-            None, None,
-            None if ia.get("hosting") is None else _h(ia, bool(ia.get("hosting"))),
-            None, None]),
         ("iplocate.io", [
             None if il.get("proxy") is None else _h(il, bool(il.get("proxy"))),
             None if il.get("vpn") is None else _h(il, bool(il.get("vpn"))),
@@ -5491,18 +5605,6 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     pc = s.get("proxycheck", {})
     if pc.get("ok") and pc.get("type"):
         type_sources.append(("proxycheck", pc["type"]))
-    ia = s.get("ipapi", {})
-    if ia.get("ok"):
-        if ia.get("hosting"):
-            type_sources.append(("ip-api", T("dc")))
-        else:
-            _dc0, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-            if _dc0:
-                type_sources.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-                type_sources.append((T("heuristic"), T("residential")))
-            else:
-                type_sources.append((T("heuristic"), T("unknown")))
     if wi.get("ok"):
         if wi.get("hosting"):
             type_sources.append(("ipwho.is", T("dc")))
@@ -5532,7 +5634,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             type_sources.append((T("heuristic"), T("residential")
                                  if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
                                  else T("unknown")))
-    if not wi.get("ok") and prof.get("ok") and not (ia.get("ok") and not ia.get("hosting")):
+    if not wi.get("ok") and prof.get("ok"):
         dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if dc:
             type_sources.append((T("heuristic"), T("dc")))
@@ -5554,7 +5656,6 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     _NA = None
     _Q = "?"
 
-    ia = s.get("ipapi", {})
     il = s.get("iplocate", {})
     iq = s.get("ipquery", {})
 
@@ -5638,7 +5739,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 #   stopforumspam/feodo/et_compromised/tor_exit 仅 IPv4 名单 (v6 恒未命中会伪造完整度);
 #   urlscan 查询语法与 v6 不兼容且信号近乎恒空
 # ============================================================
-V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapi", "ipapiis", "ipinfo",
+V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapiis", "ipinfo",
                     "freeipapi", "dbip", "geojs", "ipguide", "ripestat",
                     "scamalytics", "proxycheck", "spamhaus", "shodan_idb",
                     "ptr", "iplocate", "ipquery", "ipapico", "twoip", "otx",
@@ -5767,7 +5868,20 @@ def run_passive6(ip):
     }
 
 
-def print_report6(res, embedded=False):
+def _print_report6_tail(res):
+    """[5] 完整度与免责 (L-02: 报告尾巴, 供主动模式末尾打印, 避免中途出现)。"""
+    _section(T("sec_complete6"))
+    c = res["completeness"]
+    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
+    if c["failed"]:
+        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+    print(f"  {_c(C.dim, T('v6_stream_note'))}")
+    print()
+    for _dl in T('disclaimer').split("\n"):
+        print(_c(C.dim, _dl))
+
+
+def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     if not embedded:
         _sec_begin()
     s = res["sources"]
@@ -5780,24 +5894,16 @@ def print_report6(res, embedded=False):
 
     _print_basic_block(s, prof)
 
+    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
+    if sysinfo:
+        print_system_info(sysinfo[0], sysinfo[1])
+
     # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
     _section(T("sec_type"), sub=True)
     _ts6 = []
     _pc6 = s.get("proxycheck", {})
     if _pc6.get("ok") and _pc6.get("type"):
         _ts6.append(("proxycheck", _pc6["type"]))
-    _ia6 = s.get("ipapi", {})
-    if _ia6.get("ok"):
-        if _ia6.get("hosting"):
-            _ts6.append(("ip-api", T("dc")))
-        else:
-            _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-            if _dc6:
-                _ts6.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-                _ts6.append((T("heuristic"), T("residential")))
-            else:
-                _ts6.append((T("heuristic"), T("unknown")))
     _wi6 = s.get("ipwhois", {})
     if _wi6.get("ok"):
         if _wi6.get("hosting"):
@@ -5828,7 +5934,7 @@ def print_report6(res, embedded=False):
             _ts6.append((T("heuristic"), T("residential")
                          if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
                          else T("unknown")))
-    if not _wi6.get("ok") and prof.get("ok") and not (_ia6.get("ok") and not _ia6.get("hosting")):
+    if not _wi6.get("ok") and prof.get("ok"):
         _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
         if _dc6:
             _ts6.append((T("heuristic"), T("dc")))
@@ -5893,7 +5999,9 @@ def print_report6(res, embedded=False):
         print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
     if sh.get("ok"):
         _ports = sh.get("ports") or []
-        _ptxt = ", ".join(str(p) for p in _ports[:12]) if _ports else T("none")
+        # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+        # 打印前逐个 _strip_cc，防终端转义注入。
+        _ptxt = ", ".join(_strip_cc(p) for p in _ports[:12]) if _ports else T("none")
         print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
     # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
@@ -5938,15 +6046,8 @@ def print_report6(res, embedded=False):
         print(f"  {_c(C.dim, T('platform_note'))}")
 
     # [5] 完整度
-    _section(T("sec_complete6"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
-        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
-    print(f"  {_c(C.dim, T('v6_stream_note'))}")
-    print()
-    for _dl in T('disclaimer').split("\n"):
-        print(_c(C.dim, _dl))
+    if tail_completeness:
+        _print_report6_tail(res)
 
 
 def get_egress_ip(budget=None):
@@ -5954,9 +6055,9 @@ def get_egress_ip(budget=None):
     预算耗尽即停（横幅等调用方传入剩余时间）；None 则沿用每源 6 秒。
     F19：budget=None 时打开/读阶段亦各以每源 6 秒 join 为限，不得无限等。
     打开阶段亦受总预算约束：urlopen 的 timeout 不覆盖 DNS 解析（标准库
-    getaddrinfo 无超时参数），故打开也在线程内做、按剩余预算 join，超
-    时即弃该源（6-1 打开阶段残留；锁保证“主线程标记放弃后 worker 关闭”
-    与“worker 已存入后主线程关闭”恰好其一执行，不泄漏响应）。"""
+    getaddrinfo 无超时参数），故打开经 _open_bounded 在线程内做、按剩余
+    预算 join，超时即弃该源（6-1 打开阶段残留；迟到响应由打开线程自行
+    关闭，不泄漏响应）。"""
     _dl = time.monotonic() + budget if budget is not None else None
     sources = [
         "https://api4.ipify.org?format=json",
@@ -5976,55 +6077,19 @@ def get_egress_ip(budget=None):
         try:
             _ua = {"User-Agent": "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
-            # 打开阶段按剩余预算 join（见函数文档 6-1）：DNS 解析不受
-            # urlopen 超时约束，在途 DNS 会绕过总预算，故须线程化打开。
-            _obox = {}
-            _olock = threading.Lock()
-
-            def _do_open(req=req, _to=_to, _olock=_olock, _obox=_obox):
-                try:
-                    _resp = urllib.request.urlopen(req, timeout=_to)
-                except Exception as _e:
-                    # R2a-1：HTTPError 本身即响应对象：异常路径须显式
-                    # 关闭其携带的响应，否则保留的末条／迟到错误因
-                    # traceback 成环而只能等循环 GC，确定性清理缺失。
-                    # 主线程只判 "err" 在否、从不读错误体，故此处
-                    # 关闭安全；非响应异常无 close 属性，原样存储。
-                    _close = getattr(_e, "close", None)
-                    if callable(_close):
-                        try:
-                            _close()
-                        except Exception:
-                            pass
-                    with _olock:
-                        _obox["err"] = _e
-                    return
-                with _olock:
-                    if _obox.get("abandoned"):
-                        try:
-                            _resp.close()
-                        except Exception:
-                            pass
-                    else:
-                        _obox["resp"] = _resp
-
-            _ot = threading.Thread(target=_do_open, daemon=True)
-            _ot.start()
-            _orem = (_dl - time.monotonic()) if _dl is not None else _to
-            _ot.join(_orem)
-            if _ot.is_alive():
-                with _olock:
-                    _obox["abandoned"] = True
-                    _resp = _obox.pop("resp", None)
-                if _resp is not None:
-                    try:
-                        _resp.close()
-                    except Exception:
-                        pass
-                continue  # 打开已超总预算：弃该源（循环头因预算耗尽而 break）
-            if "err" in _obox:
+            # 打开阶段按剩余预算经 _open_bounded 打开（见函数文档 6-1）：
+            # DNS 解析不受 urlopen 超时约束，在途 DNS 会绕过总预算。
+            # _open_bounded 即时失败时抛错（HTTPError 已预先关闭）、
+            # 超时返 None；迟到响应由打开线程自行关闭，不泄漏。
+            try:
+                _resp = _open_bounded(
+                    lambda req=req, _to=_to: urllib.request.urlopen(req, timeout=_to),
+                    _dl if _dl is not None else time.monotonic() + _to)
+            except Exception:
                 continue
-            with _obox["resp"] as r:
+            if _resp is None:
+                continue
+            with _resp as r:
                 # 读阶段亦受总预算约束：直接 read() 的耗时不扣打开耗时，
                 # 故读线程按剩余预算 join，超时即弃该源（与 _open_bounded 同法）。
                 _rbox = {}
@@ -6239,9 +6304,12 @@ def get_egress_ip6():
                 ip = d.get("ip") or d.get("IP") or d.get("ip_address")
             else:
                 ip = raw.splitlines()[0].strip() if raw else ""
-            if ip:
+            # R3-H07: 上游返回的出口地址亦可能含 %scope_id/注入, 丢弃
+            if ip and "%" not in str(ip):
                 _p = ipaddress.ip_address(str(ip).strip())
-                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global and not _p.is_reserved:
+                if (isinstance(_p, ipaddress.IPv6Address) and _p.is_global
+                        and not _p.is_reserved
+                        and getattr(_p, "scope_id", None) is None):
                     return str(_p)
         except Exception:
             continue
@@ -6253,8 +6321,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener_follow = urllib.request.build_opener()
-_opener_noredir = urllib.request.build_opener(_NoRedirect)
+_opener_follow = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_opener_noredir = urllib.request.build_opener(
+    _NoRedirect, urllib.request.ProxyHandler({}))
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -6368,13 +6437,22 @@ def _pinned_connect(conn, family):
     _to = conn.timeout
     if _to is None or _to is getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None):
         _to = 5
-    infos = _getaddrinfo_timed(conn.host, conn.port, family, timeout=_to)
+    # M-04：F30 同款共享 deadline——解析、每次建连、TLS 握手共用同一预算，
+    # 每步只取剩余时间，不再每地址重获完整 _to。
+    _dl = time.monotonic() + _to
+    _rem = _dl - time.monotonic()
+    if _rem <= 0:
+        raise OSError("connect deadline exceeded: %s" % conn.host)
+    infos = _getaddrinfo_timed(conn.host, conn.port, family, timeout=_rem)
     last = None
     for af, _st, _proto, _nm, sa in infos:
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            break
         _s = None
         try:
             _s = socket.socket(af, socket.SOCK_STREAM)
-            _s.settimeout(_to)
+            _s.settimeout(_rem)
             _s.connect(sa)
             conn.sock = _s
             break
@@ -6388,6 +6466,12 @@ def _pinned_connect(conn, family):
                     pass
     if conn.sock is None:
         raise last if last is not None else OSError("no usable address")
+    # 剩余预算留给 TLS 握手/_tunnel：wrap_socket 沿用 socket 超时，
+    # 故此处把超时改设为剩余时间（_HSC.connect 与本函数共享同一 deadline）。
+    try:
+        conn.sock.settimeout(max(0.1, _dl - time.monotonic()))
+    except Exception:
+        pass
     if conn._tunnel_host:
         try:
             conn._tunnel()
@@ -6438,12 +6522,21 @@ def _pinned_opener(family, follow_redirects=True):
     return urllib.request.build_opener(*handlers)
 
 
-def _resp_complete(raw, headers):
-    """响应体完整性（_active_get 成功/HTTPError 两路径共用）：
-    CL 在场且合法时须 len(raw) == CL——read(amt) 短读不抛错，声明 1000 只到 20 字节
-    的干净 FIN 也会返回 20 字节，单凭 len<=16384 会误标 complete；
-    CL > 16384 时恒不完整（16385 字节探针无法区分“恰 16385”与“更长”）；
-    CL 缺失时沿用 EOF 探针（len(raw) <= 16384 即读到结尾）；CL 非法时不完整。"""
+# H-01 流媒体采样上限（解压后）：256–512 KiB 取顶；单次读块 64 KiB；
+# 压缩输入上限 2 MiB（防空 deflate 块旋转与压缩炸弹）。
+_STREAM_CAP = 512 * 1024
+_STREAM_CHUNK = 65536
+_STREAM_COMP_CAP = 2 * 1024 * 1024
+
+
+def _resp_complete(raw, headers, cap=_STREAM_CAP):
+    """响应体完整性（_active_get 成功/HTTPError 两路径共用）——H-01 新语义：
+    区分「真实截断」与「达到本地采样上限」两个独立信号：
+    CL 在场且合法时须读满 min(CL, cap)——声明 1000 只到 20 字节的干净
+    FIN 仍是不完整；CL 超过 cap 时读满 cap 即算完整（采样上限不是失败）。
+    CL 缺失时：走到本函数的读取已是干净 EOF 或已达 cap，两者都算完整；
+    真实截断（IncompleteRead/读超时）不经过本函数，调用方直接判 False。
+    CL 非法时不完整（保守，沿用旧行为）。"""
     cl = None
     if headers is not None:
         try:
@@ -6453,24 +6546,28 @@ def _resp_complete(raw, headers):
         if v is not None:
             v = str(v).strip()
             cl = int(v) if (v.isascii() and v.isdigit()) else False
-    if cl is False or (cl is not None and cl > 16384):
+    if cl is False:
         return False
     if cl is not None:
-        return len(raw) == cl
-    return len(raw) <= 16384
+        return len(raw) >= min(cl, cap)
+    return True
 
 
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location, complete, headers_dict)。
     headers_dict: 响应头小写键 dict（无头/异常时 {}），供挑战判定查 cf-mitigated。
-    complete: 是否读到响应体结尾（EOF/长度相符）；16KiB 截断时为 False。
-    CL 在场时须 len==CL（CL>16384 恒不完整）；IncompleteRead 的 partial 计不完整。
+    complete: 是否拿到可信采样。H-01 新语义：真实截断（IncompleteRead、
+    声明 CL 但实读 < min(CL, cap)、读超时）为 False；干净读满本地采样
+    上限（解压后 512 KiB）为 True——达到采样上限不是失败。
     调用方以“限制串不存在”判解锁时，不完整且未见限制串须判 unknown，
-    不得以截断后的前 16KiB 无限制串冒充解锁；恰 16384 字节的体仍判完整
-    （多读 1 字节探 EOF 区分，不以 len==16384 一律判截断）。"""
+    不得以截断采样中无限制串冒充解锁。
+    M-04：打开与读取共享绝对截止（_open_bounded + _read_timed），慢速滴水
+    不得拖过 timeout；读完前调 _resp_shutdown 唤醒遗留读线程再关响应。
+    请求带 Accept-Encoding: gzip，响应 gzip 时流式限额解压（防压缩炸弹）。"""
     h = {
         "User-Agent": UA_BROWSER,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip",
         "Accept-Language": "en-US,en;q=0.9",
         "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Mode": "navigate",
@@ -6483,34 +6580,115 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         opener = _pinned_opener(_FORCE_FAMILY, follow_redirects)
     else:
         opener = _opener_follow if follow_redirects else _opener_noredir
-    try:
-        req = urllib.request.Request(url, headers=h)
-        with opener.open(req, timeout=timeout) as r:
-            try:
-                raw = r.read(16385)  # 多读 1 字节探 EOF：恰 16384 字节的体仍判完整
-            except http.client.IncompleteRead as e:
-                raw = e.partial
-                return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), False, _lower_headers(getattr(r, "headers", None))
-            return r.status, raw[:16384].decode("utf-8", errors="replace"), r.geturl(), _resp_complete(raw, getattr(r, "headers", None)), _lower_headers(getattr(r, "headers", None))
-    except urllib.error.HTTPError as e:
+    req = urllib.request.Request(url, headers=h)
+    _dl = time.monotonic() + timeout
+
+    def _do_open():
+        # HTTPError 本身即带正文的错误响应：若任其抛出，_open_bounded 的即时
+        # 失败路径会先 close 再抛，正文丢失、挑战页误判 blocked；故捕获后当
+        # 响应返回，由调用方限期读体后统一关闭。
         try:
-            try:
-                raw = e.read(16385)
-                body = raw[:16384].decode("utf-8", errors="replace")
-                complete = _resp_complete(raw, getattr(e, "headers", None))
-            except http.client.IncompleteRead as e2:
-                body, complete = e2.partial[:16384].decode("utf-8", errors="replace"), False
-            except Exception:
-                body, complete = "", False
-        finally:
-            try:
-                e.close()
-            except Exception:
-                pass
-        loc = e.headers.get("Location", "") if e.headers else ""
-        return e.code, body, loc, complete, _lower_headers(getattr(e, "headers", None))
+            return opener.open(req, timeout=max(0.1, _dl - time.monotonic()))
+        except urllib.error.HTTPError as e:
+            return e
+
+    try:
+        r = _open_bounded(_do_open, _dl)
     except Exception as e:
         return None, str(e)[:100], "", False, {}
+    if r is None:
+        return None, "open deadline exceeded", "", False, {}
+    _is_err = isinstance(r, urllib.error.HTTPError)
+    _status = getattr(r, "status", None)
+    if _status is None:
+        _status = getattr(r, "code", None)
+    if _is_err:
+        _loc = r.headers.get("Location", "") if getattr(r, "headers", None) else ""
+    else:
+        try:
+            _loc = r.geturl()
+        except Exception:
+            _loc = ""
+    _hdrs = _lower_headers(getattr(r, "headers", None))
+    # H-01：服务端声明 gzip 即流式解压（16+MAX_WBITS 识别 gzip 头），解压后
+    # 采样上限 _STREAM_CAP，压缩输入另设 _STREAM_COMP_CAP 防空块旋转与
+    # 压缩炸弹。CL 是传输（压缩后）长度，须按压缩字节核对，而非解压后长度。
+    _enc = str(_hdrs.get("content-encoding", "") or "").strip().lower()
+    _gzip = _enc in ("gzip", "x-gzip")
+    try:
+        _decomp = zlib.decompressobj(16 + zlib.MAX_WBITS) if _gzip else None
+        _st = {"out": [], "n": 0, "trunc": False, "eof": False}
+
+        def _push(_data):
+            # 喂一块传输字节：解压（gzip）或直存，输出截到采样上限。
+            if not _data or _st["n"] >= _STREAM_CAP:
+                return
+            if _decomp is not None:
+                try:
+                    _dec = _decomp.decompress(_data, _STREAM_CAP - _st["n"])
+                except Exception:
+                    _st["trunc"] = True
+                    return
+                if _dec:
+                    _st["out"].append(_dec)
+                    _st["n"] += len(_dec)
+                if _decomp.eof:
+                    _st["eof"] = True
+            else:
+                _take = _data[:_STREAM_CAP - _st["n"]]
+                _st["out"].append(_take)
+                _st["n"] += len(_take)
+
+        _comp_read = 0
+        _hit_cap = False
+        while _st["n"] < _STREAM_CAP and not _st["eof"] and not _st["trunc"]:
+            _remain = _dl - time.monotonic()
+            if _remain <= 0:
+                if _is_err:
+                    return _status, "", _loc, False, _hdrs
+                return None, "read deadline exceeded", "", False, {}
+            try:
+                _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
+            except http.client.IncompleteRead as e:
+                _push(e.partial or b"")
+                _st["trunc"] = True
+                break
+            except Exception as e:
+                if _is_err:
+                    return _status, "", _loc, False, _hdrs
+                return None, str(e)[:100], "", False, {}
+            if _chunk is None:
+                # M-04：读超时即整体失败（code None），与旧单次读行为一致；
+                # HTTPError 响应沿用旧行为，保留状态码、空正文。
+                if _is_err:
+                    return _status, "", _loc, False, _hdrs
+                return None, "read deadline exceeded", "", False, {}
+            if not _chunk:
+                break  # 干净 EOF
+            _comp_read += len(_chunk)
+            if _comp_read > _STREAM_COMP_CAP:
+                _st["trunc"] = True
+                break
+            _push(_chunk)
+            if _st["n"] >= _STREAM_CAP:
+                _hit_cap = True
+                break
+        _raw = b"".join(_st["out"])
+        if _st["trunc"]:
+            _complete = False
+        elif _hit_cap or _st["n"] >= _STREAM_CAP:
+            _complete = True  # 干净读满本地采样上限，不是失败
+        elif _decomp is not None:
+            _complete = bool(_decomp.eof)  # gzip 成员不完整即真实截断
+        else:
+            _complete = _resp_complete(_raw, getattr(r, "headers", None))
+        return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
+    finally:
+        _resp_shutdown(r)
+        try:
+            r.close()
+        except Exception:
+            pass
 
 
 _unlock_cache = {}
@@ -6532,8 +6710,26 @@ def get_unlock_type(domain, local_ip=None):
             return _unlock_cache[cache_key]
 
     sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=sys_ns, timeout=2.5, return_cnames=True)
-    pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
-    pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+    if not sys_ips:
+        # OPT-02 短路：sys 为空时下行 `if not sys_ips or not pub_ips` 必返
+        # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
+        return None
+    if sys_ns == "1.1.1.1":
+        # OPT-02 复用：sys 查询与 1.1.1.1 公共查询是同一服务器、同一域名、
+        # 同一 qtype，结果直接复用，不再重复查。
+        pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
+        pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+    elif sys_ns == "8.8.8.8":
+        pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
+        pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+    else:
+        # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
+        # socket），并行发，最坏 7.5 秒 -> 2.5 秒。
+        with ThreadPoolExecutor(max_workers=2) as _ex:
+            _f1 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+            _f2 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+            pub_ips_1, pub_cnames_1 = _f1.result()
+            pub_ips_2, pub_cnames_2 = _f2.result()
 
     pub_ips = (pub_ips_1 or []) + (pub_ips_2 or [])
     pub_cnames = set((pub_cnames_1 or []) + (pub_cnames_2 or []))
@@ -6710,6 +6906,9 @@ def test_primevideo(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
@@ -6913,6 +7112,9 @@ def test_line(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
+        return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
@@ -6967,6 +7169,9 @@ def test_deepseek(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
+        return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
@@ -6982,6 +7187,9 @@ def test_appletv(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
@@ -7094,10 +7302,11 @@ SPEED6_ENDPOINTS = [
 ]
 
 
-def _open_bounded(open_fn, deadline):
+def _open_bounded(open_fn, deadline, register=None):
     """打开阶段绝对截止：deadline 前未完成 open 即返 None，worker 不再滞留。
     迟到响应由打开线程在锁内确认“已放弃”后自行关闭，不遗留未登记 socket；
-    正常完成时响应归调用方所有；open 本身的快失败照常抛出。"""
+    正常完成时响应归调用方所有；open 本身的快失败照常抛出。
+    register 非空时在线程启动后登记 worker（供横幅总预算超时统一关闭）。"""
     if deadline - time.monotonic() <= 0:
         return None
     box = {}
@@ -7132,6 +7341,8 @@ def _open_bounded(open_fn, deadline):
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
+    if register is not None:
+        register(t)
     done.wait(max(0.0, deadline - time.monotonic()))
     with lock:
         if not done.is_set():
@@ -8175,8 +8386,8 @@ def print_speed_section(json_mode=False, family=0, gated=False):
         print(f"  {_c(C.dim, T('speed_max_note').format(n=len(_sn), max=len(_sn) * (DL_CAP_BYTES // 1048576)))}")
     except Exception:
         pass
-    hdr = "  %-22s %-10s %s" % (T("speed_col_region"), T("speed_col_latency"),
-                                T("speed_col_down"))
+    hdr = ("  " + _pad(T("speed_col_region"), 22) + " "
+           + _pad(T("speed_col_latency"), 10) + " " + T("speed_col_down"))
     print(_c(C.cyan, hdr))
 
     def _row(row):
@@ -8185,7 +8396,8 @@ def print_speed_section(json_mode=False, family=0, gated=False):
         # F42: 0.0 Mbps 是合法数值结果, 须用 is not None 判缺失, 不用真值判断
         available = row["down_mbps"] is not None
         dl = "%.1f Mbps" % row["down_mbps"] if available else "-"
-        line = "  %-22s %-10s %s" % (_loc_hub_name(row["region"]), lat, dl)
+        line = ("  " + _pad(_loc_hub_name(row["region"]), 22) + " "
+                + _pad(lat, 10) + " " + dl)
         print(_c(C.green, line) if available else _c(C.dim, line))
 
     if family == 6:
@@ -8907,15 +9119,15 @@ def _run_active6(json_mode, egress6):
     """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速 + 系统/磁盘/25 端口/DNSBL"""
     res6 = run_passive6(egress6)
     dns6_res = test_dns_servers6()
+    si6 = get_system_info()
+    io6 = disk_io_test()
     if not json_mode:
-        print_report6(res6)
+        print_report6(res6, sysinfo=(si6, io6), tail_completeness=False)
         _section(T("sec_dns") + " (IPv6)")
         print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
     streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
     speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
-    si6 = get_system_info()
-    io6 = disk_io_test()
     mx_domains6 = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
     with ThreadPoolExecutor(max_workers=4) as ex:
         f_p25_6 = ex.submit(check_mail_port25, family=socket.AF_INET6)
@@ -8924,7 +9136,6 @@ def _run_active6(json_mode, egress6):
         mx6_results = [f.result() for f in f_mxs_6]
     dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
     if not json_mode:
-        print_system_info(si6, io6)
         _section(T("sec_mail"))
         if p25_6:
             print(f"  {T('port25')}: {_c(C.green, T('normal'))}")
@@ -8933,6 +9144,9 @@ def _run_active6(json_mode, egress6):
         mx6_ok = sum(1 for r in mx6_results if r is True)
         if mx6_ok == len(mx_domains6):
             print(f"  {T('mx_port25')}: {_c(C.green, T('normal'))}")
+        elif all(r is None for r in mx6_results):
+            # H-07：三次 MX 查询全失败是“无法核实”，不是“异常”。
+            print(f"  {T('mx_port25')}: {_c(C.yellow, T('unverifiable'))}")
         elif mx6_ok == 0:
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
@@ -8953,25 +9167,30 @@ def _run_active6(json_mode, egress6):
             for b in dnsbl6_pbl[:10]:
                 print(f"    {_c(C.yellow, '- ' + b)}")
             print(f"    {_c(C.dim, _L('※ PBL 为策略名单：表示该地址段按策略不应直接发信，非垃圾邮件证据', '※ PBL is a policy list: the range should not send mail directly; not evidence of spam', '※ PBL はポリシーリストです：このアドレス範囲は直接送信すべきでなく、スパムの証拠ではありません', '※ PBL — список политик: диапазон не должен отправлять почту напрямую, это не свидетельство спама', '※ PBL فهرست سیاست است: این بازه نباید مستقیماً نامه ارسال کند؛ مدرکی بر اسپم بودن نیست', zhtw='※ PBL 為策略名單：表示該位址段按策略不應直接發信，非垃圾郵件證據'))}")
-    out = {"ip": egress6, "ipv6": True,
-           "active": {"egress_ipv6": egress6, "ipv6_report": res6,
-                      "streaming_ipv6": streaming6, "speed_ipv6": speed6,
-                      "dns_ipv6": dns6_res,
-                      "system": si6,
-                      "disk_io": io6,
-                      "mail": {
-                          "outbound_port25": p25_6,
-                          "mx_port25": {name: r for (name, _), r in zip(mx_domains6, mx6_results)},
-                      },
-                      "dnsbl_ipv6": {
-                          "valid": dnsbl6_total,
-                          "clean": dnsbl6_clean,
-                          "listed": dnsbl6_marked,
-                          "hit_lists": dnsbl6_bl,
-                          "policy_lists": dnsbl6_pbl,
-                      }}}
+        _print_report6_tail(res6)
+    _dnsbl6 = {
+        "valid": dnsbl6_total,
+        "clean": dnsbl6_clean,
+        "listed": dnsbl6_marked,
+        "hit_lists": dnsbl6_bl,
+        "policy_lists": dnsbl6_pbl,
+    }
+    out = dict(res6)
+    out["active"] = {"egress_ipv6": egress6, "ipv6_report": res6,
+                     "streaming_ipv6": streaming6, "speed_ipv6": speed6,
+                     "dns_ipv6": dns6_res,
+                     "system": si6,
+                     "disk_io": io6,
+                     "mail": {
+                         "outbound_port25": p25_6,
+                         "mx_port25": {name: r for (name, _), r in zip(mx_domains6, mx6_results)},
+                         "dnsbl": _dnsbl6,
+                     },
+                     "dnsbl_ipv6": _dnsbl6}
     if json_mode:
-        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+        out["profile"] = _localize_profile_copy(out.get("profile") or {})
+        # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
+        print(json.dumps(_json_safe(out), indent=2, default=str, ensure_ascii=False))
     return out
 
 
@@ -8999,6 +9218,8 @@ def run_active(json_mode=False, stack=None):
                         # 回车是已文档化的默认含义（=auto），不算无效输入。
                         stack = "auto"
                         break
+                    if _sel in ("b", "B", "0"):
+                        return None
                     if _sel in ("1", "2", "3"):
                         stack = {"1": "auto", "2": "4", "3": "6"}[_sel]
                         break
@@ -9060,7 +9281,7 @@ def run_active(json_mode=False, stack=None):
                      sysinfo=(si, io_res), tail_completeness=False)
         _section(T("sec_stream"))
 
-    streaming_json = _run_streaming_table(egress, json_mode=json_mode)
+    streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
     if not json_mode:
         dns_res = print_dns_test(None)
     else:
@@ -9075,7 +9296,7 @@ def run_active(json_mode=False, stack=None):
 
     total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
 
-    st_res = print_speed_section(json_mode=json_mode, gated=True)
+    st_res = print_speed_section(json_mode=json_mode, family=4, gated=True)
 
     if not json_mode:
         _section(T("sec_mail"))
@@ -9092,6 +9313,9 @@ def run_active(json_mode=False, stack=None):
         mx_total = len(mx_domains)
         if mx_ok == mx_total:
             print(f"  {T('mx_port25')}: {_c(C.green, T('normal'))}")
+        elif all(r is None for r in mx_results):
+            # H-07：三次 MX 查询全失败是“无法核实”，不是“异常”。
+            print(f"  {T('mx_port25')}: {_c(C.yellow, T('unverifiable'))}")
         elif mx_ok == 0:
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
@@ -9135,7 +9359,7 @@ def run_active(json_mode=False, stack=None):
                 print(f"  {_c(C.red, T('v6_leak_warn').format(a4=_a4, a6=_a6))}")
             elif _a4 and _a6:
                 print(f"  {_c(C.green, T('v6_same_exit').format(a=_a4))}")
-            print_report6(res6, embedded=True)
+            print_report6(res6, embedded=True, tail_completeness=False)
             _section(T("sec_dns") + " (IPv6)")
             print_dns6_test(dns6_res)
             _section(T("sec_stream") + " (IPv6)")
@@ -9143,6 +9367,7 @@ def run_active(json_mode=False, stack=None):
         speed6_res = print_speed_section(json_mode=json_mode, family=6, gated=True)
         dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
         if not json_mode:
+            _section(T("sec_mail") + " (IPv6)")
             _eff6 = _c(C.cyan, str(dnsbl6_total))
             _ok6 = _c(C.green, str(dnsbl6_clean))
             _bl6 = _c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))
@@ -9161,6 +9386,8 @@ def run_active(json_mode=False, stack=None):
 
     if not json_mode:
         _print_completeness(res)
+        if res6 is not None:
+            _print_report6_tail(res6)
 
     res["active"] = {
         "system": si,
@@ -9195,7 +9422,10 @@ def run_active(json_mode=False, stack=None):
         }
 
     if json_mode:
-        print(json.dumps(res, indent=2, default=str, ensure_ascii=False))
+        _res_json = dict(res)
+        _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
+        # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
+        print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
     return res
 
 
@@ -9462,6 +9692,10 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         return {"ok": False, "error": str(e),
                 "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
     try:
+        # M-08(b)：握手结束时 _sock_readn 按剩余时间重设过超时，残留值可
+        # 近乎为零；发探测前先恢复到完整 timeout，否则 sendall/recv
+        # 会立即超时。
+        s.settimeout(timeout)
         s.sendall(b"GET /generate_204 HTTP/1.1\r\n"
                   b"Host: clients3.google.com\r\n"
                   b"User-Agent: A-Check/%s\r\n\r\n" % VERSION.encode())
@@ -9486,20 +9720,21 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         s.close()
 
 
-def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
-    """经 SOCKS5 代理获取出口 IP (走代理查 api.ipify.org)。
-    返回 (ip, None) 或 (None, error)。"""
+def _proxy_egress_ip_once(ph, pp, username, password, timeout, host):
+    """经 SOCKS5 代理向单个端点查出口 IP。返回 (ip, None) 或 (None, error)。"""
     try:
-        s, _ = socks5_connect(ph, pp, "api.ipify.org", 443,
+        s, _ = socks5_connect(ph, pp, host, 443,
                               username=username, password=password,
                               timeout=timeout, rdns=True)
     except Exception as e:
         return None, str(e)
     try:
+        # M-08(b)：握手残留超时可近乎为零，TLS 握手前先恢复完整 timeout。
+        s.settimeout(timeout)
         ctx = ssl.create_default_context()
-        tls = ctx.wrap_socket(s, server_hostname="api.ipify.org")
+        tls = ctx.wrap_socket(s, server_hostname=host)
         try:
-            tls.sendall(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\n"
+            tls.sendall(b"GET / HTTP/1.1\r\nHost: " + host.encode() + b"\r\n"
                         b"Connection: close\r\n\r\n")
             raw = b""
             eof = False
@@ -9539,8 +9774,10 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
                     body_b = body_b[:cl]
             body = body_b.decode("utf-8", errors="replace").strip()
             ip = body.splitlines()[0].strip() if body else ""
-            if ip and validate_ip(ip):
-                return str(ip), None
+            # M-08(c)：用 parse_any_ip 校验，双栈/IPv6 出口亦可接受。
+            _pip, _ver = parse_any_ip(ip) if ip else (None, None)
+            if _pip is not None:
+                return str(_pip), None
             return None, "invalid response: %r" % body[:60]
         finally:
             tls.close()
@@ -9548,6 +9785,20 @@ def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
         return None, str(e)
     finally:
         s.close()
+
+
+def proxy_egress_ip(ph, pp, username=None, password=None, timeout=10):
+    """经 SOCKS5 代理获取出口 IP。
+    先查 api.ipify.org，失败时回退到双栈端点 api64.ipify.org（纯 IPv6
+    出口只有后者可达）。返回 (ip, None) 或 (None, error)。"""
+    _last_err = None
+    for _host in ("api.ipify.org", "api64.ipify.org"):
+        _ip, _err = _proxy_egress_ip_once(ph, pp, username, password,
+                                          timeout, _host)
+        if _ip is not None:
+            return _ip, None
+        _last_err = _err
+    return None, _last_err
 
 
 class _SocksHTTPS(http.client.HTTPSConnection):
@@ -9846,7 +10097,7 @@ def _ip_asn_org(ip, timeout=8):
     fields 必须请求 connection, 直接请求 asn/org 会被丢弃。"""
     try:
         req = urllib.request.Request(
-            "https://ipwho.is/%s?fields=connection,country" % ip,
+            "https://ipwho.is/%s?fields=connection,country" % _q_ip(ip),
             headers={"User-Agent": UA_BROWSER})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
@@ -9950,6 +10201,34 @@ def tcp_ping_stats(host, port, count=10, timeout=3, family=0):
             "samples": [round(x, 1) for x in samples]}
 
 
+def _resolve_proxy_auth(username, password):
+    """M-08(a)：单边账密不得静默降级为无认证。
+    双方齐全或双方皆无时原样返回（用户名去首尾空白）；仅一边给出时，
+    交互终端追问缺失的一项（密码走 getpass），非交互终端抛 ValueError，
+    调用方将其转为参数错误（exit 2）。"""
+    _u = username.strip() if isinstance(username, str) else username
+    _p = password
+    _has_u = bool(_u)
+    _has_p = bool(_p)
+    if _has_u == _has_p:
+        return (_u if _has_u else None), (_p if _has_p else None)
+    if not sys.stdin.isatty():
+        raise ValueError("proxy auth needs both --proxy-user and "
+                         "--proxy-pass")
+    if _has_u:
+        import getpass
+        _p = getpass.getpass(T("prompt_proxy_pass"))
+        if not _p:
+            raise ValueError("proxy auth needs both --proxy-user and "
+                             "--proxy-pass")
+        return _u, _p
+    _u = (input(T("prompt_proxy_user")) or "").strip()
+    if not _u:
+        raise ValueError("proxy auth needs both --proxy-user and "
+                         "--proxy-pass")
+    return _u, _p
+
+
 def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
                    json_mode=False):
     """代理诊断主流程: SOCKS5 握手 -> 出口 IP -> 出口 IP 信誉 ->
@@ -9983,18 +10262,22 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     else:
         _note(_c(C.red, T("diag_egress_fail") % (eerr or "?")))
 
-    # 3. 出口 IP 信誉 (复用现有被动检测)
-    if eip and validate_ip(eip):
+    # 3. 出口 IP 信誉 (复用现有被动检测；IPv6 出口走 v6 路径)
+    _eip, _ever = parse_any_ip(eip) if eip else (None, None)
+    if _eip is not None:
         _note(T("diag_reputation_testing"))
         try:
-            res = run_passive(eip)
+            res = run_passive6(eip) if _ever == 6 else run_passive(eip)
             out["egress_reputation"] = {
                 "risk_level": res.get("verdict"),
                 "threat_score": res.get("scores", {}).get("threat", (None,))[0],
                 "fraud_score": res.get("scores", {}).get("fraud", (None,))[0],
             }
             if not json_mode:
-                print_report(res)
+                if _ever == 6:
+                    print_report6(res)
+                else:
+                    print_report(res)
         except Exception as e:
             _note(_c(C.dim, T("diag_reputation_fail") % e))
 
@@ -10005,8 +10288,10 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     if asn_mismatch is True:
         _note(_c(C.red, T("diag_dns_leaked")))
         for r in dinfo.get("resolvers", []):
-            _note("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
-                                        r.get("asn") or "?"))
+            # H-10: org/resolver/asn 为上游外部文本，_note() 为纯 print，
+            # 插值前须 _strip_cc，防终端转义注入。
+            _note("    %s (%s, AS%s)" % (_strip_cc(r["resolver"]), _strip_cc(r.get("org") or "?"),
+                                        _strip_cc(r.get("asn") or "?")))
     elif asn_mismatch is False:
         _note(_c(C.green, T("diag_dns_clean")))
     else:
@@ -10030,7 +10315,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             # F42: 0.0 Mbps 是合法数值结果, 须用 is not None 判缺失
             available = row["down_mbps"] is not None
             dl = "%.1f Mbps" % row["down_mbps"] if available else "-"
-            line = "    %-22s %s" % (_loc_hub_name(row["region"]), dl)
+            line = "    " + _pad(_loc_hub_name(row["region"]), 22) + " " + dl
             print(_c(C.green, line) if available else _c(C.dim, line))
 
     try:
@@ -10172,9 +10457,9 @@ def _sanitize_batch_results(results):
 def _print_batch_results(results):
     """打印排名表, 最优节点绿色标出。"""
     print()
-    hdr = "  %s %-38s %-9s %-9s %-7s %s" % (
-        "#", T("batch_col_node"), T("batch_col_avg"),
-        T("batch_col_jitter"), T("batch_col_loss"), T("batch_col_proto"))
+    hdr = ("  " + _pad("#", 2) + " " + _pad(T("batch_col_node"), 38) + " "
+           + _pad(T("batch_col_avg"), 9) + " " + _pad(T("batch_col_jitter"), 9)
+           + " " + _pad(T("batch_col_loss"), 7) + " " + T("batch_col_proto"))
     print(_c(C.cyan, hdr))
     best_marked = False
     for i, r in enumerate(results, 1):
@@ -10192,7 +10477,9 @@ def _print_batch_results(results):
         else:
             hs = "-"
         usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
-        line = "  %-2d %-38s %-9s %-9s %-7s %s" % (i, label, avg, jit, loss, hs)
+        line = ("  " + _pad(str(i), 2) + " " + _pad(label, 38) + " "
+                + _pad(avg, 9) + " " + _pad(jit, 9) + " " + _pad(loss, 7)
+                + " " + hs)
         if usable and not best_marked:
             print(_c(C.green, line + "  ★ " + T("batch_best")))
             best_marked = True
@@ -10391,45 +10678,21 @@ def _urlopen_bounded(req, budget):
     """urlopen（含同步 DNS 解析、建连、响应头读取）纳入绝对截止。
 
     socket 超时只约束单次 connect/recv：同步 DNS 解析与慢滴响应头均可不断
-    重置单次超时、远超横幅总预算。本函数以线程 + join(budget) 封顶（与
-    _read_timed 同款模式）；超时后主线程立即返 None，迟到线程完成（或失败）
-    后自行收尾：锁保证“主线程标记放弃后 worker 关闭”与“worker 已存入后
-    主线程关闭”恰好其一执行，不泄漏响应；线程为 daemon，不阻塞进程退出。
+    重置单次超时、远超横幅总预算。本函数是 _open_bounded 的薄封装：超时
+    后主线程立即返 None，迟到线程完成（或失败）后自行收尾（迟到响应与
+    迟到 HTTPError 由打开线程关闭，不泄漏；即时失败照常抛错前关闭错误
+    响应）；打开线程经 _banner_net_register_worker 登记，供横幅总预算
+    超时统一关闭；线程为 daemon，不阻塞进程退出。
     """
     if budget <= 0:
         return None
-    box = {}
-    lock = threading.Lock()
-
-    def _go():
-        try:
-            resp = urllib.request.urlopen(req, timeout=min(5, budget))
-        except Exception:
-            return
-        with lock:
-            if box.get("abandoned"):
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-            else:
-                box["resp"] = resp
-
-    t = threading.Thread(target=_go, daemon=True)
-    t.start()
-    _banner_net_register_worker(t)
-    t.join(budget)
-    with lock:
-        if t.is_alive():
-            box["abandoned"] = True
-            resp = box.pop("resp", None)
-            if resp is not None:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
-            return None
-        return box.get("resp")
+    try:
+        return _open_bounded(
+            lambda: urllib.request.urlopen(req, timeout=min(5, budget)),
+            time.monotonic() + budget,
+            register=_banner_net_register_worker)
+    except Exception:
+        return None
 
 
 def _banner_net_info():
@@ -10458,15 +10721,14 @@ def _banner_net_info():
         egress = get_egress_ip(budget=_rem()) if _rem() > 0 else None
         info["egress"] = egress
         if egress:
-            # F46: 缓存只存语言无关的原始字段: 地理请求固定用 lang=en, 城市/
-            # 国家名按界面语言在渲染时本地化 (_banner_geo_text); 若按首发
-            # 语言请求, 缓存的城市就是该语言的本地化文本, 切语言后不会重译。
-            # 注: ip-api.com 免费端点仅支持明文 HTTP（https 实测 403），结果可被中间网络篡改；
-            # 横幅地理信息经此查询，报告内另有 ipapi_http_note 披露。
+            # F46: 缓存只存语言无关的原始字段: ipwho.is 默认返回英文,
+            # 城市/国家名按界面语言在渲染时本地化 (_banner_geo_text)。
+            # M-11: 地理只走 HTTPS 源 ipwho.is, 不再请求明文 HTTP。
             try:
+                if _rem() <= 0:
+                    raise TimeoutError("banner budget exhausted")
                 req = urllib.request.Request(
-                    "http://ip-api.com/json/%s?lang=en&fields=status,country,"
-                    "city,org,isp,hosting" % egress,
+                    "https://ipwho.is/%s" % _q_ip(egress),
                     headers={"User-Agent": UA_BROWSER})
                 r = _urlopen_bounded(req, _rem())
                 if r is None:
@@ -10476,16 +10738,18 @@ def _banner_net_info():
                         raw = _read_timed(r, 8192, _rem())
                         if raw is None:
                             raise TimeoutError("banner geo read deadline")
-                        d = json.loads(raw.decode("utf-8", errors="replace"))
+                        d = json.loads(raw.decode("utf-8",
+                                                  errors="replace"))
                     finally:
                         _resp_shutdown(r)
-                if d.get("status") != "success":
-                    raise ValueError("ip-api fail")
-                org = (d.get("org") or d.get("isp") or "").strip()
+                conn = d.get("connection") or {}
+                org = (conn.get("org") or conn.get("isp") or "").strip()
                 # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
                 info["geo_country"] = d.get("country") or ""
                 info["geo_city"] = d.get("city") or ""
-                if d.get("hosting") or is_datacenter_heuristic(org, org)[0]:
+                # M-11: 保留机房标记精度: connection 透传 hosting 时认它,
+                # 否则按 org 启发式判定。
+                if conn.get("hosting") or is_datacenter_heuristic(org, org)[0]:
                     info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
                     info["geo_net"] = "residential"
@@ -10493,38 +10757,7 @@ def _banner_net_info():
                     info["geo_net"] = ""
                 info["geo_org"] = org
             except Exception:
-                try:
-                    if _rem() <= 0:
-                        raise TimeoutError("banner budget exhausted")
-                    req = urllib.request.Request(
-                        # F46: 回退源亦不传 lang (默认英文), 缓存保持语言无关。
-                        "https://ipwho.is/%s" % egress,
-                        headers={"User-Agent": UA_BROWSER})
-                    r = _urlopen_bounded(req, _rem())
-                    if r is None:
-                        raise TimeoutError("banner geo open deadline")
-                    with r:
-                        try:
-                            raw = _read_timed(r, 8192, _rem())
-                            if raw is None:
-                                raise TimeoutError("banner geo read deadline")
-                            d = json.loads(raw.decode("utf-8",
-                                                      errors="replace"))
-                        finally:
-                            _resp_shutdown(r)
-                    conn = d.get("connection") or {}
-                    org = (conn.get("org") or conn.get("isp") or "").strip()
-                    info["geo_country"] = d.get("country") or ""
-                    info["geo_city"] = d.get("city") or ""
-                    if is_datacenter_heuristic(org, org)[0]:
-                        info["geo_net"] = "dc"
-                    elif is_residential_isp(org, org):
-                        info["geo_net"] = "residential"
-                    else:
-                        info["geo_net"] = ""
-                    info["geo_org"] = org
-                except Exception:
-                    pass
+                pass
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
@@ -10534,8 +10767,13 @@ def _banner_net_info():
             break
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
+            # R3-H07: 拒绝 %scope_id 候选 (注入/链路 scope 不得进入横幅)
+            if "%" in _cand:
+                continue
             _ip6 = ipaddress.IPv6Address(_cand)
-            if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
+            if (_ip6.is_global and not _ip6.is_multicast
+                    and not _ip6.is_reserved
+                    and getattr(_ip6, "scope_id", None) is None):
                 _v6addr = str(_ip6)
                 break
         except Exception:
@@ -10939,16 +11177,27 @@ def _parse_version(v):
 def check_update():
     """菜单 6: 对比 GitHub 最新 Release 与本地版本。"""
     cause = None
+    tag = ""
     try:
         req = urllib.request.Request(
             "https://api.github.com/repos/alariclin/A-Check/releases/latest",
             headers={"User-Agent": "acheck/%s" % VERSION})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            try:
-                tag = json.loads(_read_limited(r, timeout=8).decode(
-                    "utf-8")).get("tag_name", "")
-            finally:
-                _resp_shutdown(r)
+        # M-04：经 _urlopen_deadline 打开（建连+读头共享 8s 预算，DNS 解析
+        # 亦受截止约束）；错误对象不提前关闭，归调用方读体后再关。
+        r, _err, _timed_out = _urlopen_deadline(req, 8)
+        if _timed_out:
+            cause = "timeout"
+        elif _err is not None:
+            raise _err
+        elif r is None:
+            cause = "unknown"
+        else:
+            with r:
+                try:
+                    tag = json.loads(_read_limited(r, timeout=8).decode(
+                        "utf-8")).get("tag_name", "")
+                finally:
+                    _resp_shutdown(r)
     except (TimeoutError, socket.timeout):
         # F47: 3.8/3.9 下 socket.timeout 是独立的 OSError 子类 (3.10 起才
         # 是 TimeoutError 别名), 须与 TimeoutError 并列捕获, 否则误分类。
@@ -10999,12 +11248,14 @@ def check_update():
             elif lv == cv:
                 print(f"  {_c(C.green, T('upd_latest') % VERSION)}")
             else:
-                print(f"  {_c(C.dim, T('upd_ahead') % VERSION)}")
+                print(f"  {_c(C.dim, T('upd_ahead') % latest)}")
 
 
 def run_speed_only(json_mode=False):
     """菜单/CLI 入口: 多地区下载测速表。"""
-    rows = print_speed_section(json_mode=json_mode)
+    # H-05：独立入口亦遵循 _FORCE_STACK（4/6 钉死地址族，默认 0 不变）。
+    _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
+    rows = print_speed_section(json_mode=json_mode, family=_fam)
     if json_mode:
         print(json.dumps({"regions": rows}, indent=2, default=str,
                          ensure_ascii=False))
@@ -11022,7 +11273,9 @@ def run_streaming_only():
         return
     print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
     _section(T("sec_stream"))
-    _run_streaming_table(egress)
+    # H-05：独立入口亦遵循 _FORCE_STACK（4/6 钉死地址族，默认 0 不变）。
+    _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
+    _run_streaming_table(egress, family=_fam)
 
 
 def run_dnsleak_only():
@@ -11081,7 +11334,7 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 # ============================================================
-# 命令入口管理 (快捷键 v4.14.28): acheck / ac 薄启动器
+# 命令入口管理 (快捷键 v4.14.29): acheck / ac 薄启动器
 #
 # 设计 (GPT 比选 (d) 单文件内统一后端, CLI + 菜单共用; 已仲裁):
 # - 默认用户级: 受管理副本 ~/.local/share/acheck/acheck.py
@@ -11128,10 +11381,25 @@ SHORTCUT_SHELL_WORDS = frozenset((
     "disown", "enable", "help", "mapfile", "readarray", "shopt",
 ))
 SHORTCUT_AC_RISK = (
+    "ac 由 acct/psacct 会计软件包提供；日后安装这些软件包可能遮蔽此快捷键。"
+    "在 Windows PowerShell 中，ac 还是 Add-Content 的内置别名。",
     "ac is provided by the acct/psacct accounting package; installing "
     "those packages later may shadow this shortcut. In Windows "
-    "PowerShell, ac is also a built-in alias for Add-Content."
+    "PowerShell, ac is also a built-in alias for Add-Content.",
+    "ac は acct/psacct 会計パッケージが提供するものです。これらのパッケージを"
+    "後でインストールすると、このショートカットが隠れる場合があります。"
+    "Windows PowerShell では、ac は Add-Content の組み込みエイリアスでもあります。",
+    "ac предоставляется пакетом учёта acct/psacct; установка этих пакетов "
+    "позже может затенить этот ярлык. В Windows PowerShell ac также "
+    "является встроенным псевдонимом Add-Content.",
+    "ac توسط بستهٔ حسابداری acct/psacct ارائه می‌شود؛ نصب بعدی این بسته‌ها "
+    "ممکن است این میانبر را پنهان کند. در Windows PowerShell نیز ac نام "
+    "مستعار داخلی Add-Content است。",
+    "ac 由 acct/psacct 會計軟體套件提供；日後安裝這些軟體套件可能遮蔽此捷徑。"
+    "在 Windows PowerShell 中，ac 還是 Add-Content 的內建別名。",
 )
+# 实例 ID 字符集: 只许字母/数字/_/- (1-64 字符), 绝不许换行或 shell 元字符
+SHORTCUT_INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class ShortcutError(Exception):
@@ -11140,6 +11408,26 @@ class ShortcutError(Exception):
     def __init__(self, message, rc=2):
         super().__init__(message)
         self.rc = rc
+
+
+def _shortcut_win32_msg():
+    """Windows 不支持文案 (六语, M-02 门统一用)。"""
+    return _L("命令入口管理仅支持 Linux 与 macOS，Windows 不支持。",
+              "Command shortcut management only supports Linux and macOS, "
+              "not Windows.",
+              "コマンド入口の管理は Linux と macOS のみ対応し、Windows には"
+              "対応していません。",
+              "Управление ярлыками команд поддерживается только в Linux и "
+              "macOS, но не в Windows.",
+              "مدیریت میانبرهای فرمان فقط در Linux و macOS پشتیبانی می‌شود، "
+              "نه در Windows.",
+              "命令入口管理僅支援 Linux 與 macOS，Windows 不支援。")
+
+
+def _shortcut_require_posix():
+    """Windows 门: 快捷键管理入口在 win32 下一律拒绝, 不建任何目录与状态文件。"""
+    if sys.platform == "win32":
+        raise ShortcutError(_shortcut_win32_msg())
 
 
 def _shortcut_check_interpreter(version=None):
@@ -11155,32 +11443,77 @@ def _shortcut_resolve_interpreter(explicit=None):
     if explicit:
         cand = os.path.abspath(os.path.expanduser(explicit))
         if not (os.path.isfile(cand) and os.access(cand, os.X_OK)):
-            raise ShortcutError("interpreter not executable: %s" % cand)
+            raise ShortcutError(_L("解释器不可执行：%s" % cand,
+                                  "Interpreter is not executable: %s" % cand,
+                                  "インタープリタは実行できません：%s" % cand,
+                                  "Интерпретатор не исполняется: %s" % cand,
+                                  "مفسر قابل اجرا نیست: %s" % cand,
+                                  "解譯器不可執行：%s" % cand))
         try:
             r = subprocess.run(
                 [cand, "-c",
                  "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
                 capture_output=True, text=True, timeout=15)
         except Exception as e:
-            raise ShortcutError("cannot run interpreter %s: %s" % (cand, e))
+            raise ShortcutError(_L("无法运行解释器 %s：%s" % (cand, e),
+                                  "Cannot run interpreter %s: %s" % (cand, e),
+                                  "インタープリタ %s を実行できません：%s"
+                                  % (cand, e),
+                                  "Не удаётся запустить интерпретатор %s: %s"
+                                  % (cand, e),
+                                  "نمی‌توان مفسر %s را اجرا کرد: %s"
+                                  % (cand, e),
+                                  "無法執行解譯器 %s：%s" % (cand, e)))
         if r.returncode != 0:
-            raise ShortcutError("interpreter %s failed to report version"
-                                % cand)
+            raise ShortcutError(_L("解释器 %s 未能报告版本" % cand,
+                                  "Interpreter %s failed to report its version"
+                                  % cand,
+                                  "インタープリタ %s はバージョンを報告できませんでした"
+                                  % cand,
+                                  "Интерпретатор %s не сообщил версию" % cand,
+                                  "مفسر %s نتوانست نسخه را گزارش کند" % cand,
+                                  "解譯器 %s 未能回報版本" % cand))
         try:
             ver = tuple(int(x) for x in r.stdout.strip().split("."))
         except Exception:
-            raise ShortcutError("interpreter %s returned bad version: %r"
-                                % (cand, r.stdout.strip()))
+            raise ShortcutError(_L("解释器 %s 返回了无效版本：%r"
+                                  % (cand, r.stdout.strip()),
+                                  "Interpreter %s returned a bad version: %r"
+                                  % (cand, r.stdout.strip()),
+                                  "インタープリタ %s は無効なバージョンを返しました：%r"
+                                  % (cand, r.stdout.strip()),
+                                  "Интерпретатор %s вернул неверную версию: %r"
+                                  % (cand, r.stdout.strip()),
+                                  "مفسر %s نسخهٔ نامعتبری برگرداند: %r"
+                                  % (cand, r.stdout.strip()),
+                                  "解譯器 %s 傳回了無效版本：%r"
+                                  % (cand, r.stdout.strip())))
         ok, why = _shortcut_check_interpreter(ver)
         if not ok:
-            raise ShortcutError("interpreter %s refused: %s" % (cand, why))
+            raise ShortcutError(_L("解释器 %s 被拒绝：%s" % (cand, why),
+                                  "Interpreter %s refused: %s" % (cand, why),
+                                  "インタープリタ %s は拒否されました：%s"
+                                  % (cand, why),
+                                  "Интерпретатор %s отклонён: %s" % (cand, why),
+                                  "مفسر %s رد شد: %s" % (cand, why),
+                                  "解譯器 %s 被拒絕：%s" % (cand, why)))
         return os.path.realpath(cand), ver
     exe = sys.executable
     if not exe or not os.path.isabs(exe):
-        raise ShortcutError("cannot determine interpreter absolute path")
+        raise ShortcutError(_L("无法确定解释器的绝对路径",
+                              "Cannot determine the interpreter's absolute path",
+                              "インタープリタの絶対パスを特定できません",
+                              "Не удаётся определить абсолютный путь интерпретатора",
+                              "نمی‌توان مسیر مطلق مفسر را تعیین کرد",
+                              "無法確定解譯器的絕對路徑"))
     ok, why = _shortcut_check_interpreter(sys.version_info[:3])
     if not ok:
-        raise ShortcutError("running interpreter refused: %s" % why)
+        raise ShortcutError(_L("当前解释器被拒绝：%s" % why,
+                              "Running interpreter refused: %s" % why,
+                              "実行中のインタープリタは拒否されました：%s" % why,
+                              "Запущенный интерпретатор отклонён: %s" % why,
+                              "مفسر در حال اجرا رد شد: %s" % why,
+                              "目前解譯器被拒絕：%s" % why))
     return os.path.realpath(exe), tuple(sys.version_info[:3])
 
 
@@ -11189,9 +11522,24 @@ def shortcut_paths(scope, home=None, sysroot=None):
     home 显式传入时 (夹具/测试) 以该 home 为准, 不读 XDG_DATA_HOME;
     home 为空时遵循有效的 XDG_DATA_HOME (须为绝对路径), 否则 ~/.local。"""
     if scope not in ("user", "system"):
-        raise ShortcutError("unknown scope: %r" % (scope,))
+        raise ShortcutError(_L("未知范围：%r" % (scope,),
+                              "Unknown scope: %r" % (scope,),
+                              "不明な範囲：%r" % (scope,),
+                              "Неизвестная область: %r" % (scope,),
+                              "محدودهٔ ناشناخته: %r" % (scope,),
+                              "未知範圍：%r" % (scope,)))
     if scope == "user":
         h = home if home is not None else os.path.expanduser("~")
+        if not os.path.isabs(h):
+            raise ShortcutError(_L("主目录不是绝对路径：%s" % h,
+                                  "Home directory is not an absolute path: %s"
+                                  % h,
+                                  "ホームディレクトリは絶対パスではありません：%s"
+                                  % h,
+                                  "Домашний каталог — не абсолютный путь: %s"
+                                  % h,
+                                  "پوشهٔ خانه مسیر مطلق نیست: %s" % h,
+                                  "主目錄不是絕對路徑：%s" % h))
         if home is None:
             xdg = os.environ.get("XDG_DATA_HOME", "")
             base = xdg if xdg and os.path.isabs(xdg) else \
@@ -11214,7 +11562,16 @@ def shortcut_paths(scope, home=None, sysroot=None):
 
 
 def shortcut_launcher_content(interpreter, script_path, instance_id):
-    """薄 POSIX sh 启动器: exec + 钉死路径 + "$@" (禁 $*/eval/重拼接/cd)。"""
+    """薄 POSIX sh 启动器: exec + 钉死路径 + "$@" (禁 $*/eval/重拼接/cd)。
+    instance_id 只许 [A-Za-z0-9_-]{1,64}, 换行/元字符一律拒绝 (防注入启动器)。"""
+    if not isinstance(instance_id, str) \
+            or not SHORTCUT_INSTANCE_ID_RE.match(instance_id):
+        raise ShortcutError(_L("无效的实例 ID：%r" % (instance_id,),
+                              "Invalid instance id: %r" % (instance_id,),
+                              "無効なインスタンス ID：%r" % (instance_id,),
+                              "Недопустимый id экземпляра: %r" % (instance_id,),
+                              "شناسهٔ نمونه نامعتبر است: %r" % (instance_id,),
+                              "無效的執行個體 ID：%r" % (instance_id,)))
     return ("#!/bin/sh\n"
             "# acheck-managed: %s\n"
             "exec %s %s \"$@\"\n"
@@ -11235,31 +11592,92 @@ def _shortcut_sha256_file(path):
 
 
 def _shortcut_marker(content):
-    m = re.search(r"^# acheck-managed: ([A-Za-z0-9_-]+)$", content, re.M)
-    return m.group(1) if m else None
+    """只认启动器第 2 行的 marker (第 1 行是 shebang); 文件中部出现的不算。"""
+    lines = content.split("\n")
+    if len(lines) >= 2:
+        m = re.fullmatch(r"# acheck-managed: ([A-Za-z0-9_-]+)", lines[1])
+        return m.group(1) if m else None
+    return None
+
+
+def _shortcut_canon_entry(path):
+    """入口路径规范形: 只解析父目录的符号链接 (绝不 realpath 启动器本身),
+    再拼回文件名, 供归属比对用。"""
+    d = os.path.dirname(path)
+    return os.path.join(os.path.realpath(d), os.path.basename(path))
+
+
+def _shortcut_path_in_bin_dir(path, bin_dir):
+    """入口路径是否落在启动器目录内 (父目录 realpath 比对)。"""
+    try:
+        parent = os.path.realpath(os.path.dirname(os.path.abspath(path)))
+        base = os.path.realpath(bin_dir)
+    except OSError:
+        return False
+    return parent == base
+
+
+def _shortcut_sha256_file_nofollow(path):
+    """O_NOFOLLOW + fstat 验普通文件后分块算 sha256 (符号链接一律拒绝)。"""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file: %s" % path)
+        h = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            h.update(chunk)
+        return h.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def _shortcut_entry_intact(path, entry, instance_id):
     """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
-    且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。"""
+    且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。
+    O_NOFOLLOW 打开 + fstat + 限长读 (4097 字节) + 完整 3 行模板校验。"""
     try:
-        st = os.lstat(path)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
         return False
-    if not stat.S_ISREG(st.st_mode):
-        return False
     try:
-        with open(path, "rb") as f:
-            data = f.read()
-    except OSError:
-        return False
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            return False
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        data = os.read(fd, 4097)
+        if os.read(fd, 1):
+            return False
+    finally:
+        os.close(fd)
     if _shortcut_sha256_bytes(data) != entry.get("sha256"):
         return False
     try:
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return False
-    return _shortcut_marker(text) == instance_id
+    lines = text.split("\n")
+    if len(lines) != 4 or lines[3] != "":
+        return False
+    if lines[0] != "#!/bin/sh":
+        return False
+    if lines[1] != "# acheck-managed: %s" % instance_id:
+        return False
+    try:
+        parts = shlex.split(lines[2])
+    except ValueError:
+        return False
+    if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
+        return False
+    if entry.get("marker") is not None \
+            and entry.get("marker") != instance_id:
+        return False
+    return True
 
 
 def shortcut_check_name(name, bin_dir, own_entry_paths=(),
@@ -11273,10 +11691,10 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
                          "detail": "name must match ^[a-z][a-z0-9_-]{0,31}$ "
                          "and must not be a shell keyword/builtin"})
         return findings
-    own = {os.path.normpath(p) for p in own_entry_paths}
+    own = {_shortcut_canon_entry(p) for p in own_entry_paths}
     target = os.path.join(bin_dir, name)
     if os.path.lexists(target):
-        if os.path.normpath(target) in own:
+        if _shortcut_canon_entry(target) in own:
             findings.append({"kind": "target_own", "name": name,
                              "path": target})
         else:
@@ -11297,11 +11715,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
         if not d:
             continue
         nd = os.path.normpath(d)
-        if nd in seen:
+        rd = os.path.realpath(d)
+        if rd in seen:
             continue
-        seen.add(nd)
+        seen.add(rd)
         cand = os.path.join(nd, name)
-        if os.path.normpath(cand) in own:
+        if _shortcut_canon_entry(cand) in own:
             continue
         try:
             hit = os.path.isfile(cand) and os.access(cand, os.X_OK)
@@ -11319,11 +11738,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
         if not d:
             continue
         nd = os.path.normpath(d)
-        if nd in seen:
+        rd = os.path.realpath(d)
+        if rd in seen:
             continue
-        seen.add(nd)
+        seen.add(rd)
         cand = os.path.join(nd, name)
-        if os.path.normpath(cand) in own:
+        if _shortcut_canon_entry(cand) in own:
             continue
         try:
             hit = os.path.isfile(cand) and os.access(cand, os.X_OK)
@@ -11333,12 +11753,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
             findings.append({"kind": "system_hit", "name": name,
                              "path": cand})
     # ac 已知未来风险: 当前无可执行冲突也须警告 (不以"包没装"证明安全);
-    # 已有真实冲突时只报冲突, 不再叠加未来风险
+    # 已有真实冲突时只报冲突, 不再叠加未来风险; 已是自家入口时不再重复阻断
     if name == "ac" and not any(f["kind"] in ("path_hit", "system_hit",
-                                              "target_foreign")
+                                              "target_foreign", "target_own")
                                 for f in findings):
         findings.append({"kind": "ac_risk", "name": name,
-                         "detail": SHORTCUT_AC_RISK})
+                         "detail": _L(*SHORTCUT_AC_RISK)})
     return findings
 
 
@@ -11348,18 +11768,36 @@ def _shortcut_blocked(findings):
 
 
 def _shortcut_load_state(paths):
-    """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。"""
+    """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。
+    PermissionError 单独抛 ShortcutError, 绝不误报为 corrupt;
+    instance_id 须合字符集 [A-Za-z0-9_-]{1,64}, 否则按损坏处理。"""
     try:
         with open(paths["state_path"], "r", encoding="utf-8") as f:
             state = json.load(f)
     except FileNotFoundError:
         return None, False
+    except PermissionError:
+        raise ShortcutError(_L("无权限读取状态文件：%s"
+                              % paths["state_path"],
+                              "Permission denied reading state file: %s"
+                              % paths["state_path"],
+                              "状態ファイルを読み取る権限がありません：%s"
+                              % paths["state_path"],
+                              "Нет прав на чтение файла состояния: %s"
+                              % paths["state_path"],
+                              "دسترسی خواندن پروندهٔ وضعیت ممکن نیست: %s"
+                              % paths["state_path"],
+                              "無權限讀取狀態檔案：%s"
+                              % paths["state_path"]))
     except Exception:
         return None, True
     if not isinstance(state, dict) \
             or state.get("format_version") != SHORTCUT_STATE_VERSION \
             or not isinstance(state.get("entries"), dict) \
             or not state.get("instance_id"):
+        return None, True
+    if not isinstance(state.get("instance_id"), str) \
+            or not SHORTCUT_INSTANCE_ID_RE.match(state["instance_id"]):
         return None, True
     return state, False
 
@@ -11372,6 +11810,8 @@ def _shortcut_save_state(paths, state):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
             f.write("\n")
+        if paths.get("scope") == "system":
+            os.chmod(tmp, 0o644)
         os.replace(tmp, paths["state_path"])
     except Exception:
         try:
@@ -11381,20 +11821,121 @@ def _shortcut_save_state(paths, state):
         raise
 
 
-def _shortcut_publish_launcher(bin_dir, name, content_bytes):
-    """排他创建启动器: 目标突然出现即中止, 不覆盖未知对象。"""
-    target = os.path.join(bin_dir, name)
-    fd, tmp = tempfile.mkstemp(prefix=".acheck-launcher-",
-                               dir=bin_dir)
+def _shortcut_write_launcher_tmp(bin_dir, content_bytes):
+    """把启动器内容写进 bin_dir 内的临时文件 (0755), 返回临时路径。
+    mkstemp/写入/chmod 的 OSError 一律转 ShortcutError (H-01)。"""
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".acheck-launcher-",
+                                   dir=bin_dir)
+    except OSError as e:
+        raise ShortcutError(_L("无法在 %s 创建启动器临时文件：%s"
+                              % (bin_dir, e),
+                              "Cannot create launcher temp file in %s: %s"
+                              % (bin_dir, e),
+                              "%s にランチャーの一時ファイルを作成できません：%s"
+                              % (bin_dir, e),
+                              "Не удаётся создать временный файл лаунчера "
+                              "в %s: %s" % (bin_dir, e),
+                              "نمی‌توان پروندهٔ موقت راه‌انداز را در %s ساخت: %s"
+                              % (bin_dir, e),
+                              "無法在 %s 建立啟動器暫存檔：%s"
+                              % (bin_dir, e)))
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content_bytes)
         os.chmod(tmp, 0o755)
+    except OSError as e:
         try:
-            os.link(tmp, target)
-        except FileExistsError:
-            raise ShortcutError("target appeared during install: %s "
-                                "(refusing to overwrite)" % target)
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise ShortcutError(_L("无法写入启动器临时文件：%s" % e,
+                              "Cannot write launcher temp file: %s" % e,
+                              "ランチャーの一時ファイルに書き込めません：%s" % e,
+                              "Не удаётся записать временный файл лаунчера: %s"
+                              % e,
+                              "نمی‌توان در پروندهٔ موقت راه‌انداز نوشت: %s" % e,
+                              "無法寫入啟動器暫存檔：%s" % e))
+    return tmp
+
+
+def _shortcut_link_tmp(tmp, target, content_bytes):
+    """把已写好的临时启动器排他发布到目标: 首选硬链接; 遇 EOPNOTSUPP/EPERM
+    (如跨设备/受限文件系统) 降级为 O_CREAT|O_EXCL 直接创建。目标突然出现
+    即中止, 不覆盖未知对象。"""
+    try:
+        os.link(tmp, target)
+        return
+    except FileExistsError:
+        raise ShortcutError(_L("安装期间目标突然出现：%s（拒绝覆盖）" % target,
+                              "Target appeared during install: %s "
+                              "(refusing to overwrite)" % target,
+                              "インストール中に既存の対象が現れました：%s"
+                              "（上書きしません）" % target,
+                              "Во время установки появилась цель: %s "
+                              "(перезапись запрещена)" % target,
+                              "در هنگام نصب هدف ظاهر شد: %s (بازنویسی نمی‌شود)"
+                              % target,
+                              "安裝期間目標突然出現：%s（拒絕覆寫）" % target))
+    except OSError as e:
+        if e.errno not in (errno.EOPNOTSUPP, errno.EPERM):
+            raise ShortcutError(_L("无法发布启动器 %s：%s" % (target, e),
+                                  "Cannot publish launcher %s: %s"
+                                  % (target, e),
+                                  "ランチャー %s を公開できません：%s"
+                                  % (target, e),
+                                  "Не удаётся опубликовать лаунчер %s: %s"
+                                  % (target, e),
+                                  "نمی‌توان راه‌انداز %s را منتشر کرد: %s"
+                                  % (target, e),
+                                  "無法發佈啟動器 %s：%s" % (target, e)))
+    try:
+        fd2 = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+    except FileExistsError:
+        raise ShortcutError(_L("安装期间目标突然出现：%s（拒绝覆盖）" % target,
+                              "Target appeared during install: %s "
+                              "(refusing to overwrite)" % target,
+                              "インストール中に既存の対象が現れました：%s"
+                              "（上書きしません）" % target,
+                              "Во время установки появилась цель: %s "
+                              "(перезапись запрещена)" % target,
+                              "در هنگام نصب هدف ظاهر شد: %s (بازنویسی نمی‌شود)"
+                              % target,
+                              "安裝期間目標突然出現：%s（拒絕覆寫）" % target))
+    except OSError as e2:
+        raise ShortcutError(_L("无法发布启动器 %s：%s" % (target, e2),
+                              "Cannot publish launcher %s: %s" % (target, e2),
+                              "ランチャー %s を公開できません：%s" % (target, e2),
+                              "Не удаётся опубликовать лаунчер %s: %s"
+                              % (target, e2),
+                              "نمی‌توان راه‌انداز %s را منتشر کرد: %s"
+                              % (target, e2),
+                              "無法發佈啟動器 %s：%s" % (target, e2)))
+    try:
+        with os.fdopen(fd2, "wb") as f:
+            f.write(content_bytes)
+        os.chmod(target, 0o755)
+    except OSError as e2:
+        try:
+            os.unlink(target)
+        except OSError:
+            pass
+        raise ShortcutError(_L("无法发布启动器 %s：%s" % (target, e2),
+                              "Cannot publish launcher %s: %s" % (target, e2),
+                              "ランチャー %s を公開できません：%s" % (target, e2),
+                              "Не удаётся опубликовать лаунчер %s: %s"
+                              % (target, e2),
+                              "نمی‌توان راه‌انداز %s را منتشر کرد: %s"
+                              % (target, e2),
+                              "無法發佈啟動器 %s：%s" % (target, e2)))
+
+
+def _shortcut_publish_launcher(bin_dir, name, content_bytes):
+    """排他创建启动器: 目标突然出现即中止, 不覆盖未知对象。"""
+    target = os.path.join(bin_dir, name)
+    tmp = _shortcut_write_launcher_tmp(bin_dir, content_bytes)
+    try:
+        _shortcut_link_tmp(tmp, target, content_bytes)
         return target
     finally:
         try:
@@ -11414,8 +11955,9 @@ def _shortcut_verify_launcher(path, timeout=20):
 
 
 def _shortcut_bin_in_path(bin_dir):
+    base = os.path.realpath(bin_dir)
     for d in os.environ.get("PATH", "").split(os.pathsep):
-        if d and os.path.normpath(d) == os.path.normpath(bin_dir):
+        if d and os.path.realpath(d) == base:
             return True
     return False
 
@@ -11425,19 +11967,63 @@ def _shortcut_fmt_findings(findings):
     for f in findings:
         k = f["kind"]
         if k == "invalid":
-            parts.append("invalid name %r" % f["name"])
+            parts.append(_L("无效名字 %r" % f["name"],
+                            "Invalid name %r" % f["name"],
+                            "無効な名前 %r" % f["name"],
+                            "Недопустимое имя %r" % f["name"],
+                            "نام نامعتبر %r" % f["name"],
+                            "無效名字 %r" % f["name"]))
         elif k == "target_foreign":
-            parts.append("target exists (%s): %s"
-                         % (f.get("detail", "?"), f["path"]))
+            parts.append(_L("目标已存在 (%s)：%s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "Target exists (%s): %s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "対象が既に存在します (%s)：%s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "Цель уже существует (%s): %s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "هدف از قبل وجود دارد (%s): %s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "目標已存在 (%s)：%s"
+                            % (f.get("detail", "?"), f["path"])))
         elif k == "path_hit":
-            parts.append("PATH hit%s: %s"
-                         % (" (first)" if f.get("first") else "", f["path"]))
+            parts.append(_L("PATH 命中%s：%s"
+                            % (" (首个)" if f.get("first") else "", f["path"]),
+                            "PATH hit%s: %s"
+                            % (" (first)" if f.get("first") else "", f["path"]),
+                            "PATH に存在%s：%s"
+                            % (" (最初)" if f.get("first") else "", f["path"]),
+                            "Найдено в PATH%s: %s"
+                            % (" (первое)" if f.get("first") else "",
+                               f["path"]),
+                            "در PATH یافت شد%s: %s"
+                            % (" (اول)" if f.get("first") else "", f["path"]),
+                            "PATH 命中%s：%s"
+                            % (" (首個)" if f.get("first") else "", f["path"])))
         elif k == "system_hit":
-            parts.append("system path hit: %s" % f["path"])
+            parts.append(_L("系统路径命中：%s" % f["path"],
+                            "System path hit: %s" % f["path"],
+                            "システムパスに存在：%s" % f["path"],
+                            "Найдено в системном пути: %s" % f["path"],
+                            "در مسیر سیستمی یافت شد: %s" % f["path"],
+                            "系統路徑命中：%s" % f["path"]))
         elif k == "ac_risk":
-            parts.append("known future risk for 'ac': %s" % f["detail"])
+            parts.append(_L("已知未来风险 'ac'：%s" % SHORTCUT_AC_RISK[0],
+                            "Known future risk for 'ac': %s"
+                            % SHORTCUT_AC_RISK[1],
+                            "既知の将来リスク 'ac'：%s" % SHORTCUT_AC_RISK[2],
+                            "Известный будущий риск 'ac': %s"
+                            % SHORTCUT_AC_RISK[3],
+                            "ریسک آیندهٔ شناخته‌شدهٔ 'ac': %s"
+                            % SHORTCUT_AC_RISK[4],
+                            "已知未來風險 'ac'：%s" % SHORTCUT_AC_RISK[5]))
         elif k == "target_own":
-            parts.append("already owned: %s" % f["path"])
+            parts.append(_L("已拥有：%s" % f["path"],
+                            "Already owned: %s" % f["path"],
+                            "既に所有：%s" % f["path"],
+                            "Уже принадлежит: %s" % f["path"],
+                            "از قبل متعلق است: %s" % f["path"],
+                            "已擁有：%s" % f["path"]))
     return "; ".join(parts)
 
 
@@ -11449,10 +12035,31 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。"""
     result = {"ok": False, "rc": 2, "installed": [], "failed": [],
               "skipped": [], "degraded": False, "errors": [], "scope": scope}
-    want = list(names) if names else list(SHORTCUT_DEFAULT_NAMES)
-    if len(set(want)) != len(want):
-        result["errors"].append("duplicate names: %r" % (want,))
+    try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        result["errors"].append(str(e))
         return result
+    if names is None:
+        want = None
+    else:
+        want = list(names)
+        if not want:
+            result["errors"].append(_L("未给出名字 (--names 为空)",
+                                      "No names given (--names is empty)",
+                                      "名前が指定されていません (--names が空です)",
+                                      "Имена не заданы (--names пуст)",
+                                      "نامی داده نشده است (--names خالی است)",
+                                      "未給出名字 (--names 為空)"))
+            return result
+        if len(set(want)) != len(want):
+            result["errors"].append(_L("名字重复：%r" % (want,),
+                                      "Duplicate names: %r" % (want,),
+                                      "名前が重複しています：%r" % (want,),
+                                      "Повторяющиеся имена: %r" % (want,),
+                                      "نام‌های تکراری: %r" % (want,),
+                                      "名字重複：%r" % (want,)))
+            return result
     try:
         interp, _ver = _shortcut_resolve_interpreter(interpreter)
     except ShortcutError as e:
@@ -11468,36 +12075,88 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     src = os.path.abspath(source_path) if source_path else \
         os.path.abspath(__file__)
     if not os.path.isfile(src):
-        result["errors"].append("source script not found: %s" % src)
+        result["errors"].append(_L("找不到源脚本：%s" % src,
+                                  "Source script not found: %s" % src,
+                                  "ソーススクリプトが見つかりません：%s" % src,
+                                  "Исходный скрипт не найден: %s" % src,
+                                  "اسکریپت منبع یافت نشد: %s" % src,
+                                  "找不到來源指令碼：%s" % src))
         return result
     try:
         with open(src, "rb") as f:
             src_bytes = f.read()
         src_sha = _shortcut_sha256_bytes(src_bytes)
     except OSError as e:
-        result["errors"].append("cannot read source script: %s" % e)
+        result["errors"].append(_L("无法读取源脚本：%s" % e,
+                                  "Cannot read source script: %s" % e,
+                                  "ソーススクリプトを読み取れません：%s" % e,
+                                  "Не удаётся прочитать исходный скрипт: %s" % e,
+                                  "نمی‌توان اسکریپت منبع را خواند: %s" % e,
+                                  "無法讀取來源指令碼：%s" % e))
         return result
     try:
         os.makedirs(paths["data_dir"], exist_ok=True)
         os.makedirs(paths["bin_dir"], exist_ok=True)
+        if scope == "system":
+            os.chmod(paths["data_dir"], 0o755)
+            os.chmod(paths["bin_dir"], 0o755)
     except OSError as e:
-        result["errors"].append("cannot create managed directories: %s" % e)
+        result["errors"].append(_L("无法创建受管理目录：%s" % e,
+                                  "Cannot create managed directories: %s" % e,
+                                  "管理ディレクトリを作成できません：%s" % e,
+                                  "Не удаётся создать управляемые каталоги: %s"
+                                  % e,
+                                  "نمی‌توان پوشه‌های مدیریت‌شده را ساخت: %s" % e,
+                                  "無法建立受管理目錄：%s" % e))
         return result
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
     if corrupt:
         result["errors"].append(
-            "state file is corrupt: %s (refusing to overwrite or delete "
-            "any launcher; inspect/remove it manually)"
-            % paths["state_path"])
+            _L("状态文件已损坏：%s（拒绝覆盖或删除任何启动器，"
+               "请人工检查后处理）" % paths["state_path"],
+               "State file is corrupt: %s (refusing to overwrite or delete "
+               "any launcher; inspect/remove it manually)"
+               % paths["state_path"],
+               "状態ファイルが破損しています：%s（ランチャーの上書き・削除は"
+               "行いません。手動で確認してください）" % paths["state_path"],
+               "Файл состояния повреждён: %s (перезапись и удаление "
+               "лаунчеров запрещены; проверьте вручную)" % paths["state_path"],
+               "پروندهٔ وضعیت خراب است: %s (بازنویسی یا حذف راه‌اندازها انجام "
+               "نمی‌شود؛ دستی بررسی کنید)" % paths["state_path"],
+               "狀態檔案已損壞：%s（拒絕覆寫或刪除任何啟動器，"
+               "請人工檢查後處理）" % paths["state_path"]))
         return result
     if state is not None and state.get("scope") != scope:
         result["errors"].append(
-            "existing install is scope %r, requested %r; remove it first"
-            % (state.get("scope"), scope))
+            _L("已有安装属于 %r 范围，请求的是 %r；请先移除"
+               % (state.get("scope"), scope),
+               "Existing install is scope %r, requested %r; remove it first"
+               % (state.get("scope"), scope),
+               "既存のインストールは %r 範囲です。要求は %r です。"
+               "先に削除してください" % (state.get("scope"), scope),
+               "Существующая установка — область %r, запрошена %r; "
+               "сначала удалите её" % (state.get("scope"), scope),
+               "نصب موجود در محدودهٔ %r است، %r درخواست شد؛ ابتدا آن را "
+               "حذف کنید" % (state.get("scope"), scope),
+               "已有安裝屬於 %r 範圍，請求的是 %r；請先移除"
+               % (state.get("scope"), scope)))
         return result
+    if want is None:
+        if state is not None and state.get("entries"):
+            want = list(state["entries"].keys())
+        else:
+            want = list(SHORTCUT_DEFAULT_NAMES)
     instance_id = state.get("instance_id") if state else uuid.uuid4().hex
     own_paths = [e.get("path", "") for e in
-                 (state or {}).get("entries", {}).values()]
+                 (state or {}).get("entries", {}).values()
+                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 and _shortcut_entry_intact(e.get("path", ""), e,
+                                            instance_id)]
     # ---- 第一阶段: 全部名字检查确认 (不写文件) ----
     checks = {}
     for nm in want:
@@ -11531,14 +12190,14 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
         for nm, fl in blocked.items():
             print("  %s: %s" % (nm, _shortcut_fmt_findings(fl)))
         for nm in risk_unconfirmed:
-            print(_L("  %s：已知未来风险——%s" % (nm, SHORTCUT_AC_RISK),
-                     "  %s: known future risk — %s" % (nm, SHORTCUT_AC_RISK),
-                     "  %s：既知の将来リスク — %s" % (nm, SHORTCUT_AC_RISK),
+            print(_L("  %s：已知未来风险——%s" % (nm, SHORTCUT_AC_RISK[0]),
+                     "  %s: known future risk — %s" % (nm, SHORTCUT_AC_RISK[1]),
+                     "  %s：既知の将来リスク — %s" % (nm, SHORTCUT_AC_RISK[2]),
                      "  %s: известный будущий риск — %s"
-                     % (nm, SHORTCUT_AC_RISK),
+                     % (nm, SHORTCUT_AC_RISK[3]),
                      "  %s: ریسک آیندهٔ شناخته‌شده — %s"
-                     % (nm, SHORTCUT_AC_RISK),
-                     "  %s：已知未來風險——%s" % (nm, SHORTCUT_AC_RISK)))
+                     % (nm, SHORTCUT_AC_RISK[4]),
+                     "  %s：已知未來風險——%s" % (nm, SHORTCUT_AC_RISK[5])))
         tries = 0
         while (blocked or risk_unconfirmed) and tries < 5:
             tries += 1
@@ -11565,13 +12224,25 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                          "установить его",
                          "[4] پذیرش صریح ریسک آیندهٔ شناخته‌شدهٔ ac و نصب آن",
                          "[4] 明確接受 ac 已知未來風險，繼續安裝 ac"))
-            ans = _ask(_L("请选择 [1/2/3]: ", "Choose [1/2/3]: ",
-                         "選択してください [1/2/3]: ",
-                         "Выберите [1/2/3]: ",
-                         "انتخاب کنید [1/2/3]: ",
-                         "請選擇 [1/2/3]: "))
+            ans = _ask(_L("请选择 [1/2/3/4]: " if risk_unconfirmed
+                         else "请选择 [1/2/3]: ",
+                         "Choose [1/2/3/4]: " if risk_unconfirmed
+                         else "Choose [1/2/3]: ",
+                         "選択してください [1/2/3/4]: " if risk_unconfirmed
+                         else "選択してください [1/2/3]: ",
+                         "Выберите [1/2/3/4]: " if risk_unconfirmed
+                         else "Выберите [1/2/3]: ",
+                         "انتخاب کنید [1/2/3/4]: " if risk_unconfirmed
+                         else "انتخاب کنید [1/2/3]: ",
+                         "請選擇 [1/2/3/4]: " if risk_unconfirmed
+                         else "請選擇 [1/2/3]: "))
             if ans is None or ans == "3":
-                result["errors"].append("cancelled by user")
+                result["errors"].append(_L("用户已取消",
+                                          "Cancelled by user",
+                                          "ユーザーによりキャンセルされました",
+                                          "Отменено пользователем",
+                                          "توسط کاربر لغو شد",
+                                          "使用者已取消"))
                 result["rc"] = 1
                 result["failed"] = list(want)
                 return result
@@ -11601,7 +12272,12 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                              % first_blocked,
                              "為 %s 輸入自訂名字 (空=取消): " % first_blocked))
                 if new is None or not new:
-                    result["errors"].append("cancelled by user")
+                    result["errors"].append(_L("用户已取消",
+                                              "Cancelled by user",
+                                              "ユーザーによりキャンセルされました",
+                                              "Отменено пользователем",
+                                              "توسط کاربر لغو شد",
+                                              "使用者已取消"))
                     result["rc"] = 1
                     result["failed"] = list(want)
                     return result
@@ -11632,8 +12308,18 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
             print(T("invalid_input"))
         if blocked or risk_unconfirmed:
             result["errors"].append(
-                "conflicts remain after interaction: %s"
-                % ", ".join(list(blocked) + risk_unconfirmed))
+                _L("交互处理后仍有冲突：%s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "Conflicts remain after interaction: %s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "対話処理後も競合が残っています：%s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "После обработки остались конфликты: %s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "پس از تعامل همچنان تداخل باقی است: %s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "互動處理後仍有衝突：%s"
+                   % ", ".join(list(blocked) + risk_unconfirmed)))
             result["failed"] = list(blocked) + risk_unconfirmed
             return result
     elif blocked or risk_unconfirmed:
@@ -11642,12 +12328,28 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                                     % (nm, _shortcut_fmt_findings(fl)))
         for nm in risk_unconfirmed:
             result["errors"].append(
-                "%s: known future risk for 'ac' not accepted "
-                "(use --accept-ac-risk in non-interactive mode)" % nm)
+                _L("%s：未接受 'ac' 已知未来风险"
+                   "（非交互模式请用 --accept-ac-risk）" % nm,
+                   "%s: known future risk for 'ac' not accepted "
+                   "(use --accept-ac-risk in non-interactive mode)" % nm,
+                   "%s：'ac' の既知の将来リスクが受け入れられていません"
+                   "（非対話モードでは --accept-ac-risk を使ってください）" % nm,
+                   "%s: известный будущий риск 'ac' не принят "
+                   "(в неинтерактивном режиме используйте --accept-ac-risk)"
+                   % nm,
+                   "%s: ریسک آیندهٔ شناخته‌شدهٔ 'ac' پذیرفته نشد "
+                   "(در حالت غیرتعاملی از --accept-ac-risk استفاده کنید)" % nm,
+                   "%s：未接受 'ac' 已知未來風險"
+                   "（非互動模式請用 --accept-ac-risk）" % nm))
         result["failed"] = list(blocked) + risk_unconfirmed
         return result
     if not want:
-        result["errors"].append("no entries left to install")
+        result["errors"].append(_L("没有可安装的入口",
+                                  "No entries left to install",
+                                  "インストールする入口が残っていません",
+                                  "Не осталось ярлыков для установки",
+                                  "ورودی‌ای برای نصب باقی نمانده است",
+                                  "沒有可安裝的入口"))
         return result
     # ---- 第二阶段: 写受管理副本 (更新时覆盖自己的副本, 保留入口名) ----
     # 已安装版本号取自源文件本身的 VERSION (下载版与运行版可能不同)。
@@ -11657,60 +12359,179 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     try:
         fd, tmp = tempfile.mkstemp(prefix=".acheck-script-",
                                    dir=paths["data_dir"])
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(src_bytes)
-            os.chmod(tmp, 0o755)
-            os.replace(tmp, paths["managed_script"])
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
     except OSError as e:
-        result["errors"].append("cannot write managed script: %s" % e)
+        result["errors"].append(_L("无法写入受管理脚本：%s" % e,
+                                  "Cannot write managed script: %s" % e,
+                                  "管理スクリプトに書き込めません：%s" % e,
+                                  "Не удаётся записать управляемый скрипт: %s"
+                                  % e,
+                                  "نمی‌توان در اسکریپت مدیریت‌شده نوشت: %s" % e,
+                                  "無法寫入受管理指令碼：%s" % e))
         return result
-    # ---- 第三阶段: 逐个发布启动器 (排他创建 + 最小启动验证) ----
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(src_bytes)
+        os.chmod(tmp, 0o755)
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        result["errors"].append(_L("无法写入受管理脚本：%s" % e,
+                                  "Cannot write managed script: %s" % e,
+                                  "管理スクリプトに書き込めません：%s" % e,
+                                  "Не удаётся записать управляемый скрипт: %s"
+                                  % e,
+                                  "نمی‌توان در اسکریپت مدیریت‌شده نوشت: %s" % e,
+                                  "無法寫入受管理指令碼：%s" % e))
+        return result
+    # 先对临时副本跑最小启动检查, 通过才 os.replace (损坏源绝不覆写已安装副本)
+    try:
+        _vr = subprocess.run([interp, tmp, "--help"],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, timeout=20)
+        _valid = _vr.returncode == 0
+    except Exception:
+        _valid = False
+    if not _valid:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        result["errors"].append(_L("受管理脚本未通过最小启动检查 (--help)，"
+                                   "已保留已安装副本",
+                                   "Managed script failed the minimal startup "
+                                   "check (--help); the installed copy was kept",
+                                   "管理スクリプトは最小起動検査 (--help) に"
+                                   "合格しませんでした。インストール済みコピーは"
+                                   "保持されました",
+                                   "Управляемый скрипт не прошёл минимальную "
+                                   "проверку запуска (--help); установленная "
+                                   "копия сохранена",
+                                   "اسکریپت مدیریت‌شده بررسی حداقلی راه‌اندازی "
+                                   "(--help) را نگذراند؛ نسخهٔ نصب‌شده حفظ شد",
+                                   "受管理指令碼未通過最小啟動檢查 (--help)，"
+                                   "已保留已安裝副本"))
+        result["rc"] = 1
+        return result
+    try:
+        os.replace(tmp, paths["managed_script"])
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        result["errors"].append(_L("无法写入受管理脚本：%s" % e,
+                                  "Cannot write managed script: %s" % e,
+                                  "管理スクリプトに書き込めません：%s" % e,
+                                  "Не удаётся записать управляемый скрипт: %s"
+                                  % e,
+                                  "نمی‌توان در اسکریپت مدیریت‌شده نوشت: %s" % e,
+                                  "無法寫入受管理指令碼：%s" % e))
+        return result
+    # ---- 第三阶段: 逐个发布启动器 (先验证临时启动器, 再原子替换/排他创建) ----
     entries = dict((state or {}).get("entries", {}))
     for nm in want:
         target = os.path.join(paths["bin_dir"], nm)
         old_entry = entries.get(nm)
-        if old_entry and os.path.lexists(target):
-            if not _shortcut_entry_intact(target, old_entry, instance_id):
-                result["failed"].append(nm)
-                result["errors"].append(
-                    "%s: existing launcher was modified by someone else; "
-                    "not overwriting, handle manually" % nm)
-                continue
-            try:
-                os.unlink(target)
-            except OSError as e:
-                result["failed"].append(nm)
-                result["errors"].append("%s: cannot remove old launcher: %s"
-                                        % (nm, e))
-                continue
-        content = shortcut_launcher_content(
-            interp, paths["managed_script"], instance_id)
         try:
-            _shortcut_publish_launcher(paths["bin_dir"], nm,
-                                       content.encode("utf-8"))
+            content = shortcut_launcher_content(
+                interp, paths["managed_script"], instance_id)
         except ShortcutError as e:
             result["failed"].append(nm)
             result["errors"].append(str(e))
             continue
-        if not _shortcut_verify_launcher(target):
+        content_bytes = content.encode("utf-8")
+        if old_entry and os.path.lexists(target):
+            if not _shortcut_entry_intact(target, old_entry, instance_id):
+                result["failed"].append(nm)
+                result["errors"].append(
+                    _L("%s：已有启动器被他人修改，不覆盖，请人工处理" % nm,
+                       "%s: existing launcher was modified by someone else; "
+                       "not overwriting, handle manually" % nm,
+                       "%s：既存のランチャーは他人に変更されました。"
+                       "上書きしません。手動で対処してください" % nm,
+                       "%s: существующий лаунчер был изменён кем-то другим; "
+                       "перезапись запрещена, разберитесь вручную" % nm,
+                       "%s: راه‌انداز موجود توسط دیگری تغییر کرده است؛ "
+                       "بازنویسی نمی‌شود، دستی رسیدگی کنید" % nm,
+                       "%s：已有啟動器被他人修改，不覆寫，請人工處理" % nm))
+                continue
+            # 已有入口更新: 先写临时启动器并验证, 再原子替换旧文件;
+            # 验证失败时旧文件与旧状态条目原样保留, 绝不留 stale 条目
             try:
-                os.unlink(target)
-            except OSError:
-                pass
-            result["failed"].append(nm)
-            result["errors"].append(
-                "%s: launcher failed minimal startup check (--help)" % nm)
-            continue
+                tmp = _shortcut_write_launcher_tmp(
+                    paths["bin_dir"], content_bytes)
+            except ShortcutError as e:
+                result["failed"].append(nm)
+                result["errors"].append(str(e))
+                continue
+            try:
+                if not _shortcut_verify_launcher(tmp):
+                    result["failed"].append(nm)
+                    result["errors"].append(
+                        _L("%s：启动器未通过最小启动检查 (--help)" % nm,
+                           "%s: launcher failed minimal startup check "
+                           "(--help)" % nm,
+                           "%s：ランチャーは最小起動検査 (--help) に合格しません"
+                           "でした" % nm,
+                           "%s: лаунчер не прошёл минимальную проверку "
+                           "запуска (--help)" % nm,
+                           "%s: راه‌انداز بررسی حداقلی راه‌اندازی (--help) را "
+                           "نگذراند" % nm,
+                           "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
+                    continue
+                try:
+                    os.replace(tmp, target)
+                except OSError as e:
+                    result["failed"].append(nm)
+                    result["errors"].append(
+                        _L("%s：无法替换旧启动器：%s" % (nm, e),
+                           "%s: cannot replace old launcher: %s" % (nm, e),
+                           "%s：古いランチャーを置き換えられません：%s" % (nm, e),
+                           "%s: не удаётся заменить старый лаунчер: %s"
+                           % (nm, e),
+                           "%s: نمی‌توان راه‌انداز قدیمی را جایگزین کرد: %s"
+                           % (nm, e),
+                           "%s：無法取代舊啟動器：%s" % (nm, e)))
+                    continue
+            finally:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        else:
+            if old_entry:
+                # 状态有记录但文件已失: 丢掉 stale 记录, 按新装处理
+                entries.pop(nm, None)
+            try:
+                _shortcut_publish_launcher(paths["bin_dir"], nm,
+                                           content_bytes)
+            except ShortcutError as e:
+                result["failed"].append(nm)
+                result["errors"].append(str(e))
+                continue
+            if not _shortcut_verify_launcher(target):
+                try:
+                    os.unlink(target)
+                except OSError:
+                    pass
+                entries.pop(nm, None)
+                result["failed"].append(nm)
+                result["errors"].append(
+                    _L("%s：启动器未通过最小启动检查 (--help)" % nm,
+                       "%s: launcher failed minimal startup check "
+                       "(--help)" % nm,
+                       "%s：ランチャーは最小起動検査 (--help) に合格しません"
+                       "でした" % nm,
+                       "%s: лаунчер не прошёл минимальную проверку "
+                       "запуска (--help)" % nm,
+                       "%s: راه‌انداز بررسی حداقلی راه‌اندازی (--help) را "
+                       "نگذراند" % nm,
+                       "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
+                continue
         entries[nm] = {"path": target,
-                       "sha256": _shortcut_sha256_bytes(
-                           content.encode("utf-8")),
+                       "sha256": _shortcut_sha256_bytes(content_bytes),
                        "marker": instance_id}
         result["installed"].append(nm)
     # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
@@ -11730,14 +12551,32 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     try:
         _shortcut_save_state(paths, new_state)
     except OSError as e:
-        result["errors"].append("cannot save state: %s" % e)
+        result["errors"].append(_L("无法保存状态：%s" % e,
+                                  "Cannot save state: %s" % e,
+                                  "状態を保存できません：%s" % e,
+                                  "Не удаётся сохранить состояние: %s" % e,
+                                  "نمی‌توان وضعیت را ذخیره کرد: %s" % e,
+                                  "無法儲存狀態：%s" % e))
         return result
     result["ok"] = bool(result["installed"]) and not result["failed"]
     result["rc"] = 0 if result["ok"] else 1
     if result["failed"]:
         result["errors"].append(
-            "partial success: installed %s, failed %s (not reported as "
-            "fully successful)" % (result["installed"], result["failed"]))
+            _L("部分成功：已安装 %s，失败 %s（不按全部成功汇报）"
+               % (result["installed"], result["failed"]),
+               "Partial success: installed %s, failed %s (not reported as "
+               "fully successful)" % (result["installed"], result["failed"]),
+               "部分的に成功しました：インストール済み %s、失敗 %s"
+               "（完全成功としては報告しません）"
+               % (result["installed"], result["failed"]),
+               "Частичный успех: установлено %s, не удалось %s "
+               "(не считается полным успехом)"
+               % (result["installed"], result["failed"]),
+               "موفقیت جزئی: نصب‌شده %s، ناموفق %s "
+               "(به‌عنوان موفقیت کامل گزارش نمی‌شود)"
+               % (result["installed"], result["failed"]),
+               "部分成功：已安裝 %s，失敗 %s（不按全部成功彙報）"
+               % (result["installed"], result["failed"])))
     return result
 
 
@@ -11745,10 +12584,33 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                     system_dirs=None):
     """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。"""
     try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        return str(e), 2
+    try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
         return str(e), 2
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError:
+        return (_L("无权限读取状态文件：%s\n请检查该文件权限，"
+                   "不要直接删除或覆盖入口文件。"
+                   % paths["state_path"],
+                   "Permission denied reading state file: %s\nCheck the file "
+                   "permissions; do not delete or overwrite launchers "
+                   "directly." % paths["state_path"],
+                   "状態ファイルを読み取る権限がありません：%s\nファイルの権限を"
+                   "確認してください。ランチャーを直接削除・上書きしないで"
+                   "ください。" % paths["state_path"],
+                   "Нет прав на чтение файла состояния: %s\nПроверьте права "
+                   "на файл; не удаляйте и не перезаписывайте лаунчеры "
+                   "напрямую." % paths["state_path"],
+                   "دسترسی خواندن پروندهٔ وضعیت ممکن نیست: %s\nدسترسی‌های "
+                   "پرونده را بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
+                   "بازنویسی نکنید。" % paths["state_path"],
+                   "無權限讀取狀態檔案：%s\n請檢查該檔案權限，"
+                   "不要直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
     lines = []
     if corrupt:
         return (_L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
@@ -11914,21 +12776,54 @@ def shortcut_change(old_name, new_name=None, scope="user",
     result = {"ok": False, "rc": 2, "installed": [], "removed": [],
               "errors": [], "scope": scope}
     try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
         result["errors"].append(str(e))
         return result
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
     if corrupt:
-        result["errors"].append("state file is corrupt: %s"
-                                % paths["state_path"])
+        result["errors"].append(_L("状态文件已损坏：%s" % paths["state_path"],
+                                  "State file is corrupt: %s"
+                                  % paths["state_path"],
+                                  "状態ファイルが破損しています：%s"
+                                  % paths["state_path"],
+                                  "Файл состояния повреждён: %s"
+                                  % paths["state_path"],
+                                  "پروندهٔ وضعیت خراب است: %s"
+                                  % paths["state_path"],
+                                  "狀態檔案已損壞：%s" % paths["state_path"]))
         return result
     if state is None:
-        result["errors"].append("no shortcuts installed (scope %s)" % scope)
+        result["errors"].append(_L("未安装任何入口（范围 %s）" % scope,
+                                  "No shortcuts installed (scope %s)" % scope,
+                                  "入口はインストールされていません（範囲 %s）"
+                                  % scope,
+                                  "Ярлыки не установлены (область %s)" % scope,
+                                  "هیچ میانبری نصب نشده است (محدودهٔ %s)"
+                                  % scope,
+                                  "未安裝任何入口（範圍 %s）" % scope))
         return result
     entries = dict(state.get("entries", {}))
     if old_name not in entries:
-        result["errors"].append("no installed entry named %r" % old_name)
+        result["errors"].append(_L("没有名为 %r 的已安装入口" % old_name,
+                                  "No installed entry named %r" % old_name,
+                                  "インストール済み入口 %r はありません"
+                                  % old_name,
+                                  "Нет установленного ярлыка с именем %r"
+                                  % old_name,
+                                  "ورودی نصب‌شده‌ای با نام %r وجود ندارد"
+                                  % old_name,
+                                  "沒有名為 %r 的已安裝入口" % old_name))
         return result
     inp = input_fn or input
 
@@ -11940,7 +12835,12 @@ def shortcut_change(old_name, new_name=None, scope="user",
 
     if new_name is None:
         if not interactive:
-            result["errors"].append("new name required (non-interactive)")
+            result["errors"].append(_L("须给出新名字（非交互模式）",
+                                      "New name required (non-interactive)",
+                                      "新しい名前が必要です（非対話モード）",
+                                      "Требуется новое имя (неинтерактивный режим)",
+                                      "نام جدید لازم است (حالت غیرتعاملی)",
+                                      "須給出新名字（非互動模式）"))
             return result
         new_name = _ask(_L("新名字 (空=取消): ", "New name (empty=cancel): ",
                           "新しい名前 (空=キャンセル): ",
@@ -11948,16 +12848,35 @@ def shortcut_change(old_name, new_name=None, scope="user",
                           "نام جدید (خالی=لغو): ",
                           "新名字 (空=取消): "))
         if not new_name:
-            result["errors"].append("cancelled by user")
+            result["errors"].append(_L("用户已取消",
+                                      "Cancelled by user",
+                                      "ユーザーによりキャンセルされました",
+                                      "Отменено пользователем",
+                                      "توسط کاربر لغو شد",
+                                      "使用者已取消"))
             result["rc"] = 1
             return result
     if new_name == old_name:
-        result["errors"].append("new name equals old name")
+        result["errors"].append(_L("新名字与旧名字相同",
+                                  "New name equals old name",
+                                  "新しい名前が古い名前と同じです",
+                                  "Новое имя совпадает со старым",
+                                  "نام جدید با نام قدیمی برابر است",
+                                  "新名字與舊名字相同"))
         return result
     if new_name in entries:
-        result["errors"].append("name %r is already installed" % new_name)
+        result["errors"].append(_L("名字 %r 已安装" % new_name,
+                                  "Name %r is already installed" % new_name,
+                                  "名前 %r は既にインストールされています"
+                                  % new_name,
+                                  "Имя %r уже установлено" % new_name,
+                                  "نام %r از قبل نصب شده است" % new_name,
+                                  "名字 %r 已安裝" % new_name))
         return result
-    own_paths = [e.get("path", "") for e in entries.values()]
+    own_paths = [e.get("path", "") for e in entries.values()
+                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 and _shortcut_entry_intact(e.get("path", ""), e,
+                                            state["instance_id"])]
     findings = shortcut_check_name(new_name, paths["bin_dir"],
                                    own_entry_paths=own_paths,
                                    path_dirs=path_dirs,
@@ -11971,37 +12890,69 @@ def shortcut_change(old_name, new_name=None, scope="user",
             and not accept_ac_risk:
         if interactive:
             print(_L("已知未来风险：%s\n是否明确接受并继续？ [y/N] "
-                     % SHORTCUT_AC_RISK,
+                     % SHORTCUT_AC_RISK[0],
                      "Known future risk: %s\nAccept explicitly and continue? "
-                     "[y/N] " % SHORTCUT_AC_RISK,
+                     "[y/N] " % SHORTCUT_AC_RISK[1],
                      "既知の将来リスク：%s\n明確に受け入れて続行しますか？ [y/N] "
-                     % SHORTCUT_AC_RISK,
+                     % SHORTCUT_AC_RISK[2],
                      "Известный будущий риск: %s\nПринять явно и продолжить? "
-                     "[y/N] " % SHORTCUT_AC_RISK,
+                     "[y/N] " % SHORTCUT_AC_RISK[3],
                      "ریسک آیندهٔ شناخته‌شده: %s\nبه‌صراحت می‌پذیرید و ادامه "
-                     "می‌دهید؟ [y/N] " % SHORTCUT_AC_RISK,
+                     "می‌دهید؟ [y/N] " % SHORTCUT_AC_RISK[4],
                      "已知未來風險：%s\n是否明確接受並繼續？ [y/N] "
-                     % SHORTCUT_AC_RISK))
+                     % SHORTCUT_AC_RISK[5]))
             ans = _ask("")
             if ans is None or ans.lower() not in ("y", "yes"):
-                result["errors"].append("cancelled by user")
+                result["errors"].append(_L("用户已取消",
+                                          "Cancelled by user",
+                                          "ユーザーによりキャンセルされました",
+                                          "Отменено пользователем",
+                                          "توسط کاربر لغو شد",
+                                          "使用者已取消"))
                 result["rc"] = 1
                 return result
         else:
             result["errors"].append(
-                "new name 'ac' carries a known future risk; use "
-                "--accept-ac-risk to confirm explicitly")
+                _L("新名字 'ac' 有已知未来风险；请用 --accept-ac-risk 明确确认",
+                   "New name 'ac' carries a known future risk; use "
+                   "--accept-ac-risk to confirm explicitly",
+                   "新しい名前 'ac' には既知の将来リスクがあります。"
+                   "--accept-ac-risk で明示的に確認してください",
+                   "Новое имя 'ac' несёт известный будущий риск; "
+                   "подтвердите явно через --accept-ac-risk",
+                   "نام جدید 'ac' ریسک آیندهٔ شناخته‌شده‌ای دارد؛ با "
+                   "--accept-ac-risk به‌صراحت تأیید کنید",
+                   "新名字 'ac' 有已知未來風險；請用 --accept-ac-risk 明確確認"))
             return result
+    # 状态信任复核: 受管理脚本路径须与当前目录一致 (缺键也不许抛 KeyError),
+    # 解释器须重新解析验证 (状态里写的解释器不可直接信任)
+    _ms = state.get("managed_script")
+    if _ms != paths["managed_script"]:
+        result["errors"].append(
+            _L("状态文件受管理脚本路径与当前目录不一致，拒绝改名",
+               "State file managed script path does not match the current "
+               "directory; refusing to rename",
+               "状態ファイルの管理スクリプトのパスが現在のディレクトリと一致"
+               "しません。改名しません",
+               "Путь управляемого скрипта в файле состояния не совпадает с "
+               "текущим каталогом; переименование запрещено",
+               "مسیر اسکریپت مدیریت‌شده در پروندهٔ وضعیت با پوشهٔ فعلی "
+               "مطابقت ندارد؛ تغییر نام انجام نمی‌شود",
+               "狀態檔案受管理指令碼路徑與目前目錄不一致，拒絕改名"))
+        return result
+    try:
+        interp, _v = _shortcut_resolve_interpreter(
+            state.get("interpreter") or None)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
     # 建新入口并最小验证
-    interp = state.get("interpreter", "")
-    if not interp:
-        try:
-            interp, _v = _shortcut_resolve_interpreter()
-        except ShortcutError as e:
-            result["errors"].append(str(e))
-            return result
-    content = shortcut_launcher_content(interp, state["managed_script"],
-                                        state["instance_id"])
+    try:
+        content = shortcut_launcher_content(interp, _ms,
+                                            state["instance_id"])
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
     new_path = os.path.join(paths["bin_dir"], new_name)
     try:
         _shortcut_publish_launcher(paths["bin_dir"], new_name,
@@ -12015,7 +12966,12 @@ def shortcut_change(old_name, new_name=None, scope="user",
         except OSError:
             pass
         result["errors"].append(
-            "new launcher failed minimal startup check (--help)")
+            _L("新启动器未通过最小启动检查 (--help)",
+               "New launcher failed minimal startup check (--help)",
+               "新しいランチャーは最小起動検査 (--help) に合格しませんでした",
+               "Новый лаунчер не прошёл минимальную проверку запуска (--help)",
+               "راه‌انداز جدید بررسی حداقلی راه‌اندازی (--help) را نگذراند",
+               "新啟動器未通過最小啟動檢查 (--help)"))
         result["rc"] = 1
         return result
     entries[new_name] = {"path": new_path,
@@ -12025,41 +12981,84 @@ def shortcut_change(old_name, new_name=None, scope="user",
     # 记录过渡状态, 再删旧入口 (删前重核归属)
     trans = dict(state)
     trans["entries"] = entries
-    trans["pending_rename"] = {"from": old_name, "to": new_name}
     trans["updated_at"] = datetime.now(timezone.utc).isoformat()
     try:
         _shortcut_save_state(paths, trans)
     except OSError as e:
-        result["errors"].append("cannot save transitional state: %s" % e)
+        result["errors"].append(_L("无法保存过渡状态：%s" % e,
+                                  "Cannot save transitional state: %s" % e,
+                                  "遷移中の状態を保存できません：%s" % e,
+                                  "Не удаётся сохранить переходное состояние: %s"
+                                  % e,
+                                  "نمی‌توان وضعیت گذار را ذخیره کرد: %s" % e,
+                                  "無法儲存過渡狀態：%s" % e))
         result["rc"] = 1
         return result
     old_path = entries[old_name]["path"]
     old_entry = entries[old_name]
+    if not _shortcut_path_in_bin_dir(old_path, paths["bin_dir"]):
+        result["errors"].append(
+            _L("旧入口路径 %s 不在启动器目录内，拒绝删除" % old_path,
+               "Old entry path %s is outside the launcher directory; "
+               "refusing to delete" % old_path,
+               "古い入口のパス %s はランチャーディレクトリの外にあります。"
+               "削除しません" % old_path,
+               "Путь старой записи %s вне каталога лаунчеров; удаление "
+               "запрещено" % old_path,
+               "مسیر ورودی قدیمی %s خارج از پوشهٔ راه‌اندازهاست؛ حذف نمی‌شود"
+               % old_path,
+               "舊入口路徑 %s 不在啟動器目錄內，拒絕刪除" % old_path))
+        result["installed"] = [new_name]
+        result["rc"] = 1
+        return result
     if not _shortcut_entry_intact(old_path, old_entry,
                                   state["instance_id"]):
         result["errors"].append(
-            "old launcher %s was modified by someone else; keeping both "
-            "entries, handle the old one manually" % old_path)
+            _L("旧启动器 %s 被他人修改；保留两个入口，请人工处理旧入口"
+               % old_path,
+               "Old launcher %s was modified by someone else; keeping both "
+               "entries, handle the old one manually" % old_path,
+               "古いランチャー %s は他人に変更されました。両方の入口を保持"
+               "します。古い方を手動で対処してください" % old_path,
+               "Старый лаунчер %s был изменён кем-то другим; обе записи "
+               "сохранены, разберитесь со старой вручную" % old_path,
+               "راه‌انداز قدیمی %s توسط دیگری تغییر کرده است؛ هر دو ورودی "
+               "حفظ می‌شوند، ورودی قدیمی را دستی رسیدگی کنید" % old_path,
+               "舊啟動器 %s 被他人修改；保留兩個入口，請人工處理舊入口"
+               % old_path))
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
     try:
         os.unlink(old_path)
     except OSError as e:
-        result["errors"].append("cannot remove old launcher %s: %s"
-                                % (old_path, e))
+        result["errors"].append(_L("无法删除旧启动器 %s：%s" % (old_path, e),
+                                  "Cannot remove old launcher %s: %s"
+                                  % (old_path, e),
+                                  "古いランチャー %s を削除できません：%s"
+                                  % (old_path, e),
+                                  "Не удаётся удалить старый лаунчер %s: %s"
+                                  % (old_path, e),
+                                  "نمی‌توان راه‌انداز قدیمی %s را حذف کرد: %s"
+                                  % (old_path, e),
+                                  "無法刪除舊啟動器 %s：%s" % (old_path, e)))
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
     del entries[old_name]
     final = dict(state)
     final["entries"] = entries
-    final.pop("pending_rename", None)
     final["updated_at"] = datetime.now(timezone.utc).isoformat()
     try:
         _shortcut_save_state(paths, final)
     except OSError as e:
-        result["errors"].append("cannot save final state: %s" % e)
+        result["errors"].append(_L("无法保存最终状态：%s" % e,
+                                  "Cannot save final state: %s" % e,
+                                  "最終状態を保存できません：%s" % e,
+                                  "Не удаётся сохранить итоговое состояние: %s"
+                                  % e,
+                                  "نمی‌توان وضعیت نهایی را ذخیره کرد: %s" % e,
+                                  "無法儲存最終狀態：%s" % e))
         result["installed"] = [new_name]
         result["removed"] = [old_name]
         result["rc"] = 1
@@ -12077,19 +13076,45 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
     result = {"ok": False, "rc": 2, "removed": [], "kept": [],
               "errors": [], "scope": scope}
     try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
         result["errors"].append(str(e))
         return result
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
     if corrupt:
-        result["errors"].append("state file is corrupt: %s (refusing to "
-                                "delete anything)" % paths["state_path"])
+        result["errors"].append(
+            _L("状态文件已损坏：%s（拒绝删除任何内容）" % paths["state_path"],
+               "State file is corrupt: %s (refusing to delete anything)"
+               % paths["state_path"],
+               "状態ファイルが破損しています：%s（何も削除しません）"
+               % paths["state_path"],
+               "Файл состояния повреждён: %s (ничего не удаляется)"
+               % paths["state_path"],
+               "پروندهٔ وضعیت خراب است: %s (چیزی حذف نمی‌شود)"
+               % paths["state_path"],
+               "狀態檔案已損壞：%s（拒絕刪除任何內容）" % paths["state_path"]))
         return result
     if state is None:
         result["ok"] = True
         result["rc"] = 0
-        result["errors"].append("no shortcuts installed (scope %s)" % scope)
+        result["errors"].append(_L("未安装任何入口（范围 %s）" % scope,
+                                  "No shortcuts installed (scope %s)" % scope,
+                                  "入口はインストールされていません（範囲 %s）"
+                                  % scope,
+                                  "Ярлыки не установлены (область %s)" % scope,
+                                  "هیچ میانبری نصب نشده است (محدودهٔ %s)"
+                                  % scope,
+                                  "未安裝任何入口（範圍 %s）" % scope))
         return result
     if interactive:
         inp = input_fn or input
@@ -12109,12 +13134,38 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
         except (EOFError, KeyboardInterrupt):
             ans = ""
         if ans not in ("y", "yes"):
-            result["errors"].append("cancelled by user")
+            result["errors"].append(_L("用户已取消",
+                                      "Cancelled by user",
+                                      "ユーザーによりキャンセルされました",
+                                      "Отменено пользователем",
+                                      "توسط کاربر لغو شد",
+                                      "使用者已取消"))
             result["rc"] = 1
             return result
     entries = dict(state.get("entries", {}))
     for nm, entry in sorted(entries.items()):
         p = entry.get("path", "")
+        if not _shortcut_path_in_bin_dir(p, paths["bin_dir"]):
+            if os.path.lexists(p):
+                result["kept"].append(nm)
+                result["errors"].append(
+                    _L("%s（%s）不在启动器目录内，已保留，请人工处理"
+                       % (nm, p),
+                       "%s (%s) is outside the launcher directory; kept, "
+                       "handle manually" % (nm, p),
+                       "%s（%s）はランチャーディレクトリの外にあります。"
+                       "保持します。手動で対処してください" % (nm, p),
+                       "%s (%s) вне каталога лаунчеров; сохранена, "
+                       "разберитесь вручную" % (nm, p),
+                       "%s (%s) خارج از پوشهٔ راه‌اندازهاست؛ حفظ شد، دستی "
+                       "رسیدگی کنید" % (nm, p),
+                       "%s（%s）不在啟動器目錄內，已保留，請人工處理"
+                       % (nm, p)))
+            else:
+                # 路径在目录外且文件已失: 只清状态记录, 不碰任何文件
+                del entries[nm]
+                result["removed"].append(nm)
+            continue
         if _shortcut_entry_intact(p, entry, state["instance_id"]):
             try:
                 os.unlink(p)
@@ -12122,22 +13173,41 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                 del entries[nm]
             except OSError as e:
                 result["kept"].append(nm)
-                result["errors"].append("cannot remove %s: %s" % (p, e))
+                result["errors"].append(_L("无法删除 %s：%s" % (p, e),
+                                          "Cannot remove %s: %s" % (p, e),
+                                          "%s を削除できません：%s" % (p, e),
+                                          "Не удаётся удалить %s: %s" % (p, e),
+                                          "نمی‌توان %s را حذف کرد: %s" % (p, e),
+                                          "無法刪除 %s：%s" % (p, e)))
+        elif not os.path.lexists(p):
+            # 文件已失: 允许清理状态记录 (不再死锁); 存在但非己所有才保留
+            del entries[nm]
+            result["removed"].append(nm)
         else:
             result["kept"].append(nm)
             result["errors"].append(
-                "%s (%s) is not verifiably ours; kept, handle manually"
-                % (nm, p))
+                _L("%s（%s）无法确认为我方所有，已保留，请人工处理"
+                   % (nm, p),
+                   "%s (%s) is not verifiably ours; kept, handle manually"
+                   % (nm, p),
+                   "%s（%s）は当方のものと確認できません。保持します。"
+                   "手動で対処してください" % (nm, p),
+                   "%s (%s) не подтверждена как наша; сохранена, "
+                   "разберитесь вручную" % (nm, p),
+                   "%s (%s) به‌عنوان متعلق به ما تأیید نشد؛ حفظ شد، دستی "
+                   "رسیدگی کنید" % (nm, p),
+                   "%s（%s）無法確認為我方所有，已保留，請人工處理"
+                   % (nm, p)))
     if not entries:
-        # 入口清零: 再删受管理副本 (须与状态记录的 sha 一致) 与状态文件
-        ms = state.get("managed_script", "")
-        if ms and os.path.isfile(ms):
-            try:
-                if _shortcut_sha256_file(ms) == \
-                        state.get("managed_sha256"):
-                    os.unlink(ms)
-            except OSError:
-                pass
+        # 入口清零: 再删受管理副本 (只删当前目录下的副本, 且 sha 须与状态一致,
+        # O_NOFOLLOW 防符号链接; 绝不信任状态里写的 managed_script 路径) 与状态文件
+        ms = paths["managed_script"]
+        try:
+            if _shortcut_sha256_file_nofollow(ms) == \
+                    state.get("managed_sha256"):
+                os.unlink(ms)
+        except OSError:
+            pass
         try:
             os.unlink(paths["state_path"])
         except OSError:
@@ -12149,7 +13219,12 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
         try:
             _shortcut_save_state(paths, new_state)
         except OSError as e:
-            result["errors"].append("cannot save state: %s" % e)
+            result["errors"].append(_L("无法保存状态：%s" % e,
+                                      "Cannot save state: %s" % e,
+                                      "状態を保存できません：%s" % e,
+                                      "Не удаётся сохранить состояние: %s" % e,
+                                      "نمی‌توان وضعیت را ذخیره کرد: %s" % e,
+                                      "無法儲存狀態：%s" % e))
             result["rc"] = 1
             return result
     result["ok"] = not result["kept"]
@@ -12157,8 +13232,50 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
     return result
 
 
+def _shortcut_menu_scope():
+    """菜单 [2]/[3]/[4] 的作用域自动检测: 只装了一侧就用那侧; 两侧都装
+    则询问; 都没有默认 user。读状态失败的一侧按未安装处理。"""
+    installed = {}
+    for sc in ("user", "system"):
+        try:
+            p = shortcut_paths(sc)
+            st, _corrupt = _shortcut_load_state(p)
+        except Exception:
+            continue
+        if st and st.get("entries"):
+            installed[sc] = True
+    if installed.get("user") and installed.get("system"):
+        try:
+            ans = input(_L("用户级与系统级均已安装入口，使用哪一侧？"
+                           "[1] 用户级  [2] 系统级 (默认 1): ",
+                           "Shortcuts are installed at both user and system "
+                           "level. Which scope? [1] User-level  "
+                           "[2] System-wide (default 1): ",
+                           "ユーザー単位とシステム全体の両方に入口がインストール"
+                           "されています。どちらを使いますか？[1] ユーザー単位  "
+                           "[2] システム全体 (既定 1): ",
+                           "Ярлыки установлены и на уровне пользователя, и "
+                           "системно. Какую область? [1] Пользователь  "
+                           "[2] Системная (по умолчанию 1): ",
+                           "میانبرها هم در سطح کاربر و هم سیستمی نصب شده‌اند. "
+                           "کدام محدوده؟ [1] سطح کاربر  [2] سیستمی (پیش‌فرض 1): ",
+                           "使用者級與系統級均已安裝入口，使用哪一側？"
+                           "[1] 使用者級  [2] 系統級 (預設 1): ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            return "user"
+        return "system" if ans == "2" else "user"
+    if installed.get("system"):
+        return "system"
+    return "user"
+
+
 def _shortcut_menu():
     """交互菜单 13: 管理命令入口 (安装/状态/改名/移除, 与 CLI 共用后端)。"""
+    try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        print(str(e))
+        return
     while True:
         print()
         print("  " + _c(C.cyan, _L("管理命令入口", "Manage command shortcuts",
@@ -12191,7 +13308,7 @@ def _shortcut_menu():
         if sel in ("0", "b", "q"):
             return
         if sel == "2":
-            text, _rc = shortcut_status()
+            text, _rc = shortcut_status(scope=_shortcut_menu_scope())
             print(text)
             continue
         if sel == "1":
@@ -12221,7 +13338,8 @@ def _shortcut_menu():
             _shortcut_report_install(res)
             continue
         if sel == "3":
-            text, _rc = shortcut_status()
+            scope = _shortcut_menu_scope()
+            text, _rc = shortcut_status(scope=scope)
             print(text)
             try:
                 old = input(_L("要改哪一个入口 (输入名字，空=取消): ",
@@ -12234,7 +13352,7 @@ def _shortcut_menu():
                 continue
             if not old:
                 continue
-            res = shortcut_change(old, None, interactive=True)
+            res = shortcut_change(old, None, scope=scope, interactive=True)
             if res.get("ok"):
                 print(_L("已改名：%s -> %s，旧入口已删除。"
                          % (old, res["installed"][0]),
@@ -12253,11 +13371,13 @@ def _shortcut_menu():
                     print("  " + e)
             continue
         if sel == "4":
-            res = shortcut_remove(interactive=True)
+            res = shortcut_remove(scope=_shortcut_menu_scope(),
+                                  interactive=True)
             if res.get("ok"):
-                print(_L("已移除：%s。提示：执行 hash -r (或 rehash) 或重开 "
-                         "shell 以刷新命令缓存。"
-                         % ", ".join(res["removed"]),
+                if res.get("removed"):
+                    print(_L("已移除：%s。提示：执行 hash -r (或 rehash) 或重开 "
+                             "shell 以刷新命令缓存。"
+                             % ", ".join(res["removed"]),
                          "Removed: %s. Tip: run hash -r (or rehash) or "
                          "reopen the shell to refresh the command cache."
                          % ", ".join(res["removed"]),
@@ -12272,6 +13392,13 @@ def _shortcut_menu():
                          "به‌روز شود。" % ", ".join(res["removed"]),
                          "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
                          "shell 以刷新命令快取。" % ", ".join(res["removed"])))
+                else:
+                    print(_L("未安装任何入口。",
+                             "No shortcuts installed.",
+                             "入口はインストールされていません。",
+                             "Ярлыки не установлены.",
+                             "هیچ میانبری نصب نشده است.",
+                             "未安裝任何入口。"))
             else:
                 for e in res.get("errors", []):
                     print("  " + e)
@@ -12392,6 +13519,11 @@ def _shortcut_report_install(res):
 
 def _cmd_shortcut(ns):
     """CLI --shortcut 分发, 返回进程退出码。"""
+    try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     scope = "system" if getattr(ns, "system", False) else "user"
     interactive = sys.stdin.isatty()
     action = ns.shortcut
@@ -12401,7 +13533,7 @@ def _cmd_shortcut(ns):
         return rc
     if action == "install":
         names = None
-        if getattr(ns, "names", None):
+        if getattr(ns, "names", None) is not None:
             names = [n.strip() for n in ns.names.split(",") if n.strip()]
         res = shortcut_install(names=names, scope=scope,
                                accept_ac_risk=getattr(ns, "accept_ac_risk",
@@ -12526,6 +13658,9 @@ def _print_cli_help():
                   管理命令入口：安装 / 查看状态 / 改名 / 移除
   --system        配合 --shortcut 使用系统级位置 (默认用户级)
   --accept-ac-risk 接受 ac 已知命名风险 (非交互安装 ac 时必填)
+  --names 名称列表  配合 --shortcut install：指定安装的入口名（逗号分隔）
+  --old-name 旧名  配合 --shortcut change：待改名的入口
+  --new-name 新名  配合 --shortcut change：改名后的入口
   --zh            使用简体中文输出 (默认)
   --zh-tw         使用繁體中文输出
   --en            Use English output
@@ -12542,6 +13677,7 @@ def _print_cli_help():
   python3 acheck.py --proxy 127.0.0.1:1080              # 代理诊断
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理诊断 JSON 输出
   python3 acheck.py --speed                             # 多地区测速
+  python3 acheck.py --shortcut install --names acheck,ac  # 安装命令入口
 """
     help_en = f"""Usage: python3 acheck.py [OPTIONS] [IP_ADDRESS]
 
@@ -12569,6 +13705,9 @@ Options:
                   Manage command shortcuts: install / status / change / remove
   --system        With --shortcut: use system-wide locations (default is user-level)
   --accept-ac-risk Accept the known naming risk of ac (required for non-interactive ac install)
+  --names NAMES     With --shortcut install: shortcut names to install (comma-separated)
+  --old-name NAME   With --shortcut change: the shortcut to rename
+  --new-name NAME   With --shortcut change: the new name
   --zh            Use Simplified Chinese output (default)
   --zh-tw         Use Traditional Chinese output
   --en            Use English output
@@ -12585,6 +13724,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # Proxy diagnostics
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Proxy diagnostics JSON
   python3 acheck.py --speed                             # Multi-region speed test
+  python3 acheck.py --shortcut install --names acheck,ac  # Install command shortcuts
 """
 
     help_zhtw = f"""用法: python3 acheck.py [選項] [IP 位址]
@@ -12613,6 +13753,9 @@ Examples:
                   管理命令入口：安裝 / 查看狀態 / 改名 / 移除
   --system        配合 --shortcut 使用系統級位置 (預設使用者級)
   --accept-ac-risk 接受 ac 已知命名風險 (非互動安裝 ac 時必填)
+  --names 名稱清單  配合 --shortcut install：指定安裝的入口名（逗號分隔）
+  --old-name 舊名  配合 --shortcut change：待改名的入口
+  --new-name 新名  配合 --shortcut change：改名後的入口
   --zh            使用簡體中文輸出 (預設)
   --zh-tw         使用繁體中文輸出
   --en            Use English output
@@ -12629,6 +13772,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # 代理診斷
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # 代理診斷 JSON 輸出
   python3 acheck.py --speed                             # 多地區測速
+  python3 acheck.py --shortcut install --names acheck,ac  # 安裝命令入口
 """
     help_ja = f"""使い方: python3 acheck.py [オプション] [IPアドレス]
 
@@ -12656,6 +13800,9 @@ Examples:
                   コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
   --system        --shortcut と併用：システム全体の場所を使用 (既定はユーザー単位)
   --accept-ac-risk ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須)
+  --names 名前一覧  --shortcut install と併用：インストールする入口名（カンマ区切り）
+  --old-name 旧名  --shortcut change と併用：改名する入口
+  --new-name 新名  --shortcut change と併用：改名後の入口
   --zh            簡体字中国語で出力 (デフォルト)
   --zh-tw         繁体字中国語で出力
   --en            Use English output
@@ -12672,6 +13819,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # プロキシ診断
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # プロキシ診断 JSON
   python3 acheck.py --speed                             # 多地域スピードテスト
+  python3 acheck.py --shortcut install --names acheck,ac  # コマンド入口をインストール
 """
     help_ru = f"""Использование: python3 acheck.py [ОПЦИИ] [IP_АДРЕС]
 
@@ -12699,6 +13847,9 @@ Examples:
                   Управление ярлыками: установка / состояние / переименование / удаление
   --system        С --shortcut: системные каталоги (по умолчанию — уровень пользователя)
   --accept-ac-risk Принять известный риск имени ac (обязательно для неинтерактивной установки ac)
+  --names ИМЕНА     С --shortcut install: имена ярлыков через запятую
+  --old-name СТАРОЕ С --shortcut change: переименовываемый ярлык
+  --new-name НОВОЕ  С --shortcut change: новое имя
   --zh            Вывод на упрощённом китайском (по умолчанию)
   --zh-tw         Вывод на традиционном китайском
   --en            Use English output
@@ -12715,6 +13866,7 @@ Examples:
   python3 acheck.py --proxy 127.0.0.1:1080              # Диагностика прокси
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # Диагностика прокси JSON
   python3 acheck.py --speed                             # Мультирегиональный тест скорости
+  python3 acheck.py --shortcut install --names acheck,ac  # Установка ярлыков команд
 """
     help_fa = f"""کاربرد: python3 acheck.py [گزینه‌ها] [نشانی IP]
 
@@ -12743,6 +13895,9 @@ Examples:
                   مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
   --system        همراه --shortcut: استفاده از مسیرهای سیستمی (پیش‌فرض سطح کاربر)
   --accept-ac-risk پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است)
+  --names نام‌ها     همراه --shortcut install: نام میانبرها (جدا شده با کاما)
+  --old-name نام قدیمی همراه --shortcut change: میانبری که تغییر نام می‌دهد
+  --new-name نام جدید همراه --shortcut change: نام جدید
   --zh            خروجی به زبان چینی ساده (پیش‌فرض)
   --zh-tw         خروجی به زبان چینی سنتی
   --en            Use English output
@@ -12758,6 +13913,7 @@ Examples:
   python3 acheck.py --active --json        # خروجی JSON فعال
   python3 acheck.py --proxy 127.0.0.1:1080              # عیب‌یابی پروکسی
   python3 acheck.py --proxy 127.0.0.1:1080 --json       # عیب‌یابی پروکسی JSON
+  python3 acheck.py --speed                             # تست سرعت چندمنطقه‌ای
 """
     _helps = {"zh": help_zh, "zh-TW": help_zhtw, "en": help_en,
               "ja": help_ja, "ru": help_ru, "fa": help_fa}
@@ -12846,6 +14002,12 @@ def main():
         else:
             print("[Error] " + T("ipv4_ipv6_conflict"), file=sys.stderr)
         sys.exit(2)
+    if ns.no_speed and ns.with_speed:
+        if ns.json:
+            print(json.dumps({"error": "--no-speed and --with-speed conflict"}, ensure_ascii=False))
+        else:
+            print("[Error] " + T("no_speed_with_speed_conflict"), file=sys.stderr)
+        sys.exit(2)
     _FORCE_STACK = "4" if ns.ipv4_only else ("6" if ns.ipv6_only else None)
 
     if ns.help:
@@ -12929,8 +14091,20 @@ def main():
             sys.exit(2)
         if ns.ip and not ns.json:
             print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
-        _diag = run_proxy_diag(_ph, _pt, username=ns.proxy_user,
-                               password=ns.proxy_pass, json_mode=ns.json)
+        # M-08(a)：单边账密不得静默降级为无认证；交互追问、非交互报参数错误。
+        try:
+            _pu, _ppw = _resolve_proxy_auth(ns.proxy_user, ns.proxy_pass)
+        except ValueError:
+            if ns.json:
+                print(json.dumps({"error": "proxy auth needs both "
+                                           "--proxy-user and --proxy-pass"},
+                                 ensure_ascii=False))
+            else:
+                print("[Error] " + T("proxy_auth_one_sided"),
+                      file=sys.stderr)
+            sys.exit(2)
+        _diag = run_proxy_diag(_ph, _pt, username=_pu,
+                               password=_ppw, json_mode=ns.json)
         if not (_diag.get("socks5") or {}).get("ok") \
                 or not _diag.get("egress_ip"):
             sys.exit(1)
@@ -12966,7 +14140,8 @@ def main():
         res = run_passive6(ip) if ver == 6 else run_passive(ip)
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
-        print(json.dumps(_res_json, indent=2, default=str, ensure_ascii=False))
+        # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
+        print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
         return
 
     if ns.ip is not None:
@@ -13093,7 +14268,7 @@ def main():
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
-                    _u = input(T("prompt_proxy_user"))
+                    _u = input(T("prompt_proxy_user")).strip()
                     if _u:
                         puser = _u
                         import getpass
