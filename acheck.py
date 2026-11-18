@@ -2189,13 +2189,29 @@ def _has_ipv6_egress():
         return False
 
 
+def _has_route_to(addr, family):
+    """到目标地址本身有无本地路由：UDP connect 只做路由查询，不发包。
+    S2-N1：单目标 egress 检查（如只测 Cloudflare）不得否决其他全局
+    地址——每个全局 DNS 按自身地址判定；无到该目标的路由时才剔除。"""
+    try:
+        _s = socket.socket(family, socket.SOCK_DGRAM)
+        try:
+            _s.connect((addr, 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
 def _ns_addr_usable(s):
     """系统 nameserver 是否可用（H-03）：
     拒绝 IPv6 site-local（fec0::/10，哨兵地址不可路由）；
     拒绝无有效 scope_id 的链路本地 IPv6（fe80::/10 裸地址无出口接口）；
     单栈环境下剔除无对应协议栈出口的异族全局地址——本地/ULA/环回
-    保留（链路上可达，无需全局出口）。IPv4 私网/环回同理保留。
-    解析失败返 False。"""
+    保留（链路上可达，无需全局出口）。IPv6 全局地址按目标本身测路由
+    （S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 仍用
+    _has_ipv4_egress 门。解析失败返 False。"""
     try:
         ip = ipaddress.ip_address(s)
     except ValueError:
@@ -2205,7 +2221,8 @@ def _ns_addr_usable(s):
             return False
         if ip.is_link_local and not getattr(ip, "scope_id", None):
             return False
-        if ip.is_global and not _has_ipv6_egress():
+        if ip.is_global and not _has_route_to(
+                str(ip).split("%", 1)[0], socket.AF_INET6):
             return False
     else:
         if ip.is_global and not _has_ipv4_egress():
@@ -2371,7 +2388,9 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         except Exception:
             if _srv_ip is not None and _srv_ip.is_link_local:
                 return (None, []) if return_cnames else None
-            _dest = (str(_srv_ip), 53)
+            # H-03 残留：str(ipaddress) 保留 %scope（如 ::1%lo），须在
+            # 此显式剥离，否则 sendto 目标仍带 %lo。
+            _dest = (str(_srv_ip).split("%", 1)[0], 53)
             _dest_scope = 0
             _srv_scope = None
     try:
@@ -7070,7 +7089,11 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         _gz = {"obj": (zlib.decompressobj(16 + zlib.MAX_WBITS)
                        if _decomp_kind == "gzip" else None),
                "kind": _decomp_kind, "member_eof": False,
-               "prefix": b"", "decided": _decomp_kind != "deflate"}
+               "prefix": b"", "decided": _decomp_kind != "deflate",
+               # S1-N1：累计全部压缩输入（供回退重喂）＋决策时输出快照
+               # ＋当前 wbits／是否已重试过。
+               "all_in": bytearray(), "snap": None, "retried": False,
+               "wb": None}
         _st = {"out": [], "n": 0, "trunc": False, "eof": False}
 
         def _deflate_wbits(_b):
@@ -7084,7 +7107,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         def _feed(_buf):
             # 喂一串压缩字节到当前解压对象；gzip 成员结束且有 unused_data 时
             # 换新对象继续喂（多成员直至空串或采样上限）；输出截到采样上限。
-            # 解压异常向上传播，调用方记 trunc（deflate 首喂另有一次重试）。
+            # 解压异常向上传播，调用方记 trunc（deflate 另有一次回退重试）。
             while _buf and _st["n"] < _STREAM_CAP:
                 _dec = _gz["obj"].decompress(_buf, _STREAM_CAP - _st["n"])
                 if _dec:
@@ -7104,10 +7127,27 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                     return
                 _buf = _gz["obj"].unconsumed_tail
 
+        def _deflate_retry():
+            # deflate 回退重嗅探（S1-N1）：把输出恢复到解码器创建时的
+            # 快照，换另一 wbits 重建解码器，从头重喂至今收到的全部压
+            # 缩字节——分块边界不得决定解码结果。仅重试一次。
+            _n0, _o0 = _gz["snap"]
+            _st["out"] = _st["out"][:_o0]
+            _st["n"] = _n0
+            _gz["member_eof"] = False
+            _gz["wb"] = (-zlib.MAX_WBITS if _gz["wb"] == zlib.MAX_WBITS
+                         else zlib.MAX_WBITS)
+            _gz["obj"] = zlib.decompressobj(_gz["wb"])
+            _gz["retried"] = True
+            _feed(bytes(_gz["all_in"]))
+
         def _push(_data):
             # 喂一块传输字节：解压（gzip/deflate）或直存，输出截到采样上限。
             if not _data or _st["n"] >= _STREAM_CAP:
                 return
+            if _gz["kind"] == "deflate":
+                # S1-N1：累计全部压缩输入，供后续喂入异常时回退重喂。
+                _gz["all_in"] += _data
             if _gz["obj"] is None and _gz["kind"] is None:
                 _take = _data[:_STREAM_CAP - _st["n"]]
                 _st["out"].append(_take)
@@ -7127,28 +7167,31 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                 _buf = _gz["prefix"]
                 _gz["prefix"] = b""
                 _gz["decided"] = True
-                _wb = _deflate_wbits(_buf)
-                _gz["obj"] = zlib.decompressobj(_wb)
-                _n0, _o0 = _st["n"], len(_st["out"])
+                _gz["wb"] = _deflate_wbits(_buf)
+                _gz["obj"] = zlib.decompressobj(_gz["wb"])
+                _gz["snap"] = (_st["n"], len(_st["out"]))
                 try:
                     _feed(_buf)
                 except Exception:
-                    # 嗅探误判：换另一 wbits，用同一前缀重试一次
-                    _st["out"] = _st["out"][:_o0]
-                    _st["n"] = _n0
-                    _gz["obj"] = zlib.decompressobj(
-                        -zlib.MAX_WBITS if _wb == zlib.MAX_WBITS
-                        else zlib.MAX_WBITS)
-                    _gz["member_eof"] = False
+                    # 嗅探误判：换另一 wbits，从头重喂已收全部字节（此时
+                    # 即前缀），重试一次
                     try:
-                        _feed(_buf)
+                        _deflate_retry()
                     except Exception:
                         _st["trunc"] = True
                 return
             try:
                 _feed(_data)
             except Exception:
-                _st["trunc"] = True
+                # S1-N1：后续喂入异常也要能回退／重嗅探（首块恰为 zlib
+                # 头、后续块才暴露 raw 时，旧码只记 trunc、无 raw 回退）
+                if _gz["kind"] == "deflate" and not _gz["retried"]:
+                    try:
+                        _deflate_retry()
+                    except Exception:
+                        _st["trunc"] = True
+                else:
+                    _st["trunc"] = True
                 return
 
         def _partial():
@@ -7204,7 +7247,11 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                                             cap=_STREAM_COMP_CAP,
                                             total_len=_comp_read))
         else:
-            _complete = _resp_complete(_raw, getattr(r, "headers", None))
+            # H-02：deflate 解压器从未创建 = 首字节不完整（未满 2 字节
+            # 即 EOF），无从确认正文完整，不得判 complete；明文分支沿
+            # 用旧语义（干净 EOF 或达 cap 即完整）。
+            _complete = (False if _gz["kind"] == "deflate"
+                         else _resp_complete(_raw, getattr(r, "headers", None)))
         return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
@@ -7322,10 +7369,22 @@ def _unlock_label(v):
 
 
 def _tiktok_denied(body):
-    """TikTok "Access Denied" 只认短错误页（R4-H-01）：正常大型 SSR JSON
-    的用户内容字段也可能含该短语，不得误判。短页 < 16 KiB 才算错误页。"""
+    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：
+    (1) <title>Access Denied</title>——错误页标题结构，长度不限；
+    (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
+    JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
+    SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
+    阈值不再定生死。"""
     b = body or ""
-    return len(b) < 16384 and "Access Denied" in b
+    if re.search(r"<title[^>]*>\s*access denied\s*</title>",
+                 b, re.IGNORECASE):
+        return True
+    if len(b) < 16384 and "Access Denied" in b:
+        _low = b.lower()
+        if ("<html" in _low or "<head" in _low or "<body" in _low
+                or "<h1" in _low):
+            return True
+    return False
 
 
 def test_tiktok(local_ip=None):
@@ -10772,19 +10831,29 @@ def get_resolver_ips(probes=3, timeout=8):
 
 def _ip_asn_org(ip, timeout=8):
     """用 ipwho.is 查 ASN/归属。注意: asn/org 嵌套在 connection 对象内,
-    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。"""
+    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。
+    E-430 F18: 打开（含 DNS 解析）与读体共享 timeout 预算——打开经
+    _open_bounded 纳入绝对截止，DNS 挂起时主线程按时放弃、不等满
+    解析；读体仍用 _read_limited 取剩余预算。"""
     try:
         req = urllib.request.Request(
             "https://ipwho.is/%s?fields=connection,country" % _q_ip(ip),
             headers={"User-Agent": UA_BROWSER})
-        # E-430 F18: r.read(4096) 的 socket 超时只约束单次 recv, 慢速
-        # drip 可拖长; 改 _read_limited 与打开共享 timeout 预算。
         _t0 = time.monotonic()
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        _dl = _t0 + timeout
+
+        def _do_open():
+            return urllib.request.urlopen(
+                req, timeout=max(0.1, _dl - time.monotonic()))
+
+        r = _open_bounded(_do_open, _dl)
+        if r is None:
+            return None, None, None
+        with r:
             try:
                 d = json.loads(_read_limited(
                     r, cap=4096,
-                    timeout=max(0.1, timeout - (time.monotonic() - _t0))).decode(
+                    timeout=max(0.1, _dl - time.monotonic())).decode(
                     "utf-8", errors="replace"))
             except Exception:
                 _resp_shutdown(r)
@@ -11231,13 +11300,28 @@ def _batch_best_throughput(results):
             continue
         print(T("batch_tp_testing"))
         try:
-            # M-03：最佳节点宿主为 IPv6 字面量时，测速走 IPv6 代表点
-            # （批量流不测出口 IP，以节点宿主族为准）。
-            _bip, _bver = parse_any_ip(nd["host"])
+            # M-03（.31）：批量流加出口族探测——经最优节点查出口 IP
+            # （与 run_proxy_diag 同款 proxy_egress_ip），按出口族选
+            # 枢纽，不再只按节点宿主族；探测失败／出口不明时回退宿主
+            # 族（旧行为）。IPv4 接入＋纯 IPv6 出口的节点至此走 v6 枢纽。
+            _efam = None
+            try:
+                _eip, _eerr = proxy_egress_ip(
+                    nd["host"], nd["port"], username=nd["user"],
+                    password=nd["pass"], timeout=5)
+                if _eip is not None:
+                    _pip, _pver = parse_any_ip(_eip)
+                    if _pver in (4, 6):
+                        _efam = 6 if _pver == 6 else 0
+            except Exception:
+                _efam = None
+            if _efam is None:
+                _bip, _bver = parse_any_ip(nd["host"])
+                _efam = 6 if _bver == 6 else 0
             _, tbest = proxy_speed_regions(nd["host"], nd["port"],
                                            username=nd["user"],
                                            password=nd["pass"], duration=4,
-                                           family=6 if _bver == 6 else 0)
+                                           family=_efam)
         except Exception:
             tbest = None
         if tbest:
