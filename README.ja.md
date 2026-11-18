@@ -44,7 +44,7 @@ IPv6 レポート（プレフィックス粒度：地理 / ASN / 種別 / ソー
 
 ## 概要
 
-A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準ライブラリのみ・外部依存ゼロ）で、IP アドレスの**レピュテーションとクリーン度**を評価し、自機ネットワークの**出口品質**をチェックします。33 の公開データソースへ照会し、相互に検証して 1 つのレポートにまとめます。スコアはすべて複数ソースの集約であり、単一ソースで結論は決まりません。
+A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準ライブラリのみ・外部依存ゼロ）で、IP アドレスの**レピュテーションとクリーン度**を評価し、自機ネットワークの**出口品質**をチェックします。32 の公開データソースへ照会し、相互に検証して 1 つのレポートにまとめます。スコアはすべて複数ソースの集約であり、単一ソースで結論は決まりません。
 
 ## デュアルモード
 
@@ -84,7 +84,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 | 12 | ネットワーク速度（地域別） | 28 地域ノードのダウンロード表（複数接続ピーク方式）、自機の上下速度付き |
 | 13 | コマンド入口の管理 | `acheck` / `ac` コマンド入口のインストール / 状態確認 / 改名 / 削除（`--shortcut`、`--names` / `--old-name` / `--new-name`） |
 
-ストリーミング実測は 18 プラットフォームに対応：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、動画（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、SNS その他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub）。ネイティブ解錠と DNS 解錠（Smart DNS）を区別します。
+ストリーミング実測は 18 プラットフォームに対応：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek / GitHub）、動画（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、SNS その他（Facebook / Instagram / Reddit / X / WhatsApp / Line）。ネイティブ解錠と DNS 解錠（Smart DNS）を区別します。
 
 ## クイックスタート
 

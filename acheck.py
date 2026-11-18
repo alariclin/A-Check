@@ -2753,7 +2753,9 @@ class PTRCheck(Provider):
         fcrdns = False
         got_data = False
         any_failed = False
-        for h in ptrs:
+        # R3-L-03(a)：正查只跟前 2 条 PTR，与 MX 只试前 2（mxs[:2]）同口径；
+        # 8 条 PTR 曾触发 8 次正查。
+        for h in ptrs[:2]:
             fwd_ips = None
             for _ns in sys_ns_list:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns, timeout=2.5)
@@ -8172,6 +8174,39 @@ def _dns_test_ok(d, tid, qpkt):
                 break
             _owners.add(_cmap[_ccur])
             _ccur = _cmap[_ccur]
+        # R3-L-03(b)：链裁决与 _dns_query_udp 对齐（fail-closed）——从查询名
+        # 出发的 CNAME 链畸形（目标解码失败或未恰好消费整个 RDATA）、成环
+        # 或 16 跳未终结时，即便另有直接目标记录也判 False；不可达的畸形
+        # CNAME 不污染结论。逐跳取首条的口径与严格解析侧逐字一致。
+        _cur = (qname_q or "").lower().rstrip(".")
+        _seen = {_cur}
+        _broken = False
+        for _ in range(16):
+            _nxt = None
+            _bad = False
+            for _oan, _oat, _oac, _oroff, _ordlen in _answers:
+                if _oan == _cur and _oat == 5 and _oac == 1:
+                    _tgt, _tend = _decode_dns_name(d, _oroff)
+                    if _tgt is None or _tend - _oroff != _ordlen:
+                        _bad = True
+                    elif _tgt:
+                        _nxt = _tgt.lower().rstrip(".")
+                    break
+            if _bad:
+                _broken = True
+                break
+            if _nxt is None:
+                break
+            if _nxt in _seen:
+                _broken = True
+                break
+            _seen.add(_nxt)
+            _cur = _nxt
+        else:
+            _broken = any(_oan == _cur and _oat == 5 and _oac == 1
+                          for _oan, _oat, _oac, _oroff, _ordlen in _answers)
+        if _broken:
+            return False
         _matched = False
         for _oan, _oat, _oac, _oroff, _ordlen in _answers:
             if _oan not in _owners or _oac != 1 or _oat != qt_q:

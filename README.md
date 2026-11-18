@@ -44,7 +44,7 @@ Batch node speed test & ranking:
 
 ## What it is
 
-A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 33 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
+A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 32 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
 
 ## Dual mode
 
@@ -84,7 +84,7 @@ Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured stre
 | 12 | Network speed test (regions) | Download table for 28 regional nodes (multi-connection peak), plus local up/down speeds |
 | 13 | Manage command shortcuts | Install / check / rename / remove the `acheck` / `ac` command shortcuts (`--shortcut`, `--names` / `--old-name` / `--new-name`) |
 
-Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), distinguishing native unlocks from Smart DNS unlocks.
+Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek / GitHub), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line), distinguishing native unlocks from Smart DNS unlocks.
 
 ## Quick start
 

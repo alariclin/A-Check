@@ -44,7 +44,7 @@ IPv6 报告（前缀粒度：地理 / ASN / 类型 / 逐源信誉信号 + 同公
 
 ## 这是什么
 
-A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它向 33 个公开数据源查询并交叉核对，汇总为一份报告。所有评分均为多源聚合，单一来源不决定结论。
+A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它向 32 个公开数据源查询并交叉核对，汇总为一份报告。所有评分均为多源聚合，单一来源不决定结论。
 
 ## 双模式
 
@@ -84,7 +84,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 | 12 | 网络测速（多地区） | 28 个地区节点下载测速表（多连接峰值口径），附本机上下行 |
 | 13 | 管理命令入口 | 安装 / 查看 / 改名 / 移除 `acheck` / `ac` 命令入口（`--shortcut`，`--names` / `--old-name` / `--new-name`） |
 
-流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），区分原生解锁与 DNS 解锁（Smart DNS）。
+流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek / GitHub）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line），区分原生解锁与 DNS 解锁（Smart DNS）。
 
 ## 快速开始
 
