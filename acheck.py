@@ -10753,19 +10753,29 @@ def get_resolver_ips(probes=3, timeout=8):
 
 def _ip_asn_org(ip, timeout=8):
     """用 ipwho.is 查 ASN/归属。注意: asn/org 嵌套在 connection 对象内,
-    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。"""
+    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。
+    E-430 F18: 打开（含 DNS 解析）与读体共享 timeout 预算——打开经
+    _open_bounded 纳入绝对截止，DNS 挂起时主线程按时放弃、不等满
+    解析；读体仍用 _read_limited 取剩余预算。"""
     try:
         req = urllib.request.Request(
             "https://ipwho.is/%s?fields=connection,country" % _q_ip(ip),
             headers={"User-Agent": UA_BROWSER})
-        # E-430 F18: r.read(4096) 的 socket 超时只约束单次 recv, 慢速
-        # drip 可拖长; 改 _read_limited 与打开共享 timeout 预算。
         _t0 = time.monotonic()
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        _dl = _t0 + timeout
+
+        def _do_open():
+            return urllib.request.urlopen(
+                req, timeout=max(0.1, _dl - time.monotonic()))
+
+        r = _open_bounded(_do_open, _dl)
+        if r is None:
+            return None, None, None
+        with r:
             try:
                 d = json.loads(_read_limited(
                     r, cap=4096,
-                    timeout=max(0.1, timeout - (time.monotonic() - _t0))).decode(
+                    timeout=max(0.1, _dl - time.monotonic())).decode(
                     "utf-8", errors="replace"))
             except Exception:
                 _resp_shutdown(r)
