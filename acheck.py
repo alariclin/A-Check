@@ -12344,6 +12344,54 @@ def _shortcut_entry_intact(path, entry, instance_id):
     return True
 
 
+def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
+    """分叉判定: 磁盘启动器是否为本实例的旧解释器版。
+    须同时满足: 普通文件 (非符号链接, O_NOFOLLOW)、4 行标准模板、
+    marker 与本次安装实例一致、exec 行指向同一受管理脚本、
+    且解释器与目标 interp 不同。任一不满足即不是分叉——他人篡改、
+    外来脚本、符号链接一律不得据此覆盖, 仍走 blocked/人工处理。"""
+    if not isinstance(path, str) or not isinstance(interp, str) \
+            or not isinstance(managed_script, str):
+        return False
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            return False
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        data = os.read(fd, 4097)
+        if os.read(fd, 1):
+            return False
+    finally:
+        os.close(fd)
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return False
+    lines = text.split("\n")
+    if len(lines) != 4 or lines[3] != "":
+        return False
+    if lines[0] != "#!/bin/sh":
+        return False
+    if lines[1] != "# acheck-managed: %s" % instance_id:
+        return False
+    try:
+        parts = shlex.split(lines[2])
+    except ValueError:
+        return False
+    if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
+        return False
+    if _shortcut_canon_entry(parts[2]) != \
+            _shortcut_canon_entry(managed_script):
+        return False
+    return parts[1] != interp
+
+
 def shortcut_check_name(name, bin_dir, own_entry_paths=(),
                         path_dirs=None, system_dirs=None):
     """单名全量检查, 返回 findings 列表 (kind ∈ invalid/target_own/
@@ -12827,6 +12875,21 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                                                paths["bin_dir"])
                  and _shortcut_entry_intact(e.get("path", ""), e,
                                             instance_id)]
+    # R3-M-02(3): 分叉入口——磁盘启动器是本实例旧解释器版 (见
+    # _shortcut_launcher_fork)。检查阶段同样视作自有, 否则第一阶段
+    # 会把它判 target_foreign 而整批中止, 分叉永远修不了。
+    fork_names = []
+    fork_paths = []
+    for _nm, _ent in (state or {}).get("entries", {}).items():
+        if not isinstance(_ent, dict):
+            continue
+        _p = _ent.get("path", "")
+        if _p and _shortcut_path_in_bin_dir(_p, paths["bin_dir"]) \
+                and _p not in own_paths \
+                and _shortcut_launcher_fork(
+                    _p, instance_id, paths["managed_script"], interp):
+            fork_names.append(_nm)
+            fork_paths.append(_p)
     # R4-M-01(1): 本次经冲突交互被替换/降级剔除的旧名，写盘前安全清理。
     dropped = set()
     # R3-M-02: 解释器变化时把既有入口一并纳入本次更新，避免新旧启动器
@@ -12836,11 +12899,17 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
         for _nm in state.get("entries", {}):
             if _nm not in want:
                 want.append(_nm)
+    # R3-M-02(3): 即使记录的解释器与本次相同, 磁盘启动器仍可能分叉
+    # (旧版操作遗留)。分叉入口纳入本次更新, 由第三阶段按分叉覆盖修
+    # 复; 非分叉的篡改不在此列, 仍走 blocked/人工处理。
+    for _nm in fork_names:
+        if _nm not in want:
+            want.append(_nm)
     # ---- 第一阶段: 全部名字检查确认 (不写文件) ----
     checks = {}
     for nm in want:
         checks[nm] = shortcut_check_name(nm, paths["bin_dir"],
-                                         own_entry_paths=own_paths,
+                                         own_entry_paths=own_paths + fork_paths,
                                          path_dirs=path_dirs,
                                          system_dirs=system_dirs)
     risk_names = [nm for nm in want
@@ -13125,7 +13194,12 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
             continue
         content_bytes = content.encode("utf-8")
         if old_entry and os.path.lexists(target):
-            if not _shortcut_entry_intact(target, old_entry, instance_id):
+            # R3-M-02(3): 分叉启动器 (本实例旧解释器版) 允许覆盖修复;
+            # 非分叉的他人修改仍拒绝覆盖、请人工处理。
+            if not _shortcut_entry_intact(target, old_entry, instance_id) \
+                    and not _shortcut_launcher_fork(
+                        target, instance_id, paths["managed_script"],
+                        interp):
                 result["failed"].append(nm)
                 result["errors"].append(
                     _L("%s：已有启动器被他人修改，不覆盖，请人工处理" % nm,
@@ -13334,29 +13408,38 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
         doc["running_version"] = VERSION
         doc["version_mismatch"] = \
             state.get("installed_version") != VERSION
+        # R3-M-17 + GPT-431 S3-N1/M-01(4): JSON 状态与文本状态同源——
+        # 受管理脚本只核对固定路径 paths["managed_script"], 用 nofollow
+        # 哈希 (已删的跟随链接旧函数永不恢复); 入口仅 intact 时才当
+        # 自有路径, 否则须报 target_foreign, 不得再掩盖为 target_own。
         if state.get("managed_script"):
-            ok_m = os.path.isfile(state["managed_script"])
-            if ok_m:
+            ok_m = False
+            if isinstance(state.get("managed_script"), str) \
+                    and _shortcut_canon_entry(state["managed_script"]) == \
+                    _shortcut_canon_entry(paths["managed_script"]):
                 try:
-                    ok_m = _shortcut_sha256_file(
-                        state["managed_script"]) == state.get("managed_sha256")
+                    ok_m = _shortcut_sha256_file_nofollow(
+                        paths["managed_script"]) == state.get("managed_sha256")
                 except OSError:
                     ok_m = False
             doc["managed_script"] = {
-                "path": state["managed_script"],
+                "path": paths["managed_script"],
                 "status": "OK" if ok_m else "CHANGED"}
         entries = []
-        for nm, entry in sorted(state.get("entries", {}).items()):
-            p = entry.get("path", "")
+        for nm, entry in sorted((state.get("entries") or {}).items()):
+            p = entry.get("path", "") if isinstance(entry, dict) else ""
             intact = _shortcut_entry_intact(p, entry, state["instance_id"])
             findings = shortcut_check_name(
-                nm, paths["bin_dir"], own_entry_paths=[p],
+                nm, paths["bin_dir"], own_entry_paths=[p] if intact else [],
                 path_dirs=path_dirs, system_dirs=system_dirs)
             shadow = [f for f in findings
                       if f["kind"] in ("path_hit", "system_hit")]
+            foreign = [f for f in findings
+                       if f["kind"] == "target_foreign"]
             entries.append({"name": nm, "path": p,
                             "status": "OK" if intact else "CHANGED",
-                            "warnings": [f["path"] for f in shadow]})
+                            "warnings": [{"kind": f["kind"], "path": f["path"]}
+                                         for f in shadow + foreign]})
         doc["entries"] = entries
         return doc
 
