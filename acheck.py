@@ -11289,6 +11289,12 @@ _LOGO_LINES = [
 _LOGO_PALETTE = [26, 27, 32, 33, 39, 39, 39]  # 按字母: 纯蓝阶 (R=0, 同 A-BOX 标题配色)
 
 _banner_net_cache = None
+# S5 L-01 残留：地理失败的取数结果不进永久缓存，但留一份最近结果与
+# 取数时间供横幅在重试间隔内展示（否则 async 尾部回退会丢出口信息），
+# 间隔过后横幅重取一次。直接调 _banner_net_info() 不节流，每次都重取。
+_banner_net_last_info = None
+_banner_net_last_attempt = 0.0
+_BANNER_NET_RETRY_AFTER = 60  # 地理失败后横幅重试间隔（秒）
 _banner_net_budget = 15  # 横幅网络信息整条任务总截止（秒；裁定未定量，我方取 15）
 _banner_net_started = [False]
 _banner_net_lock = threading.Lock()
@@ -11431,11 +11437,14 @@ def _urlopen_bounded(req, budget):
 def _banner_net_info():
     """横幅网络信息 (进程内缓存, 只查一次): 出口地理 (缓存英文原始字段,
     渲染时按界面语言本地化) + IPv6 出口地址。
-    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。"""
-    global _banner_net_cache
+    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。
+    S5 L-01 残留：地理取数失败（限流/超时/坏体）时不写入永久缓存，
+    下次调用重取；地理未尝试（无出口 IP）时仍按旧行为缓存。"""
+    global _banner_net_cache, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
-    _deadline = time.monotonic() + _banner_net_budget
+    _t0 = time.monotonic()
+    _deadline = _t0 + _banner_net_budget
 
     def _rem():
         return max(0.0, _deadline - time.monotonic())
@@ -11450,6 +11459,9 @@ def _banner_net_info():
                                                       timeout=min(5, _rem())))
         except Exception:
             info["dns_ok"] = False
+    # S5 L-01 残留：地理失败标记——仅地理步抛错/失败体时置真，末尾
+    # 凭此决定是否写入永久缓存；无出口 IP 时地理步未跑，不置真。
+    _geo_failed = False
     try:
         egress = get_egress_ip(budget=_rem()) if _rem() > 0 else None
         info["egress"] = egress
@@ -11498,7 +11510,9 @@ def _banner_net_info():
                     info["geo_net"] = ""
                 info["geo_org"] = org
             except Exception:
-                pass
+                # S5 L-01 残留：失败体/超时/坏 JSON 均记地理失败，不再
+                # 走末尾无条件缓存（原 `except: pass` 吞错后照常缓存空地理）。
+                _geo_failed = True
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
@@ -11543,7 +11557,12 @@ def _banner_net_info():
                     pass
     info["ipv6_addr"] = _v6addr
     info["ipv6"] = bool(_v6addr)
-    _banner_net_cache = info
+    _banner_net_last_info = info
+    _banner_net_last_attempt = _t0
+    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；其余情形
+    # （成功、无出口 IP）仍缓存。
+    if not _geo_failed:
+        _banner_net_cache = info
     return info
 
 
@@ -11806,6 +11825,13 @@ def _banner_net_info_async():
         return _banner_net_info()
     if _banner_net_cache is not None:
         return _banner_net_cache
+    # S5 L-01 残留：首轮取数已完成但地理失败、缓存未写时——重试间隔内
+    # 展示上次结果（带出口/IP，不重复发请求）；间隔已过则重取一次。
+    # 上次结果为空说明首轮仍在另一线程进行中，保持旧行为（空回退）。
+    if _banner_net_last_info is not None:
+        if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
+            return _banner_net_last_info
+        return _banner_net_info()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 
