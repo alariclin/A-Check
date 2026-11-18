@@ -14268,7 +14268,7 @@ def main():
                     except Exception:
                         print(T("invalid_proxy_format"))
                         continue
-                    _u = input(T("prompt_proxy_user"))
+                    _u = input(T("prompt_proxy_user")).strip()
                     if _u:
                         puser = _u
                         import getpass
