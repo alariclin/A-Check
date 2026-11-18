@@ -1749,7 +1749,7 @@ def _urlopen_deadline(req, timeout):
 
     def _run():
         try:
-            _box["resp"] = urllib.request.urlopen(
+            _box["resp"] = _opener_safe.open(
                 req, timeout=max(0.1, _dl - time.monotonic()))
         except Exception as _e:
             _box["err"] = _e
@@ -1782,10 +1782,12 @@ def _urlopen_deadline(req, timeout):
         return _box["resp"], None, False
 
 
-def _http_fetch_uncached(url, h, timeout, retries):
+def _http_fetch_uncached(url, h, timeout, retries, cap=None):
     """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。
     F02：每次尝试建绝对截止（建连+读头+读体共享 timeout 预算），剩余预算
-    传给后续阶段；慢速发头 drip 不得拖超 timeout。"""
+    传给后续阶段；慢速发头 drip 不得拖超 timeout。
+    cap：响应体上限（字节），None 时用 _read_limited 默认 1 MiB；
+    威胁列表等已知大体调用方按需放宽（M-19）。"""
     last_err = ""
     for _ in range(retries):
         _dl = time.monotonic() + timeout
@@ -1801,7 +1803,8 @@ def _http_fetch_uncached(url, h, timeout, retries):
             with _r as r:
                 try:
                     data = _read_limited(
-                        r, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        r, cap=cap if cap is not None else 1048576,
+                        timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     # 异常 unwind 也会走 with 退出关响应：先 shutdown 唤醒 stuck 读者
@@ -1813,7 +1816,8 @@ def _http_fetch_uncached(url, h, timeout, retries):
             try:
                 try:
                     data = _read_limited(
-                        e, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        e, cap=cap if cap is not None else 1048576,
+                        timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     data = ""
@@ -1837,12 +1841,13 @@ def _http_fetch_uncached(url, h, timeout, retries):
     return False, last_err
 
 
-def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
+def http_get(url, headers=None, timeout=10, retries=2, use_cache=True,
+             cap=None):
     h = {"User-Agent": UA_BROWSER}
     if headers:
         h.update(headers)
     if not use_cache:
-        return _http_fetch_uncached(url, h, timeout, retries)
+        return _http_fetch_uncached(url, h, timeout, retries, cap=cap)
     key = (url, tuple(sorted(h.items())))
     with _cache_lock:
         if key in _cache:
@@ -1852,7 +1857,7 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
         with _cache_lock:
             if key in _cache:
                 return True, _cache[key]
-        ok, data = _http_fetch_uncached(url, h, timeout, retries)
+        ok, data = _http_fetch_uncached(url, h, timeout, retries, cap=cap)
         if ok:
             with _cache_lock:
                 _cache[key] = data
@@ -1873,6 +1878,12 @@ _threat_lists = {}
 _threat_lists_lock = threading.Lock()
 
 
+# M-19：威胁列表下载上限 16 MiB——ipsum.txt 实测 2,249,330 字节
+# （2026-11-18），留约 7 倍增长余量；与 R3-M-05 响应体 16 MB 上限
+# 同口径。上限仍存在，17 MiB 名单照常被拒，不引入无界下载。
+_THREAT_LIST_CAP = 16 * 1024 * 1024
+
+
 def _get_threat_list(name, url, parser):
     """拉取并缓存公开威胁情报黑名单 (允许合法的空集合 set()，仅在解析失败时返回 None)。"""
     with _threat_lists_lock:
@@ -1883,7 +1894,8 @@ def _get_threat_list(name, url, parser):
         with _threat_lists_lock:
             if name in _threat_lists:
                 return _threat_lists[name]
-        ok, raw = http_get(url, timeout=12, retries=2, use_cache=True)
+        ok, raw = http_get(url, timeout=12, retries=2, use_cache=True,
+                           cap=_THREAT_LIST_CAP)
         if not ok:
             return None
         try:
@@ -2089,6 +2101,44 @@ def _has_ipv4_egress():
         return False
 
 
+def _has_ipv6_egress():
+    """有无 IPv6 出口：与 _has_ipv4_egress 同款本地路由查询，不发包；
+    无 IPv6 路由时抛 OSError（纯 IPv4 主机）。"""
+    try:
+        _s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        try:
+            _s.connect(("2606:4700:4700::1111", 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _ns_addr_usable(s):
+    """系统 nameserver 是否可用（H-03）：
+    拒绝 IPv6 site-local（fec0::/10，哨兵地址不可路由）；
+    拒绝无有效 scope_id 的链路本地 IPv6（fe80::/10 裸地址无出口接口）；
+    单栈环境下剔除无对应协议栈出口的异族全局地址——本地/ULA/环回
+    保留（链路上可达，无需全局出口）。IPv4 私网/环回同理保留。
+    解析失败返 False。"""
+    try:
+        ip = ipaddress.ip_address(s)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if getattr(ip, "is_site_local", False):
+            return False
+        if ip.is_link_local and not getattr(ip, "scope_id", None):
+            return False
+        if ip.is_global and not _has_ipv6_egress():
+            return False
+    else:
+        if ip.is_global and not _has_ipv4_egress():
+            return False
+    return True
+
+
 def _get_system_nameservers():
     """跨平台读取系统默认 DNS 服务器列表（IPv4/IPv6，支持 Linux / macOS / Windows）。
     H-07：IPv6 系统 DNS 亦返回；无系统 DNS 时，IPv6 模式或无 IPv4 出口
@@ -2108,22 +2158,31 @@ def _get_system_nameservers():
                     _dns_indent = len(line) - len(line.lstrip())
                     parts = line.split(":", 1)
                     if len(parts) == 2:
-                        # M-07(a)：先剥 %scope_id（Python 3.8 不接受带作用域
-                        # 的地址字面量，3.9+ 原生支持，剥离后两者皆可）。
-                        cand = parts[1].strip().split("%", 1)[0]
+                        # H-03：先按原样解析（含 %scope_id 时 3.9+ 保留作用域，
+                        # 链路本地地址赖此选接口）；3.8 不接受 % 时再剥离重试
+                        # （M-07(a) 兼容）。
+                        cand = parts[1].strip()
                         try:
                             ip = ipaddress.ip_address(cand)
-                            ns.append(str(ip))
                         except ValueError:
-                            pass
+                            try:
+                                ip = ipaddress.ip_address(
+                                    cand.split("%", 1)[0])
+                            except ValueError:
+                                ip = None
+                        if ip is not None:
+                            ns.append(str(ip))
                 elif in_dns:
                     cand = line.strip()
                     if not cand:
                         in_dns = False
                         continue
                     try:
-                        ip = ipaddress.ip_address(
-                            cand.split()[0].split("%", 1)[0])
+                        _c0 = cand.split()[0]
+                        try:
+                            ip = ipaddress.ip_address(_c0)
+                        except ValueError:
+                            ip = ipaddress.ip_address(_c0.split("%", 1)[0])
                         ns.append(str(ip))
                     except ValueError:
                         # M-07(a)：续行解析失败（如旧版 %scope）不结束 DNS 段；
@@ -2182,13 +2241,16 @@ def _get_system_nameservers():
                     ["scutil", "--dns"],
                     capture_output=True, text=True, timeout=4, errors="replace",
                 ).stdout
-                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[0-9a-fA-F:]+)", out):
+                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[0-9a-fA-F:]+(?:%[0-9A-Za-z._-]+)?)", out):
                     try:
                         ns.append(str(ipaddress.ip_address(m.group(1))))
                     except ValueError:
                         pass
             except Exception:
                 pass
+    # H-03：过滤不可路由地址（site-local / 无 scope 的链路本地 /
+    # 单栈异族全局），再决定回退；全被滤掉时走下方公共 DNS 回退。
+    ns = [x for x in ns if _ns_addr_usable(x)]
     if not ns:
         if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
             return ["2606:4700:4700::1111", "2001:4860:4860::8888"]
@@ -2217,6 +2279,27 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         _srv_ip = None
         _srv_is6 = False
     sock = None
+    # H-03：IPv6 服务器须经 getaddrinfo（AI_NUMERICHOST，禁 DNS 解析）
+    # 取四元组目的地址——带 %scope_id 的链路本地地址赖此填入 scope_id，
+    # 否则 sendto 找不到出口接口；无 scope 时 scope_id 为 0。
+    # glibc 只对链路本地地址接受 scope：非链路本地地址的 scope 无路由
+    # 意义（如 ::1%lo），getaddrinfo 拒收时剥离后按无 scope 处理；
+    # 链路本地解析失败则 fail-closed（无接口可出包）。
+    _dest = (server, 53)
+    _dest_scope = 0
+    _srv_scope = getattr(_srv_ip, "scope_id", None) if _srv_ip is not None else None
+    if _srv_is6:
+        try:
+            _dest = socket.getaddrinfo(server, 53, socket.AF_INET6,
+                                       socket.SOCK_DGRAM, 0,
+                                       socket.AI_NUMERICHOST)[0][4]
+            _dest_scope = _dest[3]
+        except Exception:
+            if _srv_ip is not None and _srv_ip.is_link_local:
+                return (None, []) if return_cnames else None
+            _dest = (str(_srv_ip), 53)
+            _dest_scope = 0
+            _srv_scope = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
         # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的唯一合法目标。
@@ -2229,7 +2312,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             socket.AF_INET6 if _srv_is6 else socket.AF_INET,
             socket.SOCK_DGRAM)
         sock.settimeout(timeout)
-        sock.sendto(pkt, (server, 53))
+        sock.sendto(pkt, _dest)
         data, addr = sock.recvfrom(2048)
     except Exception:
         return (None, []) if return_cnames else None
@@ -2251,8 +2334,16 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     if _srv_ip is not None:
         try:
-            _src_ok = ipaddress.ip_address(addr[0]) == _srv_ip \
-                and addr[1] == 53
+            # H-03：源校验按地址值比对——比较 packed（带 scope_id 的
+            # IPv6Address.__eq__ 会因 scope 不同而失配，::1%lo 与 ::1
+            # 明明是同一地址却判不等）；服务器带 scope 时再核对回包
+            # 四元组的接口索引 addr[3]，须与建连时解析出的 scope 一致，
+            # 无四元组（桩/异常传输）时 fail-closed。
+            _recv_ip = ipaddress.ip_address(addr[0])
+            _src_ok = _recv_ip.packed == _srv_ip.packed and addr[1] == 53
+            if _src_ok and isinstance(_srv_ip, ipaddress.IPv6Address) \
+                    and _srv_scope:
+                _src_ok = len(addr) > 3 and addr[3] == _dest_scope
         except ValueError:
             _src_ok = False
     else:
@@ -6169,15 +6260,49 @@ def _http_te_chunked(head):
 
 
 def _http_content_length(head):
-    """Content-Length 整数；缺失返 None；非法返 False（调用方按失败处理）。"""
+    """Content-Length 整数；缺失返 None；非法返 False（调用方按失败处理）。
+    R3-M-05：冲突重复值拒收（多行不同值，或单行逗号并列不同值）；
+    完全相同重复值返回该值（RFC 9110 §8.6 允许的等值重复）。"""
+    _vals = []
     for ln in head.split(b"\r\n")[1:]:
         if ln.lower().startswith(b"content-length:"):
-            v = ln.split(b":", 1)[1].strip()
-            # 仅纯 ASCII 十进制合法：int() 会放行 "-1"/"+5"/"1_0"，负数随后 body[:cl] 截尾
-            if not v.isascii() or not v.isdigit():
-                return False
-            return int(v)
-    return None
+            for _tok in ln.split(b":", 1)[1].split(b","):
+                _v = _tok.strip()
+                # 仅纯 ASCII 十进制合法：int() 会放行 "-1"/"+5"/"1_0"，负数随后 body[:cl] 截尾
+                if not _v.isascii() or not _v.isdigit():
+                    return False
+                _vals.append(int(_v))
+    if not _vals:
+        return None
+    if len(set(_vals)) > 1:
+        return False
+    return _vals[0]
+
+
+def _http_status_code(head):
+    """首行状态码整数；解析失败返 None。"""
+    try:
+        toks = head.split(b"\r\n", 1)[0].split()
+        return int(toks[1]) if len(toks) >= 2 else None
+    except Exception:
+        return None
+
+
+def _split_final_head(raw):
+    """跳过 1xx 临时头（R3-M-05），返回首个非 1xx 头的 (head, body)；
+    只有 1xx 头或无完整头体分隔符时返 (None, b"")。"""
+    _rest = raw
+    while True:
+        _head, _sep, _body = _rest.partition(b"\r\n\r\n")
+        if not _sep:
+            return None, b""
+        _code = _http_status_code(_head)
+        if _code is None:
+            return None, b""
+        if 100 <= _code < 200:
+            _rest = _body
+            continue
+        return _head, _body
 
 
 def _https_get_pinned6(host, path, timeout=6):
@@ -6217,9 +6342,9 @@ def _https_get_pinned6(host, path, timeout=6):
                 # Content-Length 到量即完；chunked 收到完整终止零块+trailer
                 # 即完；仅关闭定界才等 EOF。未收齐继续读（chunked 解码失败
                 # 可能是体未收全，须与非法体区分：EOF/截止时后随校验拒收）。
-                _head, _sep, _body = raw.partition(b"\r\n\r\n")
-                if not _sep:
-                    continue
+                _head, _body = _split_final_head(raw)
+                if _head is None:
+                    continue  # 尚无完整最终头（含仅有 1xx 临时头）：继续读
                 if not _http_status_ok(_head):
                     break  # 非 200：停读，后随校验进下一地址
                 if _http_te_chunked(_head):
@@ -6232,9 +6357,9 @@ def _https_get_pinned6(host, path, timeout=6):
                     if _cl is not None and len(_body) >= _cl:
                         break
                     # _cl 为 None：关闭定界，继续等 EOF
-            head, sep, body = raw.partition(b"\r\n\r\n")
-            if not sep:
-                continue  # 无头体分隔符：首行不可信，不得当成功
+            head, body = _split_final_head(raw)
+            if head is None:
+                continue  # 无完整最终头：首行不可信，不得当成功
             if not _http_status_ok(head):
                 continue
             if _http_te_chunked(head):
@@ -6316,14 +6441,73 @@ def get_egress_ip6():
     return None
 
 
+def _redirect_host_public(host):
+    """重定向目标主机是否可公开访问（R3-M-05）：字面量 IP 须为全球单播；
+    主机名须解析且全部解析地址为全球单播；解析失败 fail-closed。
+    169.254.169.254 / 100.100.100.200（元数据）与内网/环回/链路本地
+    均非全球单播，一律拒收。"""
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        pass
+    try:
+        _infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC,
+                                    socket.SOCK_STREAM)
+    except Exception:
+        return False
+    if not _infos:
+        return False
+    for _info in _infos:
+        try:
+            _ip = ipaddress.ip_address(_info[4][0])
+        except ValueError:
+            return False
+        if not _ip.is_global:
+            return False
+    return True
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """R3-M-05：重定向白名单——只允许同协议 https→https / http→http；
+    拦截 https→http 降级（与 http→https 升级）、ftp/file 等异协议、
+    内网/环回/链路本地/元数据 IP 目标；重定向上限 5 次。
+    拦截时 raise HTTPError（而非返回 None）：返回 None 会把 302 空体
+    当成功响应交回调用方，http_get 将返 ok=True；raise 则进错误分支
+    返 ok=False，不泄露目标体。"""
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _target = urllib.parse.urljoin(req.full_url, newurl)
+        _parts = urllib.parse.urlsplit(_target)
+        _old_scheme = urllib.parse.urlsplit(req.full_url).scheme.lower()
+        _new_scheme = _parts.scheme.lower()
+        _blocked = None
+        if _new_scheme != _old_scheme:
+            _blocked = "cross-scheme redirect %s->%s" % (_old_scheme, _new_scheme)
+        elif _new_scheme not in ("http", "https"):
+            _blocked = "non-http(s) redirect scheme %s" % _new_scheme
+        elif not _parts.hostname or not _redirect_host_public(_parts.hostname):
+            _blocked = "redirect target host not public: %s" % (_parts.hostname or _target)
+        if _blocked is not None:
+            raise urllib.error.HTTPError(req.full_url, code, _blocked, headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
-_opener_follow = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_opener_follow = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _SafeRedirectHandler())
 _opener_noredir = urllib.request.build_opener(
     _NoRedirect, urllib.request.ProxyHandler({}))
+
+
+# http_get 路径专用 opener：环境代理语义不变（ProxyHandler() 读环境），
+# 重定向走 _SafeRedirectHandler（不用 urllib.request.urlopen 的默认 opener）。
+_opener_safe = urllib.request.build_opener(
+    urllib.request.ProxyHandler(), _SafeRedirectHandler())
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -6519,6 +6703,11 @@ def _pinned_opener(family, follow_redirects=True):
     handlers = [urllib.request.ProxyHandler({}), _HH(), _HSH()]
     if not follow_redirects:
         handlers.append(_NoRedirect())
+    else:
+        # R3-M-05：跟随时走安全重定向处理器；不跟随（False）时只留
+        # _NoRedirect——两者同放会使安全处理器在 _NoRedirect 返回 None
+        # 后重新跟随，抵消不跟随语义。
+        handlers.append(_SafeRedirectHandler())
     return urllib.request.build_opener(*handlers)
 
 
@@ -6529,14 +6718,16 @@ _STREAM_CHUNK = 65536
 _STREAM_COMP_CAP = 2 * 1024 * 1024
 
 
-def _resp_complete(raw, headers, cap=_STREAM_CAP):
+def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
     """响应体完整性（_active_get 成功/HTTPError 两路径共用）——H-01 新语义：
     区分「真实截断」与「达到本地采样上限」两个独立信号：
     CL 在场且合法时须读满 min(CL, cap)——声明 1000 只到 20 字节的干净
     FIN 仍是不完整；CL 超过 cap 时读满 cap 即算完整（采样上限不是失败）。
     CL 缺失时：走到本函数的读取已是干净 EOF 或已达 cap，两者都算完整；
     真实截断（IncompleteRead/读超时）不经过本函数，调用方直接判 False。
-    CL 非法时不完整（保守，沿用旧行为）。"""
+    CL 非法时不完整（保守，沿用旧行为）。
+    total_len：调用方已知的实际读取字节数（压缩分支传压缩传输字节数，
+    此时 raw 为解压后采样、长度单位不同，不得用 len(raw) 核对 CL）。"""
     cl = None
     if headers is not None:
         try:
@@ -6549,7 +6740,8 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP):
     if cl is False:
         return False
     if cl is not None:
-        return len(raw) >= min(cl, cap)
+        _n = total_len if total_len is not None else len(raw)
+        return _n >= min(cl, cap)
     return True
 
 
@@ -6613,39 +6805,120 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     # H-01：服务端声明 gzip 即流式解压（16+MAX_WBITS 识别 gzip 头），解压后
     # 采样上限 _STREAM_CAP，压缩输入另设 _STREAM_COMP_CAP 防空块旋转与
     # 压缩炸弹。CL 是传输（压缩后）长度，须按压缩字节核对，而非解压后长度。
+    # H-02：Content-Encoding 按逗号拆分编码令牌；identity 为空操作；
+    # gzip/x-gzip 与 deflate（zlib 包装或 raw）解码；其余非空编码
+    # （br/zstd 等，本机无解码器）不可信，正文清空、判不完整，禁止拿
+    # 压缩二进制冒充明文 HTML 判解锁。
     _enc = str(_hdrs.get("content-encoding", "") or "").strip().lower()
-    _gzip = _enc in ("gzip", "x-gzip")
+    _enc_tokens = [t.strip() for t in _enc.split(",") if t.strip()]
+    _enc_core = [t for t in _enc_tokens if t != "identity"]
+    if not _enc_core:
+        _decomp_kind = None
+    elif _enc_core == ["gzip"] or _enc_core == ["x-gzip"]:
+        _decomp_kind = "gzip"
+    elif _enc_core == ["deflate"]:
+        _decomp_kind = "deflate"
+    else:
+        _decomp_kind = None
     try:
-        _decomp = zlib.decompressobj(16 + zlib.MAX_WBITS) if _gzip else None
+        if _decomp_kind is None and _enc_core:
+            # 无法解码的非空编码：正文不可信，清空后判不完整。
+            return _status, "", _loc, False, _hdrs
+        _gz = {"obj": (zlib.decompressobj(16 + zlib.MAX_WBITS)
+                       if _decomp_kind == "gzip" else None),
+               "kind": _decomp_kind, "member_eof": False,
+               "prefix": b"", "decided": _decomp_kind != "deflate"}
         _st = {"out": [], "n": 0, "trunc": False, "eof": False}
 
-        def _push(_data):
-            # 喂一块传输字节：解压（gzip）或直存，输出截到采样上限。
-            if not _data or _st["n"] >= _STREAM_CAP:
-                return
-            if _decomp is not None:
-                try:
-                    _dec = _decomp.decompress(_data, _STREAM_CAP - _st["n"])
-                except Exception:
-                    _st["trunc"] = True
-                    return
+        def _deflate_wbits(_b):
+            # zlib 包装（RFC 1950）头两字节：CMF 低半字节须为 8（deflate），
+            # 且 (CMF*256+FLG) % 31 == 0；否则按 raw deflate（RFC 1951）解。
+            if len(_b) >= 2 and (_b[0] & 0x0F) == 8 \
+                    and (_b[0] * 256 + _b[1]) % 31 == 0:
+                return zlib.MAX_WBITS
+            return -zlib.MAX_WBITS
+
+        def _feed(_buf):
+            # 喂一串压缩字节到当前解压对象；gzip 成员结束且有 unused_data 时
+            # 换新对象继续喂（多成员直至空串或采样上限）；输出截到采样上限。
+            # 解压异常向上传播，调用方记 trunc（deflate 首喂另有一次重试）。
+            while _buf and _st["n"] < _STREAM_CAP:
+                _dec = _gz["obj"].decompress(_buf, _STREAM_CAP - _st["n"])
                 if _dec:
                     _st["out"].append(_dec)
                     _st["n"] += len(_dec)
-                if _decomp.eof:
-                    _st["eof"] = True
-            else:
+                if _gz["obj"].eof:
+                    _rest = _gz["obj"].unused_data
+                    if _rest:
+                        if _gz["kind"] != "gzip":
+                            # deflate 单成员：流结束后的残留字节不可信
+                            _gz["member_eof"] = True
+                            return
+                        _gz["obj"] = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                        _buf = _rest
+                        continue
+                    _gz["member_eof"] = True
+                    return
+                _buf = _gz["obj"].unconsumed_tail
+
+        def _push(_data):
+            # 喂一块传输字节：解压（gzip/deflate）或直存，输出截到采样上限。
+            if not _data or _st["n"] >= _STREAM_CAP:
+                return
+            if _gz["obj"] is None and _gz["kind"] is None:
                 _take = _data[:_STREAM_CAP - _st["n"]]
                 _st["out"].append(_take)
                 _st["n"] += len(_take)
+                return
+            if _gz["kind"] == "gzip" and _gz["member_eof"]:
+                # 上一成员已结束：后续块属于下一成员，换新对象
+                # （成员 eof 不停读：底层流未 EOF 时成员 2 可能在下一块）。
+                _gz["obj"] = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                _gz["member_eof"] = False
+            if _gz["kind"] == "deflate" and _gz["member_eof"]:
+                return  # 单成员已结束，后续字节为流外残留，不再喂
+            if _gz["kind"] == "deflate" and not _gz["decided"]:
+                _gz["prefix"] += _data
+                if len(_gz["prefix"]) < 2:
+                    return  # 未满两字节无法嗅探 wbits，等下一块
+                _buf = _gz["prefix"]
+                _gz["prefix"] = b""
+                _gz["decided"] = True
+                _wb = _deflate_wbits(_buf)
+                _gz["obj"] = zlib.decompressobj(_wb)
+                _n0, _o0 = _st["n"], len(_st["out"])
+                try:
+                    _feed(_buf)
+                except Exception:
+                    # 嗅探误判：换另一 wbits，用同一前缀重试一次
+                    _st["out"] = _st["out"][:_o0]
+                    _st["n"] = _n0
+                    _gz["obj"] = zlib.decompressobj(
+                        -zlib.MAX_WBITS if _wb == zlib.MAX_WBITS
+                        else zlib.MAX_WBITS)
+                    _gz["member_eof"] = False
+                    try:
+                        _feed(_buf)
+                    except Exception:
+                        _st["trunc"] = True
+                return
+            try:
+                _feed(_data)
+            except Exception:
+                _st["trunc"] = True
+                return
+
+        def _partial():
+            # 已读到的部分正文（解压后）：HTTPError 三处早返时保留挑战页特征。
+            return b"".join(_st["out"]).decode("utf-8", errors="replace")
 
         _comp_read = 0
         _hit_cap = False
-        while _st["n"] < _STREAM_CAP and not _st["eof"] and not _st["trunc"]:
+        while _st["n"] < _STREAM_CAP and not _st["trunc"]:
             _remain = _dl - time.monotonic()
             if _remain <= 0:
                 if _is_err:
-                    return _status, "", _loc, False, _hdrs
+                    return _status, _partial(), _loc, False, _hdrs
                 return None, "read deadline exceeded", "", False, {}
             try:
                 _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
@@ -6655,15 +6928,16 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                 break
             except Exception as e:
                 if _is_err:
-                    return _status, "", _loc, False, _hdrs
+                    return _status, _partial(), _loc, False, _hdrs
                 return None, str(e)[:100], "", False, {}
             if _chunk is None:
                 # M-04：读超时即整体失败（code None），与旧单次读行为一致；
-                # HTTPError 响应沿用旧行为，保留状态码、空正文。
+                # HTTPError 响应保留状态码与已读正文（挑战页特征不丢）。
                 if _is_err:
-                    return _status, "", _loc, False, _hdrs
+                    return _status, _partial(), _loc, False, _hdrs
                 return None, "read deadline exceeded", "", False, {}
             if not _chunk:
+                _st["eof"] = True
                 break  # 干净 EOF
             _comp_read += len(_chunk)
             if _comp_read > _STREAM_COMP_CAP:
@@ -6678,8 +6952,14 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             _complete = False
         elif _hit_cap or _st["n"] >= _STREAM_CAP:
             _complete = True  # 干净读满本地采样上限，不是失败
-        elif _decomp is not None:
-            _complete = bool(_decomp.eof)  # gzip 成员不完整即真实截断
+        elif _gz["obj"] is not None:
+            # 压缩分支：末成员须完整结束、无残留未喂字节，且按压缩传输
+            # 字节数核对 CL（H-02：gzip 分支此前完全不核 CL）。
+            _complete = (bool(_gz["member_eof"])
+                         and not _gz["obj"].unused_data
+                         and _resp_complete(b"", getattr(r, "headers", None),
+                                            cap=_STREAM_COMP_CAP,
+                                            total_len=_comp_read))
         else:
             _complete = _resp_complete(_raw, getattr(r, "headers", None))
         return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
@@ -6701,33 +6981,48 @@ def get_unlock_type(domain, local_ip=None):
     真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
     前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
-    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。"""
-    sys_ns = _get_system_nameservers()[0]
+    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。
+    H-03：系统 NS 按序遍历 [:3] 直至拿到响应（ns[0] 失败不再直接返 None）；
+    公共对比 DNS 按出口切换：_FORCE_FAMILY==6 或无 IPv4 出口时用 IPv6 对
+    (2606:4700:4700::1111 / 2001:4860:4860::8888)，否则用 IPv4 对。"""
+    _ns_list = _get_system_nameservers()
     qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)) else 1
-    cache_key = (domain, local_ip or "", sys_ns, qtype)
+    if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
+        _pub = ("2606:4700:4700::1111", "2001:4860:4860::8888")
+    else:
+        _pub = ("1.1.1.1", "8.8.8.8")
+    cache_key = (domain, local_ip or "", tuple(_ns_list[:3]), qtype)
     with _unlock_lock:
         if cache_key in _unlock_cache:
             return _unlock_cache[cache_key]
 
-    sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=sys_ns, timeout=2.5, return_cnames=True)
+    sys_ns = None
+    sys_ips = sys_cnames = None
+    for _cand in _ns_list[:3]:
+        sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=_cand, timeout=2.5, return_cnames=True)
+        if sys_ips is not None:
+            sys_ns = _cand
+            break
+    if sys_ns is None:
+        return None
     if not sys_ips:
         # OPT-02 短路：sys 为空时下行 `if not sys_ips or not pub_ips` 必返
         # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
         return None
-    if sys_ns == "1.1.1.1":
-        # OPT-02 复用：sys 查询与 1.1.1.1 公共查询是同一服务器、同一域名、
+    if sys_ns == _pub[0]:
+        # OPT-02 复用：sys 查询与公共查询是同一服务器、同一域名、
         # 同一 qtype，结果直接复用，不再重复查。
         pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
-        pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
-    elif sys_ns == "8.8.8.8":
+        pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
+    elif sys_ns == _pub[1]:
         pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
-        pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+        pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
     else:
         # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
         # socket），并行发，最坏 7.5 秒 -> 2.5 秒。
         with ThreadPoolExecutor(max_workers=2) as _ex:
-            _f1 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
-            _f2 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+            _f1 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
+            _f2 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
             pub_ips_1, pub_cnames_1 = _f1.result()
             pub_ips_2, pub_cnames_2 = _f2.result()
 
@@ -7217,8 +7512,12 @@ def check_mail_port25(family=socket.AF_UNSPEC):
 def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
     """纯 Python 查询域名 MX 记录并测试 25 端口连通性 (无需 nslookup)。"""
     try:
-        sys_ns = _get_system_nameservers()[0]
-        mxs = _dns_query_udp(domain, qtype=15, server=sys_ns, timeout=2.5)
+        # H-03：系统 NS 按序遍历 [:3]，全失败再回退硬编码 1.1.1.1。
+        mxs = None
+        for _cand in _get_system_nameservers()[:3]:
+            mxs = _dns_query_udp(domain, qtype=15, server=_cand, timeout=2.5)
+            if mxs is not None:
+                break
         if mxs is None:
             mxs = _dns_query_udp(domain, qtype=15, server="1.1.1.1", timeout=2.5)
         if mxs is None:
@@ -8949,13 +9248,18 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     bl = []
     pbl = []
     done = [0]
-    sys_ns = _get_system_nameservers()[0]
+    sys_ns_list = _get_system_nameservers()[:3]
     is_json = json_mode or "--json" in sys.argv
 
     def _check(lst):
         qname = f"{rev}.{lst}"
         try:
-            ans = _dns_query_udp(qname, qtype=1, server=sys_ns, timeout=2.5)
+            # H-03：系统 NS 按序遍历 [:3]，全失败再回退硬编码 1.1.1.1。
+            ans = None
+            for _cand in sys_ns_list:
+                ans = _dns_query_udp(qname, qtype=1, server=_cand, timeout=2.5)
+                if ans is not None:
+                    break
             if ans is None:
                 ans = _dns_query_udp(qname, qtype=1, server="1.1.1.1", timeout=2.5)
             if ans is None:
@@ -9969,18 +10273,24 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                     with lock:
                         counter[0] -= _take
                     break  # 窗口已尽未返回，或 EOF：归还预留
-                if time.monotonic() >= stop:
-                    with lock:
-                        counter[0] -= _take
-                    break  # 停滞读在 stop 后才返回时不计入窗口字节
+                # 6-4：读后 stop 检查与锁内结算必须原子化（与 _dl_direct_worker
+                # 对齐）。旧“锁外检查、锁内结算”下，横跨 stop 的迭代可在主
+                # 线程窗口后读数之后才结算，致 32768 字节漏计入窗口。
+                _past_stop = False
                 with lock:
-                    counter[0] += min(len(chunk), _take) - _take
-                    settled[0] += min(len(chunk), _take)
-                    # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
-                    # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
-                    if (settled[0] >= DL_CAP_BYTES and cap_box is not None
-                            and cap_box[0] is None):
-                        cap_box[0] = time.monotonic()
+                    if time.monotonic() >= stop:
+                        counter[0] -= _take
+                        _past_stop = True
+                    else:
+                        counter[0] += min(len(chunk), _take) - _take
+                        settled[0] += min(len(chunk), _take)
+                        # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
+                        # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
+                        if (settled[0] >= DL_CAP_BYTES and cap_box is not None
+                                and cap_box[0] is None):
+                            cap_box[0] = time.monotonic()
+                if _past_stop:
+                    break  # 停滞读在 stop 后才结算时不计入窗口字节
                 if settled[0] >= DL_CAP_BYTES:
                     _cleanup(conn, resp)
                     return
@@ -10041,6 +10351,11 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
 PROXY_SPEED_HUBS = ["SG Singapore", "JP Tokyo", "US Los Angeles",
                     "DE Frankfurt", "UK London"]
 
+# IPv6 出口时代理测速的代表点（M-03）：与 v4 枢纽同为 5 个，取自
+# SPEED6_ENDPOINTS 中已实测支持 IPv6 的端点（Cloudflare/SG/DE/UK/US）。
+PROXY_SPEED_HUBS6 = ["Global Cloudflare", "SG Singapore",
+                     "DE Falkenstein", "UK London", "US Hillsboro"]
+
 
 def _loc_hub_name(name):
     """代理测速枢纽地区名 -> 界面语言, 仅渲染时转换 (F43)。
@@ -10057,10 +10372,27 @@ def _loc_hub_name(name):
 
 
 def proxy_speed_regions(ph, pp, username=None, password=None, duration=4,
-                        on_result=None):
-    """经 SOCKS5 代理逐枢纽下载测速。返回 (rows, best_row_or_None)。"""
-    hosts = dict(SPEED_REGIONS)
+                        on_result=None, family=0):
+    """经 SOCKS5 代理逐枢纽下载测速。返回 (rows, best_row_or_None)。
+    family==6 时用 IPv6 代表点（PROXY_SPEED_HUBS6，取自 SPEED6_ENDPOINTS
+    的 URL，host/path 由 urllib.parse.urlsplit 解析传入）；其余族用 v4 枢纽。"""
     rows = []
+    if family == 6:
+        _eps = dict((name, url) for name, _h, url in SPEED6_ENDPOINTS)
+        for name in PROXY_SPEED_HUBS6:
+            _u = urllib.parse.urlsplit(_eps[name])
+            _path = _u.path + ("?" + _u.query if _u.query else "")
+            mbps = measure_download_proxy(ph, pp, username, password,
+                                          _u.hostname, _path,
+                                          duration=duration, streams=3)
+            row = {"region": name, "down_mbps": mbps}
+            rows.append(row)
+            if on_result:
+                on_result(row)
+        ok = [r for r in rows if r["down_mbps"] is not None]
+        best = max(ok, key=lambda r: r["down_mbps"]) if ok else None
+        return rows, best
+    hosts = dict(SPEED_REGIONS)
     for name in PROXY_SPEED_HUBS:
         mbps = measure_download_proxy(ph, pp, username, password,
                                       hosts[name], _SPEED_FILE,
@@ -10236,6 +10568,9 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     out = {"proxy": "%s:%s" % (proxy_host, proxy_port),
            "socks5": None, "egress": None, "egress_ip": None,
            "egress_reputation": None, "dns_leak": None, "tcp_ping": None}
+    # R3-M-07：入口即定测速门禁（JSON/非交互默认关、--with-speed 开、
+    # 交互终端问一次），吞吐段与 F41 共用此判定，不再只看 _NO_SPEED。
+    _spd_ok = _speed_allowed(json_mode)
 
     def _note(msg):
         if not json_mode:
@@ -10307,8 +10642,8 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     else:
         _note(_c(C.red, T("diag_tcp_fail")))
 
-    # 6. 吞吐 (经代理, 多地区枢纽节点下载; --no-speed 跳过)
-    _note(T("speed_skipped") if _NO_SPEED else T("diag_speed_testing"))
+    # 6. 吞吐 (经代理, 多地区枢纽节点下载; 门禁关闭时跳过)
+    _note(T("speed_skipped") if not _spd_ok else T("diag_speed_testing"))
 
     def _hub_row(row):
         if not json_mode:
@@ -10319,18 +10654,19 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             print(_c(C.green, line) if available else _c(C.dim, line))
 
     try:
-        trows, tbest = ([], None) if _NO_SPEED else proxy_speed_regions(proxy_host, proxy_port,
+        trows, tbest = ([], None) if not _spd_ok else proxy_speed_regions(proxy_host, proxy_port,
                                            username=username,
                                            password=password,
-                                           on_result=_hub_row)
+                                           on_result=_hub_row,
+                                           family=6 if _ever == 6 else 0)
     except Exception:
         trows, tbest = [], None
     out["throughput"] = {"regions": trows,
                          "best_mbps": tbest["down_mbps"] if tbest else None,
                          "best_region": tbest["region"] if tbest else None}
-    # F41: 仅在实际执行过测速时输出成功或失败; --no-speed 跳过后不再把
+    # F41: 仅在实际执行过测速时输出成功或失败; 门禁跳过后不再把
     # “未执行”显示为“失败” (tbest=None 在此分支下是跳过, 不是失败)。
-    if not _NO_SPEED:
+    if _spd_ok:
         if tbest:
             _note(_c(C.green, T("diag_speed_ok") % (_loc_hub_name(tbest["region"]),
                                                    tbest["down_mbps"])))
@@ -10338,7 +10674,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             _note(_c(C.dim, T("diag_speed_fail")))
 
     if json_mode:
-        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+        print(json.dumps(_json_safe(out), indent=2, default=str, ensure_ascii=False))
     else:
         _note(_c(C.green, T("done")))
     return out
@@ -10491,8 +10827,10 @@ def _print_batch_results(results):
 
 
 def _batch_best_throughput(results):
-    """排名后对最优 SOCKS5 节点实测经代理多地区下载吞吐 (附加行)。"""
-    if _NO_SPEED:
+    """排名后对最优 SOCKS5 节点实测经代理多地区下载吞吐 (附加行)。
+    R3-M-07：入口即走 _speed_allowed 门禁（与 run_proxy_diag 同款）；
+    门禁关闭时不测速（--batch 绕过仅影响非 JSON 路径，此处即该路径）。"""
+    if not _speed_allowed(False):
         print(f"  {_c(C.dim, T('speed_skipped'))}")
         return
     for r in results:
@@ -10502,9 +10840,13 @@ def _batch_best_throughput(results):
             continue
         print(T("batch_tp_testing"))
         try:
+            # M-03：最佳节点宿主为 IPv6 字面量时，测速走 IPv6 代表点
+            # （批量流不测出口 IP，以节点宿主族为准）。
+            _bip, _bver = parse_any_ip(nd["host"])
             _, tbest = proxy_speed_regions(nd["host"], nd["port"],
                                            username=nd["user"],
-                                           password=nd["pass"], duration=4)
+                                           password=nd["pass"], duration=4,
+                                           family=6 if _bver == 6 else 0)
         except Exception:
             tbest = None
         if tbest:
@@ -11257,25 +11599,34 @@ def run_speed_only(json_mode=False):
     _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
     rows = print_speed_section(json_mode=json_mode, family=_fam)
     if json_mode:
-        print(json.dumps({"regions": rows}, indent=2, default=str,
+        print(json.dumps(_json_safe({"regions": rows}), indent=2, default=str,
                          ensure_ascii=False))
     return rows
 
 
 def run_streaming_only():
-    """菜单独立入口: 仅流媒体解锁检测 (取出口 IP 后跑流媒体表)。"""
+    """菜单独立入口: 仅流媒体解锁检测 (取出口 IP 后跑流媒体表)。
+    M-04：对齐菜单 1（run_active）的分栈契约——_FORCE_STACK 钉死
+    地址族时只测该族；默认自动模式下 IPv4 与 IPv6 出口各跑一张表
+    （family 与出口族一致，不再把 IPv4 出口地址当 family=0 测，
+    也不再因无 IPv4 出口就直接失败）。"""
     with _unlock_lock:
         _unlock_cache.clear()
     print(f"  {T('detecting_egress')}")
-    egress = get_egress_ip()
-    if not egress:
+    if _FORCE_STACK == "6":
+        _eg = [(get_egress_ip6(), 6)]
+    elif _FORCE_STACK == "4":
+        _eg = [(get_egress_ip(), 4)]
+    else:
+        _eg = [(get_egress_ip(), 4), (get_egress_ip6(), 6)]
+    _eg = [(e, f) for e, f in _eg if e]
+    if not _eg:
         print(f"  {_c(C.red, T('egress_fail'))}")
         return
-    print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
     _section(T("sec_stream"))
-    # H-05：独立入口亦遵循 _FORCE_STACK（4/6 钉死地址族，默认 0 不变）。
-    _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
-    _run_streaming_table(egress, family=_fam)
+    for egress, _fam in _eg:
+        print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+        _run_streaming_table(egress, family=_fam)
 
 
 def run_dnsleak_only():
@@ -14125,7 +14476,7 @@ def main():
             print(_c(C.yellow, _ip_ignored_tpl % "--batch"))
         _res = batch_node_test(_nodes)
         if ns.json:
-            print(json.dumps({"batch": _sanitize_batch_results(_res)},
+            print(json.dumps(_json_safe({"batch": _sanitize_batch_results(_res)}),
                              ensure_ascii=False))
         else:
             _print_batch_results(_res)
