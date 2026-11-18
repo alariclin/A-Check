@@ -47,7 +47,7 @@ SKIP=0
 RESULTS=""
 
 # 内层检查脚本（本地/docker 共用一份，L-03：两处 53 行 heredoc 去重）。
-INNER_SCRIPT=$(cat <<'INNER_EOF'
+IFS= read -r -d '' INNER_SCRIPT <<'INNER_EOF' || true
 WORKDIR="$(mktemp -d)" || { echo "FAIL: cannot create temp dir"; exit 1; }
 trap 'rm -rf "$WORKDIR"' EXIT
 cp "${ACHECK_SRC:-/acheck.py}" "$WORKDIR/acheck.py" || { echo "FAIL: cannot copy acheck.py"; exit 1; }
@@ -102,7 +102,6 @@ fi
 "$PYBIN" "$WORKDIR/acheck.py" --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
 echo "PASS"
 INNER_EOF
-)
 
 # 内层检查: $1=包管理器, $2=是否旧 Debian, $3=镜像 (仅 docker 模式)。
 # docker 模式: 文件经只读挂载进 /acheck.py; 本地模式: 经 ACHECK_SRC 指到宿主文件。

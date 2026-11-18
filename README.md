@@ -98,7 +98,7 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS:

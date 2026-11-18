@@ -1265,7 +1265,7 @@ STR = {
         "bn_ok": "در دسترس",
         "bn_untested": "تست نشده",
         "bn_fault": "خطا",
-        "bn_cores": "هسته",
+        "bn_cores": " هسته",
         "grp_ip": "[ اعتبار IP ]",
         "grp_net": "[ پروکسی و شبکه ]",
         "grp_sys": "[ سیستم و تنظیمات ]",
@@ -1296,7 +1296,7 @@ STR = {
         "diag_dns_clean": "✓ خروجی DNS سازگار است: ASN حل‌کننده با ASN خروجی مطابقت دارد",
         "diag_dns_unknown": "[غیرقابل تأیید] خطا در بررسی سازگاری خروجی DNS",
         "diag_tcp_testing": "در حال تست تأخیر TCP %s:%s...",
-        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f، افت %.1f%%",
+        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f میلی‌ثانیه، افت %.1f%%",
         "diag_tcp_fail": "✗ خطای اتصال TCP",
         "prompt_proxy": "آدرس پروکسی را وارد کنید (host:port، b بازگشت، q خروج): ",
         "prompt_proxy_user": "نام کاربری (Enter برای رد شدن): ",
@@ -11394,7 +11394,7 @@ SHORTCUT_AC_RISK = (
     "является встроенным псевдонимом Add-Content.",
     "ac توسط بستهٔ حسابداری acct/psacct ارائه می‌شود؛ نصب بعدی این بسته‌ها "
     "ممکن است این میانبر را پنهان کند. در Windows PowerShell نیز ac نام "
-    "مستعار داخلی Add-Content است。",
+    "مستعار داخلی Add-Content است.",
     "ac 由 acct/psacct 會計軟體套件提供；日後安裝這些軟體套件可能遮蔽此捷徑。"
     "在 Windows PowerShell 中，ac 還是 Add-Content 的內建別名。",
 )
@@ -11497,7 +11497,7 @@ def _shortcut_resolve_interpreter(explicit=None):
                                   "Интерпретатор %s отклонён: %s" % (cand, why),
                                   "مفسر %s رد شد: %s" % (cand, why),
                                   "解譯器 %s 被拒絕：%s" % (cand, why)))
-        return os.path.realpath(cand), ver
+        return cand, ver
     exe = sys.executable
     if not exe or not os.path.isabs(exe):
         raise ShortcutError(_L("无法确定解释器的绝对路径",
@@ -11506,6 +11506,15 @@ def _shortcut_resolve_interpreter(explicit=None):
                               "Не удаётся определить абсолютный путь интерпретатора",
                               "نمی‌توان مسیر مطلق مفسر را تعیین کرد",
                               "無法確定解譯器的絕對路徑"))
+    # R3-M-02: 记原始路径（不 realpath），解析后校验目标存在且可执行；
+    # 首次启动校验由安装时的最小启动检查（--help）完成。
+    if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
+        raise ShortcutError(_L("解释器不可执行：%s" % exe,
+                              "Interpreter is not executable: %s" % exe,
+                              "インタープリタは実行できません：%s" % exe,
+                              "Интерпретатор не исполняется: %s" % exe,
+                              "مفسر قابل اجرا نیست: %s" % exe,
+                              "解譯器不可執行：%s" % exe))
     ok, why = _shortcut_check_interpreter(sys.version_info[:3])
     if not ok:
         raise ShortcutError(_L("当前解释器被拒绝：%s" % why,
@@ -11514,7 +11523,7 @@ def _shortcut_resolve_interpreter(explicit=None):
                               "Запущенный интерпретатор отклонён: %s" % why,
                               "مفسر در حال اجرا رد شد: %s" % why,
                               "目前解譯器被拒絕：%s" % why))
-    return os.path.realpath(exe), tuple(sys.version_info[:3])
+    return exe, tuple(sys.version_info[:3])
 
 
 def shortcut_paths(scope, home=None, sysroot=None):
@@ -11583,32 +11592,19 @@ def _shortcut_sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def _shortcut_sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _shortcut_marker(content):
-    """只认启动器第 2 行的 marker (第 1 行是 shebang); 文件中部出现的不算。"""
-    lines = content.split("\n")
-    if len(lines) >= 2:
-        m = re.fullmatch(r"# acheck-managed: ([A-Za-z0-9_-]+)", lines[1])
-        return m.group(1) if m else None
-    return None
-
-
 def _shortcut_canon_entry(path):
     """入口路径规范形: 只解析父目录的符号链接 (绝不 realpath 启动器本身),
     再拼回文件名, 供归属比对用。"""
+    if not isinstance(path, str):
+        return ""
     d = os.path.dirname(path)
     return os.path.join(os.path.realpath(d), os.path.basename(path))
 
 
 def _shortcut_path_in_bin_dir(path, bin_dir):
     """入口路径是否落在启动器目录内 (父目录 realpath 比对)。"""
+    if not isinstance(path, str) or not isinstance(bin_dir, str):
+        return False
     try:
         parent = os.path.realpath(os.path.dirname(os.path.abspath(path)))
         base = os.path.realpath(bin_dir)
@@ -11619,7 +11615,7 @@ def _shortcut_path_in_bin_dir(path, bin_dir):
 
 def _shortcut_sha256_file_nofollow(path):
     """O_NOFOLLOW + fstat 验普通文件后分块算 sha256 (符号链接一律拒绝)。"""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -11638,9 +11634,12 @@ def _shortcut_sha256_file_nofollow(path):
 def _shortcut_entry_intact(path, entry, instance_id):
     """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
     且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。
-    O_NOFOLLOW 打开 + fstat + 限长读 (4097 字节) + 完整 3 行模板校验。"""
+    O_NOFOLLOW|O_NONBLOCK 打开 (FIFO 不阻塞) + fstat + 限长读 (4097 字节)
+    + 完整 3 行模板校验。"""
+    if not isinstance(path, str) or not isinstance(entry, dict):
+        return False
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return False
     try:
@@ -11799,6 +11798,10 @@ def _shortcut_load_state(paths):
     if not isinstance(state.get("instance_id"), str) \
             or not SHORTCUT_INSTANCE_ID_RE.match(state["instance_id"]):
         return None, True
+    for _k, _v in state.get("entries", {}).items():
+        if not isinstance(_k, str) or not SHORTCUT_NAME_RE.match(_k) \
+                or not isinstance(_v, dict):
+            return None, True
     return state, False
 
 
@@ -12154,9 +12157,20 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     instance_id = state.get("instance_id") if state else uuid.uuid4().hex
     own_paths = [e.get("path", "") for e in
                  (state or {}).get("entries", {}).values()
-                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 if isinstance(e, dict)
+                 and _shortcut_path_in_bin_dir(e.get("path", ""),
+                                               paths["bin_dir"])
                  and _shortcut_entry_intact(e.get("path", ""), e,
                                             instance_id)]
+    # R4-M-01(1): 本次经冲突交互被替换/降级剔除的旧名，写盘前安全清理。
+    dropped = set()
+    # R3-M-02: 解释器变化时把既有入口一并纳入本次更新，避免新旧启动器
+    # 引用不同解释器路径而分叉。
+    if state is not None and state.get("interpreter") \
+            and state.get("interpreter") != interp:
+        for _nm in state.get("entries", {}):
+            if _nm not in want:
+                want.append(_nm)
     # ---- 第一阶段: 全部名字检查确认 (不写文件) ----
     checks = {}
     for nm in want:
@@ -12251,6 +12265,8 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                 continue
             if ans == "2":
                 result["degraded"] = True
+                dropped.update(nm for nm in want
+                               if nm in blocked or nm in risk_unconfirmed)
                 want = [nm for nm in want if nm not in blocked
                         and nm not in risk_unconfirmed]
                 blocked = {}
@@ -12296,6 +12312,7 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                 if _shortcut_blocked(fl):
                     print("  %s: %s" % (new, _shortcut_fmt_findings(fl)))
                     continue
+                dropped.add(first_blocked)
                 want = [new if x == first_blocked else x for x in want]
                 checks[new] = fl
                 checks.pop(first_blocked, None)
@@ -12535,6 +12552,20 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                        "marker": instance_id}
         result["installed"].append(nm)
     # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
+    # R4-M-01(1): 写盘前清理本次冲突交互剔除的旧名——仅当旧启动器仍属
+    # 自有（在启动器目录内且 intact）时才安全删除文件并移出 entries；
+    # 系统文件或他人文件一律不动。
+    for _nm in sorted(dropped):
+        if _nm in entries:
+            _ent = entries[_nm]
+            _p = _ent.get("path", "") if isinstance(_ent, dict) else ""
+            if _shortcut_path_in_bin_dir(_p, paths["bin_dir"]) \
+                    and _shortcut_entry_intact(_p, _ent, instance_id):
+                try:
+                    os.unlink(_p)
+                except OSError:
+                    continue
+                del entries[_nm]
     new_state = {
         "format_version": SHORTCUT_STATE_VERSION,
         "instance_id": instance_id,
@@ -12544,6 +12575,7 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
         "interpreter": interp,
         "bin_dir": paths["bin_dir"],
         "entries": entries,
+        "install_status": "failed" if not result["installed"] else "ok",
         "installed_version": src_version,
         "source_path": src,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -12608,7 +12640,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "напрямую." % paths["state_path"],
                    "دسترسی خواندن پروندهٔ وضعیت ممکن نیست: %s\nدسترسی‌های "
                    "پرونده را بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
-                   "بازنویسی نکنید。" % paths["state_path"],
+                   "بازنویسی نکنید." % paths["state_path"],
                    "無權限讀取狀態檔案：%s\n請檢查該檔案權限，"
                    "不要直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
     lines = []
@@ -12627,7 +12659,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "напрямую." % paths["state_path"],
                    "پروندهٔ وضعیت خراب است (corrupt): %s\nپیش از هر اقدامی "
                    "آن را دستی بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
-                   "بازنویسی نکنید。" % paths["state_path"],
+                   "بازنویسی نکنید." % paths["state_path"],
                    "狀態檔案已損壞 (corrupt): %s\n請人工檢查後再處理，不要"
                    "直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
     lines.append(_L("命令入口状态 (%s):" % scope,
@@ -12660,10 +12692,30 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                    "Примечание: %s нет в PATH; настройте PATH "
                                    "после установки." % paths["bin_dir"],
                                    "توجه: %s در PATH نیست؛ پس از نصب PATH را "
-                                   "تنظیم کنید。" % paths["bin_dir"],
+                                   "تنظیم کنید." % paths["bin_dir"],
                                    "提示：%s 不在 PATH 中，安裝後需按提示設定 PATH。"
                                    % paths["bin_dir"]))
         return "\n".join(lines) + "\n", 0
+    if state.get("install_status") == "failed":
+        return (_L("上次安装失败，未装好任何入口（状态文件 %s）。"
+                   "请重跑安装，失败原因见安装时的报错。"
+                   % paths["state_path"],
+                   "The last install failed and no entry was installed "
+                   "(state file %s). Re-run install; see the install-time "
+                   "errors for the cause." % paths["state_path"],
+                   "前回のインストールは失敗し、入口は一つもインストールされません"
+                   "でした（状態ファイル %s）。インストールを再実行してください。"
+                   "原因はインストール時のエラーを参照してください。"
+                   % paths["state_path"],
+                   "Последняя установка не удалась, ни один ярлык не "
+                   "установлен (файл состояния %s). Повторите установку; "
+                   "причина — в ошибках установки." % paths["state_path"],
+                   "نصب قبلی ناموفق بود و هیچ ورودی‌ای نصب نشد (پروندهٔ "
+                   "وضعیت %s). نصب را دوباره اجرا کنید؛ علت را در خطاهای "
+                   "زمان نصب ببینید." % paths["state_path"],
+                   "上次安裝失敗，未裝好任何入口（狀態檔案 %s）。"
+                   "請重跑安裝，失敗原因見安裝時的報錯。"
+                   % paths["state_path"]), 1)
     lines.append("  %s: %s" % (_L("已安装脚本版本", "Installed script version",
                                  "インストール済みスクリプトの版",
                                  "Версия установленного скрипта",
@@ -12693,27 +12745,35 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                "提示：已安裝副本與目前執行版本不同，下載新版後"
                                "請重跑安裝更新副本（入口名保留）。"))
     if state.get("managed_script"):
-        ok_m = os.path.isfile(state["managed_script"])
-        if ok_m:
+        # R4-M-01(4): 只核对固定路径 paths["managed_script"]，不用状态里
+        # 写的可疑路径；O_NOFOLLOW + O_NONBLOCK，符号链接/FIFO 一律 CHANGED。
+        ok_m = False
+        if isinstance(state.get("managed_script"), str) \
+                and _shortcut_canon_entry(state["managed_script"]) == \
+                _shortcut_canon_entry(paths["managed_script"]):
             try:
-                ok_m = _shortcut_sha256_file(state["managed_script"]) == \
-                    state.get("managed_sha256")
+                ok_m = _shortcut_sha256_file_nofollow(
+                    paths["managed_script"]) == state.get("managed_sha256")
             except OSError:
                 ok_m = False
         lines.append("  %s: %s (%s)" % (_L("受管理脚本", "Managed script",
                                           "管理スクリプト", "Управляемый скрипт",
                                           "اسکریپت مدیریت‌شده", "受管理指令碼"),
-                                       state["managed_script"],
+                                       paths["managed_script"],
                                        "OK" if ok_m else "CHANGED"))
     for nm, entry in sorted(state.get("entries", {}).items()):
-        p = entry.get("path", "")
+        p = entry.get("path", "") if isinstance(entry, dict) else ""
         intact = _shortcut_entry_intact(p, entry, state["instance_id"])
+        # R4-M-01(4): 仅 intact 为真时才把入口路径当作自有路径传给检查；
+        # 被篡改的入口须报 target_foreign，不得再被掩盖为 target_own。
         findings = shortcut_check_name(nm, paths["bin_dir"],
-                                       own_entry_paths=[p],
+                                       own_entry_paths=[p] if intact else [],
                                        path_dirs=path_dirs,
                                        system_dirs=system_dirs)
         shadow = [f for f in findings
                   if f["kind"] in ("path_hit", "system_hit")]
+        foreign = [f for f in findings
+                   if f["kind"] == "target_foreign"]
         lines.append("  %s: %s (%s)" % (nm, p, "OK" if intact else "CHANGED"))
         if shadow:
             lines.append("    " + _L("警告：出现同名命令：%s，请用管理入口更换短名。"
@@ -12729,10 +12789,36 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                      "менеджер ярлыков."
                                      % ", ".join(f["path"] for f in shadow),
                                      "هشدار: فرمان هم‌نام ظاهر شد: %s؛ با "
-                                     "مدیریت میانبر نام کوتاه را عوض کنید。"
+                                     "مدیریت میانبر نام کوتاه را عوض کنید."
                                      % ", ".join(f["path"] for f in shadow),
                                      "警告：出現同名命令：%s，請用管理入口更換短名。"
                                      % ", ".join(f["path"] for f in shadow)))
+        if foreign:
+            lines.append("    " + _L("警告：入口 %s 的目标文件已被他人替换或占用：%s，"
+                                     "请用管理入口更换短名或人工处理。"
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "Warning: the target file of entry %s was "
+                                     "replaced or taken over by someone else: %s; "
+                                     "rename it via the shortcut manager or handle "
+                                     "it manually."
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "警告：入口 %s の対象ファイルは他人に置き換え"
+                                     "られたか、占有されています：%s。管理入口で短名"
+                                     "を変更するか、手動で対処してください。"
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "Предупреждение: целевой файл записи %s был "
+                                     "заменён или занят кем-то другим: %s; "
+                                     "переименуйте через менеджер ярлыков или "
+                                     "разберитесь вручную."
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "هشدار: پروندهٔ هدف ورودی %s توسط دیگری "
+                                     "جایگزین یا اشغال شده است: %s؛ از راه مدیریت "
+                                     "میانبر نام کوتاه را عوض کنید یا دستی رسیدگی "
+                                     "کنید."
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "警告：入口 %s 的目標檔案已被他人替換或佔用：%s，"
+                                     "請用管理入口更換短名或人工處理。"
+                                     % (nm, ", ".join(f["path"] for f in foreign))))
     if not _shortcut_bin_in_path(paths["bin_dir"]):
         lines.append("  " + _L("提示：%s 不在 PATH 中，入口当前无法直接调用；"
                                "请把该目录加入 PATH (如在 ~/.bashrc 或 "
@@ -12758,7 +12844,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                "قابل فراخوانی نیستند؛ آن را به PATH اضافه کنید "
                                "(مثلاً export PATH=\"$HOME/.local/bin:$PATH\" "
                                "در ~/.bashrc یا ~/.zshrc) و پوسته را دوباره "
-                               "باز کنید。" % paths["bin_dir"],
+                               "باز کنید." % paths["bin_dir"],
                                "提示：%s 不在 PATH 中，入口目前無法直接呼叫；"
                                "請把該目錄加入 PATH (如在 ~/.bashrc 或 "
                                "~/.zshrc 中加 export PATH=\"$HOME/.local/bin:"
@@ -12874,7 +12960,9 @@ def shortcut_change(old_name, new_name=None, scope="user",
                                   "名字 %r 已安裝" % new_name))
         return result
     own_paths = [e.get("path", "") for e in entries.values()
-                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 if isinstance(e, dict)
+                 and _shortcut_path_in_bin_dir(e.get("path", ""),
+                                               paths["bin_dir"])
                  and _shortcut_entry_intact(e.get("path", ""), e,
                                             state["instance_id"])]
     findings = shortcut_check_name(new_name, paths["bin_dir"],
@@ -12927,7 +13015,9 @@ def shortcut_change(old_name, new_name=None, scope="user",
     # 状态信任复核: 受管理脚本路径须与当前目录一致 (缺键也不许抛 KeyError),
     # 解释器须重新解析验证 (状态里写的解释器不可直接信任)
     _ms = state.get("managed_script")
-    if _ms != paths["managed_script"]:
+    if not isinstance(_ms, str) \
+            or _shortcut_canon_entry(_ms) != \
+            _shortcut_canon_entry(paths["managed_script"]):
         result["errors"].append(
             _L("状态文件受管理脚本路径与当前目录不一致，拒绝改名",
                "State file managed script path does not match the current "
@@ -13389,7 +13479,7 @@ def _shortcut_menu():
                          "кэш команд." % ", ".join(res["removed"]),
                          "حذف شد: %s. نکته: hash -r (یا rehash) را اجرا کنید "
                          "یا پوسته را دوباره باز کنید تا حافظهٔ فرمان "
-                         "به‌روز شود。" % ", ".join(res["removed"]),
+                         "به‌روز شود." % ", ".join(res["removed"]),
                          "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
                          "shell 以刷新命令快取。" % ", ".join(res["removed"])))
                 else:
@@ -13476,7 +13566,7 @@ def _shortcut_report_install(res):
                      % res.get("bin_dir", ""),
                      "توجه: %s در PATH نیست و میانبرها هنوز مستقیم قابل "
                      "فراخوانی نیستند؛ آن را به PATH اضافه کنید و پوسته را "
-                     "دوباره باز کنید。" % res.get("bin_dir", ""),
+                     "دوباره باز کنید." % res.get("bin_dir", ""),
                      "提示：%s 不在 PATH 中，入口現在還不能直接呼叫；"
                      "請把該目錄加入 PATH 後重開 shell。"
                      % res.get("bin_dir", "")))
@@ -13617,7 +13707,7 @@ def _cmd_shortcut(ns):
                      % (", ".join(res["removed"]) if res["removed"]
                         else "нет"),
                      "حذف شد: %s. نکته: hash -r (یا rehash) را اجرا کنید یا "
-                     "پوسته را دوباره باز کنید。"
+                     "پوسته را دوباره باز کنید."
                      % (", ".join(res["removed"]) if res["removed"]
                         else "هیچ"),
                      "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
