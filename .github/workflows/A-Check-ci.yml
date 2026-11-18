@@ -1,0 +1,95 @@
+name: A-Check CI
+
+# A-Check 仓库的 CI（2026-11-18 新增；此前从未配置过 CI）。
+# 覆盖仓库内可验证的门禁：
+#   harness: harness 本地模式（py_compile + --help + --explain + Python >= 3.8 门），
+#            在 Python 3.8-3.13 矩阵上各跑一遍。
+#   consistency: 根文件与包内副本逐字节一致；全仓版本号一致、无旧版残留；
+#            run.bat 全行 CRLF；两个测试脚本 bash 语法通过。
+# 不覆盖：170 份回归夹具（在 ~/workspace/.astra_review/fix-tools/，不在仓库内，
+# 故 CI 跑不到；如要进 CI，须先把夹具审过后提交进仓库，另立项决定）。
+# 也不覆盖：联网行为（被动/主动检测、流媒体探针），由悉尼实机腿覆盖。
+
+on:
+  push:
+    branches: ["main", "fix/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Harness local mode (py_compile + --help + --explain)
+        run: ACHECK_LOCAL_ONLY=1 bash acheck-all-systems-test.sh ./acheck.py
+
+  consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Package copy identical to root file
+        run: cmp acheck.py A-Check.app/Contents/Resources/acheck.py
+      - name: Version consistency (no stale version anywhere)
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          root = pathlib.Path("acheck.py").read_text(encoding="utf-8")
+          m = re.search(r'^VERSION\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"', root, re.M)
+          if not m:
+              sys.exit("ERROR: VERSION not found in acheck.py")
+          ver = m.group(1)
+          major, minor, _ = ver.split(".")
+          pat = re.compile(r"v?%s\.%s\.\d+" % (re.escape(major), re.escape(minor)))
+          bad = []
+          skip = {".git", "__pycache__", ".ruff_cache"}
+          for p in pathlib.Path(".").rglob("*"):
+              if not p.is_file():
+                  continue
+              if any(part in skip for part in p.parts):
+                  continue
+              try:
+                  text = p.read_text(encoding="utf-8", errors="strict")
+              except (UnicodeDecodeError, ValueError):
+                  continue
+              for hit in pat.finditer(text):
+                  if hit.group(0).lstrip("v") != ver:
+                      bad.append(f"{p}: {hit.group(0)}")
+                      break
+          if bad:
+              print("ERROR: stale version strings (expected %s):" % ver)
+              for b in bad[:20]:
+                  print("  - " + b)
+              sys.exit(1)
+          print(f"OK: all version strings are {ver}")
+          PY
+      - name: run.bat is CRLF throughout
+        run: |
+          python3 - <<'PY'
+          data = open("run.bat", "rb").read()
+          lines = data.split(b"\n")
+          if lines and lines[-1] == b"":
+              lines = lines[:-1]
+          bad = [i + 1 for i, ln in enumerate(lines) if not ln.endswith(b"\r")]
+          if bad:
+              raise SystemExit(f"ERROR: run.bat lines not CRLF: {bad[:10]}")
+          print(f"OK: run.bat {len(lines)} lines, all CRLF")
+          PY
+      - name: Test scripts pass bash -n
+        run: |
+          bash -n acheck-all-systems-test.sh
+          bash -n vps-test.sh
