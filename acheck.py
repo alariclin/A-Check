@@ -7272,10 +7272,22 @@ def _unlock_label(v):
 
 
 def _tiktok_denied(body):
-    """TikTok "Access Denied" 只认短错误页（R4-H-01）：正常大型 SSR JSON
-    的用户内容字段也可能含该短语，不得误判。短页 < 16 KiB 才算错误页。"""
+    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：
+    (1) <title>Access Denied</title>——错误页标题结构，长度不限；
+    (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
+    JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
+    SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
+    阈值不再定生死。"""
     b = body or ""
-    return len(b) < 16384 and "Access Denied" in b
+    if re.search(r"<title[^>]*>\s*access denied\s*</title>",
+                 b, re.IGNORECASE):
+        return True
+    if len(b) < 16384 and "Access Denied" in b:
+        _low = b.lower()
+        if ("<html" in _low or "<head" in _low or "<body" in _low
+                or "<h1" in _low):
+            return True
+    return False
 
 
 def test_tiktok(local_ip=None):
