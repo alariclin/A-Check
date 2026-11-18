@@ -6992,7 +6992,11 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         _gz = {"obj": (zlib.decompressobj(16 + zlib.MAX_WBITS)
                        if _decomp_kind == "gzip" else None),
                "kind": _decomp_kind, "member_eof": False,
-               "prefix": b"", "decided": _decomp_kind != "deflate"}
+               "prefix": b"", "decided": _decomp_kind != "deflate",
+               # S1-N1：累计全部压缩输入（供回退重喂）＋决策时输出快照
+               # ＋当前 wbits／是否已重试过。
+               "all_in": bytearray(), "snap": None, "retried": False,
+               "wb": None}
         _st = {"out": [], "n": 0, "trunc": False, "eof": False}
 
         def _deflate_wbits(_b):
@@ -7006,7 +7010,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         def _feed(_buf):
             # 喂一串压缩字节到当前解压对象；gzip 成员结束且有 unused_data 时
             # 换新对象继续喂（多成员直至空串或采样上限）；输出截到采样上限。
-            # 解压异常向上传播，调用方记 trunc（deflate 首喂另有一次重试）。
+            # 解压异常向上传播，调用方记 trunc（deflate 另有一次回退重试）。
             while _buf and _st["n"] < _STREAM_CAP:
                 _dec = _gz["obj"].decompress(_buf, _STREAM_CAP - _st["n"])
                 if _dec:
@@ -7026,10 +7030,27 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                     return
                 _buf = _gz["obj"].unconsumed_tail
 
+        def _deflate_retry():
+            # deflate 回退重嗅探（S1-N1）：把输出恢复到解码器创建时的
+            # 快照，换另一 wbits 重建解码器，从头重喂至今收到的全部压
+            # 缩字节——分块边界不得决定解码结果。仅重试一次。
+            _n0, _o0 = _gz["snap"]
+            _st["out"] = _st["out"][:_o0]
+            _st["n"] = _n0
+            _gz["member_eof"] = False
+            _gz["wb"] = (-zlib.MAX_WBITS if _gz["wb"] == zlib.MAX_WBITS
+                         else zlib.MAX_WBITS)
+            _gz["obj"] = zlib.decompressobj(_gz["wb"])
+            _gz["retried"] = True
+            _feed(bytes(_gz["all_in"]))
+
         def _push(_data):
             # 喂一块传输字节：解压（gzip/deflate）或直存，输出截到采样上限。
             if not _data or _st["n"] >= _STREAM_CAP:
                 return
+            if _gz["kind"] == "deflate":
+                # S1-N1：累计全部压缩输入，供后续喂入异常时回退重喂。
+                _gz["all_in"] += _data
             if _gz["obj"] is None and _gz["kind"] is None:
                 _take = _data[:_STREAM_CAP - _st["n"]]
                 _st["out"].append(_take)
@@ -7049,28 +7070,31 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                 _buf = _gz["prefix"]
                 _gz["prefix"] = b""
                 _gz["decided"] = True
-                _wb = _deflate_wbits(_buf)
-                _gz["obj"] = zlib.decompressobj(_wb)
-                _n0, _o0 = _st["n"], len(_st["out"])
+                _gz["wb"] = _deflate_wbits(_buf)
+                _gz["obj"] = zlib.decompressobj(_gz["wb"])
+                _gz["snap"] = (_st["n"], len(_st["out"]))
                 try:
                     _feed(_buf)
                 except Exception:
-                    # 嗅探误判：换另一 wbits，用同一前缀重试一次
-                    _st["out"] = _st["out"][:_o0]
-                    _st["n"] = _n0
-                    _gz["obj"] = zlib.decompressobj(
-                        -zlib.MAX_WBITS if _wb == zlib.MAX_WBITS
-                        else zlib.MAX_WBITS)
-                    _gz["member_eof"] = False
+                    # 嗅探误判：换另一 wbits，从头重喂已收全部字节（此时
+                    # 即前缀），重试一次
                     try:
-                        _feed(_buf)
+                        _deflate_retry()
                     except Exception:
                         _st["trunc"] = True
                 return
             try:
                 _feed(_data)
             except Exception:
-                _st["trunc"] = True
+                # S1-N1：后续喂入异常也要能回退／重嗅探（首块恰为 zlib
+                # 头、后续块才暴露 raw 时，旧码只记 trunc、无 raw 回退）
+                if _gz["kind"] == "deflate" and not _gz["retried"]:
+                    try:
+                        _deflate_retry()
+                    except Exception:
+                        _st["trunc"] = True
+                else:
+                    _st["trunc"] = True
                 return
 
         def _partial():
@@ -7126,7 +7150,11 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                                             cap=_STREAM_COMP_CAP,
                                             total_len=_comp_read))
         else:
-            _complete = _resp_complete(_raw, getattr(r, "headers", None))
+            # H-02：deflate 解压器从未创建 = 首字节不完整（未满 2 字节
+            # 即 EOF），无从确认正文完整，不得判 complete；明文分支沿
+            # 用旧语义（干净 EOF 或达 cap 即完整）。
+            _complete = (False if _gz["kind"] == "deflate"
+                         else _resp_complete(_raw, getattr(r, "headers", None)))
         return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
