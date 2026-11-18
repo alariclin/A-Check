@@ -1912,11 +1912,28 @@ def validate_ip(s):
         return None
 
 
+def _q_ip(ip):
+    """上游 URL 拼接用 IP 编码: 只编 % & # ? / 等注入字符, 保留 ':'。
+    合法 IPv4/IPv6 (数字、点、十六进制、冒号) 编码后与原文完全相同,
+    故对正常查询零行为变化; 含 %scope_id 的注入串则被中和
+    (% -> %25, & -> %26, # -> %23, / -> %2F)。path 与 query 位置通用。
+    不用 safe='': 那会把 IPv6 的 ':' 编成 %3A, 部分上游按原样路由
+    path 段可能 404; ':' 在 path/query 中均为合法字符 (R3-H07)。"""
+    return urllib.parse.quote(str(ip), safe=":")
+
+
 def parse_any_ip(s):
-    """解析任意公网 IP: 返回 (ip对象, 4|6); 失败返回 (None, 错误i18n键)。"""
+    """解析任意公网 IP: 返回 (ip对象, 4|6); 失败返回 (None, 错误i18n键)。
+    含 '%' 的地址一律拒绝: IPv6 scope_id (%en0 / %00&ip=...# 等)
+    不属于本工具公网查询的合法输入, 且 '%' 可向 27 处上游 URL 注入
+    第二参数或截断查询串 (R3-H07)。"""
+    if "%" in str(s):
+        return None, "invalid_ip"
     try:
         ip = ipaddress.ip_address(str(s).strip())
     except Exception:
+        return None, "invalid_ip"
+    if getattr(ip, "scope_id", None) is not None:
         return None, "invalid_ip"
     if isinstance(ip, ipaddress.IPv6Address):
         _mapped = ip.ipv4_mapped
@@ -2390,7 +2407,7 @@ class Scamalytics(Provider):
     name = "Scamalytics"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://scamalytics.com/ip/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://scamalytics.com/ip/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         m = (
@@ -2410,7 +2427,7 @@ class StopForumSpam(Provider):
     name = "StopForumSpam"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.stopforumspam.org/api?ip={ip}&json", use_cache=False)
+        ok, raw = http_get(f"https://api.stopforumspam.org/api?ip={_q_ip(ip)}&json", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -2468,7 +2485,7 @@ class RIPEstat(Provider):
 
     def check(self, ip):
         ok, raw = http_get(
-            f"https://stat.ripe.net/data/prefix-overview/data.json?resource={ip}",
+            f"https://stat.ripe.net/data/prefix-overview/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
         if not ok:
@@ -2482,7 +2499,7 @@ class RIPEstat(Provider):
             announced = d.get("announced", False)
             age_years, first_seen, visibility = None, None, None
             ok2, raw2 = http_get(
-                f"https://stat.ripe.net/data/routing-history/data.json?resource={ip}",
+                f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
                 use_cache=False,
             )
             if ok2:
@@ -2947,7 +2964,7 @@ class IPWhoIs(Provider):
 
     def check(self, ip):
         _l = _ipwho_lang()
-        ok, raw = http_get(f"https://ipwho.is/{ip}" + (f"?lang={_l}" if _l else ""),
+        ok, raw = http_get(f"https://ipwho.is/{_q_ip(ip)}" + (f"?lang={_l}" if _l else ""),
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -2997,7 +3014,7 @@ class IPInfo(Provider):
     name = "ipinfo.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipinfo.io/{ip}/json",
+        ok, raw = http_get(f"https://ipinfo.io/{_q_ip(ip)}/json",
                            headers={"User-Agent": "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"},
                            use_cache=False)
         if not ok:
@@ -3026,7 +3043,7 @@ class SANSISC(Provider):
     name = "SANS ISC"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://isc.sans.edu/api/ip/{ip}?json", use_cache=False)
+        ok, raw = http_get(f"https://isc.sans.edu/api/ip/{_q_ip(ip)}?json", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3051,7 +3068,7 @@ class GreyNoise(Provider):
 
     def check(self, ip):
         # 免费版 Community 限 25 次/周，进程内缓存减少重复消耗
-        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{ip}", use_cache=True)
+        ok, raw = http_get(f"https://api.greynoise.io/v3/community/{_q_ip(ip)}", use_cache=True)
         if not ok:
             # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
             # 404 表示该 IP 未被观测到扫描，视为非噪音（正常）
@@ -3103,7 +3120,7 @@ class ProxyCheck(Provider):
     name = "proxycheck.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://proxycheck.io/v2/{ip}?vpn=1&asn=1&risk=1", use_cache=False)
+        ok, raw = http_get(f"https://proxycheck.io/v2/{_q_ip(ip)}?vpn=1&asn=1&risk=1", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3161,7 +3178,7 @@ class DBIP(Provider):
     name = "DB-IP"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.db-ip.com/v2/free/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.db-ip.com/v2/free/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3188,9 +3205,9 @@ class FreeIPAPI(Provider):
     name = "freeipapi"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://free.freeipapi.com/api/json/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
         if not ok:
-            ok, raw = http_get(f"https://freeipapi.com/api/json/{ip}", use_cache=False)
+            ok, raw = http_get(f"https://freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3223,7 +3240,7 @@ class ShodanInternetDB(Provider):
     name = "Shodan InternetDB"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://internetdb.shodan.io/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://internetdb.shodan.io/{_q_ip(ip)}", use_cache=False)
         if not ok:
             if raw.startswith("HTTP 404:"):
                 return {
@@ -3341,7 +3358,7 @@ class IPWhoisApp(Provider):
     name = "ipwhois.app"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipwhois.app/json/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://ipwhois.app/json/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3373,7 +3390,7 @@ class IPApiIs(Provider):
     name = "ipapi.is"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.ipapi.is/?ip={ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.ipapi.is/?ip={_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3411,7 +3428,7 @@ class IPGuide(Provider):
     name = "ip.guide"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ip.guide/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://ip.guide/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3447,7 +3464,7 @@ class GeoJS(Provider):
     name = "GeoJS"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://get.geojs.io/v1/ip/geo/{ip}.json",
+        ok, raw = http_get(f"https://get.geojs.io/v1/ip/geo/{_q_ip(ip)}.json",
                            use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3530,7 +3547,7 @@ class IPLocate(Provider):
     name = "iplocate.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://iplocate.io/api/lookup/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://iplocate.io/api/lookup/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3567,7 +3584,7 @@ class IPQuery(Provider):
     name = "ipquery.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.ipquery.io/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.ipquery.io/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3599,7 +3616,7 @@ class IpapiCo(Provider):
     name = "ipapi.co"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://ipapi.co/{ip}/json/", use_cache=False)
+        ok, raw = http_get(f"https://ipapi.co/{_q_ip(ip)}/json/", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3625,7 +3642,7 @@ class TwoIp(Provider):
     name = "2ip.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.2ip.io/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.2ip.io/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3658,7 +3675,7 @@ class OTX(Provider):
         except Exception:
             ver = 4
         ok, raw = http_get(
-            f"https://otx.alienvault.com/api/v1/indicators/IPv{ver}/{ip}/general",
+            f"https://otx.alienvault.com/api/v1/indicators/IPv{ver}/{_q_ip(ip)}/general",
             use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
@@ -3690,7 +3707,7 @@ class BlocklistDE(Provider):
     name = "blocklist.de"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.blocklist.de/api.php?ip={ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.blocklist.de/api.php?ip={_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -3717,7 +3734,7 @@ class RDAP(Provider):
         d = None
         for base in ("https://rdap.arin.net/registry/ip/",
                      "https://rdap.db.ripe.net/ip/"):
-            ok, raw = http_get(base + ip, use_cache=False)
+            ok, raw = http_get(base + _q_ip(ip), use_cache=False)
             if not ok:
                 continue
             try:
@@ -3887,7 +3904,7 @@ class HackerTarget(Provider):
     name = "HackerTarget"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.hackertarget.com/geoip/?q={ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.hackertarget.com/geoip/?q={_q_ip(ip)}", use_cache=False)
         if not ok or "Country:" not in raw:
             return {"ok": False, "err": raw if not ok else "unexpected response"}
         try:
@@ -3897,7 +3914,7 @@ class HackerTarget(Provider):
                     k, v = line.split(":", 1)
                     kv[k.strip().lower()] = v.strip()
             asn = prefix = netname = ""
-            ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={ip}",
+            ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={_q_ip(ip)}",
                                  use_cache=False)
             if ok2:
                 parts = [p.strip() for p in raw2.strip().strip('"').split('","')]
@@ -3929,7 +3946,7 @@ class CountryIs(Provider):
     name = "country.is"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://api.country.is/{ip}", use_cache=False)
+        ok, raw = http_get(f"https://api.country.is/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
@@ -6221,9 +6238,12 @@ def get_egress_ip6():
                 ip = d.get("ip") or d.get("IP") or d.get("ip_address")
             else:
                 ip = raw.splitlines()[0].strip() if raw else ""
-            if ip:
+            # R3-H07: 上游返回的出口地址亦可能含 %scope_id/注入, 丢弃
+            if ip and "%" not in str(ip):
                 _p = ipaddress.ip_address(str(ip).strip())
-                if isinstance(_p, ipaddress.IPv6Address) and _p.is_global and not _p.is_reserved:
+                if (isinstance(_p, ipaddress.IPv6Address) and _p.is_global
+                        and not _p.is_reserved
+                        and getattr(_p, "scope_id", None) is None):
                     return str(_p)
         except Exception:
             continue
@@ -9928,7 +9948,7 @@ def _ip_asn_org(ip, timeout=8):
     fields 必须请求 connection, 直接请求 asn/org 会被丢弃。"""
     try:
         req = urllib.request.Request(
-            "https://ipwho.is/%s?fields=connection,country" % ip,
+            "https://ipwho.is/%s?fields=connection,country" % _q_ip(ip),
             headers={"User-Agent": UA_BROWSER})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
@@ -10557,7 +10577,7 @@ def _banner_net_info():
                 if _rem() <= 0:
                     raise TimeoutError("banner budget exhausted")
                 req = urllib.request.Request(
-                    "https://ipwho.is/%s" % egress,
+                    "https://ipwho.is/%s" % _q_ip(egress),
                     headers={"User-Agent": UA_BROWSER})
                 r = _urlopen_bounded(req, _rem())
                 if r is None:
@@ -10596,8 +10616,13 @@ def _banner_net_info():
             break
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
+            # R3-H07: 拒绝 %scope_id 候选 (注入/链路 scope 不得进入横幅)
+            if "%" in _cand:
+                continue
             _ip6 = ipaddress.IPv6Address(_cand)
-            if _ip6.is_global and not _ip6.is_multicast and not _ip6.is_reserved:
+            if (_ip6.is_global and not _ip6.is_multicast
+                    and not _ip6.is_reserved
+                    and getattr(_ip6, "scope_id", None) is None):
                 _v6addr = str(_ip6)
                 break
         except Exception:
