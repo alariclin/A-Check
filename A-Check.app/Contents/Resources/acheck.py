@@ -52,6 +52,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
@@ -6436,12 +6437,21 @@ def _pinned_opener(family, follow_redirects=True):
     return urllib.request.build_opener(*handlers)
 
 
-def _resp_complete(raw, headers):
-    """响应体完整性（_active_get 成功/HTTPError 两路径共用）：
-    CL 在场且合法时须 len(raw) == CL——read(amt) 短读不抛错，声明 1000 只到 20 字节
-    的干净 FIN 也会返回 20 字节，单凭 len<=16384 会误标 complete；
-    CL > 16384 时恒不完整（16385 字节探针无法区分“恰 16385”与“更长”）；
-    CL 缺失时沿用 EOF 探针（len(raw) <= 16384 即读到结尾）；CL 非法时不完整。"""
+# H-01 流媒体采样上限（解压后）：256–512 KiB 取顶；单次读块 64 KiB；
+# 压缩输入上限 2 MiB（防空 deflate 块旋转与压缩炸弹）。
+_STREAM_CAP = 512 * 1024
+_STREAM_CHUNK = 65536
+_STREAM_COMP_CAP = 2 * 1024 * 1024
+
+
+def _resp_complete(raw, headers, cap=_STREAM_CAP):
+    """响应体完整性（_active_get 成功/HTTPError 两路径共用）——H-01 新语义：
+    区分「真实截断」与「达到本地采样上限」两个独立信号：
+    CL 在场且合法时须读满 min(CL, cap)——声明 1000 只到 20 字节的干净
+    FIN 仍是不完整；CL 超过 cap 时读满 cap 即算完整（采样上限不是失败）。
+    CL 缺失时：走到本函数的读取已是干净 EOF 或已达 cap，两者都算完整；
+    真实截断（IncompleteRead/读超时）不经过本函数，调用方直接判 False。
+    CL 非法时不完整（保守，沿用旧行为）。"""
     cl = None
     if headers is not None:
         try:
@@ -6451,26 +6461,28 @@ def _resp_complete(raw, headers):
         if v is not None:
             v = str(v).strip()
             cl = int(v) if (v.isascii() and v.isdigit()) else False
-    if cl is False or (cl is not None and cl > 16384):
+    if cl is False:
         return False
     if cl is not None:
-        return len(raw) == cl
-    return len(raw) <= 16384
+        return len(raw) >= min(cl, cap)
+    return True
 
 
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location, complete, headers_dict)。
     headers_dict: 响应头小写键 dict（无头/异常时 {}），供挑战判定查 cf-mitigated。
-    complete: 是否读到响应体结尾（EOF/长度相符）；16KiB 截断时为 False。
-    CL 在场时须 len==CL（CL>16384 恒不完整）；IncompleteRead 的 partial 计不完整。
+    complete: 是否拿到可信采样。H-01 新语义：真实截断（IncompleteRead、
+    声明 CL 但实读 < min(CL, cap)、读超时）为 False；干净读满本地采样
+    上限（解压后 512 KiB）为 True——达到采样上限不是失败。
     调用方以“限制串不存在”判解锁时，不完整且未见限制串须判 unknown，
-    不得以截断后的前 16KiB 无限制串冒充解锁；恰 16384 字节的体仍判完整
-    （多读 1 字节探 EOF 区分，不以 len==16384 一律判截断）。
+    不得以截断采样中无限制串冒充解锁。
     M-04：打开与读取共享绝对截止（_open_bounded + _read_timed），慢速滴水
-    不得拖过 timeout；读完前调 _resp_shutdown 唤醒遗留读线程再关响应。"""
+    不得拖过 timeout；读完前调 _resp_shutdown 唤醒遗留读线程再关响应。
+    请求带 Accept-Encoding: gzip，响应 gzip 时流式限额解压（防压缩炸弹）。"""
     h = {
         "User-Agent": UA_BROWSER,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip",
         "Accept-Language": "en-US,en;q=0.9",
         "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Mode": "navigate",
@@ -6513,21 +6525,79 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         except Exception:
             _loc = ""
     _hdrs = _lower_headers(getattr(r, "headers", None))
+    # H-01：服务端声明 gzip 即流式解压（16+MAX_WBITS 识别 gzip 头），解压后
+    # 采样上限 _STREAM_CAP，压缩输入另设 _STREAM_COMP_CAP 防空块旋转与
+    # 压缩炸弹。CL 是传输（压缩后）长度，须按压缩字节核对，而非解压后长度。
+    _enc = str(_hdrs.get("content-encoding", "") or "").strip().lower()
+    _gzip = _enc in ("gzip", "x-gzip")
     try:
-        try:
-            raw = _read_timed(r, 16385, max(0.0, _dl - time.monotonic()))
-        except http.client.IncompleteRead as e:
-            raw = e.partial
-            return _status, raw[:16384].decode("utf-8", errors="replace"), _loc, False, _hdrs
-        except Exception as e:
-            if _is_err:
-                return _status, "", _loc, False, _hdrs
-            return None, str(e)[:100], "", False, {}
-        if raw is None:
-            if _is_err:
-                return _status, "", _loc, False, _hdrs
-            return None, "read deadline exceeded", "", False, {}
-        return _status, raw[:16384].decode("utf-8", errors="replace"), _loc, _resp_complete(raw, getattr(r, "headers", None)), _hdrs
+        _decomp = zlib.decompressobj(16 + zlib.MAX_WBITS) if _gzip else None
+        _st = {"out": [], "n": 0, "trunc": False, "eof": False}
+
+        def _push(_data):
+            # 喂一块传输字节：解压（gzip）或直存，输出截到采样上限。
+            if not _data or _st["n"] >= _STREAM_CAP:
+                return
+            if _decomp is not None:
+                try:
+                    _dec = _decomp.decompress(_data, _STREAM_CAP - _st["n"])
+                except Exception:
+                    _st["trunc"] = True
+                    return
+                if _dec:
+                    _st["out"].append(_dec)
+                    _st["n"] += len(_dec)
+                if _decomp.eof:
+                    _st["eof"] = True
+            else:
+                _take = _data[:_STREAM_CAP - _st["n"]]
+                _st["out"].append(_take)
+                _st["n"] += len(_take)
+
+        _comp_read = 0
+        _hit_cap = False
+        while _st["n"] < _STREAM_CAP and not _st["eof"] and not _st["trunc"]:
+            _remain = _dl - time.monotonic()
+            if _remain <= 0:
+                if _is_err:
+                    return _status, "", _loc, False, _hdrs
+                return None, "read deadline exceeded", "", False, {}
+            try:
+                _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
+            except http.client.IncompleteRead as e:
+                _push(e.partial or b"")
+                _st["trunc"] = True
+                break
+            except Exception as e:
+                if _is_err:
+                    return _status, "", _loc, False, _hdrs
+                return None, str(e)[:100], "", False, {}
+            if _chunk is None:
+                # M-04：读超时即整体失败（code None），与旧单次读行为一致；
+                # HTTPError 响应沿用旧行为，保留状态码、空正文。
+                if _is_err:
+                    return _status, "", _loc, False, _hdrs
+                return None, "read deadline exceeded", "", False, {}
+            if not _chunk:
+                break  # 干净 EOF
+            _comp_read += len(_chunk)
+            if _comp_read > _STREAM_COMP_CAP:
+                _st["trunc"] = True
+                break
+            _push(_chunk)
+            if _st["n"] >= _STREAM_CAP:
+                _hit_cap = True
+                break
+        _raw = b"".join(_st["out"])
+        if _st["trunc"]:
+            _complete = False
+        elif _hit_cap or _st["n"] >= _STREAM_CAP:
+            _complete = True  # 干净读满本地采样上限，不是失败
+        elif _decomp is not None:
+            _complete = bool(_decomp.eof)  # gzip 成员不完整即真实截断
+        else:
+            _complete = _resp_complete(_raw, getattr(r, "headers", None))
+        return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
         try:
@@ -6752,6 +6822,9 @@ def test_primevideo(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
+        return T("unknown"), "", None
     if code == 200:
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r'"territory"\s*:\s*"([A-Z]{2})"', body
@@ -6954,6 +7027,9 @@ def test_line(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
+        return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
@@ -7008,6 +7084,9 @@ def test_deepseek(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
+        return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
@@ -7023,6 +7102,9 @@ def test_appletv(local_ip=None):
     if _is_challenge(code, body, hdrs):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
+        return T("unknown"), "", None
+    # H-01：真实截断时不得判可达（与 F25 门禁探针一致）。
+    if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
         return T("reachable"), "", None
