@@ -26,6 +26,7 @@ IP 信誉检测 v4.14.29 — 全量修复与并发优化公开版 (零 API Key �
     python3 acheck.py --explain              # 输出评分规则说明 (支持 6 种语言)
 """
 import base64
+import errno
 import hashlib
 import http.client
 import ipaddress
@@ -11128,10 +11129,25 @@ SHORTCUT_SHELL_WORDS = frozenset((
     "disown", "enable", "help", "mapfile", "readarray", "shopt",
 ))
 SHORTCUT_AC_RISK = (
+    "ac 由 acct/psacct 会计软件包提供；日后安装这些软件包可能遮蔽此快捷键。"
+    "在 Windows PowerShell 中，ac 还是 Add-Content 的内置别名。",
     "ac is provided by the acct/psacct accounting package; installing "
     "those packages later may shadow this shortcut. In Windows "
-    "PowerShell, ac is also a built-in alias for Add-Content."
+    "PowerShell, ac is also a built-in alias for Add-Content.",
+    "ac は acct/psacct 会計パッケージが提供するものです。これらのパッケージを"
+    "後でインストールすると、このショートカットが隠れる場合があります。"
+    "Windows PowerShell では、ac は Add-Content の組み込みエイリアスでもあります。",
+    "ac предоставляется пакетом учёта acct/psacct; установка этих пакетов "
+    "позже может затенить этот ярлык. В Windows PowerShell ac также "
+    "является встроенным псевдонимом Add-Content.",
+    "ac توسط بستهٔ حسابداری acct/psacct ارائه می‌شود؛ نصب بعدی این بسته‌ها "
+    "ممکن است این میانبر را پنهان کند. در Windows PowerShell نیز ac نام "
+    "مستعار داخلی Add-Content است。",
+    "ac 由 acct/psacct 會計軟體套件提供；日後安裝這些軟體套件可能遮蔽此捷徑。"
+    "在 Windows PowerShell 中，ac 還是 Add-Content 的內建別名。",
 )
+# 实例 ID 字符集: 只许字母/数字/_/- (1-64 字符), 绝不许换行或 shell 元字符
+SHORTCUT_INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class ShortcutError(Exception):
@@ -11140,6 +11156,26 @@ class ShortcutError(Exception):
     def __init__(self, message, rc=2):
         super().__init__(message)
         self.rc = rc
+
+
+def _shortcut_win32_msg():
+    """Windows 不支持文案 (六语, M-02 门统一用)。"""
+    return _L("命令入口管理仅支持 Linux 与 macOS，Windows 不支持。",
+              "Command shortcut management only supports Linux and macOS, "
+              "not Windows.",
+              "コマンド入口の管理は Linux と macOS のみ対応し、Windows には"
+              "対応していません。",
+              "Управление ярлыками команд поддерживается только в Linux и "
+              "macOS, но не в Windows.",
+              "مدیریت میانبرهای فرمان فقط در Linux و macOS پشتیبانی می‌شود، "
+              "نه در Windows.",
+              "命令入口管理僅支援 Linux 與 macOS，Windows 不支援。")
+
+
+def _shortcut_require_posix():
+    """Windows 门: 快捷键管理入口在 win32 下一律拒绝, 不建任何目录与状态文件。"""
+    if sys.platform == "win32":
+        raise ShortcutError(_shortcut_win32_msg())
 
 
 def _shortcut_check_interpreter(version=None):
@@ -11155,32 +11191,77 @@ def _shortcut_resolve_interpreter(explicit=None):
     if explicit:
         cand = os.path.abspath(os.path.expanduser(explicit))
         if not (os.path.isfile(cand) and os.access(cand, os.X_OK)):
-            raise ShortcutError("interpreter not executable: %s" % cand)
+            raise ShortcutError(_L("解释器不可执行：%s" % cand,
+                                  "Interpreter is not executable: %s" % cand,
+                                  "インタープリタは実行できません：%s" % cand,
+                                  "Интерпретатор не исполняется: %s" % cand,
+                                  "مفسر قابل اجرا نیست: %s" % cand,
+                                  "解譯器不可執行：%s" % cand))
         try:
             r = subprocess.run(
                 [cand, "-c",
                  "import sys; print('.'.join(map(str, sys.version_info[:3])))"],
                 capture_output=True, text=True, timeout=15)
         except Exception as e:
-            raise ShortcutError("cannot run interpreter %s: %s" % (cand, e))
+            raise ShortcutError(_L("无法运行解释器 %s：%s" % (cand, e),
+                                  "Cannot run interpreter %s: %s" % (cand, e),
+                                  "インタープリタ %s を実行できません：%s"
+                                  % (cand, e),
+                                  "Не удаётся запустить интерпретатор %s: %s"
+                                  % (cand, e),
+                                  "نمی‌توان مفسر %s را اجرا کرد: %s"
+                                  % (cand, e),
+                                  "無法執行解譯器 %s：%s" % (cand, e)))
         if r.returncode != 0:
-            raise ShortcutError("interpreter %s failed to report version"
-                                % cand)
+            raise ShortcutError(_L("解释器 %s 未能报告版本" % cand,
+                                  "Interpreter %s failed to report its version"
+                                  % cand,
+                                  "インタープリタ %s はバージョンを報告できませんでした"
+                                  % cand,
+                                  "Интерпретатор %s не сообщил версию" % cand,
+                                  "مفسر %s نتوانست نسخه را گزارش کند" % cand,
+                                  "解譯器 %s 未能回報版本" % cand))
         try:
             ver = tuple(int(x) for x in r.stdout.strip().split("."))
         except Exception:
-            raise ShortcutError("interpreter %s returned bad version: %r"
-                                % (cand, r.stdout.strip()))
+            raise ShortcutError(_L("解释器 %s 返回了无效版本：%r"
+                                  % (cand, r.stdout.strip()),
+                                  "Interpreter %s returned a bad version: %r"
+                                  % (cand, r.stdout.strip()),
+                                  "インタープリタ %s は無効なバージョンを返しました：%r"
+                                  % (cand, r.stdout.strip()),
+                                  "Интерпретатор %s вернул неверную версию: %r"
+                                  % (cand, r.stdout.strip()),
+                                  "مفسر %s نسخهٔ نامعتبری برگرداند: %r"
+                                  % (cand, r.stdout.strip()),
+                                  "解譯器 %s 傳回了無效版本：%r"
+                                  % (cand, r.stdout.strip())))
         ok, why = _shortcut_check_interpreter(ver)
         if not ok:
-            raise ShortcutError("interpreter %s refused: %s" % (cand, why))
+            raise ShortcutError(_L("解释器 %s 被拒绝：%s" % (cand, why),
+                                  "Interpreter %s refused: %s" % (cand, why),
+                                  "インタープリタ %s は拒否されました：%s"
+                                  % (cand, why),
+                                  "Интерпретатор %s отклонён: %s" % (cand, why),
+                                  "مفسر %s رد شد: %s" % (cand, why),
+                                  "解譯器 %s 被拒絕：%s" % (cand, why)))
         return os.path.realpath(cand), ver
     exe = sys.executable
     if not exe or not os.path.isabs(exe):
-        raise ShortcutError("cannot determine interpreter absolute path")
+        raise ShortcutError(_L("无法确定解释器的绝对路径",
+                              "Cannot determine the interpreter's absolute path",
+                              "インタープリタの絶対パスを特定できません",
+                              "Не удаётся определить абсолютный путь интерпретатора",
+                              "نمی‌توان مسیر مطلق مفسر را تعیین کرد",
+                              "無法確定解譯器的絕對路徑"))
     ok, why = _shortcut_check_interpreter(sys.version_info[:3])
     if not ok:
-        raise ShortcutError("running interpreter refused: %s" % why)
+        raise ShortcutError(_L("当前解释器被拒绝：%s" % why,
+                              "Running interpreter refused: %s" % why,
+                              "実行中のインタープリタは拒否されました：%s" % why,
+                              "Запущенный интерпретатор отклонён: %s" % why,
+                              "مفسر در حال اجرا رد شد: %s" % why,
+                              "目前解譯器被拒絕：%s" % why))
     return os.path.realpath(exe), tuple(sys.version_info[:3])
 
 
@@ -11189,9 +11270,24 @@ def shortcut_paths(scope, home=None, sysroot=None):
     home 显式传入时 (夹具/测试) 以该 home 为准, 不读 XDG_DATA_HOME;
     home 为空时遵循有效的 XDG_DATA_HOME (须为绝对路径), 否则 ~/.local。"""
     if scope not in ("user", "system"):
-        raise ShortcutError("unknown scope: %r" % (scope,))
+        raise ShortcutError(_L("未知范围：%r" % (scope,),
+                              "Unknown scope: %r" % (scope,),
+                              "不明な範囲：%r" % (scope,),
+                              "Неизвестная область: %r" % (scope,),
+                              "محدودهٔ ناشناخته: %r" % (scope,),
+                              "未知範圍：%r" % (scope,)))
     if scope == "user":
         h = home if home is not None else os.path.expanduser("~")
+        if not os.path.isabs(h):
+            raise ShortcutError(_L("主目录不是绝对路径：%s" % h,
+                                  "Home directory is not an absolute path: %s"
+                                  % h,
+                                  "ホームディレクトリは絶対パスではありません：%s"
+                                  % h,
+                                  "Домашний каталог — не абсолютный путь: %s"
+                                  % h,
+                                  "پوشهٔ خانه مسیر مطلق نیست: %s" % h,
+                                  "主目錄不是絕對路徑：%s" % h))
         if home is None:
             xdg = os.environ.get("XDG_DATA_HOME", "")
             base = xdg if xdg and os.path.isabs(xdg) else \
@@ -11214,7 +11310,16 @@ def shortcut_paths(scope, home=None, sysroot=None):
 
 
 def shortcut_launcher_content(interpreter, script_path, instance_id):
-    """薄 POSIX sh 启动器: exec + 钉死路径 + "$@" (禁 $*/eval/重拼接/cd)。"""
+    """薄 POSIX sh 启动器: exec + 钉死路径 + "$@" (禁 $*/eval/重拼接/cd)。
+    instance_id 只许 [A-Za-z0-9_-]{1,64}, 换行/元字符一律拒绝 (防注入启动器)。"""
+    if not isinstance(instance_id, str) \
+            or not SHORTCUT_INSTANCE_ID_RE.match(instance_id):
+        raise ShortcutError(_L("无效的实例 ID：%r" % (instance_id,),
+                              "Invalid instance id: %r" % (instance_id,),
+                              "無効なインスタンス ID：%r" % (instance_id,),
+                              "Недопустимый id экземпляра: %r" % (instance_id,),
+                              "شناسهٔ نمونه نامعتبر است: %r" % (instance_id,),
+                              "無效的執行個體 ID：%r" % (instance_id,)))
     return ("#!/bin/sh\n"
             "# acheck-managed: %s\n"
             "exec %s %s \"$@\"\n"
@@ -11235,31 +11340,92 @@ def _shortcut_sha256_file(path):
 
 
 def _shortcut_marker(content):
-    m = re.search(r"^# acheck-managed: ([A-Za-z0-9_-]+)$", content, re.M)
-    return m.group(1) if m else None
+    """只认启动器第 2 行的 marker (第 1 行是 shebang); 文件中部出现的不算。"""
+    lines = content.split("\n")
+    if len(lines) >= 2:
+        m = re.fullmatch(r"# acheck-managed: ([A-Za-z0-9_-]+)", lines[1])
+        return m.group(1) if m else None
+    return None
+
+
+def _shortcut_canon_entry(path):
+    """入口路径规范形: 只解析父目录的符号链接 (绝不 realpath 启动器本身),
+    再拼回文件名, 供归属比对用。"""
+    d = os.path.dirname(path)
+    return os.path.join(os.path.realpath(d), os.path.basename(path))
+
+
+def _shortcut_path_in_bin_dir(path, bin_dir):
+    """入口路径是否落在启动器目录内 (父目录 realpath 比对)。"""
+    try:
+        parent = os.path.realpath(os.path.dirname(os.path.abspath(path)))
+        base = os.path.realpath(bin_dir)
+    except OSError:
+        return False
+    return parent == base
+
+
+def _shortcut_sha256_file_nofollow(path):
+    """O_NOFOLLOW + fstat 验普通文件后分块算 sha256 (符号链接一律拒绝)。"""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("not a regular file: %s" % path)
+        h = hashlib.sha256()
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            h.update(chunk)
+        return h.hexdigest()
+    finally:
+        os.close(fd)
 
 
 def _shortcut_entry_intact(path, entry, instance_id):
     """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
-    且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。"""
+    且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。
+    O_NOFOLLOW 打开 + fstat + 限长读 (4097 字节) + 完整 3 行模板校验。"""
     try:
-        st = os.lstat(path)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
         return False
-    if not stat.S_ISREG(st.st_mode):
-        return False
     try:
-        with open(path, "rb") as f:
-            data = f.read()
-    except OSError:
-        return False
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            return False
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        data = os.read(fd, 4097)
+        if os.read(fd, 1):
+            return False
+    finally:
+        os.close(fd)
     if _shortcut_sha256_bytes(data) != entry.get("sha256"):
         return False
     try:
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return False
-    return _shortcut_marker(text) == instance_id
+    lines = text.split("\n")
+    if len(lines) != 4 or lines[3] != "":
+        return False
+    if lines[0] != "#!/bin/sh":
+        return False
+    if lines[1] != "# acheck-managed: %s" % instance_id:
+        return False
+    try:
+        parts = shlex.split(lines[2])
+    except ValueError:
+        return False
+    if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
+        return False
+    if entry.get("marker") is not None \
+            and entry.get("marker") != instance_id:
+        return False
+    return True
 
 
 def shortcut_check_name(name, bin_dir, own_entry_paths=(),
@@ -11273,10 +11439,10 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
                          "detail": "name must match ^[a-z][a-z0-9_-]{0,31}$ "
                          "and must not be a shell keyword/builtin"})
         return findings
-    own = {os.path.normpath(p) for p in own_entry_paths}
+    own = {_shortcut_canon_entry(p) for p in own_entry_paths}
     target = os.path.join(bin_dir, name)
     if os.path.lexists(target):
-        if os.path.normpath(target) in own:
+        if _shortcut_canon_entry(target) in own:
             findings.append({"kind": "target_own", "name": name,
                              "path": target})
         else:
@@ -11297,11 +11463,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
         if not d:
             continue
         nd = os.path.normpath(d)
-        if nd in seen:
+        rd = os.path.realpath(d)
+        if rd in seen:
             continue
-        seen.add(nd)
+        seen.add(rd)
         cand = os.path.join(nd, name)
-        if os.path.normpath(cand) in own:
+        if _shortcut_canon_entry(cand) in own:
             continue
         try:
             hit = os.path.isfile(cand) and os.access(cand, os.X_OK)
@@ -11319,11 +11486,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
         if not d:
             continue
         nd = os.path.normpath(d)
-        if nd in seen:
+        rd = os.path.realpath(d)
+        if rd in seen:
             continue
-        seen.add(nd)
+        seen.add(rd)
         cand = os.path.join(nd, name)
-        if os.path.normpath(cand) in own:
+        if _shortcut_canon_entry(cand) in own:
             continue
         try:
             hit = os.path.isfile(cand) and os.access(cand, os.X_OK)
@@ -11333,12 +11501,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
             findings.append({"kind": "system_hit", "name": name,
                              "path": cand})
     # ac 已知未来风险: 当前无可执行冲突也须警告 (不以"包没装"证明安全);
-    # 已有真实冲突时只报冲突, 不再叠加未来风险
+    # 已有真实冲突时只报冲突, 不再叠加未来风险; 已是自家入口时不再重复阻断
     if name == "ac" and not any(f["kind"] in ("path_hit", "system_hit",
-                                              "target_foreign")
+                                              "target_foreign", "target_own")
                                 for f in findings):
         findings.append({"kind": "ac_risk", "name": name,
-                         "detail": SHORTCUT_AC_RISK})
+                         "detail": _L(*SHORTCUT_AC_RISK)})
     return findings
 
 
@@ -11348,18 +11516,36 @@ def _shortcut_blocked(findings):
 
 
 def _shortcut_load_state(paths):
-    """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。"""
+    """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。
+    PermissionError 单独抛 ShortcutError, 绝不误报为 corrupt;
+    instance_id 须合字符集 [A-Za-z0-9_-]{1,64}, 否则按损坏处理。"""
     try:
         with open(paths["state_path"], "r", encoding="utf-8") as f:
             state = json.load(f)
     except FileNotFoundError:
         return None, False
+    except PermissionError:
+        raise ShortcutError(_L("无权限读取状态文件：%s"
+                              % paths["state_path"],
+                              "Permission denied reading state file: %s"
+                              % paths["state_path"],
+                              "状態ファイルを読み取る権限がありません：%s"
+                              % paths["state_path"],
+                              "Нет прав на чтение файла состояния: %s"
+                              % paths["state_path"],
+                              "دسترسی خواندن پروندهٔ وضعیت ممکن نیست: %s"
+                              % paths["state_path"],
+                              "無權限讀取狀態檔案：%s"
+                              % paths["state_path"]))
     except Exception:
         return None, True
     if not isinstance(state, dict) \
             or state.get("format_version") != SHORTCUT_STATE_VERSION \
             or not isinstance(state.get("entries"), dict) \
             or not state.get("instance_id"):
+        return None, True
+    if not isinstance(state.get("instance_id"), str) \
+            or not SHORTCUT_INSTANCE_ID_RE.match(state["instance_id"]):
         return None, True
     return state, False
 
@@ -11372,6 +11558,8 @@ def _shortcut_save_state(paths, state):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
             f.write("\n")
+        if paths.get("scope") == "system":
+            os.chmod(tmp, 0o644)
         os.replace(tmp, paths["state_path"])
     except Exception:
         try:
@@ -11381,20 +11569,121 @@ def _shortcut_save_state(paths, state):
         raise
 
 
-def _shortcut_publish_launcher(bin_dir, name, content_bytes):
-    """排他创建启动器: 目标突然出现即中止, 不覆盖未知对象。"""
-    target = os.path.join(bin_dir, name)
-    fd, tmp = tempfile.mkstemp(prefix=".acheck-launcher-",
-                               dir=bin_dir)
+def _shortcut_write_launcher_tmp(bin_dir, content_bytes):
+    """把启动器内容写进 bin_dir 内的临时文件 (0755), 返回临时路径。
+    mkstemp/写入/chmod 的 OSError 一律转 ShortcutError (H-01)。"""
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".acheck-launcher-",
+                                   dir=bin_dir)
+    except OSError as e:
+        raise ShortcutError(_L("无法在 %s 创建启动器临时文件：%s"
+                              % (bin_dir, e),
+                              "Cannot create launcher temp file in %s: %s"
+                              % (bin_dir, e),
+                              "%s にランチャーの一時ファイルを作成できません：%s"
+                              % (bin_dir, e),
+                              "Не удаётся создать временный файл лаунчера "
+                              "в %s: %s" % (bin_dir, e),
+                              "نمی‌توان پروندهٔ موقت راه‌انداز را در %s ساخت: %s"
+                              % (bin_dir, e),
+                              "無法在 %s 建立啟動器暫存檔：%s"
+                              % (bin_dir, e)))
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(content_bytes)
         os.chmod(tmp, 0o755)
+    except OSError as e:
         try:
-            os.link(tmp, target)
-        except FileExistsError:
-            raise ShortcutError("target appeared during install: %s "
-                                "(refusing to overwrite)" % target)
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise ShortcutError(_L("无法写入启动器临时文件：%s" % e,
+                              "Cannot write launcher temp file: %s" % e,
+                              "ランチャーの一時ファイルに書き込めません：%s" % e,
+                              "Не удаётся записать временный файл лаунчера: %s"
+                              % e,
+                              "نمی‌توان در پروندهٔ موقت راه‌انداز نوشت: %s" % e,
+                              "無法寫入啟動器暫存檔：%s" % e))
+    return tmp
+
+
+def _shortcut_link_tmp(tmp, target, content_bytes):
+    """把已写好的临时启动器排他发布到目标: 首选硬链接; 遇 EOPNOTSUPP/EPERM
+    (如跨设备/受限文件系统) 降级为 O_CREAT|O_EXCL 直接创建。目标突然出现
+    即中止, 不覆盖未知对象。"""
+    try:
+        os.link(tmp, target)
+        return
+    except FileExistsError:
+        raise ShortcutError(_L("安装期间目标突然出现：%s（拒绝覆盖）" % target,
+                              "Target appeared during install: %s "
+                              "(refusing to overwrite)" % target,
+                              "インストール中に既存の対象が現れました：%s"
+                              "（上書きしません）" % target,
+                              "Во время установки появилась цель: %s "
+                              "(перезапись запрещена)" % target,
+                              "در هنگام نصب هدف ظاهر شد: %s (بازنویسی نمی‌شود)"
+                              % target,
+                              "安裝期間目標突然出現：%s（拒絕覆寫）" % target))
+    except OSError as e:
+        if e.errno not in (errno.EOPNOTSUPP, errno.EPERM):
+            raise ShortcutError(_L("无法发布启动器 %s：%s" % (target, e),
+                                  "Cannot publish launcher %s: %s"
+                                  % (target, e),
+                                  "ランチャー %s を公開できません：%s"
+                                  % (target, e),
+                                  "Не удаётся опубликовать лаунчер %s: %s"
+                                  % (target, e),
+                                  "نمی‌توان راه‌انداز %s را منتشر کرد: %s"
+                                  % (target, e),
+                                  "無法發佈啟動器 %s：%s" % (target, e)))
+    try:
+        fd2 = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o755)
+    except FileExistsError:
+        raise ShortcutError(_L("安装期间目标突然出现：%s（拒绝覆盖）" % target,
+                              "Target appeared during install: %s "
+                              "(refusing to overwrite)" % target,
+                              "インストール中に既存の対象が現れました：%s"
+                              "（上書きしません）" % target,
+                              "Во время установки появилась цель: %s "
+                              "(перезапись запрещена)" % target,
+                              "در هنگام نصب هدف ظاهر شد: %s (بازنویسی نمی‌شود)"
+                              % target,
+                              "安裝期間目標突然出現：%s（拒絕覆寫）" % target))
+    except OSError as e2:
+        raise ShortcutError(_L("无法发布启动器 %s：%s" % (target, e2),
+                              "Cannot publish launcher %s: %s" % (target, e2),
+                              "ランチャー %s を公開できません：%s" % (target, e2),
+                              "Не удаётся опубликовать лаунчер %s: %s"
+                              % (target, e2),
+                              "نمی‌توان راه‌انداز %s را منتشر کرد: %s"
+                              % (target, e2),
+                              "無法發佈啟動器 %s：%s" % (target, e2)))
+    try:
+        with os.fdopen(fd2, "wb") as f:
+            f.write(content_bytes)
+        os.chmod(target, 0o755)
+    except OSError as e2:
+        try:
+            os.unlink(target)
+        except OSError:
+            pass
+        raise ShortcutError(_L("无法发布启动器 %s：%s" % (target, e2),
+                              "Cannot publish launcher %s: %s" % (target, e2),
+                              "ランチャー %s を公開できません：%s" % (target, e2),
+                              "Не удаётся опубликовать лаунчер %s: %s"
+                              % (target, e2),
+                              "نمی‌توان راه‌انداز %s را منتشر کرد: %s"
+                              % (target, e2),
+                              "無法發佈啟動器 %s：%s" % (target, e2)))
+
+
+def _shortcut_publish_launcher(bin_dir, name, content_bytes):
+    """排他创建启动器: 目标突然出现即中止, 不覆盖未知对象。"""
+    target = os.path.join(bin_dir, name)
+    tmp = _shortcut_write_launcher_tmp(bin_dir, content_bytes)
+    try:
+        _shortcut_link_tmp(tmp, target, content_bytes)
         return target
     finally:
         try:
@@ -11414,8 +11703,9 @@ def _shortcut_verify_launcher(path, timeout=20):
 
 
 def _shortcut_bin_in_path(bin_dir):
+    base = os.path.realpath(bin_dir)
     for d in os.environ.get("PATH", "").split(os.pathsep):
-        if d and os.path.normpath(d) == os.path.normpath(bin_dir):
+        if d and os.path.realpath(d) == base:
             return True
     return False
 
@@ -11425,19 +11715,63 @@ def _shortcut_fmt_findings(findings):
     for f in findings:
         k = f["kind"]
         if k == "invalid":
-            parts.append("invalid name %r" % f["name"])
+            parts.append(_L("无效名字 %r" % f["name"],
+                            "Invalid name %r" % f["name"],
+                            "無効な名前 %r" % f["name"],
+                            "Недопустимое имя %r" % f["name"],
+                            "نام نامعتبر %r" % f["name"],
+                            "無效名字 %r" % f["name"]))
         elif k == "target_foreign":
-            parts.append("target exists (%s): %s"
-                         % (f.get("detail", "?"), f["path"]))
+            parts.append(_L("目标已存在 (%s)：%s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "Target exists (%s): %s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "対象が既に存在します (%s)：%s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "Цель уже существует (%s): %s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "هدف از قبل وجود دارد (%s): %s"
+                            % (f.get("detail", "?"), f["path"]),
+                            "目標已存在 (%s)：%s"
+                            % (f.get("detail", "?"), f["path"])))
         elif k == "path_hit":
-            parts.append("PATH hit%s: %s"
-                         % (" (first)" if f.get("first") else "", f["path"]))
+            parts.append(_L("PATH 命中%s：%s"
+                            % (" (首个)" if f.get("first") else "", f["path"]),
+                            "PATH hit%s: %s"
+                            % (" (first)" if f.get("first") else "", f["path"]),
+                            "PATH に存在%s：%s"
+                            % (" (最初)" if f.get("first") else "", f["path"]),
+                            "Найдено в PATH%s: %s"
+                            % (" (первое)" if f.get("first") else "",
+                               f["path"]),
+                            "در PATH یافت شد%s: %s"
+                            % (" (اول)" if f.get("first") else "", f["path"]),
+                            "PATH 命中%s：%s"
+                            % (" (首個)" if f.get("first") else "", f["path"])))
         elif k == "system_hit":
-            parts.append("system path hit: %s" % f["path"])
+            parts.append(_L("系统路径命中：%s" % f["path"],
+                            "System path hit: %s" % f["path"],
+                            "システムパスに存在：%s" % f["path"],
+                            "Найдено в системном пути: %s" % f["path"],
+                            "در مسیر سیستمی یافت شد: %s" % f["path"],
+                            "系統路徑命中：%s" % f["path"]))
         elif k == "ac_risk":
-            parts.append("known future risk for 'ac': %s" % f["detail"])
+            parts.append(_L("已知未来风险 'ac'：%s" % SHORTCUT_AC_RISK[0],
+                            "Known future risk for 'ac': %s"
+                            % SHORTCUT_AC_RISK[1],
+                            "既知の将来リスク 'ac'：%s" % SHORTCUT_AC_RISK[2],
+                            "Известный будущий риск 'ac': %s"
+                            % SHORTCUT_AC_RISK[3],
+                            "ریسک آیندهٔ شناخته‌شدهٔ 'ac': %s"
+                            % SHORTCUT_AC_RISK[4],
+                            "已知未來風險 'ac'：%s" % SHORTCUT_AC_RISK[5]))
         elif k == "target_own":
-            parts.append("already owned: %s" % f["path"])
+            parts.append(_L("已拥有：%s" % f["path"],
+                            "Already owned: %s" % f["path"],
+                            "既に所有：%s" % f["path"],
+                            "Уже принадлежит: %s" % f["path"],
+                            "از قبل متعلق است: %s" % f["path"],
+                            "已擁有：%s" % f["path"]))
     return "; ".join(parts)
 
 
@@ -11449,10 +11783,31 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。"""
     result = {"ok": False, "rc": 2, "installed": [], "failed": [],
               "skipped": [], "degraded": False, "errors": [], "scope": scope}
-    want = list(names) if names else list(SHORTCUT_DEFAULT_NAMES)
-    if len(set(want)) != len(want):
-        result["errors"].append("duplicate names: %r" % (want,))
+    try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        result["errors"].append(str(e))
         return result
+    if names is None:
+        want = None
+    else:
+        want = list(names)
+        if not want:
+            result["errors"].append(_L("未给出名字 (--names 为空)",
+                                      "No names given (--names is empty)",
+                                      "名前が指定されていません (--names が空です)",
+                                      "Имена не заданы (--names пуст)",
+                                      "نامی داده نشده است (--names خالی است)",
+                                      "未給出名字 (--names 為空)"))
+            return result
+        if len(set(want)) != len(want):
+            result["errors"].append(_L("名字重复：%r" % (want,),
+                                      "Duplicate names: %r" % (want,),
+                                      "名前が重複しています：%r" % (want,),
+                                      "Повторяющиеся имена: %r" % (want,),
+                                      "نام‌های تکراری: %r" % (want,),
+                                      "名字重複：%r" % (want,)))
+            return result
     try:
         interp, _ver = _shortcut_resolve_interpreter(interpreter)
     except ShortcutError as e:
@@ -11468,36 +11823,88 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     src = os.path.abspath(source_path) if source_path else \
         os.path.abspath(__file__)
     if not os.path.isfile(src):
-        result["errors"].append("source script not found: %s" % src)
+        result["errors"].append(_L("找不到源脚本：%s" % src,
+                                  "Source script not found: %s" % src,
+                                  "ソーススクリプトが見つかりません：%s" % src,
+                                  "Исходный скрипт не найден: %s" % src,
+                                  "اسکریپت منبع یافت نشد: %s" % src,
+                                  "找不到來源指令碼：%s" % src))
         return result
     try:
         with open(src, "rb") as f:
             src_bytes = f.read()
         src_sha = _shortcut_sha256_bytes(src_bytes)
     except OSError as e:
-        result["errors"].append("cannot read source script: %s" % e)
+        result["errors"].append(_L("无法读取源脚本：%s" % e,
+                                  "Cannot read source script: %s" % e,
+                                  "ソーススクリプトを読み取れません：%s" % e,
+                                  "Не удаётся прочитать исходный скрипт: %s" % e,
+                                  "نمی‌توان اسکریپت منبع را خواند: %s" % e,
+                                  "無法讀取來源指令碼：%s" % e))
         return result
     try:
         os.makedirs(paths["data_dir"], exist_ok=True)
         os.makedirs(paths["bin_dir"], exist_ok=True)
+        if scope == "system":
+            os.chmod(paths["data_dir"], 0o755)
+            os.chmod(paths["bin_dir"], 0o755)
     except OSError as e:
-        result["errors"].append("cannot create managed directories: %s" % e)
+        result["errors"].append(_L("无法创建受管理目录：%s" % e,
+                                  "Cannot create managed directories: %s" % e,
+                                  "管理ディレクトリを作成できません：%s" % e,
+                                  "Не удаётся создать управляемые каталоги: %s"
+                                  % e,
+                                  "نمی‌توان پوشه‌های مدیریت‌شده را ساخت: %s" % e,
+                                  "無法建立受管理目錄：%s" % e))
         return result
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
     if corrupt:
         result["errors"].append(
-            "state file is corrupt: %s (refusing to overwrite or delete "
-            "any launcher; inspect/remove it manually)"
-            % paths["state_path"])
+            _L("状态文件已损坏：%s（拒绝覆盖或删除任何启动器，"
+               "请人工检查后处理）" % paths["state_path"],
+               "State file is corrupt: %s (refusing to overwrite or delete "
+               "any launcher; inspect/remove it manually)"
+               % paths["state_path"],
+               "状態ファイルが破損しています：%s（ランチャーの上書き・削除は"
+               "行いません。手動で確認してください）" % paths["state_path"],
+               "Файл состояния повреждён: %s (перезапись и удаление "
+               "лаунчеров запрещены; проверьте вручную)" % paths["state_path"],
+               "پروندهٔ وضعیت خراب است: %s (بازنویسی یا حذف راه‌اندازها انجام "
+               "نمی‌شود؛ دستی بررسی کنید)" % paths["state_path"],
+               "狀態檔案已損壞：%s（拒絕覆寫或刪除任何啟動器，"
+               "請人工檢查後處理）" % paths["state_path"]))
         return result
     if state is not None and state.get("scope") != scope:
         result["errors"].append(
-            "existing install is scope %r, requested %r; remove it first"
-            % (state.get("scope"), scope))
+            _L("已有安装属于 %r 范围，请求的是 %r；请先移除"
+               % (state.get("scope"), scope),
+               "Existing install is scope %r, requested %r; remove it first"
+               % (state.get("scope"), scope),
+               "既存のインストールは %r 範囲です。要求は %r です。"
+               "先に削除してください" % (state.get("scope"), scope),
+               "Существующая установка — область %r, запрошена %r; "
+               "сначала удалите её" % (state.get("scope"), scope),
+               "نصب موجود در محدودهٔ %r است، %r درخواست شد؛ ابتدا آن را "
+               "حذف کنید" % (state.get("scope"), scope),
+               "已有安裝屬於 %r 範圍，請求的是 %r；請先移除"
+               % (state.get("scope"), scope)))
         return result
+    if want is None:
+        if state is not None and state.get("entries"):
+            want = list(state["entries"].keys())
+        else:
+            want = list(SHORTCUT_DEFAULT_NAMES)
     instance_id = state.get("instance_id") if state else uuid.uuid4().hex
     own_paths = [e.get("path", "") for e in
-                 (state or {}).get("entries", {}).values()]
+                 (state or {}).get("entries", {}).values()
+                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 and _shortcut_entry_intact(e.get("path", ""), e,
+                                            instance_id)]
     # ---- 第一阶段: 全部名字检查确认 (不写文件) ----
     checks = {}
     for nm in want:
@@ -11531,14 +11938,14 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
         for nm, fl in blocked.items():
             print("  %s: %s" % (nm, _shortcut_fmt_findings(fl)))
         for nm in risk_unconfirmed:
-            print(_L("  %s：已知未来风险——%s" % (nm, SHORTCUT_AC_RISK),
-                     "  %s: known future risk — %s" % (nm, SHORTCUT_AC_RISK),
-                     "  %s：既知の将来リスク — %s" % (nm, SHORTCUT_AC_RISK),
+            print(_L("  %s：已知未来风险——%s" % (nm, SHORTCUT_AC_RISK[0]),
+                     "  %s: known future risk — %s" % (nm, SHORTCUT_AC_RISK[1]),
+                     "  %s：既知の将来リスク — %s" % (nm, SHORTCUT_AC_RISK[2]),
                      "  %s: известный будущий риск — %s"
-                     % (nm, SHORTCUT_AC_RISK),
+                     % (nm, SHORTCUT_AC_RISK[3]),
                      "  %s: ریسک آیندهٔ شناخته‌شده — %s"
-                     % (nm, SHORTCUT_AC_RISK),
-                     "  %s：已知未來風險——%s" % (nm, SHORTCUT_AC_RISK)))
+                     % (nm, SHORTCUT_AC_RISK[4]),
+                     "  %s：已知未來風險——%s" % (nm, SHORTCUT_AC_RISK[5])))
         tries = 0
         while (blocked or risk_unconfirmed) and tries < 5:
             tries += 1
@@ -11565,13 +11972,25 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                          "установить его",
                          "[4] پذیرش صریح ریسک آیندهٔ شناخته‌شدهٔ ac و نصب آن",
                          "[4] 明確接受 ac 已知未來風險，繼續安裝 ac"))
-            ans = _ask(_L("请选择 [1/2/3]: ", "Choose [1/2/3]: ",
-                         "選択してください [1/2/3]: ",
-                         "Выберите [1/2/3]: ",
-                         "انتخاب کنید [1/2/3]: ",
-                         "請選擇 [1/2/3]: "))
+            ans = _ask(_L("请选择 [1/2/3/4]: " if risk_unconfirmed
+                         else "请选择 [1/2/3]: ",
+                         "Choose [1/2/3/4]: " if risk_unconfirmed
+                         else "Choose [1/2/3]: ",
+                         "選択してください [1/2/3/4]: " if risk_unconfirmed
+                         else "選択してください [1/2/3]: ",
+                         "Выберите [1/2/3/4]: " if risk_unconfirmed
+                         else "Выберите [1/2/3]: ",
+                         "انتخاب کنید [1/2/3/4]: " if risk_unconfirmed
+                         else "انتخاب کنید [1/2/3]: ",
+                         "請選擇 [1/2/3/4]: " if risk_unconfirmed
+                         else "請選擇 [1/2/3]: "))
             if ans is None or ans == "3":
-                result["errors"].append("cancelled by user")
+                result["errors"].append(_L("用户已取消",
+                                          "Cancelled by user",
+                                          "ユーザーによりキャンセルされました",
+                                          "Отменено пользователем",
+                                          "توسط کاربر لغو شد",
+                                          "使用者已取消"))
                 result["rc"] = 1
                 result["failed"] = list(want)
                 return result
@@ -11601,7 +12020,12 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                              % first_blocked,
                              "為 %s 輸入自訂名字 (空=取消): " % first_blocked))
                 if new is None or not new:
-                    result["errors"].append("cancelled by user")
+                    result["errors"].append(_L("用户已取消",
+                                              "Cancelled by user",
+                                              "ユーザーによりキャンセルされました",
+                                              "Отменено пользователем",
+                                              "توسط کاربر لغو شد",
+                                              "使用者已取消"))
                     result["rc"] = 1
                     result["failed"] = list(want)
                     return result
@@ -11632,8 +12056,18 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
             print(T("invalid_input"))
         if blocked or risk_unconfirmed:
             result["errors"].append(
-                "conflicts remain after interaction: %s"
-                % ", ".join(list(blocked) + risk_unconfirmed))
+                _L("交互处理后仍有冲突：%s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "Conflicts remain after interaction: %s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "対話処理後も競合が残っています：%s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "После обработки остались конфликты: %s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "پس از تعامل همچنان تداخل باقی است: %s"
+                   % ", ".join(list(blocked) + risk_unconfirmed),
+                   "互動處理後仍有衝突：%s"
+                   % ", ".join(list(blocked) + risk_unconfirmed)))
             result["failed"] = list(blocked) + risk_unconfirmed
             return result
     elif blocked or risk_unconfirmed:
@@ -11642,12 +12076,28 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                                     % (nm, _shortcut_fmt_findings(fl)))
         for nm in risk_unconfirmed:
             result["errors"].append(
-                "%s: known future risk for 'ac' not accepted "
-                "(use --accept-ac-risk in non-interactive mode)" % nm)
+                _L("%s：未接受 'ac' 已知未来风险"
+                   "（非交互模式请用 --accept-ac-risk）" % nm,
+                   "%s: known future risk for 'ac' not accepted "
+                   "(use --accept-ac-risk in non-interactive mode)" % nm,
+                   "%s：'ac' の既知の将来リスクが受け入れられていません"
+                   "（非対話モードでは --accept-ac-risk を使ってください）" % nm,
+                   "%s: известный будущий риск 'ac' не принят "
+                   "(в неинтерактивном режиме используйте --accept-ac-risk)"
+                   % nm,
+                   "%s: ریسک آیندهٔ شناخته‌شدهٔ 'ac' پذیرفته نشد "
+                   "(در حالت غیرتعاملی از --accept-ac-risk استفاده کنید)" % nm,
+                   "%s：未接受 'ac' 已知未來風險"
+                   "（非互動模式請用 --accept-ac-risk）" % nm))
         result["failed"] = list(blocked) + risk_unconfirmed
         return result
     if not want:
-        result["errors"].append("no entries left to install")
+        result["errors"].append(_L("没有可安装的入口",
+                                  "No entries left to install",
+                                  "インストールする入口が残っていません",
+                                  "Не осталось ярлыков для установки",
+                                  "ورودی‌ای برای نصب باقی نمانده است",
+                                  "沒有可安裝的入口"))
         return result
     # ---- 第二阶段: 写受管理副本 (更新时覆盖自己的副本, 保留入口名) ----
     # 已安装版本号取自源文件本身的 VERSION (下载版与运行版可能不同)。
@@ -11657,60 +12107,179 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     try:
         fd, tmp = tempfile.mkstemp(prefix=".acheck-script-",
                                    dir=paths["data_dir"])
-        try:
-            with os.fdopen(fd, "wb") as f:
-                f.write(src_bytes)
-            os.chmod(tmp, 0o755)
-            os.replace(tmp, paths["managed_script"])
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
     except OSError as e:
-        result["errors"].append("cannot write managed script: %s" % e)
+        result["errors"].append(_L("无法写入受管理脚本：%s" % e,
+                                  "Cannot write managed script: %s" % e,
+                                  "管理スクリプトに書き込めません：%s" % e,
+                                  "Не удаётся записать управляемый скрипт: %s"
+                                  % e,
+                                  "نمی‌توان در اسکریپت مدیریت‌شده نوشت: %s" % e,
+                                  "無法寫入受管理指令碼：%s" % e))
         return result
-    # ---- 第三阶段: 逐个发布启动器 (排他创建 + 最小启动验证) ----
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(src_bytes)
+        os.chmod(tmp, 0o755)
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        result["errors"].append(_L("无法写入受管理脚本：%s" % e,
+                                  "Cannot write managed script: %s" % e,
+                                  "管理スクリプトに書き込めません：%s" % e,
+                                  "Не удаётся записать управляемый скрипт: %s"
+                                  % e,
+                                  "نمی‌توان در اسکریپت مدیریت‌شده نوشت: %s" % e,
+                                  "無法寫入受管理指令碼：%s" % e))
+        return result
+    # 先对临时副本跑最小启动检查, 通过才 os.replace (损坏源绝不覆写已安装副本)
+    try:
+        _vr = subprocess.run([interp, tmp, "--help"],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, timeout=20)
+        _valid = _vr.returncode == 0
+    except Exception:
+        _valid = False
+    if not _valid:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        result["errors"].append(_L("受管理脚本未通过最小启动检查 (--help)，"
+                                   "已保留已安装副本",
+                                   "Managed script failed the minimal startup "
+                                   "check (--help); the installed copy was kept",
+                                   "管理スクリプトは最小起動検査 (--help) に"
+                                   "合格しませんでした。インストール済みコピーは"
+                                   "保持されました",
+                                   "Управляемый скрипт не прошёл минимальную "
+                                   "проверку запуска (--help); установленная "
+                                   "копия сохранена",
+                                   "اسکریپت مدیریت‌شده بررسی حداقلی راه‌اندازی "
+                                   "(--help) را نگذراند؛ نسخهٔ نصب‌شده حفظ شد",
+                                   "受管理指令碼未通過最小啟動檢查 (--help)，"
+                                   "已保留已安裝副本"))
+        result["rc"] = 1
+        return result
+    try:
+        os.replace(tmp, paths["managed_script"])
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        result["errors"].append(_L("无法写入受管理脚本：%s" % e,
+                                  "Cannot write managed script: %s" % e,
+                                  "管理スクリプトに書き込めません：%s" % e,
+                                  "Не удаётся записать управляемый скрипт: %s"
+                                  % e,
+                                  "نمی‌توان در اسکریپت مدیریت‌شده نوشت: %s" % e,
+                                  "無法寫入受管理指令碼：%s" % e))
+        return result
+    # ---- 第三阶段: 逐个发布启动器 (先验证临时启动器, 再原子替换/排他创建) ----
     entries = dict((state or {}).get("entries", {}))
     for nm in want:
         target = os.path.join(paths["bin_dir"], nm)
         old_entry = entries.get(nm)
-        if old_entry and os.path.lexists(target):
-            if not _shortcut_entry_intact(target, old_entry, instance_id):
-                result["failed"].append(nm)
-                result["errors"].append(
-                    "%s: existing launcher was modified by someone else; "
-                    "not overwriting, handle manually" % nm)
-                continue
-            try:
-                os.unlink(target)
-            except OSError as e:
-                result["failed"].append(nm)
-                result["errors"].append("%s: cannot remove old launcher: %s"
-                                        % (nm, e))
-                continue
-        content = shortcut_launcher_content(
-            interp, paths["managed_script"], instance_id)
         try:
-            _shortcut_publish_launcher(paths["bin_dir"], nm,
-                                       content.encode("utf-8"))
+            content = shortcut_launcher_content(
+                interp, paths["managed_script"], instance_id)
         except ShortcutError as e:
             result["failed"].append(nm)
             result["errors"].append(str(e))
             continue
-        if not _shortcut_verify_launcher(target):
+        content_bytes = content.encode("utf-8")
+        if old_entry and os.path.lexists(target):
+            if not _shortcut_entry_intact(target, old_entry, instance_id):
+                result["failed"].append(nm)
+                result["errors"].append(
+                    _L("%s：已有启动器被他人修改，不覆盖，请人工处理" % nm,
+                       "%s: existing launcher was modified by someone else; "
+                       "not overwriting, handle manually" % nm,
+                       "%s：既存のランチャーは他人に変更されました。"
+                       "上書きしません。手動で対処してください" % nm,
+                       "%s: существующий лаунчер был изменён кем-то другим; "
+                       "перезапись запрещена, разберитесь вручную" % nm,
+                       "%s: راه‌انداز موجود توسط دیگری تغییر کرده است؛ "
+                       "بازنویسی نمی‌شود، دستی رسیدگی کنید" % nm,
+                       "%s：已有啟動器被他人修改，不覆寫，請人工處理" % nm))
+                continue
+            # 已有入口更新: 先写临时启动器并验证, 再原子替换旧文件;
+            # 验证失败时旧文件与旧状态条目原样保留, 绝不留 stale 条目
             try:
-                os.unlink(target)
-            except OSError:
-                pass
-            result["failed"].append(nm)
-            result["errors"].append(
-                "%s: launcher failed minimal startup check (--help)" % nm)
-            continue
+                tmp = _shortcut_write_launcher_tmp(
+                    paths["bin_dir"], content_bytes)
+            except ShortcutError as e:
+                result["failed"].append(nm)
+                result["errors"].append(str(e))
+                continue
+            try:
+                if not _shortcut_verify_launcher(tmp):
+                    result["failed"].append(nm)
+                    result["errors"].append(
+                        _L("%s：启动器未通过最小启动检查 (--help)" % nm,
+                           "%s: launcher failed minimal startup check "
+                           "(--help)" % nm,
+                           "%s：ランチャーは最小起動検査 (--help) に合格しません"
+                           "でした" % nm,
+                           "%s: лаунчер не прошёл минимальную проверку "
+                           "запуска (--help)" % nm,
+                           "%s: راه‌انداز بررسی حداقلی راه‌اندازی (--help) را "
+                           "نگذراند" % nm,
+                           "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
+                    continue
+                try:
+                    os.replace(tmp, target)
+                except OSError as e:
+                    result["failed"].append(nm)
+                    result["errors"].append(
+                        _L("%s：无法替换旧启动器：%s" % (nm, e),
+                           "%s: cannot replace old launcher: %s" % (nm, e),
+                           "%s：古いランチャーを置き換えられません：%s" % (nm, e),
+                           "%s: не удаётся заменить старый лаунчер: %s"
+                           % (nm, e),
+                           "%s: نمی‌توان راه‌انداز قدیمی را جایگزین کرد: %s"
+                           % (nm, e),
+                           "%s：無法取代舊啟動器：%s" % (nm, e)))
+                    continue
+            finally:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        else:
+            if old_entry:
+                # 状态有记录但文件已失: 丢掉 stale 记录, 按新装处理
+                entries.pop(nm, None)
+            try:
+                _shortcut_publish_launcher(paths["bin_dir"], nm,
+                                           content_bytes)
+            except ShortcutError as e:
+                result["failed"].append(nm)
+                result["errors"].append(str(e))
+                continue
+            if not _shortcut_verify_launcher(target):
+                try:
+                    os.unlink(target)
+                except OSError:
+                    pass
+                entries.pop(nm, None)
+                result["failed"].append(nm)
+                result["errors"].append(
+                    _L("%s：启动器未通过最小启动检查 (--help)" % nm,
+                       "%s: launcher failed minimal startup check "
+                       "(--help)" % nm,
+                       "%s：ランチャーは最小起動検査 (--help) に合格しません"
+                       "でした" % nm,
+                       "%s: лаунчер не прошёл минимальную проверку "
+                       "запуска (--help)" % nm,
+                       "%s: راه‌انداز بررسی حداقلی راه‌اندازی (--help) را "
+                       "نگذراند" % nm,
+                       "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
+                continue
         entries[nm] = {"path": target,
-                       "sha256": _shortcut_sha256_bytes(
-                           content.encode("utf-8")),
+                       "sha256": _shortcut_sha256_bytes(content_bytes),
                        "marker": instance_id}
         result["installed"].append(nm)
     # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
@@ -11730,14 +12299,32 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     try:
         _shortcut_save_state(paths, new_state)
     except OSError as e:
-        result["errors"].append("cannot save state: %s" % e)
+        result["errors"].append(_L("无法保存状态：%s" % e,
+                                  "Cannot save state: %s" % e,
+                                  "状態を保存できません：%s" % e,
+                                  "Не удаётся сохранить состояние: %s" % e,
+                                  "نمی‌توان وضعیت را ذخیره کرد: %s" % e,
+                                  "無法儲存狀態：%s" % e))
         return result
     result["ok"] = bool(result["installed"]) and not result["failed"]
     result["rc"] = 0 if result["ok"] else 1
     if result["failed"]:
         result["errors"].append(
-            "partial success: installed %s, failed %s (not reported as "
-            "fully successful)" % (result["installed"], result["failed"]))
+            _L("部分成功：已安装 %s，失败 %s（不按全部成功汇报）"
+               % (result["installed"], result["failed"]),
+               "Partial success: installed %s, failed %s (not reported as "
+               "fully successful)" % (result["installed"], result["failed"]),
+               "部分的に成功しました：インストール済み %s、失敗 %s"
+               "（完全成功としては報告しません）"
+               % (result["installed"], result["failed"]),
+               "Частичный успех: установлено %s, не удалось %s "
+               "(не считается полным успехом)"
+               % (result["installed"], result["failed"]),
+               "موفقیت جزئی: نصب‌شده %s، ناموفق %s "
+               "(به‌عنوان موفقیت کامل گزارش نمی‌شود)"
+               % (result["installed"], result["failed"]),
+               "部分成功：已安裝 %s，失敗 %s（不按全部成功彙報）"
+               % (result["installed"], result["failed"])))
     return result
 
 
@@ -11745,10 +12332,33 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                     system_dirs=None):
     """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。"""
     try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        return str(e), 2
+    try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
         return str(e), 2
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        return (_L("无权限读取状态文件：%s\n请检查该文件权限，"
+                   "不要直接删除或覆盖入口文件。"
+                   % paths["state_path"],
+                   "Permission denied reading state file: %s\nCheck the file "
+                   "permissions; do not delete or overwrite launchers "
+                   "directly." % paths["state_path"],
+                   "状態ファイルを読み取る権限がありません：%s\nファイルの権限を"
+                   "確認してください。ランチャーを直接削除・上書きしないで"
+                   "ください。" % paths["state_path"],
+                   "Нет прав на чтение файла состояния: %s\nПроверьте права "
+                   "на файл; не удаляйте и не перезаписывайте лаунчеры "
+                   "напрямую." % paths["state_path"],
+                   "دسترسی خواندن پروندهٔ وضعیت ممکن نیست: %s\nدسترسی‌های "
+                   "پرونده را بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
+                   "بازنویسی نکنید。" % paths["state_path"],
+                   "無權限讀取狀態檔案：%s\n請檢查該檔案權限，"
+                   "不要直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
     lines = []
     if corrupt:
         return (_L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
@@ -11914,21 +12524,54 @@ def shortcut_change(old_name, new_name=None, scope="user",
     result = {"ok": False, "rc": 2, "installed": [], "removed": [],
               "errors": [], "scope": scope}
     try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
         result["errors"].append(str(e))
         return result
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
     if corrupt:
-        result["errors"].append("state file is corrupt: %s"
-                                % paths["state_path"])
+        result["errors"].append(_L("状态文件已损坏：%s" % paths["state_path"],
+                                  "State file is corrupt: %s"
+                                  % paths["state_path"],
+                                  "状態ファイルが破損しています：%s"
+                                  % paths["state_path"],
+                                  "Файл состояния повреждён: %s"
+                                  % paths["state_path"],
+                                  "پروندهٔ وضعیت خراب است: %s"
+                                  % paths["state_path"],
+                                  "狀態檔案已損壞：%s" % paths["state_path"]))
         return result
     if state is None:
-        result["errors"].append("no shortcuts installed (scope %s)" % scope)
+        result["errors"].append(_L("未安装任何入口（范围 %s）" % scope,
+                                  "No shortcuts installed (scope %s)" % scope,
+                                  "入口はインストールされていません（範囲 %s）"
+                                  % scope,
+                                  "Ярлыки не установлены (область %s)" % scope,
+                                  "هیچ میانبری نصب نشده است (محدودهٔ %s)"
+                                  % scope,
+                                  "未安裝任何入口（範圍 %s）" % scope))
         return result
     entries = dict(state.get("entries", {}))
     if old_name not in entries:
-        result["errors"].append("no installed entry named %r" % old_name)
+        result["errors"].append(_L("没有名为 %r 的已安装入口" % old_name,
+                                  "No installed entry named %r" % old_name,
+                                  "インストール済み入口 %r はありません"
+                                  % old_name,
+                                  "Нет установленного ярлыка с именем %r"
+                                  % old_name,
+                                  "ورودی نصب‌شده‌ای با نام %r وجود ندارد"
+                                  % old_name,
+                                  "沒有名為 %r 的已安裝入口" % old_name))
         return result
     inp = input_fn or input
 
@@ -11940,7 +12583,12 @@ def shortcut_change(old_name, new_name=None, scope="user",
 
     if new_name is None:
         if not interactive:
-            result["errors"].append("new name required (non-interactive)")
+            result["errors"].append(_L("须给出新名字（非交互模式）",
+                                      "New name required (non-interactive)",
+                                      "新しい名前が必要です（非対話モード）",
+                                      "Требуется новое имя (неинтерактивный режим)",
+                                      "نام جدید لازم است (حالت غیرتعاملی)",
+                                      "須給出新名字（非互動模式）"))
             return result
         new_name = _ask(_L("新名字 (空=取消): ", "New name (empty=cancel): ",
                           "新しい名前 (空=キャンセル): ",
@@ -11948,16 +12596,35 @@ def shortcut_change(old_name, new_name=None, scope="user",
                           "نام جدید (خالی=لغو): ",
                           "新名字 (空=取消): "))
         if not new_name:
-            result["errors"].append("cancelled by user")
+            result["errors"].append(_L("用户已取消",
+                                      "Cancelled by user",
+                                      "ユーザーによりキャンセルされました",
+                                      "Отменено пользователем",
+                                      "توسط کاربر لغو شد",
+                                      "使用者已取消"))
             result["rc"] = 1
             return result
     if new_name == old_name:
-        result["errors"].append("new name equals old name")
+        result["errors"].append(_L("新名字与旧名字相同",
+                                  "New name equals old name",
+                                  "新しい名前が古い名前と同じです",
+                                  "Новое имя совпадает со старым",
+                                  "نام جدید با نام قدیمی برابر است",
+                                  "新名字與舊名字相同"))
         return result
     if new_name in entries:
-        result["errors"].append("name %r is already installed" % new_name)
+        result["errors"].append(_L("名字 %r 已安装" % new_name,
+                                  "Name %r is already installed" % new_name,
+                                  "名前 %r は既にインストールされています"
+                                  % new_name,
+                                  "Имя %r уже установлено" % new_name,
+                                  "نام %r از قبل نصب شده است" % new_name,
+                                  "名字 %r 已安裝" % new_name))
         return result
-    own_paths = [e.get("path", "") for e in entries.values()]
+    own_paths = [e.get("path", "") for e in entries.values()
+                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 and _shortcut_entry_intact(e.get("path", ""), e,
+                                            state["instance_id"])]
     findings = shortcut_check_name(new_name, paths["bin_dir"],
                                    own_entry_paths=own_paths,
                                    path_dirs=path_dirs,
@@ -11971,37 +12638,69 @@ def shortcut_change(old_name, new_name=None, scope="user",
             and not accept_ac_risk:
         if interactive:
             print(_L("已知未来风险：%s\n是否明确接受并继续？ [y/N] "
-                     % SHORTCUT_AC_RISK,
+                     % SHORTCUT_AC_RISK[0],
                      "Known future risk: %s\nAccept explicitly and continue? "
-                     "[y/N] " % SHORTCUT_AC_RISK,
+                     "[y/N] " % SHORTCUT_AC_RISK[1],
                      "既知の将来リスク：%s\n明確に受け入れて続行しますか？ [y/N] "
-                     % SHORTCUT_AC_RISK,
+                     % SHORTCUT_AC_RISK[2],
                      "Известный будущий риск: %s\nПринять явно и продолжить? "
-                     "[y/N] " % SHORTCUT_AC_RISK,
+                     "[y/N] " % SHORTCUT_AC_RISK[3],
                      "ریسک آیندهٔ شناخته‌شده: %s\nبه‌صراحت می‌پذیرید و ادامه "
-                     "می‌دهید؟ [y/N] " % SHORTCUT_AC_RISK,
+                     "می‌دهید؟ [y/N] " % SHORTCUT_AC_RISK[4],
                      "已知未來風險：%s\n是否明確接受並繼續？ [y/N] "
-                     % SHORTCUT_AC_RISK))
+                     % SHORTCUT_AC_RISK[5]))
             ans = _ask("")
             if ans is None or ans.lower() not in ("y", "yes"):
-                result["errors"].append("cancelled by user")
+                result["errors"].append(_L("用户已取消",
+                                          "Cancelled by user",
+                                          "ユーザーによりキャンセルされました",
+                                          "Отменено пользователем",
+                                          "توسط کاربر لغو شد",
+                                          "使用者已取消"))
                 result["rc"] = 1
                 return result
         else:
             result["errors"].append(
-                "new name 'ac' carries a known future risk; use "
-                "--accept-ac-risk to confirm explicitly")
+                _L("新名字 'ac' 有已知未来风险；请用 --accept-ac-risk 明确确认",
+                   "New name 'ac' carries a known future risk; use "
+                   "--accept-ac-risk to confirm explicitly",
+                   "新しい名前 'ac' には既知の将来リスクがあります。"
+                   "--accept-ac-risk で明示的に確認してください",
+                   "Новое имя 'ac' несёт известный будущий риск; "
+                   "подтвердите явно через --accept-ac-risk",
+                   "نام جدید 'ac' ریسک آیندهٔ شناخته‌شده‌ای دارد؛ با "
+                   "--accept-ac-risk به‌صراحت تأیید کنید",
+                   "新名字 'ac' 有已知未來風險；請用 --accept-ac-risk 明確確認"))
             return result
+    # 状态信任复核: 受管理脚本路径须与当前目录一致 (缺键也不许抛 KeyError),
+    # 解释器须重新解析验证 (状态里写的解释器不可直接信任)
+    _ms = state.get("managed_script")
+    if _ms != paths["managed_script"]:
+        result["errors"].append(
+            _L("状态文件受管理脚本路径与当前目录不一致，拒绝改名",
+               "State file managed script path does not match the current "
+               "directory; refusing to rename",
+               "状態ファイルの管理スクリプトのパスが現在のディレクトリと一致"
+               "しません。改名しません",
+               "Путь управляемого скрипта в файле состояния не совпадает с "
+               "текущим каталогом; переименование запрещено",
+               "مسیر اسکریپت مدیریت‌شده در پروندهٔ وضعیت با پوشهٔ فعلی "
+               "مطابقت ندارد؛ تغییر نام انجام نمی‌شود",
+               "狀態檔案受管理指令碼路徑與目前目錄不一致，拒絕改名"))
+        return result
+    try:
+        interp, _v = _shortcut_resolve_interpreter(
+            state.get("interpreter") or None)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
     # 建新入口并最小验证
-    interp = state.get("interpreter", "")
-    if not interp:
-        try:
-            interp, _v = _shortcut_resolve_interpreter()
-        except ShortcutError as e:
-            result["errors"].append(str(e))
-            return result
-    content = shortcut_launcher_content(interp, state["managed_script"],
-                                        state["instance_id"])
+    try:
+        content = shortcut_launcher_content(interp, _ms,
+                                            state["instance_id"])
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
     new_path = os.path.join(paths["bin_dir"], new_name)
     try:
         _shortcut_publish_launcher(paths["bin_dir"], new_name,
@@ -12015,7 +12714,12 @@ def shortcut_change(old_name, new_name=None, scope="user",
         except OSError:
             pass
         result["errors"].append(
-            "new launcher failed minimal startup check (--help)")
+            _L("新启动器未通过最小启动检查 (--help)",
+               "New launcher failed minimal startup check (--help)",
+               "新しいランチャーは最小起動検査 (--help) に合格しませんでした",
+               "Новый лаунчер не прошёл минимальную проверку запуска (--help)",
+               "راه‌انداز جدید بررسی حداقلی راه‌اندازی (--help) را نگذراند",
+               "新啟動器未通過最小啟動檢查 (--help)"))
         result["rc"] = 1
         return result
     entries[new_name] = {"path": new_path,
@@ -12030,24 +12734,63 @@ def shortcut_change(old_name, new_name=None, scope="user",
     try:
         _shortcut_save_state(paths, trans)
     except OSError as e:
-        result["errors"].append("cannot save transitional state: %s" % e)
+        result["errors"].append(_L("无法保存过渡状态：%s" % e,
+                                  "Cannot save transitional state: %s" % e,
+                                  "遷移中の状態を保存できません：%s" % e,
+                                  "Не удаётся сохранить переходное состояние: %s"
+                                  % e,
+                                  "نمی‌توان وضعیت گذار را ذخیره کرد: %s" % e,
+                                  "無法儲存過渡狀態：%s" % e))
         result["rc"] = 1
         return result
     old_path = entries[old_name]["path"]
     old_entry = entries[old_name]
+    if not _shortcut_path_in_bin_dir(old_path, paths["bin_dir"]):
+        result["errors"].append(
+            _L("旧入口路径 %s 不在启动器目录内，拒绝删除" % old_path,
+               "Old entry path %s is outside the launcher directory; "
+               "refusing to delete" % old_path,
+               "古い入口のパス %s はランチャーディレクトリの外にあります。"
+               "削除しません" % old_path,
+               "Путь старой записи %s вне каталога лаунчеров; удаление "
+               "запрещено" % old_path,
+               "مسیر ورودی قدیمی %s خارج از پوشهٔ راه‌اندازهاست؛ حذف نمی‌شود"
+               % old_path,
+               "舊入口路徑 %s 不在啟動器目錄內，拒絕刪除" % old_path))
+        result["installed"] = [new_name]
+        result["rc"] = 1
+        return result
     if not _shortcut_entry_intact(old_path, old_entry,
                                   state["instance_id"]):
         result["errors"].append(
-            "old launcher %s was modified by someone else; keeping both "
-            "entries, handle the old one manually" % old_path)
+            _L("旧启动器 %s 被他人修改；保留两个入口，请人工处理旧入口"
+               % old_path,
+               "Old launcher %s was modified by someone else; keeping both "
+               "entries, handle the old one manually" % old_path,
+               "古いランチャー %s は他人に変更されました。両方の入口を保持"
+               "します。古い方を手動で対処してください" % old_path,
+               "Старый лаунчер %s был изменён кем-то другим; обе записи "
+               "сохранены, разберитесь со старой вручную" % old_path,
+               "راه‌انداز قدیمی %s توسط دیگری تغییر کرده است؛ هر دو ورودی "
+               "حفظ می‌شوند، ورودی قدیمی را دستی رسیدگی کنید" % old_path,
+               "舊啟動器 %s 被他人修改；保留兩個入口，請人工處理舊入口"
+               % old_path))
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
     try:
         os.unlink(old_path)
     except OSError as e:
-        result["errors"].append("cannot remove old launcher %s: %s"
-                                % (old_path, e))
+        result["errors"].append(_L("无法删除旧启动器 %s：%s" % (old_path, e),
+                                  "Cannot remove old launcher %s: %s"
+                                  % (old_path, e),
+                                  "古いランチャー %s を削除できません：%s"
+                                  % (old_path, e),
+                                  "Не удаётся удалить старый лаунчер %s: %s"
+                                  % (old_path, e),
+                                  "نمی‌توان راه‌انداز قدیمی %s را حذف کرد: %s"
+                                  % (old_path, e),
+                                  "無法刪除舊啟動器 %s：%s" % (old_path, e)))
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
@@ -12059,7 +12802,13 @@ def shortcut_change(old_name, new_name=None, scope="user",
     try:
         _shortcut_save_state(paths, final)
     except OSError as e:
-        result["errors"].append("cannot save final state: %s" % e)
+        result["errors"].append(_L("无法保存最终状态：%s" % e,
+                                  "Cannot save final state: %s" % e,
+                                  "最終状態を保存できません：%s" % e,
+                                  "Не удаётся сохранить итоговое состояние: %s"
+                                  % e,
+                                  "نمی‌توان وضعیت نهایی را ذخیره کرد: %s" % e,
+                                  "無法儲存最終狀態：%s" % e))
         result["installed"] = [new_name]
         result["removed"] = [old_name]
         result["rc"] = 1
@@ -12077,19 +12826,45 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
     result = {"ok": False, "rc": 2, "removed": [], "kept": [],
               "errors": [], "scope": scope}
     try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        return result
+    try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
         result["errors"].append(str(e))
         return result
-    state, corrupt = _shortcut_load_state(paths)
+    try:
+        state, corrupt = _shortcut_load_state(paths)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
     if corrupt:
-        result["errors"].append("state file is corrupt: %s (refusing to "
-                                "delete anything)" % paths["state_path"])
+        result["errors"].append(
+            _L("状态文件已损坏：%s（拒绝删除任何内容）" % paths["state_path"],
+               "State file is corrupt: %s (refusing to delete anything)"
+               % paths["state_path"],
+               "状態ファイルが破損しています：%s（何も削除しません）"
+               % paths["state_path"],
+               "Файл состояния повреждён: %s (ничего не удаляется)"
+               % paths["state_path"],
+               "پروندهٔ وضعیت خراب است: %s (چیزی حذف نمی‌شود)"
+               % paths["state_path"],
+               "狀態檔案已損壞：%s（拒絕刪除任何內容）" % paths["state_path"]))
         return result
     if state is None:
         result["ok"] = True
         result["rc"] = 0
-        result["errors"].append("no shortcuts installed (scope %s)" % scope)
+        result["errors"].append(_L("未安装任何入口（范围 %s）" % scope,
+                                  "No shortcuts installed (scope %s)" % scope,
+                                  "入口はインストールされていません（範囲 %s）"
+                                  % scope,
+                                  "Ярлыки не установлены (область %s)" % scope,
+                                  "هیچ میانبری نصب نشده است (محدودهٔ %s)"
+                                  % scope,
+                                  "未安裝任何入口（範圍 %s）" % scope))
         return result
     if interactive:
         inp = input_fn or input
@@ -12109,12 +12884,38 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
         except (EOFError, KeyboardInterrupt):
             ans = ""
         if ans not in ("y", "yes"):
-            result["errors"].append("cancelled by user")
+            result["errors"].append(_L("用户已取消",
+                                      "Cancelled by user",
+                                      "ユーザーによりキャンセルされました",
+                                      "Отменено пользователем",
+                                      "توسط کاربر لغو شد",
+                                      "使用者已取消"))
             result["rc"] = 1
             return result
     entries = dict(state.get("entries", {}))
     for nm, entry in sorted(entries.items()):
         p = entry.get("path", "")
+        if not _shortcut_path_in_bin_dir(p, paths["bin_dir"]):
+            if os.path.lexists(p):
+                result["kept"].append(nm)
+                result["errors"].append(
+                    _L("%s（%s）不在启动器目录内，已保留，请人工处理"
+                       % (nm, p),
+                       "%s (%s) is outside the launcher directory; kept, "
+                       "handle manually" % (nm, p),
+                       "%s（%s）はランチャーディレクトリの外にあります。"
+                       "保持します。手動で対処してください" % (nm, p),
+                       "%s (%s) вне каталога лаунчеров; сохранена, "
+                       "разберитесь вручную" % (nm, p),
+                       "%s (%s) خارج از پوشهٔ راه‌اندازهاست؛ حفظ شد، دستی "
+                       "رسیدگی کنید" % (nm, p),
+                       "%s（%s）不在啟動器目錄內，已保留，請人工處理"
+                       % (nm, p)))
+            else:
+                # 路径在目录外且文件已失: 只清状态记录, 不碰任何文件
+                del entries[nm]
+                result["removed"].append(nm)
+            continue
         if _shortcut_entry_intact(p, entry, state["instance_id"]):
             try:
                 os.unlink(p)
@@ -12122,22 +12923,41 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                 del entries[nm]
             except OSError as e:
                 result["kept"].append(nm)
-                result["errors"].append("cannot remove %s: %s" % (p, e))
+                result["errors"].append(_L("无法删除 %s：%s" % (p, e),
+                                          "Cannot remove %s: %s" % (p, e),
+                                          "%s を削除できません：%s" % (p, e),
+                                          "Не удаётся удалить %s: %s" % (p, e),
+                                          "نمی‌توان %s را حذف کرد: %s" % (p, e),
+                                          "無法刪除 %s：%s" % (p, e)))
+        elif not os.path.lexists(p):
+            # 文件已失: 允许清理状态记录 (不再死锁); 存在但非己所有才保留
+            del entries[nm]
+            result["removed"].append(nm)
         else:
             result["kept"].append(nm)
             result["errors"].append(
-                "%s (%s) is not verifiably ours; kept, handle manually"
-                % (nm, p))
+                _L("%s（%s）无法确认为我方所有，已保留，请人工处理"
+                   % (nm, p),
+                   "%s (%s) is not verifiably ours; kept, handle manually"
+                   % (nm, p),
+                   "%s（%s）は当方のものと確認できません。保持します。"
+                   "手動で対処してください" % (nm, p),
+                   "%s (%s) не подтверждена как наша; сохранена, "
+                   "разберитесь вручную" % (nm, p),
+                   "%s (%s) به‌عنوان متعلق به ما تأیید نشد؛ حفظ شد، دستی "
+                   "رسیدگی کنید" % (nm, p),
+                   "%s（%s）無法確認為我方所有，已保留，請人工處理"
+                   % (nm, p)))
     if not entries:
-        # 入口清零: 再删受管理副本 (须与状态记录的 sha 一致) 与状态文件
-        ms = state.get("managed_script", "")
-        if ms and os.path.isfile(ms):
-            try:
-                if _shortcut_sha256_file(ms) == \
-                        state.get("managed_sha256"):
-                    os.unlink(ms)
-            except OSError:
-                pass
+        # 入口清零: 再删受管理副本 (只删当前目录下的副本, 且 sha 须与状态一致,
+        # O_NOFOLLOW 防符号链接; 绝不信任状态里写的 managed_script 路径) 与状态文件
+        ms = paths["managed_script"]
+        try:
+            if _shortcut_sha256_file_nofollow(ms) == \
+                    state.get("managed_sha256"):
+                os.unlink(ms)
+        except OSError:
+            pass
         try:
             os.unlink(paths["state_path"])
         except OSError:
@@ -12149,7 +12969,12 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
         try:
             _shortcut_save_state(paths, new_state)
         except OSError as e:
-            result["errors"].append("cannot save state: %s" % e)
+            result["errors"].append(_L("无法保存状态：%s" % e,
+                                      "Cannot save state: %s" % e,
+                                      "状態を保存できません：%s" % e,
+                                      "Не удаётся сохранить состояние: %s" % e,
+                                      "نمی‌توان وضعیت را ذخیره کرد: %s" % e,
+                                      "無法儲存狀態：%s" % e))
             result["rc"] = 1
             return result
     result["ok"] = not result["kept"]
@@ -12157,8 +12982,50 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
     return result
 
 
+def _shortcut_menu_scope():
+    """菜单 [2]/[3]/[4] 的作用域自动检测: 只装了一侧就用那侧; 两侧都装
+    则询问; 都没有默认 user。读状态失败的一侧按未安装处理。"""
+    installed = {}
+    for sc in ("user", "system"):
+        try:
+            p = shortcut_paths(sc)
+            st, _corrupt = _shortcut_load_state(p)
+        except Exception:
+            continue
+        if st and st.get("entries"):
+            installed[sc] = True
+    if installed.get("user") and installed.get("system"):
+        try:
+            ans = input(_L("用户级与系统级均已安装入口，使用哪一侧？"
+                           "[1] 用户级  [2] 系统级 (默认 1): ",
+                           "Shortcuts are installed at both user and system "
+                           "level. Which scope? [1] User-level  "
+                           "[2] System-wide (default 1): ",
+                           "ユーザー単位とシステム全体の両方に入口がインストール"
+                           "されています。どちらを使いますか？[1] ユーザー単位  "
+                           "[2] システム全体 (既定 1): ",
+                           "Ярлыки установлены и на уровне пользователя, и "
+                           "системно. Какую область? [1] Пользователь  "
+                           "[2] Системная (по умолчанию 1): ",
+                           "میانبرها هم در سطح کاربر و هم سیستمی نصب شده‌اند. "
+                           "کدام محدوده؟ [1] سطح کاربر  [2] سیستمی (پیش‌فرض 1): ",
+                           "使用者級與系統級均已安裝入口，使用哪一側？"
+                           "[1] 使用者級  [2] 系統級 (預設 1): ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            return "user"
+        return "system" if ans == "2" else "user"
+    if installed.get("system"):
+        return "system"
+    return "user"
+
+
 def _shortcut_menu():
     """交互菜单 13: 管理命令入口 (安装/状态/改名/移除, 与 CLI 共用后端)。"""
+    try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        print(str(e))
+        return
     while True:
         print()
         print("  " + _c(C.cyan, _L("管理命令入口", "Manage command shortcuts",
@@ -12191,7 +13058,7 @@ def _shortcut_menu():
         if sel in ("0", "b", "q"):
             return
         if sel == "2":
-            text, _rc = shortcut_status()
+            text, _rc = shortcut_status(scope=_shortcut_menu_scope())
             print(text)
             continue
         if sel == "1":
@@ -12221,7 +13088,8 @@ def _shortcut_menu():
             _shortcut_report_install(res)
             continue
         if sel == "3":
-            text, _rc = shortcut_status()
+            scope = _shortcut_menu_scope()
+            text, _rc = shortcut_status(scope=scope)
             print(text)
             try:
                 old = input(_L("要改哪一个入口 (输入名字，空=取消): ",
@@ -12234,7 +13102,7 @@ def _shortcut_menu():
                 continue
             if not old:
                 continue
-            res = shortcut_change(old, None, interactive=True)
+            res = shortcut_change(old, None, scope=scope, interactive=True)
             if res.get("ok"):
                 print(_L("已改名：%s -> %s，旧入口已删除。"
                          % (old, res["installed"][0]),
@@ -12253,11 +13121,13 @@ def _shortcut_menu():
                     print("  " + e)
             continue
         if sel == "4":
-            res = shortcut_remove(interactive=True)
+            res = shortcut_remove(scope=_shortcut_menu_scope(),
+                                  interactive=True)
             if res.get("ok"):
-                print(_L("已移除：%s。提示：执行 hash -r (或 rehash) 或重开 "
-                         "shell 以刷新命令缓存。"
-                         % ", ".join(res["removed"]),
+                if res.get("removed"):
+                    print(_L("已移除：%s。提示：执行 hash -r (或 rehash) 或重开 "
+                             "shell 以刷新命令缓存。"
+                             % ", ".join(res["removed"]),
                          "Removed: %s. Tip: run hash -r (or rehash) or "
                          "reopen the shell to refresh the command cache."
                          % ", ".join(res["removed"]),
@@ -12272,6 +13142,13 @@ def _shortcut_menu():
                          "به‌روز شود。" % ", ".join(res["removed"]),
                          "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
                          "shell 以刷新命令快取。" % ", ".join(res["removed"])))
+                else:
+                    print(_L("未安装任何入口。",
+                             "No shortcuts installed.",
+                             "入口はインストールされていません。",
+                             "Ярлыки не установлены.",
+                             "هیچ میانبری نصب نشده است。",
+                             "未安裝任何入口。"))
             else:
                 for e in res.get("errors", []):
                     print("  " + e)
@@ -12392,6 +13269,11 @@ def _shortcut_report_install(res):
 
 def _cmd_shortcut(ns):
     """CLI --shortcut 分发, 返回进程退出码。"""
+    try:
+        _shortcut_require_posix()
+    except ShortcutError as e:
+        print(str(e), file=sys.stderr)
+        return 2
     scope = "system" if getattr(ns, "system", False) else "user"
     interactive = sys.stdin.isatty()
     action = ns.shortcut
@@ -12401,7 +13283,7 @@ def _cmd_shortcut(ns):
         return rc
     if action == "install":
         names = None
-        if getattr(ns, "names", None):
+        if getattr(ns, "names", None) is not None:
             names = [n.strip() for n in ns.names.split(",") if n.strip()]
         res = shortcut_install(names=names, scope=scope,
                                accept_ac_risk=getattr(ns, "accept_ac_risk",
