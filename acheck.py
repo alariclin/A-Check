@@ -15220,7 +15220,7 @@ def main():
         if ip is None:
             print(json.dumps({"error": "invalid or non-public IP address"}, ensure_ascii=False))
             sys.exit(1)
-        res = run_passive6(ip) if ver == 6 else run_passive(ip)
+        res = run_passive6(ip, json_mode=ns.json) if ver == 6 else run_passive(ip, json_mode=ns.json)
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
         # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
