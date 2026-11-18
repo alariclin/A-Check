@@ -26,7 +26,7 @@ elif [ -n "$VPS_TEST_LOCAL_ONLY" ]; then
     cp "$_LOCAL" acheck.py || { echo "FAIL: [本地] 复制本地脚本失败"; exit 1; }
     echo "本地仓库脚本 OK: $_LOCAL"
 else
-    curl -fSL --connect-timeout 10 --max-time 60 -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.30/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
+    curl -fSL --connect-timeout 10 --max-time 60 -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.31/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
 fi
 python3 -m py_compile acheck.py || { echo "FAIL: [本地] 编译失败"; exit 1; }
 echo "编译 OK"
