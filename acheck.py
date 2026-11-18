@@ -1916,7 +1916,10 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True,
         h.update(headers)
     if not use_cache:
         return _http_fetch_uncached(url, h, timeout, retries, cap=cap)
-    key = (url, tuple(sorted(h.items())))
+    # S6-N1：cap 纳入缓存键——不同上限取到的正文不同（大 cap 可返回超
+    # 1 MiB 体），同 URL/同头不同 cap 不得共用同一缓存条目；cap=None
+    #（取体时默认 1 MiB）与显式 cap 各占独立键，互不串扰。
+    key = (url, tuple(sorted(h.items())), cap)
     with _cache_lock:
         if key in _cache:
             return True, _cache[key]
@@ -1933,13 +1936,16 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True,
 
 
 def _http_cache_evict(url, headers=None):
-    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。"""
+    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。
+    S6-N1：缓存键含 cap，驱逐时按 (url, 头) 前缀扫清全部 cap 变体，
+    否则 16 MiB 名单解析失败后同 URL 的 cap 条目排毒不净。"""
     h = {"User-Agent": UA_BROWSER}
     if headers:
         h.update(headers)
-    key = (url, tuple(sorted(h.items())))
+    _prefix = (url, tuple(sorted(h.items())))
     with _cache_lock:
-        _cache.pop(key, None)
+        for _k in [k for k in _cache if k[:2] == _prefix]:
+            _cache.pop(_k, None)
 
 
 _threat_lists = {}
