@@ -2183,13 +2183,29 @@ def _has_ipv6_egress():
         return False
 
 
+def _has_route_to(addr, family):
+    """到目标地址本身有无本地路由：UDP connect 只做路由查询，不发包。
+    S2-N1：单目标 egress 检查（如只测 Cloudflare）不得否决其他全局
+    地址——每个全局 DNS 按自身地址判定；无到该目标的路由时才剔除。"""
+    try:
+        _s = socket.socket(family, socket.SOCK_DGRAM)
+        try:
+            _s.connect((addr, 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
 def _ns_addr_usable(s):
     """系统 nameserver 是否可用（H-03）：
     拒绝 IPv6 site-local（fec0::/10，哨兵地址不可路由）；
     拒绝无有效 scope_id 的链路本地 IPv6（fe80::/10 裸地址无出口接口）；
     单栈环境下剔除无对应协议栈出口的异族全局地址——本地/ULA/环回
-    保留（链路上可达，无需全局出口）。IPv4 私网/环回同理保留。
-    解析失败返 False。"""
+    保留（链路上可达，无需全局出口）。IPv6 全局地址按目标本身测路由
+    （S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 仍用
+    _has_ipv4_egress 门。解析失败返 False。"""
     try:
         ip = ipaddress.ip_address(s)
     except ValueError:
@@ -2199,7 +2215,8 @@ def _ns_addr_usable(s):
             return False
         if ip.is_link_local and not getattr(ip, "scope_id", None):
             return False
-        if ip.is_global and not _has_ipv6_egress():
+        if ip.is_global and not _has_route_to(
+                str(ip).split("%", 1)[0], socket.AF_INET6):
             return False
     else:
         if ip.is_global and not _has_ipv4_egress():
@@ -2365,7 +2382,9 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         except Exception:
             if _srv_ip is not None and _srv_ip.is_link_local:
                 return (None, []) if return_cnames else None
-            _dest = (str(_srv_ip), 53)
+            # H-03 残留：str(ipaddress) 保留 %scope（如 ::1%lo），须在
+            # 此显式剥离，否则 sendto 目标仍带 %lo。
+            _dest = (str(_srv_ip).split("%", 1)[0], 53)
             _dest_scope = 0
             _srv_scope = None
     try:
