@@ -2786,15 +2786,27 @@ def _wd_label(name, kind, context):
     同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
     时返 None。"""
     try:
-        q = urllib.parse.quote(context or name)
-        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
-                           f"&search={q}&language=en&format=json&limit=5&type=item",
-                           timeout=5, retries=1, use_cache=False)
-        if not ok:
+        def _search(term):
+            q = urllib.parse.quote(term)
+            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                               f"&search={q}&language=en&format=json&limit=5&type=item",
+                               timeout=5, retries=1, use_cache=False)
+            if not ok:
+                return None
+            return [c for c in json.loads(raw).get("search", [])
+                    if (c.get("label") or "").lower() == name.lower()
+                    and c.get("id")]
+
+        cands = _search(context or name)
+        if cands is None:
             return None
-        cands = [c for c in json.loads(raw).get("search", [])
-                 if (c.get("label") or "").lower() == name.lower()
-                 and c.get("id")]
+        if not cands and context and context != name:
+            # E-430 残留: context 为 "California, US" 式串时
+            # wbsearchentities 常返空 (或仅返 "X, USA" 式 label 失配项),
+            # 以裸名重查一次; context 命中时不触发 (保留城市消歧收益)。
+            cands = _search(name)
+            if cands is None:
+                return None
         if not cands:
             return None
         langs = _WD_LANGS.get(LANG, [])
@@ -2968,7 +2980,19 @@ def _loc_city(text):
 
 def _localize_profile_copy(prof):
     """JSON 用 profile 本地化副本: country/region/city 走与文本报告相同
-    的本地化函数; 其余字段原样, 输入不改动 (文本报告仍用原始 profile)。"""
+    的本地化函数; 其余字段原样, 输入不改动 (文本报告仍用原始 profile)。
+    E-430: 先按 _print_basic_block 的前两条 _gjobs 口径填在线地名
+    (本地表未收录时查 Wikidata), 否则 --json 冷进程缺主动报告已填字段。"""
+    if prof.get("city") or prof.get("region"):
+        _jobs = []
+        if prof.get("city"):
+            _jobs.append(("city", prof["city"],
+                          _join_nonempty(prof.get("city"),
+                                         _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")), sep=", ")))
+        if prof.get("region"):
+            _jobs.append(("region", prof["region"],
+                          _join_nonempty(prof.get("region"), prof.get("country"), sep=", ")))
+        _resolve_geo_online(_jobs)
     out = dict(prof)
     if prof.get("country"):
         out["country"] = _loc_country_name(prof["country"])
@@ -4748,12 +4772,21 @@ def run_passive(ip):
                   "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            with urllib.request.urlopen(_rq, timeout=4) as _rp:
+            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
+            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
+            _dl = time.monotonic() + 4
+            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
+            if _rp is not None:
                 try:
-                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                             .get("address") or {})
+                    _addr = (json.loads(_read_limited(
+                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        "utf-8", "replace")).get("address") or {})
                 finally:
                     _resp_shutdown(_rp)
+                    try:
+                        _rp.close()
+                    except Exception:
+                        pass
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -5812,12 +5845,21 @@ def run_passive6(ip):
                   "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            with urllib.request.urlopen(_rq, timeout=4) as _rp:
+            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
+            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
+            _dl = time.monotonic() + 4
+            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
+            if _rp is not None:
                 try:
-                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                             .get("address") or {})
+                    _addr = (json.loads(_read_limited(
+                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        "utf-8", "replace")).get("address") or {})
                 finally:
                     _resp_shutdown(_rp)
+                    try:
+                        _rp.close()
+                    except Exception:
+                        pass
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -7517,19 +7559,33 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
 
 
 def regional_speed_test(duration=5, on_result=None, family=0):
-    """逐地区测速: TCP 延迟 (443) + 多连接下载。on_result(row) 逐行回调。"""
+    """逐地区测速: TCP 延迟 (443) + 多连接下载。on_result(row) 逐行回调。
+    OPT-01: 先并发预探全部目标的 TCP 延迟, 再按原顺序串行下载可达节点
+    (on_result 顺序与峰值精度不变); 延迟不通的节点跳过下载。"""
     rows = []
     if family == 6:
         _targets = [(n, h, u) for n, h, u in SPEED6_ENDPOINTS]
     else:
         _targets = [(n, h, "https://%s%s" % (h, _SPEED_FILE))
                     for n, h in SPEED_REGIONS]
-    for name, host, _url in _targets:
-        tp = tcp_ping_stats(host, 443, count=3, timeout=2, family=family)
+
+    def _probe(t):
+        try:
+            return tcp_ping_stats(t[1], 443, count=3, timeout=2, family=family)
+        except Exception:
+            # 单点探针异常按死节点计, 不让一路失败拖垮整表
+            return {"ok": False, "sent": 3, "ok_count": 0, "loss_pct": 100.0}
+
+    with ThreadPoolExecutor(max_workers=14) as _ex:
+        _tps = list(_ex.map(_probe, _targets))
+    for (name, host, _url), tp in zip(_targets, _tps):
         lat = tp["avg_ms"] if tp.get("ok") else None
-        mbps, nbytes = measure_download_direct(_url,
-                                               duration=duration, streams=3,
-                                               family=family)
+        if tp.get("ok"):
+            mbps, nbytes = measure_download_direct(_url,
+                                                   duration=duration, streams=3,
+                                                   family=family)
+        else:
+            mbps, nbytes = None, 0
         row = {"region": name, "host": host,
                "latency_ms": lat, "down_mbps": mbps, "dl_bytes": nbytes}
         rows.append(row)
@@ -10099,8 +10155,18 @@ def _ip_asn_org(ip, timeout=8):
         req = urllib.request.Request(
             "https://ipwho.is/%s?fields=connection,country" % _q_ip(ip),
             headers={"User-Agent": UA_BROWSER})
+        # E-430 F18: r.read(4096) 的 socket 超时只约束单次 recv, 慢速
+        # drip 可拖长; 改 _read_limited 与打开共享 timeout 预算。
+        _t0 = time.monotonic()
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
+            try:
+                d = json.loads(_read_limited(
+                    r, cap=4096,
+                    timeout=max(0.1, timeout - (time.monotonic() - _t0))).decode(
+                    "utf-8", errors="replace"))
+            except Exception:
+                _resp_shutdown(r)
+                raise
         if d.get("success") is False:
             return None, None, None
         conn = d.get("connection") or {}
