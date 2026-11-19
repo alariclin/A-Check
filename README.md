@@ -64,7 +64,7 @@ A passive report is printed in numbered sections:
 - **[5] DNS recommendations** — nearby resolvers chosen by the IP's location (passive mode)
 - **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so the report makes it visible when data is thin
 
-Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured streaming [4], a full DNS test (26 UDP / 15 DoH / 12 DoT resolvers, latency-ranked with a fastest pick) plus recommendations [5], the speed test [6], port 25 & DNSBL checks [7] and completeness [8]. When an IPv6 egress exists, a dual-stack verdict and a complete IPv6 stack follow as **[9]–[17]** — the IPv6 report with per-source reputation signals, an IPv6 DNS test (UDP / DoH / DoT, fastest pick included), IPv6 streaming and IPv6 speed — and the two egresses are compared for leak risk.
+Self-check mode numbers its sections too. IPv4 runs **[1]–[7]**: measured streaming [4], a full DNS test (26 UDP / 15 DoH / 12 DoT resolvers, latency-ranked with a fastest pick) plus recommendations [5], the speed test [6] and port 25 & DNSBL checks [7]. When an IPv6 egress exists, a dual-stack verdict [8] and a complete IPv6 stack follow as **[9]–[16]** — the IPv6 report with per-source reputation signals, an IPv6 DNS test (UDP / DoH / DoT, fastest pick included), IPv6 streaming and IPv6 speed — and the two egresses are compared for leak risk. Completeness closes the report: IPv4 [17], IPv6 [18].
 
 ## The 13 menu features
 
@@ -150,6 +150,7 @@ python3 acheck.py [IP] [options]
 | `--no-speed` | With `--active`: skip the speed test (interactive self-checks ask first by default) |
 | `--with-speed` | With `--active`: force the speed test (interactive self-checks ask first by default) |
 | `--shortcut install/status/change/remove` | Manage command shortcuts (add `--names` for install, `--old-name` / `--new-name` for change; `--system` for system-wide locations) |
+| `--accept-ac-risk` | Accept the known naming risk of ac (required for non-interactive ac install) |
 | `--explain` | Print the scoring rules |
 | `--json` | JSON output (combinable with an IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | Output language |
