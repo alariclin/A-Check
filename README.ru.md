@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.33-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 - **[5] Рекомендации DNS** — ближайшие резолверы по местоположению IP (пассивный режим)
 - **[6] Полнота данных и достоверность** — сколько источников реально ответило и на месте ли ключевые, чтобы неполные данные не выдавались за определённость
 
-В режиме самопроверки разделы также пронумерованы. IPv4 — это **[1]–[8]**: фактический стриминг [4], полный тест DNS (26 обычных / 15 DoH / 12 DoT, ранжирование по задержке и отметка самого быстрого) и рекомендации [5], тест скорости [6], проверки порта 25 и DNSBL [7], полнота [8]. При наличии выходного IPv6 далее идут вердикт о двухстечности и полный стек IPv6 **[9]–[17]** — отчёт IPv6 с сигналами репутации по источникам, тест IPv6 DNS (обычный / DoH / DoT, с отметкой самого быстрого), стриминг IPv6 и скорость IPv6, — а два выхода сравниваются на предмет утечки.
+В режиме самопроверки разделы также пронумерованы. IPv4 — это **[1]–[7]**: фактический стриминг [4], полный тест DNS (26 обычных / 15 DoH / 12 DoT, ранжирование по задержке и отметка самого быстрого) и рекомендации [5], тест скорости [6], проверки порта 25 и DNSBL [7]. При наличии выходного IPv6 далее идут вердикт о двухстечности [8] и полный стек IPv6 **[9]–[16]** — отчёт IPv6 с сигналами репутации по источникам, тест IPv6 DNS (обычный / DoH / DoT, с отметкой самого быстрого), стриминг IPv6 и скорость IPv6, — а два выхода сравниваются на предмет утечки. Полнота завершает отчёт: IPv4 — [17], IPv6 — [18].
 
 ## 13 функций главного меню
 
@@ -98,32 +98,32 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **Зеркало CDN — для регионов, где GitHub труднодоступен (например, материковый Китай). Один файл, полный функционал:**
 gh-proxy (прямой доступ из Китая):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 Или запустите скрипт напрямую (нужен Python 3.8+):
 
@@ -150,6 +150,7 @@ python3 acheck.py [IP] [опции]
 | `--no-speed` | С `--active`: пропустить тест скорости (интерактивная самопроверка по умолчанию сначала спрашивает) |
 | `--with-speed` | С `--active`: принудительно выполнять тест скорости (интерактивная самопроверка по умолчанию сначала спрашивает) |
 | `--shortcut install/status/change/remove` | Управление ярлыками команд (для установки — `--names`, для переименования — `--old-name` / `--new-name`; `--system` — системные каталоги) |
+| `--accept-ac-risk` | Принять известный риск имени ac (обязательно для неинтерактивной установки ac) |
 | `--explain` | Вывести правила оценки |
 | `--json` | Вывод в JSON (сочетается с IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | Язык вывода |

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.33-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 - **[5] DNS サーバー推奨** — IP の所在地に応じた近傍 DNS（パッシブモード）
 - **[6] データ完全性と信頼度** — 実際に回答したソース数とコアソースの有無から信頼度を算出。「データ不足なのに断定」を避けるための指標
 
-セルフチェックも番号付きです。IPv4 は **[1]–[8]**（ストリーミング実測 [4]、DNS 完全テスト（従来 26 / DoH 15 / DoT 12、遅延ランキングと最速表示付き）と推奨 [5]、速度テスト [6]、25 番ポートと DNSBL [7]、完全性 [8]）。IPv6 出口がある場合はデュアルスタック判定と IPv6 の完全なスタック **[9]–[17]**（ソース別レピュテーション信号付き IPv6 レポート、IPv6 DNS テスト（従来 / DoH / DoT、最速表示付き）、IPv6 ストリーミング、IPv6 速度）が続き、両出口のリーク判定も行います。
+セルフチェックも番号付きです。IPv4 は **[1]–[7]**（ストリーミング実測 [4]、DNS 完全テスト（従来 26 / DoH 15 / DoT 12、遅延ランキングと最速表示付き）と推奨 [5]、速度テスト [6]、25 番ポートと DNSBL [7]）。IPv6 出口がある場合はデュアルスタック判定 [8] と IPv6 の完全なスタック **[9]–[16]**（ソース別レピュテーション信号付き IPv6 レポート、IPv6 DNS テスト（従来 / DoH / DoT、最速表示付き）、IPv6 ストリーミング、IPv6 速度）が続き、両出口のリーク判定も行います。完全性は IPv4 が [17]、IPv6 が [18] で締めくくります。
 
 ## メインメニュー 13 機能
 
@@ -98,32 +98,32 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN ミラー：GitHub へ直接つながりにくい地域（中国本土など）向け。単一ファイル版、機能は同一です：**
 gh-proxy（中国本土から直接）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 スクリプトを直接実行することもできます（Python 3.8+）：
 
@@ -150,6 +150,7 @@ python3 acheck.py [IP] [オプション]
 | `--no-speed` | `--active` と併用：速度テストを省略（対話型セルフチェックでは既定で先に確認） |
 | `--with-speed` | `--active` と併用：速度テストを強制実行（対話型セルフチェックでは既定で先に確認） |
 | `--shortcut install/status/change/remove` | コマンド入口の管理（インストール時は `--names`、改名時は `--old-name` / `--new-name`、システム全体では `--system`） |
+| `--accept-ac-risk` | ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須) |
 | `--explain` | スコアリングルールを出力 |
 | `--json` | JSON 出力（IP / --active / --proxy と組合せ可） |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | 出力言語を指定 |

@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 純淨度與網路品質檢測工具</b> — 多源聚合 · 雙模式 · 零依賴單檔案</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.33-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 - **[5] DNS 伺服器推薦** — 按 IP 歸屬地推薦就近 DNS（被動模式）
 - **[6] 資料完整度與信心度** — 本次實際拿到多少來源的資料、核心來源是否齊全，據此給出信心度，資料不足時會在報告中如實標註
 
-自檢模式同樣按編號輸出：IPv4 為 **[1]–[8]**（串流實測 [4]、完整 DNS 測試（26 個傳統 / 15 個 DoH / 12 個 DoT，帶延遲排名與最快推薦）與推薦 [5]、測速 [6]、25 連接埠與黑名單檢測 [7]、完整度 [8]）；偵測到 IPv6 出口時，其後是雙棧判定與完整的 IPv6 章節 **[9]–[17]**（含逐源信譽訊號的 IPv6 報告、IPv6 DNS 測試（傳統 / DoH / DoT，帶最快推薦）、IPv6 串流與 IPv6 測速），並對比雙出口給出洩漏判定。
+自檢模式同樣按編號輸出：IPv4 為 **[1]–[7]**（串流實測 [4]、完整 DNS 測試（26 個傳統 / 15 個 DoH / 12 個 DoT，帶延遲排名與最快推薦）與推薦 [5]、測速 [6]、25 連接埠與黑名單檢測 [7]）；偵測到 IPv6 出口時，其後是雙棧判定 [8] 與完整的 IPv6 章節 **[9]–[16]**（含逐源信譽訊號的 IPv6 報告、IPv6 DNS 測試（傳統 / DoH / DoT，帶最快推薦）、IPv6 串流與 IPv6 測速），並對比雙出口給出洩漏判定；完整度收尾：IPv4 [17]、IPv6 [18]。
 
 ## 主選單 13 項功能
 
@@ -98,32 +98,32 @@ A-Check 是一個單檔案 Python 腳本（`acheck.py`，僅標準庫、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系統（單一檔案，需 Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN 鏡像——GitHub 直連困難的地區（如中國大陸）可用。單文件版，功能完整：**
 gh-proxy（大陸直連）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 也可以直接執行腳本本體（需 Python 3.8+）：
 
@@ -150,6 +150,7 @@ python3 acheck.py [IP] [選項]
 | `--no-speed` | 配合 `--active`：跳過網速測試（互動自檢預設先詢問） |
 | `--with-speed` | 配合 `--active`：強制進行網速測試（互動自檢預設先詢問） |
 | `--shortcut install/status/change/remove` | 管理命令入口（安裝時加 `--names`，改名時加 `--old-name` / `--new-name`；`--system` 為系統級位置） |
+| `--accept-ac-risk` | 接受 ac 已知命名風險 (非互動安裝 ac 時必填) |
 | `--explain` | 輸出評分規則說明 |
 | `--json` | 以 JSON 輸出（可與 IP / --active / --proxy 組合） |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | 指定輸出語言 |

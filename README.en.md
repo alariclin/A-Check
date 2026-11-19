@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.33-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A passive report is printed in numbered sections:
 - **[5] DNS recommendations** — nearby resolvers chosen by the IP's location (passive mode)
 - **[6] Data completeness & confidence** — how many sources actually answered and whether the core sources are present, so the report makes it visible when data is thin
 
-Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured streaming [4], a full DNS test (26 UDP / 15 DoH / 12 DoT resolvers, latency-ranked with a fastest pick) plus recommendations [5], the speed test [6], port 25 & DNSBL checks [7] and completeness [8]. When an IPv6 egress exists, a dual-stack verdict and a complete IPv6 stack follow as **[9]–[17]** — the IPv6 report with per-source reputation signals, an IPv6 DNS test (UDP / DoH / DoT, fastest pick included), IPv6 streaming and IPv6 speed — and the two egresses are compared for leak risk.
+Self-check mode numbers its sections too. IPv4 runs **[1]–[7]**: measured streaming [4], a full DNS test (26 UDP / 15 DoH / 12 DoT resolvers, latency-ranked with a fastest pick) plus recommendations [5], the speed test [6] and port 25 & DNSBL checks [7]. When an IPv6 egress exists, a dual-stack verdict [8] and a complete IPv6 stack follow as **[9]–[16]** — the IPv6 report with per-source reputation signals, an IPv6 DNS test (UDP / DoH / DoT, fastest pick included), IPv6 streaming and IPv6 speed — and the two egresses are compared for leak risk. Completeness closes the report: IPv4 [17], IPv6 [18].
 
 ## The 13 menu features
 
@@ -98,32 +98,32 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
 gh-proxy (mainland China direct):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 Or run the script directly (Python 3.8+):
 
@@ -150,6 +150,7 @@ python3 acheck.py [IP] [options]
 | `--no-speed` | With `--active`: skip the speed test (interactive self-checks ask first by default) |
 | `--with-speed` | With `--active`: force the speed test (interactive self-checks ask first by default) |
 | `--shortcut install/status/change/remove` | Manage command shortcuts (add `--names` for install, `--old-name` / `--new-name` for change; `--system` for system-wide locations) |
+| `--accept-ac-risk` | Accept the known naming risk of ac (required for non-interactive ac install) |
 | `--explain` | Print the scoring rules |
 | `--json` | JSON output (combinable with an IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | Output language |

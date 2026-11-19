@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.33-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -64,7 +64,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 - **[5] پیشنهاد سرور DNS** — نزدیک‌ترین حل‌کننده‌ها بر اساس موقعیت IP (حالت غیرفعال)
 - **[6] کامل بودن داده و اطمینان** — چند منبع واقعاً پاسخ داده‌اند و آیا منابع هسته حاضرند؛ تا داده ناقص جای قطعیت را نگیرد
 
-در حالت خودآزمایی نیز بخش‌ها شماره‌دارند. IPv4 شامل **[1]–[8]** است: تست واقعی استریم [4]، تست کامل DNS (۲۶ سنتی / ۱۵ DoH / ۱۲ DoT، با رتبه‌بندی تأخیر و نشان سریع‌ترین) و پیشنهادها [5]، تست سرعت [6]، بررسی پورت ۲۵ و DNSBL [7] و کامل بودن [8]. اگر خروجی IPv6 وجود داشته باشد، داوری دوپشته و پشته کامل IPv6 در **[9]–[17]** می‌آید — گزارش IPv6 با سیگنال‌های اعتبار به تفکیک منبع، تست DNS IPv6 (سنتی / DoH / DoT با نشان سریع‌ترین)، استریم IPv6 و سرعت IPv6 — و دو خروجی از نظر نشت مقایسه می‌شوند.
+در حالت خودآزمایی نیز بخش‌ها شماره‌دارند. IPv4 شامل **[1]–[7]** است: تست واقعی استریم [4]، تست کامل DNS (۲۶ سنتی / ۱۵ DoH / ۱۲ DoT، با رتبه‌بندی تأخیر و نشان سریع‌ترین) و پیشنهادها [5]، تست سرعت [6]، بررسی پورت ۲۵ و DNSBL [7]. اگر خروجی IPv6 وجود داشته باشد، داوری دوپشته [8] و پشته کامل IPv6 در **[9]–[16]** می‌آید — گزارش IPv6 با سیگنال‌های اعتبار به تفکیک منبع، تست DNS IPv6 (سنتی / DoH / DoT با نشان سریع‌ترین)، استریم IPv6 و سرعت IPv6 — و دو خروجی از نظر نشت مقایسه می‌شوند. کامل بودن پایان گزارش است: IPv4 [17] و IPv6 [18].
 
 ## ۱۳ قابلیت منوی اصلی
 
@@ -98,32 +98,32 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.33/A-Check-v4.14.33-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **آینهٔ CDN — برای مناطقی که دسترسی مستقیم به GitHub دشوار است (مانند چین). نسخهٔ تک‌فایل، با امکانات کامل:**
 gh-proxy (دسترسی مستقیم از چین):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.33/acheck.py -o acheck.py && python3 acheck.py
 ```
 یا اسکریپت را مستقیم اجرا کنید (Python 3.8+ لازم است):
 
@@ -150,6 +150,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 | `--no-speed` | همراه `--active`: رد کردن تست سرعت (خودآزمایی تعاملی به‌طور پیش‌فرض ابتدا می‌پرسد) |
 | `--with-speed` | همراه `--active`: اجرای اجباری تست سرعت (خودآزمایی تعاملی به‌طور پیش‌فرض ابتدا می‌پرسد) |
 | `--shortcut install/status/change/remove` | مدیریت میانبرهای فرمان (برای نصب `--names`، برای تغییر نام `--old-name` / `--new-name`؛ `--system` برای مسیرهای سیستمی) |
+| `--accept-ac-risk` | پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است) |
 | `--explain` | چاپ قواعد امتیازدهی |
 | `--json` | خروجی JSON (قابل ترکیب با IP / --active / --proxy) |
 | `--zh / --zh-tw / --en / --ja / --ru / --fa` | زبان خروجی |
