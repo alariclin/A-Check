@@ -20,7 +20,15 @@
 
 set -u
 ACHEK="${1:-./acheck.py}"
-ACHEK_ABS="$(realpath "$ACHEK")"
+# R3-L-03(c)：realpath 在旧 macOS/BSD 上可能不存在，缺失时回退 cd+pwd 拼绝对路径。
+if command -v realpath >/dev/null 2>&1; then
+    ACHEK_ABS="$(realpath "$ACHEK")"
+else
+    case "$ACHEK" in
+        /*) ACHEK_ABS="$ACHEK" ;;
+        *) ACHEK_ABS="$(cd "$(dirname "$ACHEK")" && pwd)/$(basename "$ACHEK")" ;;
+    esac
+fi
 [ -f "$ACHEK_ABS" ] || { echo "acheck.py not found: $ACHEK_ABS" >&2; exit 2; }
 
 # 系统列表: 镜像|名称|包管理器|是否旧 Debian
@@ -47,7 +55,7 @@ SKIP=0
 RESULTS=""
 
 # 内层检查脚本（本地/docker 共用一份，L-03：两处 53 行 heredoc 去重）。
-INNER_SCRIPT=$(cat <<'INNER_EOF'
+IFS= read -r -d '' INNER_SCRIPT <<'INNER_EOF' || true
 WORKDIR="$(mktemp -d)" || { echo "FAIL: cannot create temp dir"; exit 1; }
 trap 'rm -rf "$WORKDIR"' EXIT
 cp "${ACHECK_SRC:-/acheck.py}" "$WORKDIR/acheck.py" || { echo "FAIL: cannot copy acheck.py"; exit 1; }
@@ -102,16 +110,26 @@ fi
 "$PYBIN" "$WORKDIR/acheck.py" --explain >/dev/null </dev/null || { echo "FAIL: --explain"; exit 1; }
 echo "PASS"
 INNER_EOF
-)
+
+# R3-L-03(c)：timeout 在旧 macOS/BSD 上可能不存在，缺失时直接跑（无外层时限；
+# 内层命令自带超时）。stdin 由调用方管道传入，经本函数透传给命令。
+_run_timeout() {  # $1=秒数，其余=命令
+    _t="$1"; shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$_t" "$@"
+    else
+        "$@"
+    fi
+}
 
 # 内层检查: $1=包管理器, $2=是否旧 Debian, $3=镜像 (仅 docker 模式)。
 # docker 模式: 文件经只读挂载进 /acheck.py; 本地模式: 经 ACHECK_SRC 指到宿主文件。
 # 内层脚本经 stdin 喂给 sh -s, 故内层一切可能读 stdin 的命令都显式 </dev/null。
 run_inner() {
     if [ "${ACHECK_LOCAL_ONLY:-0}" = "1" ]; then
-        printf '%s\n' "$INNER_SCRIPT" | ACHECK_SRC="$ACHEK_ABS" timeout 420 sh -s "$1" "$2"
+        printf '%s\n' "$INNER_SCRIPT" | ACHECK_SRC="$ACHEK_ABS" _run_timeout 420 sh -s "$1" "$2"
     else
-        printf '%s\n' "$INNER_SCRIPT" | timeout 420 docker run --rm -i -v "$ACHEK_ABS:/acheck.py:ro" "$3" sh -s "$1" "$2"
+        printf '%s\n' "$INNER_SCRIPT" | _run_timeout 420 docker run --rm -i -v "$ACHEK_ABS:/acheck.py:ro" "$3" sh -s "$1" "$2"
     fi
 }
 

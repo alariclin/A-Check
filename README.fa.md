@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.29-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@
 
 ## این ابزار چیست
 
-A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، فقط کتابخانه استاندارد، بدون هیچ وابستگی خارجی) که **اعتبار و پاکی** یک آدرس IP را ارزیابی می‌کند و **کیفیت خروجی** شبکه خودتان را می‌سنجد. اطلاعات ۳۳ منبع داده عمومی را در یک گزارش با راستی‌آزمایی متقابل گرد می‌آورد — همه امتیازها تجمیع چند منبع‌اند و هیچ منبعی به‌تنهایی نتیجه را تعیین نمی‌کند.
+A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، فقط کتابخانه استاندارد، بدون هیچ وابستگی خارجی) که **اعتبار و پاکی** یک آدرس IP را ارزیابی می‌کند و **کیفیت خروجی** شبکه خودتان را می‌سنجد. اطلاعات ۳۲ منبع داده عمومی را در یک گزارش با راستی‌آزمایی متقابل گرد می‌آورد — همه امتیازها تجمیع چند منبع‌اند و هیچ منبعی به‌تنهایی نتیجه را تعیین نمی‌کند.
 
 ## دو حالت
 
@@ -84,7 +84,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 | 12 | تست سرعت شبکه (مناطق) | جدول دانلود ۲۸ گره منطقه‌ای (اوج چنداتصاله) به‌همراه سرعت ارسال/دریافت محلی |
 | 13 | مدیریت میانبرهای فرمان | نصب / وضعیت / تغییر نام / حذف میانبرهای فرمان `acheck` / `ac` (`--shortcut`، `--names` / `--old-name` / `--new-name`) |
 
-تست واقعی استریم ۱۸ پلتفرم را پوشش می‌دهد: هوش مصنوعی (ChatGPT / Gemini / Claude / Grok / DeepSeek)، ویدیو (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+)، اجتماعی و دیگر (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub)، با تمایز میان رفع مسدودیت بومی و رفع مسدودیت DNS ‏(Smart DNS).
+تست واقعی استریم ۱۸ پلتفرم را پوشش می‌دهد: هوش مصنوعی (ChatGPT / Gemini / Claude / Grok / DeepSeek / GitHub)، ویدیو (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+)، اجتماعی و دیگر (Facebook / Instagram / Reddit / X / WhatsApp / Line)، با تمایز میان رفع مسدودیت بومی و رفع مسدودیت DNS ‏(Smart DNS).
 
 ## شروع سریع
 
@@ -98,32 +98,32 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **آینهٔ CDN — برای مناطقی که دسترسی مستقیم به GitHub دشوار است (مانند چین). نسخهٔ تک‌فایل، با امکانات کامل:**
 gh-proxy (دسترسی مستقیم از چین):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 یا اسکریپت را مستقیم اجرا کنید (Python 3.8+ لازم است):
 

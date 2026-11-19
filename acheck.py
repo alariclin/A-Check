@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.29 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.32 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -60,7 +60,7 @@ import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.29"
+VERSION = "4.14.32"
 
 
 def _init_console():
@@ -1265,7 +1265,7 @@ STR = {
         "bn_ok": "در دسترس",
         "bn_untested": "تست نشده",
         "bn_fault": "خطا",
-        "bn_cores": "هسته",
+        "bn_cores": " هسته",
         "grp_ip": "[ اعتبار IP ]",
         "grp_net": "[ پروکسی و شبکه ]",
         "grp_sys": "[ سیستم و تنظیمات ]",
@@ -1296,7 +1296,7 @@ STR = {
         "diag_dns_clean": "✓ خروجی DNS سازگار است: ASN حل‌کننده با ASN خروجی مطابقت دارد",
         "diag_dns_unknown": "[غیرقابل تأیید] خطا در بررسی سازگاری خروجی DNS",
         "diag_tcp_testing": "در حال تست تأخیر TCP %s:%s...",
-        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f، افت %.1f%%",
+        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f میلی‌ثانیه، افت %.1f%%",
         "diag_tcp_fail": "✗ خطای اتصال TCP",
         "prompt_proxy": "آدرس پروکسی را وارد کنید (host:port، b بازگشت، q خروج): ",
         "prompt_proxy_user": "نام کاربری (Enter برای رد شدن): ",
@@ -1460,6 +1460,27 @@ def _clean_str(v):
     return _strip_cc(v).strip()
 
 
+def _strict_bool(v):
+    """严格布尔清洗 (R4-H-04)：仅 JSON 真布尔值保留；字符串 "false"/"true"、
+    数字、null 等非布尔值一律返 None（未知/弃权），不得以 bool(v) 误判
+    （"false" 为真、0 为假皆错）。与 IPWhoIs._b 的 F08 口径一致，
+    抽为共用函数供各情报源入库与评分层调用。"""
+    return v if isinstance(v, bool) else None
+
+
+def _clamp_score(v):
+    """风险分清洗 (R4-H-04)：有限数值钳制到 [0, 100]（整值返 int）；
+    非数值/非有限数（NaN/Inf/字符串）返 None（未知）。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(f):
+        return None
+    f = max(0.0, min(100.0, f))
+    return int(f) if f == int(f) else f
+
+
 def _clean_coord(v, lo, hi):
     """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
     1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
@@ -1511,12 +1532,53 @@ def _disp_width(s):
 
 def _truncate_disp(s, max_width):
     """按终端显示列宽安全截断字符串，防止中日韩双宽字符溢出折行。
-    ANSI 转义序列原样透传、不计宽度、不被拦腰截断；截断时若有未闭合 SGR 补复位。"""
+    ANSI 转义序列原样透传、不计宽度、不被拦腰截断；截断时若有未闭合 SGR 补复位。
+    省略号 "..." 计入 max_width：总宽恒 <= max_width（旧实现截到 max_width
+    后无条件再加 "..."，总宽 = max_width+3）。"""
+    if max_width <= 0:
+        return ""
+    s = str(s)
+    if _disp_width(s) <= max_width:
+        return s
+    if max_width <= 3:
+        # 无空间放正文 + 省略号：只截取 max_width 列宽，不加省略号。
+        # ANSI 序列原样透传（与主循环同一解析规则），截断时未闭合 SGR 补复位；
+        # 旧实现遇 ESC 即 break，ANSI 打头的串直接返回 ""（r2b5a D-3.6b/D-3.7/C6）。
+        w = 0
+        out = []
+        i = 0
+        sgr_open = False
+        while i < len(s):
+            if s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
+                j = i + 2
+                while j < len(s) and not (0x40 <= ord(s[j]) <= 0x7E):
+                    j += 1
+                if j < len(s):
+                    seq = s[i:j + 1]
+                    out.append(seq)
+                    if seq.endswith("m"):
+                        try:
+                            _is_reset = all(p == "" or int(p) == 0 for p in seq[2:-1].split(";"))
+                        except ValueError:
+                            _is_reset = False
+                        sgr_open = not _is_reset
+                    i = j + 1
+                    continue
+            ch = s[i]
+            cw = 0 if _is_zero_width(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
+            if w + cw > max_width:
+                break
+            out.append(ch)
+            w += cw
+            i += 1
+        if sgr_open:
+            out.append("\x1b[0m")
+        return "".join(out)
     w = 0
     out = []
     i = 0
-    s = str(s)
     sgr_open = False
+    _budget = max_width - 3  # 为 "..." 预留 3 列
     while i < len(s):
         if s[i] == "\x1b" and i + 1 < len(s) and s[i + 1] == "[":
             j = i + 2
@@ -1535,7 +1597,11 @@ def _truncate_disp(s, max_width):
                 continue
         ch = s[i]
         cw = 0 if _is_zero_width(ch) else (2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1)
-        if w + cw > max_width:
+        if w + cw > _budget:
+            # 双宽字符凑不满预算时用空格补齐到预算，截断结果恒为 max_width 列
+            #（固定宽进度栏对齐用；调用方 _render_progress_locked 本就会补空格到 _lim）。
+            if _budget > w:
+                out.append(" " * (_budget - w))
             out.append("...")
             if sgr_open:
                 out.append("\x1b[0m")
@@ -1553,9 +1619,10 @@ def _pad(s, width):
 _progress_lock = threading.Lock()
 
 
-def _render_progress_locked(current, total, name=""):
-    """渲染进度条；必须持有 _progress_lock 时调用。JSON 模式下静默。"""
-    if "--json" in sys.argv:
+def _render_progress_locked(current, total, name="", json_mode=False):
+    """渲染进度条；必须持有 _progress_lock 时调用。JSON 模式下静默。
+    R3-M-17：json_mode 由调用方参数传入，不再硬读 sys.argv。"""
+    if json_mode:
         return
     bar_len = 28
     filled = int(bar_len * current / max(total, 1))
@@ -1563,15 +1630,16 @@ def _render_progress_locked(current, total, name=""):
     msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
     _lim = max(10, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
     if _disp_width(msg) > _lim:
-        msg = _truncate_disp(msg, _lim - 3)
+        # _truncate_disp 已把 "..." 计入 max_width 内，直接按 _lim 截断。
+        msg = _truncate_disp(msg, _lim)
     pad_spaces = " " * max(0, _lim - _disp_width(msg))
     print(msg + pad_spaces, end="", flush=True)
 
 
-def _print_progress(current, total, name=""):
+def _print_progress(current, total, name="", json_mode=False):
     """线程安全地打印检测进度条（其它调用点继续用它）。"""
     with _progress_lock:
-        _render_progress_locked(current, total, name)
+        _render_progress_locked(current, total, name, json_mode=json_mode)
 
 
 # ============================================================
@@ -1749,7 +1817,7 @@ def _urlopen_deadline(req, timeout):
 
     def _run():
         try:
-            _box["resp"] = urllib.request.urlopen(
+            _box["resp"] = _opener_safe.open(
                 req, timeout=max(0.1, _dl - time.monotonic()))
         except Exception as _e:
             _box["err"] = _e
@@ -1782,10 +1850,12 @@ def _urlopen_deadline(req, timeout):
         return _box["resp"], None, False
 
 
-def _http_fetch_uncached(url, h, timeout, retries):
+def _http_fetch_uncached(url, h, timeout, retries, cap=None):
     """单次 HTTP GET 取体（不碰缓存）：返回 (ok, data_or_err)。
     F02：每次尝试建绝对截止（建连+读头+读体共享 timeout 预算），剩余预算
-    传给后续阶段；慢速发头 drip 不得拖超 timeout。"""
+    传给后续阶段；慢速发头 drip 不得拖超 timeout。
+    cap：响应体上限（字节），None 时用 _read_limited 默认 1 MiB；
+    威胁列表等已知大体调用方按需放宽（M-19）。"""
     last_err = ""
     for _ in range(retries):
         _dl = time.monotonic() + timeout
@@ -1801,7 +1871,8 @@ def _http_fetch_uncached(url, h, timeout, retries):
             with _r as r:
                 try:
                     data = _read_limited(
-                        r, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        r, cap=cap if cap is not None else 1048576,
+                        timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     # 异常 unwind 也会走 with 退出关响应：先 shutdown 唤醒 stuck 读者
@@ -1813,7 +1884,8 @@ def _http_fetch_uncached(url, h, timeout, retries):
             try:
                 try:
                     data = _read_limited(
-                        e, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        e, cap=cap if cap is not None else 1048576,
+                        timeout=max(0.1, _dl - time.monotonic())).decode(
                         "utf-8", errors="replace")
                 except Exception:
                     data = ""
@@ -1837,13 +1909,17 @@ def _http_fetch_uncached(url, h, timeout, retries):
     return False, last_err
 
 
-def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
+def http_get(url, headers=None, timeout=10, retries=2, use_cache=True,
+             cap=None):
     h = {"User-Agent": UA_BROWSER}
     if headers:
         h.update(headers)
     if not use_cache:
-        return _http_fetch_uncached(url, h, timeout, retries)
-    key = (url, tuple(sorted(h.items())))
+        return _http_fetch_uncached(url, h, timeout, retries, cap=cap)
+    # S6-N1：cap 纳入缓存键——不同上限取到的正文不同（大 cap 可返回超
+    # 1 MiB 体），同 URL/同头不同 cap 不得共用同一缓存条目；cap=None
+    #（取体时默认 1 MiB）与显式 cap 各占独立键，互不串扰。
+    key = (url, tuple(sorted(h.items())), cap)
     with _cache_lock:
         if key in _cache:
             return True, _cache[key]
@@ -1852,7 +1928,7 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
         with _cache_lock:
             if key in _cache:
                 return True, _cache[key]
-        ok, data = _http_fetch_uncached(url, h, timeout, retries)
+        ok, data = _http_fetch_uncached(url, h, timeout, retries, cap=cap)
         if ok:
             with _cache_lock:
                 _cache[key] = data
@@ -1860,17 +1936,26 @@ def http_get(url, headers=None, timeout=10, retries=2, use_cache=True):
 
 
 def _http_cache_evict(url, headers=None):
-    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。"""
+    """驱逐 http_get 的缓存条目（与 http_get 同款键构造，供解析失败时排毒）。
+    S6-N1：缓存键含 cap，驱逐时按 (url, 头) 前缀扫清全部 cap 变体，
+    否则 16 MiB 名单解析失败后同 URL 的 cap 条目排毒不净。"""
     h = {"User-Agent": UA_BROWSER}
     if headers:
         h.update(headers)
-    key = (url, tuple(sorted(h.items())))
+    _prefix = (url, tuple(sorted(h.items())))
     with _cache_lock:
-        _cache.pop(key, None)
+        for _k in [k for k in _cache if k[:2] == _prefix]:
+            _cache.pop(_k, None)
 
 
 _threat_lists = {}
 _threat_lists_lock = threading.Lock()
+
+
+# M-19：威胁列表下载上限 16 MiB——ipsum.txt 实测 2,249,330 字节
+# （2026-11-18），留约 7 倍增长余量；与 R3-M-05 响应体 16 MB 上限
+# 同口径。上限仍存在，17 MiB 名单照常被拒，不引入无界下载。
+_THREAT_LIST_CAP = 16 * 1024 * 1024
 
 
 def _get_threat_list(name, url, parser):
@@ -1883,7 +1968,8 @@ def _get_threat_list(name, url, parser):
         with _threat_lists_lock:
             if name in _threat_lists:
                 return _threat_lists[name]
-        ok, raw = http_get(url, timeout=12, retries=2, use_cache=True)
+        ok, raw = http_get(url, timeout=12, retries=2, use_cache=True,
+                           cap=_THREAT_LIST_CAP)
         if not ok:
             return None
         try:
@@ -2089,6 +2175,61 @@ def _has_ipv4_egress():
         return False
 
 
+def _has_ipv6_egress():
+    """有无 IPv6 出口：与 _has_ipv4_egress 同款本地路由查询，不发包；
+    无 IPv6 路由时抛 OSError（纯 IPv4 主机）。"""
+    try:
+        _s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+        try:
+            _s.connect(("2606:4700:4700::1111", 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _has_route_to(addr, family):
+    """到目标地址本身有无本地路由：UDP connect 只做路由查询，不发包。
+    S2-N1：单目标 egress 检查（如只测 Cloudflare）不得否决其他全局
+    地址——每个全局 DNS 按自身地址判定；无到该目标的路由时才剔除。"""
+    try:
+        _s = socket.socket(family, socket.SOCK_DGRAM)
+        try:
+            _s.connect((addr, 53))
+        finally:
+            _s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _ns_addr_usable(s):
+    """系统 nameserver 是否可用（H-03）：
+    拒绝 IPv6 site-local（fec0::/10，哨兵地址不可路由）；
+    拒绝无有效 scope_id 的链路本地 IPv6（fe80::/10 裸地址无出口接口）；
+    单栈环境下剔除无对应协议栈出口的异族全局地址——本地/ULA/环回
+    保留（链路上可达，无需全局出口）。IPv6 全局地址按目标本身测路由
+    （S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 仍用
+    _has_ipv4_egress 门。解析失败返 False。"""
+    try:
+        ip = ipaddress.ip_address(s)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if getattr(ip, "is_site_local", False):
+            return False
+        if ip.is_link_local and not getattr(ip, "scope_id", None):
+            return False
+        if ip.is_global and not _has_route_to(
+                str(ip).split("%", 1)[0], socket.AF_INET6):
+            return False
+    else:
+        if ip.is_global and not _has_ipv4_egress():
+            return False
+    return True
+
+
 def _get_system_nameservers():
     """跨平台读取系统默认 DNS 服务器列表（IPv4/IPv6，支持 Linux / macOS / Windows）。
     H-07：IPv6 系统 DNS 亦返回；无系统 DNS 时，IPv6 模式或无 IPv4 出口
@@ -2108,22 +2249,31 @@ def _get_system_nameservers():
                     _dns_indent = len(line) - len(line.lstrip())
                     parts = line.split(":", 1)
                     if len(parts) == 2:
-                        # M-07(a)：先剥 %scope_id（Python 3.8 不接受带作用域
-                        # 的地址字面量，3.9+ 原生支持，剥离后两者皆可）。
-                        cand = parts[1].strip().split("%", 1)[0]
+                        # H-03：先按原样解析（含 %scope_id 时 3.9+ 保留作用域，
+                        # 链路本地地址赖此选接口）；3.8 不接受 % 时再剥离重试
+                        # （M-07(a) 兼容）。
+                        cand = parts[1].strip()
                         try:
                             ip = ipaddress.ip_address(cand)
-                            ns.append(str(ip))
                         except ValueError:
-                            pass
+                            try:
+                                ip = ipaddress.ip_address(
+                                    cand.split("%", 1)[0])
+                            except ValueError:
+                                ip = None
+                        if ip is not None:
+                            ns.append(str(ip))
                 elif in_dns:
                     cand = line.strip()
                     if not cand:
                         in_dns = False
                         continue
                     try:
-                        ip = ipaddress.ip_address(
-                            cand.split()[0].split("%", 1)[0])
+                        _c0 = cand.split()[0]
+                        try:
+                            ip = ipaddress.ip_address(_c0)
+                        except ValueError:
+                            ip = ipaddress.ip_address(_c0.split("%", 1)[0])
                         ns.append(str(ip))
                     except ValueError:
                         # M-07(a)：续行解析失败（如旧版 %scope）不结束 DNS 段；
@@ -2182,13 +2332,16 @@ def _get_system_nameservers():
                     ["scutil", "--dns"],
                     capture_output=True, text=True, timeout=4, errors="replace",
                 ).stdout
-                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[0-9a-fA-F:]+)", out):
+                for m in re.finditer(r"nameserver\[\d+\]\s*:\s*([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|[0-9a-fA-F:]+(?:%[0-9A-Za-z._-]+)?)", out):
                     try:
                         ns.append(str(ipaddress.ip_address(m.group(1))))
                     except ValueError:
                         pass
             except Exception:
                 pass
+    # H-03：过滤不可路由地址（site-local / 无 scope 的链路本地 /
+    # 单栈异族全局），再决定回退；全被滤掉时走下方公共 DNS 回退。
+    ns = [x for x in ns if _ns_addr_usable(x)]
     if not ns:
         if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
             return ["2606:4700:4700::1111", "2001:4860:4860::8888"]
@@ -2217,6 +2370,29 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         _srv_ip = None
         _srv_is6 = False
     sock = None
+    # H-03：IPv6 服务器须经 getaddrinfo（AI_NUMERICHOST，禁 DNS 解析）
+    # 取四元组目的地址——带 %scope_id 的链路本地地址赖此填入 scope_id，
+    # 否则 sendto 找不到出口接口；无 scope 时 scope_id 为 0。
+    # glibc 只对链路本地地址接受 scope：非链路本地地址的 scope 无路由
+    # 意义（如 ::1%lo），getaddrinfo 拒收时剥离后按无 scope 处理；
+    # 链路本地解析失败则 fail-closed（无接口可出包）。
+    _dest = (server, 53)
+    _dest_scope = 0
+    _srv_scope = getattr(_srv_ip, "scope_id", None) if _srv_ip is not None else None
+    if _srv_is6:
+        try:
+            _dest = socket.getaddrinfo(server, 53, socket.AF_INET6,
+                                       socket.SOCK_DGRAM, 0,
+                                       socket.AI_NUMERICHOST)[0][4]
+            _dest_scope = _dest[3]
+        except Exception:
+            if _srv_ip is not None and _srv_ip.is_link_local:
+                return (None, []) if return_cnames else None
+            # H-03 残留：str(ipaddress) 保留 %scope（如 ::1%lo），须在
+            # 此显式剥离，否则 sendto 目标仍带 %lo。
+            _dest = (str(_srv_ip).split("%", 1)[0], 53)
+            _dest_scope = 0
+            _srv_scope = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
         # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的唯一合法目标。
@@ -2229,7 +2405,7 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             socket.AF_INET6 if _srv_is6 else socket.AF_INET,
             socket.SOCK_DGRAM)
         sock.settimeout(timeout)
-        sock.sendto(pkt, (server, 53))
+        sock.sendto(pkt, _dest)
         data, addr = sock.recvfrom(2048)
     except Exception:
         return (None, []) if return_cnames else None
@@ -2251,8 +2427,16 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
         return (None, []) if return_cnames else None
     if _srv_ip is not None:
         try:
-            _src_ok = ipaddress.ip_address(addr[0]) == _srv_ip \
-                and addr[1] == 53
+            # H-03：源校验按地址值比对——比较 packed（带 scope_id 的
+            # IPv6Address.__eq__ 会因 scope 不同而失配，::1%lo 与 ::1
+            # 明明是同一地址却判不等）；服务器带 scope 时再核对回包
+            # 四元组的接口索引 addr[3]，须与建连时解析出的 scope 一致，
+            # 无四元组（桩/异常传输）时 fail-closed。
+            _recv_ip = ipaddress.ip_address(addr[0])
+            _src_ok = _recv_ip.packed == _srv_ip.packed and addr[1] == 53
+            if _src_ok and isinstance(_srv_ip, ipaddress.IPv6Address) \
+                    and _srv_scope:
+                _src_ok = len(addr) > 3 and addr[3] == _dest_scope
         except ValueError:
             _src_ok = False
     else:
@@ -2615,7 +2799,9 @@ class PTRCheck(Provider):
         fcrdns = False
         got_data = False
         any_failed = False
-        for h in ptrs:
+        # R3-L-03(a)：正查只跟前 2 条 PTR，与 MX 只试前 2（mxs[:2]）同口径；
+        # 8 条 PTR 曾触发 8 次正查。
+        for h in ptrs[:2]:
             fwd_ips = None
             for _ns in sys_ns_list:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns, timeout=2.5)
@@ -2655,7 +2841,12 @@ class PTRCheck(Provider):
 
 
 # ---- 显示层本地化查表 (数据源无语言参数时, 国家名/时区名按界面语言呈现) ----
-_CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA', 'germany': 'DE', 'france': 'FR', 'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'singapore': 'SG', 'india': 'IN', 'brazil': 'BR', 'russia': 'RU', 'united kingdom': 'GB', 'netherlands': 'NL', 'switzerland': 'CH', 'sweden': 'SE', 'norway': 'NO', 'finland': 'FI', 'denmark': 'DK', 'austria': 'AT', 'belgium': 'BE', 'ireland': 'IE', 'poland': 'PL', 'turkey': 'TR', 'mexico': 'MX', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO', 'peru': 'PE', 'egypt': 'EG', 'nigeria': 'NG', 'kenya': 'KE', 'morocco': 'MA', 'israel': 'IL', 'united arab emirates': 'AE', 'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'thailand': 'TH', 'vietnam': 'VN', 'indonesia': 'ID', 'malaysia': 'MY', 'philippines': 'PH', 'taiwan': 'TW', 'hong kong': 'HK', 'china': 'CN', 'australia': 'AU', 'new zealand': 'NZ', 'south africa': 'ZA', 'greece': 'GR', 'portugal': 'PT', 'czechia': 'CZ', 'hungary': 'HU', 'romania': 'RO', 'ukraine': 'UA', 'italy': 'IT', 'spain': 'ES', 'китай': 'CN', '中國': 'CN', 'çin': 'CN'}
+_CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA', 'germany': 'DE', 'france': 'FR', 'japan': 'JP', 'south korea': 'KR', 'korea': 'KR', 'singapore': 'SG', 'india': 'IN', 'brazil': 'BR', 'russia': 'RU', 'united kingdom': 'GB', 'netherlands': 'NL', 'switzerland': 'CH', 'sweden': 'SE', 'norway': 'NO', 'finland': 'FI', 'denmark': 'DK', 'austria': 'AT', 'belgium': 'BE', 'ireland': 'IE', 'poland': 'PL', 'turkey': 'TR', 'mexico': 'MX', 'argentina': 'AR', 'chile': 'CL', 'colombia': 'CO', 'peru': 'PE', 'egypt': 'EG', 'nigeria': 'NG', 'kenya': 'KE', 'morocco': 'MA', 'israel': 'IL', 'united arab emirates': 'AE', 'saudi arabia': 'SA', 'qatar': 'QA', 'kuwait': 'KW', 'iran': 'IR', 'iraq': 'IQ', 'pakistan': 'PK', 'bangladesh': 'BD', 'thailand': 'TH', 'vietnam': 'VN', 'indonesia': 'ID', 'malaysia': 'MY', 'philippines': 'PH', 'taiwan': 'TW', 'hong kong': 'HK', 'china': 'CN', 'australia': 'AU', 'new zealand': 'NZ', 'south africa': 'ZA', 'greece': 'GR', 'portugal': 'PT', 'czechia': 'CZ', 'hungary': 'HU', 'romania': 'RO', 'ukraine': 'UA', 'italy': 'IT', 'spain': 'ES', 'китай': 'CN', '中國': 'CN', 'çin': 'CN',
+# R3-M-10：本地化别名（简体中文名 + 日语名）。此前只有繁体 '中國'，首选源
+# 返回简体 "中国"/"德国" 或日语 "ドイツ" 时反查不到代码，同名借用循环又因
+# 名称不一致排除了他源，country_code 整批清空。键一律小写（查表前 lower）。
+'中国': 'CN', '美国': 'US', '加拿大': 'CA', '德国': 'DE', '法国': 'FR', '日本': 'JP', '韩国': 'KR', '新加坡': 'SG', '印度': 'IN', '巴西': 'BR', '俄罗斯': 'RU', '英国': 'GB', '荷兰': 'NL', '瑞士': 'CH', '瑞典': 'SE', '挪威': 'NO', '芬兰': 'FI', '丹麦': 'DK', '奥地利': 'AT', '比利时': 'BE', '爱尔兰': 'IE', '波兰': 'PL', '土耳其': 'TR', '墨西哥': 'MX', '阿根廷': 'AR', '智利': 'CL', '哥伦比亚': 'CO', '秘鲁': 'PE', '埃及': 'EG', '尼日利亚': 'NG', '肯尼亚': 'KE', '摩洛哥': 'MA', '以色列': 'IL', '阿联酋': 'AE', '沙特阿拉伯': 'SA', '卡塔尔': 'QA', '科威特': 'KW', '伊朗': 'IR', '伊拉克': 'IQ', '巴基斯坦': 'PK', '孟加拉国': 'BD', '泰国': 'TH', '越南': 'VN', '印度尼西亚': 'ID', '马来西亚': 'MY', '菲律宾': 'PH', '台湾': 'TW', '香港': 'HK', '澳大利亚': 'AU', '新西兰': 'NZ', '南非': 'ZA', '希腊': 'GR', '葡萄牙': 'PT', '捷克': 'CZ', '匈牙利': 'HU', '罗马尼亚': 'RO', '乌克兰': 'UA', '意大利': 'IT', '西班牙': 'ES',
+'ドイツ': 'DE', 'フランス': 'FR', 'イギリス': 'GB', 'アメリカ': 'US', 'カナダ': 'CA', 'オーストラリア': 'AU', 'ニュージーランド': 'NZ', 'オランダ': 'NL', 'イタリア': 'IT', 'スペイン': 'ES', 'ロシア': 'RU', 'スイス': 'CH', 'スウェーデン': 'SE', 'ノルウェー': 'NO', 'フィンランド': 'FI', 'デンマーク': 'DK', 'オーストリア': 'AT', 'ベルギー': 'BE', 'アイルランド': 'IE', 'ポーランド': 'PL', 'トルコ': 'TR', 'メキシコ': 'MX', 'ブラジル': 'BR', 'インド': 'IN', 'シンガポール': 'SG', 'タイ': 'TH', 'ベトナム': 'VN', 'インドネシア': 'ID', 'マレーシア': 'MY', 'フィリピン': 'PH', '韓国': 'KR', '中国': 'CN', '台湾': 'TW', '香港': 'HK', '南アフリカ': 'ZA', 'ギリシャ': 'GR', 'ポルトガル': 'PT', 'チェコ': 'CZ', 'ハンガリー': 'HU', 'ルーマニア': 'RO', 'ウクライナ': 'UA', 'エジプト': 'EG', 'ナイジェリア': 'NG', 'ケニア': 'KE', 'モロッコ': 'MA', 'イスラエル': 'IL', 'サウジアラビア': 'SA', 'カタール': 'QA', 'クウェート': 'KW', 'イラン': 'IR', 'イラク': 'IQ', 'パキスタン': 'PK', 'バングラデシュ': 'BD'}
 _COUNTRY_NAMES = {'zh': {'US': '美国', 'CA': '加拿大', 'DE': '德国', 'FR': '法国', 'JP': '日本', 'KR': '韩国', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄罗斯', 'GB': '英国', 'NL': '荷兰', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬兰', 'DK': '丹麦', 'AT': '奥地利', 'BE': '比利时', 'IE': '爱尔兰', 'PL': '波兰', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥伦比亚', 'PE': '秘鲁', 'EG': '埃及', 'NG': '尼日利亚', 'KE': '肯尼亚', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿联酋', 'SA': '沙特阿拉伯', 'QA': '卡塔尔', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉国', 'TH': '泰国', 'VN': '越南', 'ID': '印度尼西亚', 'MY': '马来西亚', 'PH': '菲律宾', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': '澳大利亚', 'NZ': '新西兰', 'ZA': '南非', 'GR': '希腊', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '罗马尼亚', 'UA': '乌克兰', 'IT': '意大利', 'ES': '西班牙'}, 'zh-TW': {'US': '美國', 'CA': '加拿大', 'DE': '德國', 'FR': '法國', 'JP': '日本', 'KR': '韓國', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄羅斯', 'GB': '英國', 'NL': '荷蘭', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬蘭', 'DK': '丹麥', 'AT': '奧地利', 'BE': '比利時', 'IE': '愛爾蘭', 'PL': '波蘭', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥倫比亞', 'PE': '秘魯', 'EG': '埃及', 'NG': '奈及利亞', 'KE': '肯亞', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿聯酋', 'SA': '沙烏地阿拉伯', 'QA': '卡達', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉國', 'TH': '泰國', 'VN': '越南', 'ID': '印度尼西亞', 'MY': '馬來西亞', 'PH': '菲律賓', 'TW': '台灣', 'HK': '香港', 'CN': '中國', 'AU': '澳大利亞', 'NZ': '紐西蘭', 'ZA': '南非', 'GR': '希臘', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '羅馬尼亞', 'UA': '烏克蘭', 'IT': '義大利', 'ES': '西班牙'}, 'ja': {'US': 'アメリカ', 'CA': 'カナダ', 'DE': 'ドイツ', 'FR': 'フランス', 'JP': '日本', 'KR': '韓国', 'SG': 'シンガポール', 'IN': 'インド', 'BR': 'ブラジル', 'RU': 'ロシア', 'GB': 'イギリス', 'NL': 'オランダ', 'CH': 'スイス', 'SE': 'スウェーデン', 'NO': 'ノルウェー', 'FI': 'フィンランド', 'DK': 'デンマーク', 'AT': 'オーストリア', 'BE': 'ベルギー', 'IE': 'アイルランド', 'PL': 'ポーランド', 'TR': 'トルコ', 'MX': 'メキシコ', 'AR': 'アルゼンチン', 'CL': 'チリ', 'CO': 'コロンビア', 'PE': 'ペルー', 'EG': 'エジプト', 'NG': 'ナイジェリア', 'KE': 'ケニア', 'MA': 'モロッコ', 'IL': 'イスラエル', 'AE': 'アラブ首長国連邦', 'SA': 'サウジアラビア', 'QA': 'カタール', 'KW': 'クウェート', 'IR': 'イラン', 'IQ': 'イラク', 'PK': 'パキスタン', 'BD': 'バングラデシュ', 'TH': 'タイ', 'VN': 'ベトナム', 'ID': 'インドネシア', 'MY': 'マレーシア', 'PH': 'フィリピン', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': 'オーストラリア', 'NZ': 'ニュージーランド', 'ZA': '南アフリカ', 'GR': 'ギリシャ', 'PT': 'ポルトガル', 'CZ': 'チェコ', 'HU': 'ハンガリー', 'RO': 'ルーマニア', 'UA': 'ウクライナ', 'IT': 'イタリア', 'ES': 'スペイン'}, 'ru': {'US': 'США', 'CA': 'Канада', 'DE': 'Германия', 'FR': 'Франция', 'JP': 'Япония', 'KR': 'Южная Корея', 'SG': 'Сингапур', 'IN': 'Индия', 'BR': 'Бразилия', 'RU': 'Россия', 'GB': 'Великобритания', 'NL': 'Нидерланды', 'CH': 'Швейцария', 'SE': 'Швеция', 'NO': 'Норвегия', 'FI': 'Финляндия', 'DK': 'Дания', 'AT': 'Австрия', 'BE': 'Бельгия', 'IE': 'Ирландия', 'PL': 'Польша', 'TR': 'Турция', 'MX': 'Мексика', 'AR': 'Аргентина', 'CL': 'Чили', 'CO': 'Колумбия', 'PE': 'Перу', 'EG': 'Египет', 'NG': 'Нигерия', 'KE': 'Кения', 'MA': 'Марокко', 'IL': 'Израиль', 'AE': 'ОАЭ', 'SA': 'Саудовская Аравия', 'QA': 'Катар', 'KW': 'Кувейт', 'IR': 'Иран', 'IQ': 'Ирак', 'PK': 'Пакистан', 'BD': 'Бангладеш', 'TH': 'Таиланд', 'VN': 'Вьетнам', 'ID': 'Индонезия', 'MY': 'Малайзия', 'PH': 'Филиппины', 'TW': 'Тайвань', 'HK': 'Гонконг', 'CN': 'Китай', 'AU': 'Австралия', 'NZ': 'Новая Зеландия', 'ZA': 'ЮАР', 'GR': 'Греция', 'PT': 'Португалия', 'CZ': 'Чехия', 'HU': 'Венгрия', 'RO': 'Румыния', 'UA': 'Украина', 'IT': 'Италия', 'ES': 'Испания'}, 'fa': {'US': 'آمریکا', 'CA': 'کانادا', 'DE': 'آلمان', 'FR': 'فرانسه', 'JP': 'ژاپن', 'KR': 'کره جنوبی', 'SG': 'سنگاپور', 'IN': 'هند', 'BR': 'برزیل', 'RU': 'روسیه', 'GB': 'بریتانیا', 'NL': 'هلند', 'CH': 'سوئیس', 'SE': 'سوئد', 'NO': 'نروژ', 'FI': 'فنلاند', 'DK': 'دانمارک', 'AT': 'اتریش', 'BE': 'بلژیک', 'IE': 'ایرلند', 'PL': 'لهستان', 'TR': 'ترکیه', 'MX': 'مکزیک', 'AR': 'آرژانتین', 'CL': 'شیلی', 'CO': 'کلمبیا', 'PE': 'پرو', 'EG': 'مصر', 'NG': 'نیجریه', 'KE': 'کنیا', 'MA': 'مراکش', 'IL': 'اسرائیل', 'AE': 'امارات', 'SA': 'عربستان سعودی', 'QA': 'قطر', 'KW': 'کویت', 'IR': 'ایران', 'IQ': 'عراق', 'PK': 'پاکستان', 'BD': 'بنگلادش', 'TH': 'تایلند', 'VN': 'ویتنام', 'ID': 'اندونزی', 'MY': 'مالزی', 'PH': 'فیلیپین', 'TW': 'تایوان', 'HK': 'هنگ\u200cکنگ', 'CN': 'چین', 'AU': 'استرالیا', 'NZ': 'نیوزیلند', 'ZA': 'آفریقای جنوبی', 'GR': 'یونان', 'PT': 'پرتغال', 'CZ': 'چک', 'HU': 'مجارستان', 'RO': 'رومانی', 'UA': 'اوکراین', 'IT': 'ایتالیا', 'ES': 'اسپانیا'}}
 _CC_EN.update({'afghanistan': 'AF', 'albania': 'AL', 'algeria': 'DZ', 'american samoa': 'AS', 'andorra': 'AD', 'angola': 'AO', 'anguilla': 'AI', 'antarctica': 'AQ', 'antigua and barbuda': 'AG', 'armenia': 'AM', 'aruba': 'AW', 'azerbaijan': 'AZ', 'bahamas': 'BS', 'bahrain': 'BH', 'barbados': 'BB', 'belarus': 'BY', 'belize': 'BZ', 'benin': 'BJ', 'bermuda': 'BM', 'bhutan': 'BT', 'bolivia': 'BO', 'bosnia and herzegovina': 'BA', 'botswana': 'BW', 'brunei': 'BN', 'bulgaria': 'BG', 'burkina faso': 'BF', 'burundi': 'BI', 'cambodia': 'KH', 'cameroon': 'CM', 'cape verde': 'CV', 'cayman islands': 'KY', 'central african republic': 'CF', 'chad': 'TD', 'comoros': 'KM', 'congo': 'CG', 'congo (democratic republic)': 'CD', 'cook islands': 'CK', 'costa rica': 'CR', 'croatia': 'HR', 'cuba': 'CU', 'cyprus': 'CY', 'djibouti': 'DJ', 'dominica': 'DM', 'dominican republic': 'DO', 'ecuador': 'EC', 'el salvador': 'SV', 'equatorial guinea': 'GQ', 'eritrea': 'ER', 'estonia': 'EE', 'eswatini': 'SZ', 'ethiopia': 'ET', 'falkland islands': 'FK', 'faroe islands': 'FO', 'fiji': 'FJ', 'gabon': 'GA', 'gambia': 'GM', 'georgia': 'GE', 'ghana': 'GH', 'gibraltar': 'GI', 'greenland': 'GL', 'grenada': 'GD', 'guam': 'GU', 'guatemala': 'GT', 'guinea': 'GN', 'guinea-bissau': 'GW', 'guyana': 'GY', 'haiti': 'HT', 'honduras': 'HN', 'iceland': 'IS', 'jamaica': 'JM', 'jordan': 'JO', 'kazakhstan': 'KZ', 'kiribati': 'KI', 'kosovo': 'XK', 'kyrgyzstan': 'KG', 'laos': 'LA', 'latvia': 'LV', 'lebanon': 'LB', 'lesotho': 'LS', 'liberia': 'LR', 'libya': 'LY', 'liechtenstein': 'LI', 'lithuania': 'LT', 'luxembourg': 'LU', 'macau': 'MO', 'madagascar': 'MG', 'malawi': 'MW', 'maldives': 'MV', 'mali': 'ML', 'malta': 'MT', 'marshall islands': 'MH', 'mauritania': 'MR', 'mauritius': 'MU', 'micronesia': 'FM', 'moldova': 'MD', 'monaco': 'MC', 'mongolia': 'MN', 'montenegro': 'ME', 'mozambique': 'MZ', 'myanmar': 'MM', 'namibia': 'NA', 'nepal': 'NP', 'nicaragua': 'NI', 'niger': 'NE', 'north korea': 'KP', 'north macedonia': 'MK', 'northern mariana islands': 'MP', 'oman': 'OM', 'palau': 'PW', 'palestine': 'PS', 'panama': 'PA', 'papua new guinea': 'PG', 'paraguay': 'PY', 'puerto rico': 'PR', 'rwanda': 'RW', 'saint kitts and nevis': 'KN', 'saint lucia': 'LC', 'samoa': 'WS', 'san marino': 'SM', 'sao tome and principe': 'ST', 'senegal': 'SN', 'serbia': 'RS', 'seychelles': 'SC', 'sierra leone': 'SL', 'slovakia': 'SK', 'slovenia': 'SI', 'solomon islands': 'SB', 'somalia': 'SO', 'south sudan': 'SS', 'sri lanka': 'LK', 'sudan': 'SD', 'suriname': 'SR', 'syria': 'SY', 'tajikistan': 'TJ', 'tanzania': 'TZ', 'timor-leste': 'TL', 'togo': 'TG', 'tonga': 'TO', 'trinidad and tobago': 'TT', 'tunisia': 'TN', 'turkmenistan': 'TM', 'tuvalu': 'TV', 'uganda': 'UG', 'uruguay': 'UY', 'uzbekistan': 'UZ', 'vanuatu': 'VU', 'venezuela': 'VE', 'yemen': 'YE', 'zambia': 'ZM', 'zimbabwe': 'ZW', 'guernsey': 'GG', 'jersey': 'JE', 'isle of man': 'IM', 'aland': 'AX', 'curacao': 'CW', 'sint maarten': 'SX', 'bonaire': 'BQ', 'saint barthelemy': 'BL', 'saint martin': 'MF', 'mayotte': 'YT', 'reunion': 'RE', 'martinique': 'MQ', 'guadeloupe': 'GP', 'french guiana': 'GF', 'french polynesia': 'PF', 'new caledonia': 'NC', 'niue': 'NU', 'norfolk island': 'NF', 'christmas island': 'CX', 'pitcairn': 'PN', 'saint helena': 'SH', 'montserrat': 'MS', 'british virgin islands': 'VG', 'u.s. virgin islands': 'VI', 'turks and caicos': 'TC', 'cote d\'ivoire': 'CI', 'côte d\'ivoire': 'CI', 'ivory coast': 'CI', 'saint vincent and the grenadines': 'VC', 'czech republic': 'CZ'})
 _EXTRA_CN = {'zh': {'AF': '阿富汗', 'AL': '阿尔巴尼亚', 'DZ': '阿尔及利亚', 'AS': '美属萨摩亚', 'AD': '安道尔', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南极洲', 'AG': '安提瓜和巴布达', 'AM': '亚美尼亚', 'AW': '阿鲁巴', 'AZ': '阿塞拜疆', 'BS': '巴哈马', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄罗斯', 'BZ': '伯利兹', 'BJ': '贝宁', 'BM': '百慕大', 'BT': '不丹', 'BO': '玻利维亚', 'BA': '波黑', 'BW': '博茨瓦纳', 'BN': '文莱', 'BG': '保加利亚', 'BF': '布基纳法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麦隆', 'CV': '佛得角', 'KY': '开曼群岛', 'CF': '中非共和国', 'TD': '乍得', 'KM': '科摩罗', 'CG': '刚果（布）', 'CD': '刚果（金）', 'CK': '库克群岛', 'CR': '哥斯达黎加', 'HR': '克罗地亚', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多米尼加', 'EC': '厄瓜多尔', 'SV': '萨尔瓦多', 'GQ': '赤道几内亚', 'ER': '厄立特里亚', 'EE': '爱沙尼亚', 'SZ': '斯威士兰', 'ET': '埃塞俄比亚', 'FK': '福克兰群岛', 'FO': '法罗群岛', 'FJ': '斐济', 'GA': '加蓬', 'GM': '冈比亚', 'GE': '格鲁吉亚', 'GH': '加纳', 'GI': '直布罗陀', 'GL': '格陵兰', 'GD': '格林纳达', 'GU': '关岛', 'GT': '危地马拉', 'GN': '几内亚', 'GW': '几内亚比绍', 'GY': '圭亚那', 'HT': '海地', 'HN': '洪都拉斯', 'IS': '冰岛', 'JM': '牙买加', 'JO': '约旦', 'KZ': '哈萨克斯坦', 'KI': '基里巴斯', 'XK': '科索沃', 'KG': '吉尔吉斯斯坦', 'LA': '老挝', 'LV': '拉脱维亚', 'LB': '黎巴嫩', 'LS': '莱索托', 'LR': '利比里亚', 'LY': '利比亚', 'LI': '列支敦士登', 'LT': '立陶宛', 'LU': '卢森堡', 'MO': '澳门', 'MG': '马达加斯加', 'MW': '马拉维', 'MV': '马尔代夫', 'ML': '马里', 'MT': '马耳他', 'MH': '马绍尔群岛', 'MR': '毛里塔尼亚', 'MU': '毛里求斯', 'FM': '密克罗尼西亚', 'MD': '摩尔多瓦', 'MC': '摩纳哥', 'MN': '蒙古', 'ME': '黑山', 'MZ': '莫桑比克', 'MM': '缅甸', 'NA': '纳米比亚', 'NP': '尼泊尔', 'NI': '尼加拉瓜', 'NE': '尼日尔', 'KP': '朝鲜', 'MK': '北马其顿', 'MP': '北马里亚纳群岛', 'OM': '阿曼', 'PW': '帕劳', 'PS': '巴勒斯坦', 'PA': '巴拿马', 'PG': '巴布亚新几内亚', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '卢旺达', 'KN': '圣基茨和尼维斯', 'LC': '圣卢西亚', 'WS': '萨摩亚', 'SM': '圣马力诺', 'ST': '圣多美和普林西比', 'SN': '塞内加尔', 'RS': '塞尔维亚', 'SC': '塞舌尔', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛文尼亚', 'SB': '所罗门群岛', 'SO': '索马里', 'SS': '南苏丹', 'LK': '斯里兰卡', 'SD': '苏丹', 'SR': '苏里南', 'SY': '叙利亚', 'TJ': '塔吉克斯坦', 'TZ': '坦桑尼亚', 'TL': '东帝汶', 'TG': '多哥', 'TO': '汤加', 'TT': '特立尼达和多巴哥', 'TN': '突尼斯', 'TM': '土库曼斯坦', 'TV': '图瓦卢', 'UG': '乌干达', 'UY': '乌拉圭', 'UZ': '乌兹别克斯坦', 'VU': '瓦努阿图', 'VE': '委内瑞拉', 'YE': '也门', 'ZM': '赞比亚', 'ZW': '津巴布韦', 'GG': '根西岛', 'JE': '泽西岛', 'IM': '马恩岛', 'AX': '奥兰群岛', 'CW': '库拉索', 'SX': '圣马丁（荷属）', 'BQ': '博奈尔、圣尤斯特歇斯和萨巴', 'BL': '圣巴泰勒米', 'MF': '圣马丁（法属）', 'YT': '马约特', 'RE': '留尼汪', 'MQ': '马提尼克', 'GP': '瓜德罗普', 'GF': '法属圭亚那', 'PF': '法属波利尼西亚', 'NC': '新喀里多尼亚', 'NU': '纽埃', 'NF': '诺福克岛', 'CX': '圣诞岛', 'PN': '皮特凯恩群岛', 'SH': '圣赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英属维尔京群岛', 'VI': '美属维尔京群岛', 'TC': '特克斯和凯科斯群岛', 'CI': '科特迪瓦', 'VC': '圣文森特和格林纳丁斯'}, 'zh-TW': {'AF': '阿富汗', 'AL': '阿爾巴尼亞', 'DZ': '阿爾及利亞', 'AS': '美屬薩摩亞', 'AD': '安道爾', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南極洲', 'AG': '安提瓜和巴布達', 'AM': '亞美尼亞', 'AW': '阿魯巴', 'AZ': '亞塞拜然', 'BS': '巴哈馬', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄羅斯', 'BZ': '貝里斯', 'BJ': '貝南', 'BM': '百慕達', 'BT': '不丹', 'BO': '玻利維亞', 'BA': '波赫', 'BW': '波札那', 'BN': '汶萊', 'BG': '保加利亞', 'BF': '布基納法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麥隆', 'CV': '維德角', 'KY': '開曼群島', 'CF': '中非共和國', 'TD': '查德', 'KM': '葛摩', 'CG': '剛果（布）', 'CD': '剛果（金）', 'CK': '庫克群島', 'CR': '哥斯大黎加', 'HR': '克羅埃西亞', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多明尼加', 'EC': '厄瓜多', 'SV': '薩爾瓦多', 'GQ': '赤道幾內亞', 'ER': '厄利垂亞', 'EE': '愛沙尼亞', 'SZ': '史瓦帝尼', 'ET': '衣索比亞', 'FK': '福克蘭群島', 'FO': '法羅群島', 'FJ': '斐濟', 'GA': '加彭', 'GM': '甘比亞', 'GE': '喬治亞', 'GH': '迦納', 'GI': '直布羅陀', 'GL': '格陵蘭', 'GD': '格瑞那達', 'GU': '關島', 'GT': '瓜地馬拉', 'GN': '幾內亞', 'GW': '幾內亞比索', 'GY': '蓋亞那', 'HT': '海地', 'HN': '宏都拉斯', 'IS': '冰島', 'JM': '牙買加', 'JO': '約旦', 'KZ': '哈薩克斯坦', 'KI': '吉里巴斯', 'XK': '科索沃', 'KG': '吉爾吉斯斯坦', 'LA': '寮國', 'LV': '拉脫維亞', 'LB': '黎巴嫩', 'LS': '賴索托', 'LR': '賴比瑞亞', 'LY': '利比亞', 'LI': '列支敦斯登', 'LT': '立陶宛', 'LU': '盧森堡', 'MO': '澳門', 'MG': '馬達加斯加', 'MW': '馬拉威', 'MV': '馬爾地夫', 'ML': '馬利', 'MT': '馬耳他', 'MH': '馬紹爾群島', 'MR': '茅利塔尼亞', 'MU': '模里西斯', 'FM': '密克羅尼西亞', 'MD': '摩爾多瓦', 'MC': '摩納哥', 'MN': '蒙古', 'ME': '蒙特內哥羅', 'MZ': '莫三比克', 'MM': '緬甸', 'NA': '納米比亞', 'NP': '尼泊爾', 'NI': '尼加拉瓜', 'NE': '尼日', 'KP': '北韓', 'MK': '北馬其頓', 'MP': '北馬里亞納群島', 'OM': '阿曼', 'PW': '帛琉', 'PS': '巴勒斯坦', 'PA': '巴拿馬', 'PG': '巴布亞紐幾內亞', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '盧安達', 'KN': '聖基茨和尼維斯', 'LC': '聖露西亞', 'WS': '薩摩亞', 'SM': '聖馬利諾', 'ST': '聖多美和普林西比', 'SN': '塞內加爾', 'RS': '塞爾維亞', 'SC': '塞舌爾', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛維尼亞', 'SB': '所羅門群島', 'SO': '索馬利亞', 'SS': '南蘇丹', 'LK': '斯里蘭卡', 'SD': '蘇丹', 'SR': '蘇利南', 'SY': '敘利亞', 'TJ': '塔吉克斯坦', 'TZ': '坦尚尼亞', 'TL': '東帝汶', 'TG': '多哥', 'TO': '東加', 'TT': '特立尼達和多巴哥', 'TN': '突尼西亞', 'TM': '土庫曼斯坦', 'TV': '圖瓦盧', 'UG': '烏干達', 'UY': '烏拉圭', 'UZ': '烏茲別克斯坦', 'VU': '瓦努阿圖', 'VE': '委內瑞拉', 'YE': '葉門', 'ZM': '贊比亞', 'ZW': '津巴布韋', 'GG': '根西島', 'JE': '澤西島', 'IM': '馬恩島', 'AX': '奧蘭群島', 'CW': '庫拉索', 'SX': '聖馬丁（荷屬）', 'BQ': '博奈爾、聖尤斯特歇斯和薩巴', 'BL': '聖巴泰勒米', 'MF': '聖馬丁（法屬）', 'YT': '馬約特', 'RE': '留尼汪', 'MQ': '馬提尼克', 'GP': '瓜德羅普', 'GF': '法屬圭亞那', 'PF': '法屬波利尼西亞', 'NC': '新喀里多尼亞', 'NU': '紐埃', 'NF': '諾福克島', 'CX': '聖誕島', 'PN': '皮特凱恩群島', 'SH': '聖赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英屬維爾京群島', 'VI': '美屬維爾京群島', 'TC': '特克斯和凱科斯群島', 'CI': '科特迪瓦', 'VC': '聖文森特和格林納丁斯'}, 'ja': {'AF': 'アフガニスタン', 'AL': 'アルバニア', 'DZ': 'アルジェリア', 'AS': '米領サモア', 'AD': 'アンドラ', 'AO': 'アンゴラ', 'AI': 'アンギラ', 'AQ': '南極', 'AG': 'アンティグア・バーブーダ', 'AM': 'アルメニア', 'AW': 'アルバ', 'AZ': 'アゼルバイジャン', 'BS': 'バハマ', 'BH': 'バーレーン', 'BB': 'バルバドス', 'BY': 'ベラルーシ', 'BZ': 'ベリーズ', 'BJ': 'ベナン', 'BM': 'バミューダ', 'BT': 'ブータン', 'BO': 'ボリビア', 'BA': 'ボスニア・ヘルツェゴビナ', 'BW': 'ボツワナ', 'BN': 'ブルネイ', 'BG': 'ブルガリア', 'BF': 'ブルキナファソ', 'BI': 'ブルンジ', 'KH': 'カンボジア', 'CM': 'カメルーン', 'CV': 'カーボベルデ', 'KY': 'ケイマン諸島', 'CF': '中央アフリカ', 'TD': 'チャド', 'KM': 'コモロ', 'CG': 'コンゴ共和国', 'CD': 'コンゴ民主共和国', 'CK': 'クック諸島', 'CR': 'コスタリカ', 'HR': 'クロアチア', 'CU': 'キューバ', 'CY': 'キプロス', 'DJ': 'ジブチ', 'DM': 'ドミニカ国', 'DO': 'ドミニカ共和国', 'EC': 'エクアドル', 'SV': 'エルサルバドル', 'GQ': '赤道ギニア', 'ER': 'エリトリア', 'EE': 'エストニア', 'SZ': 'エスワティニ', 'ET': 'エチオピア', 'FK': 'フォークランド諸島', 'FO': 'フェロー諸島', 'FJ': 'フィジー', 'GA': 'ガボン', 'GM': 'ガンビア', 'GE': 'ジョージア', 'GH': 'ガーナ', 'GI': 'ジブラルタル', 'GL': 'グリーンランド', 'GD': 'グレナダ', 'GU': 'グアム', 'GT': 'グアテマラ', 'GN': 'ギニア', 'GW': 'ギニアビサウ', 'GY': 'ガイアナ', 'HT': 'ハイチ', 'HN': 'ホンジュラス', 'IS': 'アイスランド', 'JM': 'ジャマイカ', 'JO': 'ヨルダン', 'KZ': 'カザフスタン', 'KI': 'キリバス', 'XK': 'コソボ', 'KG': 'キルギス', 'LA': 'ラオス', 'LV': 'ラトビア', 'LB': 'レバノン', 'LS': 'レソト', 'LR': 'リベリア', 'LY': 'リビア', 'LI': 'リヒテンシュタイン', 'LT': 'リトアニア', 'LU': 'ルクセンブルク', 'MO': 'マカオ', 'MG': 'マダガスカル', 'MW': 'マラウイ', 'MV': 'モルディブ', 'ML': 'マリ', 'MT': 'マルタ', 'MH': 'マーシャル諸島', 'MR': 'モーリタニア', 'MU': 'モーリシャス', 'FM': 'ミクロネシア', 'MD': 'モルドバ', 'MC': 'モナコ', 'MN': 'モンゴル', 'ME': 'モンテネグロ', 'MZ': 'モザンビーク', 'MM': 'ミャンマー', 'NA': 'ナミビア', 'NP': 'ネパール', 'NI': 'ニカラグア', 'NE': 'ニジェール', 'KP': '北朝鮮', 'MK': '北マケドニア', 'MP': '北マリアナ諸島', 'OM': 'オマーン', 'PW': 'パラオ', 'PS': 'パレスチナ', 'PA': 'パナマ', 'PG': 'パプアニューギニア', 'PY': 'パラグアイ', 'PR': 'プエルトリコ', 'RW': 'ルワンダ', 'KN': 'セントクリストファー・ネイビス', 'LC': 'セントルシア', 'WS': 'サモア', 'SM': 'サンマリノ', 'ST': 'サントメ・プリンシペ', 'SN': 'セネガル', 'RS': 'セルビア', 'SC': 'セーシェル', 'SL': 'シエラレオネ', 'SK': 'スロバキア', 'SI': 'スロベニア', 'SB': 'ソロモン諸島', 'SO': 'ソマリア', 'SS': '南スーダン', 'LK': 'スリランカ', 'SD': 'スーダン', 'SR': 'スリナム', 'SY': 'シリア', 'TJ': 'タジキスタン', 'TZ': 'タンザニア', 'TL': '東ティモール', 'TG': 'トーゴ', 'TO': 'トンガ', 'TT': 'トリニダード・トバゴ', 'TN': 'チュニジア', 'TM': 'トルクメニスタン', 'TV': 'ツバル', 'UG': 'ウガンダ', 'UY': 'ウルグアイ', 'UZ': 'ウズベキスタン', 'VU': 'バヌアツ', 'VE': 'ベネズエラ', 'YE': 'イエメン', 'ZM': 'ザンビア', 'ZW': 'ジンバブエ', 'GG': 'ガーンジー', 'JE': 'ジャージー', 'IM': 'マン島', 'AX': 'オーランド諸島', 'CW': 'キュラソー', 'SX': 'シント・マールテン', 'BQ': 'ボネール、シント・ユースタティウス、サバ', 'BL': 'サン・バルテルミー', 'MF': 'サン・マルタン', 'YT': 'マヨット', 'RE': 'レユニオン', 'MQ': 'マルティニーク', 'GP': 'グアドループ', 'GF': 'フランス領ギアナ', 'PF': 'フランス領ポリネシア', 'NC': 'ニューカレドニア', 'NU': 'ニウエ', 'NF': 'ノーフォーク島', 'CX': 'クリスマス島', 'PN': 'ピトケアン諸島', 'SH': 'セントヘレナ', 'MS': 'モントセラト', 'VG': '英領バージン諸島', 'VI': '米領バージン諸島', 'TC': 'タークス・カイコス諸島', 'CI': 'コートジボワール', 'VC': 'セントビンセント・グレナディーン'}, 'ru': {'AF': 'Афганистан', 'AL': 'Албания', 'DZ': 'Алжир', 'AS': 'Американское Самоа', 'AD': 'Андорра', 'AO': 'Ангола', 'AI': 'Ангилья', 'AQ': 'Антарктида', 'AG': 'Антигуа и Барбуда', 'AM': 'Армения', 'AW': 'Аруба', 'AZ': 'Азербайджан', 'BS': 'Багамы', 'BH': 'Бахрейн', 'BB': 'Барбадос', 'BY': 'Беларусь', 'BZ': 'Белиз', 'BJ': 'Бенин', 'BM': 'Бермуды', 'BT': 'Бутан', 'BO': 'Боливия', 'BA': 'Босния и Герцеговина', 'BW': 'Ботсвана', 'BN': 'Бруней', 'BG': 'Болгария', 'BF': 'Буркина-Фасо', 'BI': 'Бурунди', 'KH': 'Камбоджа', 'CM': 'Камерун', 'CV': 'Кабо-Верде', 'KY': 'Каймановы острова', 'CF': 'ЦАР', 'TD': 'Чад', 'KM': 'Коморы', 'CG': 'Конго', 'CD': 'ДР Конго', 'CK': 'Острова Кука', 'CR': 'Коста-Рика', 'HR': 'Хорватия', 'CU': 'Куба', 'CY': 'Кипр', 'DJ': 'Джибути', 'DM': 'Доминика', 'DO': 'Доминиканская Республика', 'EC': 'Эквадор', 'SV': 'Сальвадор', 'GQ': 'Экваториальная Гвинея', 'ER': 'Эритрея', 'EE': 'Эстония', 'SZ': 'Эсватини', 'ET': 'Эфиопия', 'FK': 'Фолклендские острова', 'FO': 'Фарерские острова', 'FJ': 'Фиджи', 'GA': 'Габон', 'GM': 'Гамбия', 'GE': 'Грузия', 'GH': 'Гана', 'GI': 'Гибралтар', 'GL': 'Гренландия', 'GD': 'Гренада', 'GU': 'Гуам', 'GT': 'Гватемала', 'GN': 'Гвинея', 'GW': 'Гвинея-Бисау', 'GY': 'Гайана', 'HT': 'Гаити', 'HN': 'Гондурас', 'IS': 'Исландия', 'JM': 'Ямайка', 'JO': 'Иордания', 'KZ': 'Казахстан', 'KI': 'Кирибати', 'XK': 'Косово', 'KG': 'Киргизия', 'LA': 'Лаос', 'LV': 'Латвия', 'LB': 'Ливан', 'LS': 'Лесото', 'LR': 'Либерия', 'LY': 'Ливия', 'LI': 'Лихтенштейн', 'LT': 'Литва', 'LU': 'Люксембург', 'MO': 'Макао', 'MG': 'Мадагаскар', 'MW': 'Малави', 'MV': 'Мальдивы', 'ML': 'Мали', 'MT': 'Мальта', 'MH': 'Маршалловы Острова', 'MR': 'Мавритания', 'MU': 'Маврикий', 'FM': 'Микронезия', 'MD': 'Молдова', 'MC': 'Монако', 'MN': 'Монголия', 'ME': 'Черногория', 'MZ': 'Мозамбик', 'MM': 'Мьянма', 'NA': 'Намибия', 'NP': 'Непал', 'NI': 'Никарагуа', 'NE': 'Нигер', 'KP': 'Северная Корея', 'MK': 'Северная Македония', 'MP': 'Северные Марианские острова', 'OM': 'Оман', 'PW': 'Палау', 'PS': 'Палестина', 'PA': 'Панама', 'PG': 'Папуа — Новая Гвинея', 'PY': 'Парагвай', 'PR': 'Пуэрто-Рико', 'RW': 'Руанда', 'KN': 'Сент-Китс и Невис', 'LC': 'Сент-Люсия', 'WS': 'Самоа', 'SM': 'Сан-Марино', 'ST': 'Сан-Томе и Принсипи', 'SN': 'Сенегал', 'RS': 'Сербия', 'SC': 'Сейшелы', 'SL': 'Сьерра-Леоне', 'SK': 'Словакия', 'SI': 'Словения', 'SB': 'Соломоновы Острова', 'SO': 'Сомали', 'SS': 'Южный Судан', 'LK': 'Шри-Ланка', 'SD': 'Судан', 'SR': 'Суринам', 'SY': 'Сирия', 'TJ': 'Таджикистан', 'TZ': 'Танзания', 'TL': 'Восточный Тимор', 'TG': 'Того', 'TO': 'Тонга', 'TT': 'Тринидад и Тобаго', 'TN': 'Тунис', 'TM': 'Туркменистан', 'TV': 'Тувалу', 'UG': 'Уганда', 'UY': 'Уругвай', 'UZ': 'Узбекистан', 'VU': 'Вануату', 'VE': 'Венесуэла', 'YE': 'Йемен', 'ZM': 'Замбия', 'ZW': 'Зимбабве', 'GG': 'Гернси', 'JE': 'Джерси', 'IM': 'Остров Мэн', 'AX': 'Аландские острова', 'CW': 'Кюрасао', 'SX': 'Синт-Мартен', 'BQ': 'Бонайре, Синт-Эстатиус и Саба', 'BL': 'Сен-Бартелеми', 'MF': 'Сен-Мартен', 'YT': 'Майотта', 'RE': 'Реюньон', 'MQ': 'Мартиника', 'GP': 'Гваделупа', 'GF': 'Французская Гвиана', 'PF': 'Французская Полинезия', 'NC': 'Новая Каледония', 'NU': 'Ниуэ', 'NF': 'Остров Норфолк', 'CX': 'Остров Рождества', 'PN': 'Питкэрн', 'SH': 'Остров Святой Елены', 'MS': 'Монтсеррат', 'VG': 'Британские Виргинские острова', 'VI': 'Американские Виргинские острова', 'TC': 'Теркс и Кайкос', 'CI': 'Кот-д’Ивуар', 'VC': 'Сент-Винсент и Гренадины'}, 'fa': {'AF': 'افغانستان', 'AL': 'آلبانی', 'DZ': 'الجزایر', 'AS': 'ساموآی آمریکا', 'AD': 'آندورا', 'AO': 'آنگولا', 'AI': 'آنگویلا', 'AQ': 'جنوبگان', 'AG': 'آنتیگوا و باربودا', 'AM': 'ارمنستان', 'AW': 'آروبا', 'AZ': 'آذربایجان', 'BS': 'باهاما', 'BH': 'بحرین', 'BB': 'باربادوس', 'BY': 'بلاروس', 'BZ': 'بلیز', 'BJ': 'بنین', 'BM': 'برمودا', 'BT': 'بوتان', 'BO': 'بولیوی', 'BA': 'بوسنی و هرزگوین', 'BW': 'بوتسوانا', 'BN': 'برونئی', 'BG': 'بلغارستان', 'BF': 'بورکینافاسو', 'BI': 'بوروندی', 'KH': 'کامبوج', 'CM': 'کامرون', 'CV': 'کیپ ورد', 'KY': 'جزایر کیمن', 'CF': 'جمهوری آفریقای مرکزی', 'TD': 'چاد', 'KM': 'کومور', 'CG': 'کنگو', 'CD': 'جمهوری دموکراتیک کنگو', 'CK': 'جزایر کوک', 'CR': 'کاستاریکا', 'HR': 'کرواسی', 'CU': 'کوبا', 'CY': 'قبرس', 'DJ': 'جیبوتی', 'DM': 'دومینیکا', 'DO': 'جمهوری دومینیکن', 'EC': 'اکوادور', 'SV': 'السالوادور', 'GQ': 'گینه استوایی', 'ER': 'اریتره', 'EE': 'استونی', 'SZ': 'اسواتینی', 'ET': 'اتیوپی', 'FK': 'جزایر فالکلند', 'FO': 'جزایر فارو', 'FJ': 'فیجی', 'GA': 'گابن', 'GM': 'گامبیا', 'GE': 'گرجستان', 'GH': 'غنا', 'GI': 'جبل\u200cالطارق', 'GL': 'گرینلند', 'GD': 'گرنادا', 'GU': 'گوام', 'GT': 'گواتمالا', 'GN': 'گینه', 'GW': 'گینه بیسائو', 'GY': 'گویان', 'HT': 'هائیتی', 'HN': 'هندوراس', 'IS': 'ایسلند', 'JM': 'جامائیکا', 'JO': 'اردن', 'KZ': 'قزاقستان', 'KI': 'کیریباتی', 'XK': 'کوزوو', 'KG': 'قرقیزستان', 'LA': 'لائوس', 'LV': 'لتونی', 'LB': 'لبنان', 'LS': 'لسوتو', 'LR': 'لیبریا', 'LY': 'لیبی', 'LI': 'لیختن\u200cاشتاین', 'LT': 'لیتوانی', 'LU': 'لوکزامبورگ', 'MO': 'ماکائو', 'MG': 'ماداگاسکار', 'MW': 'مالاوی', 'MV': 'مالدیو', 'ML': 'مالی', 'MT': 'مالت', 'MH': 'جزایر مارشال', 'MR': 'موریتانی', 'MU': 'موریس', 'FM': 'میکرونزی', 'MD': 'مولداوی', 'MC': 'موناکو', 'MN': 'مغولستان', 'ME': 'مونته\u200cنگرو', 'MZ': 'موزامبیک', 'MM': 'میانمار', 'NA': 'نامیبیا', 'NP': 'نپال', 'NI': 'نیکاراگوئه', 'NE': 'نیجر', 'KP': 'کره شمالی', 'MK': 'مقدونیه شمالی', 'MP': 'جزایر ماریانای شمالی', 'OM': 'عمان', 'PW': 'پالائو', 'PS': 'فلسطین', 'PA': 'پاناما', 'PG': 'پاپوا گینه نو', 'PY': 'پاراگوئه', 'PR': 'پورتوریکو', 'RW': 'رواندا', 'KN': 'سنت کیتس و نویس', 'LC': 'سنت لوسیا', 'WS': 'ساموآ', 'SM': 'سن مارینو', 'ST': 'سائوتومه و پرنسیپ', 'SN': 'سنگال', 'RS': 'صربستان', 'SC': 'سیشل', 'SL': 'سیرالئون', 'SK': 'اسلواکی', 'SI': 'اسلوونی', 'SB': 'جزایر سلیمان', 'SO': 'سومالی', 'SS': 'سودان جنوبی', 'LK': 'سری\u200cلانکا', 'SD': 'سودان', 'SR': 'سورینام', 'SY': 'سوریه', 'TJ': 'تاجیکستان', 'TZ': 'تانزانیا', 'TL': 'تیمور شرقی', 'TG': 'توگو', 'TO': 'تونگا', 'TT': 'ترینیداد و توباگو', 'TN': 'تونس', 'TM': 'ترکمنستان', 'TV': 'تووالو', 'UG': 'اوگاندا', 'UY': 'اروگوئه', 'UZ': 'ازبکستان', 'VU': 'وانواتو', 'VE': 'ونزوئلا', 'YE': 'یمن', 'ZM': 'زامبیا', 'ZW': 'زیمبابوه', 'GG': 'گرنزی', 'JE': 'جرزی', 'IM': 'جزیره من', 'AX': 'جزایر الند', 'CW': 'کوراسائو', 'SX': 'سینت مارتن', 'BQ': 'بونیر، سینت یوستاتیوس و سابا', 'BL': 'سن بارتلمی', 'MF': 'سن مارتن', 'YT': 'مایوت', 'RE': 'رئونیون', 'MQ': 'مارتینیک', 'GP': 'گوادلوپ', 'GF': 'گویان فرانسه', 'PF': 'پلی\u200cنزی فرانسه', 'NC': 'کالدونیای جدید', 'NU': 'نیوئه', 'NF': 'جزیره نورفک', 'CX': 'جزیره کریسمس', 'PN': 'پیتکرن', 'SH': 'سنت هلنا', 'MS': 'مونتسرات', 'VG': 'جزایر ویرجین بریتانیا', 'VI': 'جزایر ویرجین آمریکا', 'TC': 'جزایر تورکس و کایکوس', 'CI': 'ساحل عاج', 'VC': 'سنت وینسنت و گرنادین‌ها'}}
@@ -2755,6 +2946,15 @@ _WD_PLACE_QIDS = frozenset({"Q515", "Q486972", "Q3957", "Q532", "Q15284",
                             "Q1549591", "Q200250", "Q208511", "Q174844",
                             "Q51929311", "Q1093829", "Q2264924", "Q15063611"})
 _WD_PLACE_ROOT_QIDS = frozenset()
+# S6-N2：context 国家/行政区简称 -> 国家 QID（裸名回退校验用）：
+# 英格兰/苏格兰/威尔士/北爱尔兰的 P17 均为英国 Q145；America/USA/US
+# 的 P17 均为美国 Q30。仅作国家级等价，不含行政区级映射。
+_WD_COUNTRY_ALIASES = {"us": "Q30", "usa": "Q30", "u.s.": "Q30",
+                       "u.s.a.": "Q30", "america": "Q30",
+                       "uk": "Q145", "great britain": "Q145",
+                       "britain": "Q145", "england": "Q145",
+                       "scotland": "Q145", "wales": "Q145",
+                       "northern ireland": "Q145"}
 
 
 def _wd_claim_ids(ent, prop):
@@ -2784,17 +2984,60 @@ def _wd_label(name, kind, context):
     候选须经实体类型校验 (P31, 必要时沿 P279 上溯一级): 描述子串匹配
     不可作类型依据 ("state" 会命中 "city in the united states of america",
     同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
-    时返 None。"""
+    时返 None。S6-N2: 裸名回退的候选另须验证国家/行政区与 context 一致
+    (P17 国家、P131 行政归属上溯一级), 无法确认时返 None——回退不
+    得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
+    (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
-        q = urllib.parse.quote(context or name)
-        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
-                           f"&search={q}&language=en&format=json&limit=5&type=item",
-                           timeout=5, retries=1, use_cache=False)
-        if not ok:
+        def _search(term):
+            q = urllib.parse.quote(term)
+            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                               f"&search={q}&language=en&format=json&limit=5&type=item",
+                               timeout=5, retries=1, use_cache=False)
+            if not ok:
+                return None
+            return [c for c in json.loads(raw).get("search", [])
+                    if (c.get("label") or "").lower() == name.lower()
+                    and c.get("id")]
+
+        def _resolve_qid(term):
+            """context 成分 (国家/州名) -> QID：简称查表，余者按 label/
+            alias 精确匹配检索；解不出时返 None（即无法确认）。"""
+            low = (term or "").strip().lower()
+            if not low:
+                return None
+            if low in _WD_COUNTRY_ALIASES:
+                return _WD_COUNTRY_ALIASES[low]
+            q = urllib.parse.quote(term.strip())
+            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+                               f"&search={q}&language=en&format=json&limit=5&type=item",
+                               timeout=5, retries=1, use_cache=False)
+            if not ok:
+                return None
+            try:
+                items = json.loads(raw).get("search", [])
+            except Exception:
+                return None
+            for c in items:
+                if (c.get("label") or "").lower() == low:
+                    return c.get("id")
+                for al in c.get("aliases") or []:
+                    if isinstance(al, str) and al.lower() == low:
+                        return c.get("id")
             return None
-        cands = [c for c in json.loads(raw).get("search", [])
-                 if (c.get("label") or "").lower() == name.lower()
-                 and c.get("id")]
+
+        _fallback = False
+        cands = _search(context or name)
+        if cands is None:
+            return None
+        if not cands and context and context != name:
+            # E-430 残留: context 为 "California, US" 式串时
+            # wbsearchentities 常返空 (或仅返 "X, USA" 式 label 失配项),
+            # 以裸名重查一次; context 命中时不触发 (保留城市消歧收益)。
+            cands = _search(name)
+            _fallback = True
+            if cands is None:
+                return None
         if not cands:
             return None
         langs = _WD_LANGS.get(LANG, [])
@@ -2810,11 +3053,42 @@ def _wd_label(name, kind, context):
             return None
         entities = json.loads(raw).get("entities", {})
         want = _WD_ADMIN_QIDS if kind == "region" else _WD_PLACE_QIDS
+
+        def _context_ok(eid):
+            """裸名回退校验：实体 P17 国家 / P131 行政归属（上溯一级）
+            须与 context 某一成分的 QID 相符；非回退路径恒真；实体无
+            P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            if not _fallback:
+                return True
+            ent = entities.get(eid, {})
+            countries = set(_wd_claim_ids(ent, "P17"))
+            placed = _wd_claim_ids(ent, "P131")
+            if placed:
+                ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                     f"&ids={'|'.join(placed)}&props=claims&format=json",
+                                     timeout=5, retries=1, use_cache=False)
+                if ok2:
+                    try:
+                        for tent in json.loads(raw2).get("entities", {}).values():
+                            placed.extend(_wd_claim_ids(tent, "P131"))
+                    except Exception:
+                        pass
+            placed = set(placed)
+            if not countries and not placed:
+                return False
+            toks = [t.strip() for t in (context or "").split(",")]
+            toks = [t for t in toks if t and t.lower() != name.lower()]
+            for tok in toks:
+                qid = _resolve_qid(tok)
+                if qid and (qid in countries or qid in placed):
+                    return True
+            return False
+
         p31_map = {}
         for c in cands:
             p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
             p31_map[c["id"]] = p31s
-            if any(p in want for p in p31s):
+            if any(p in want for p in p31s) and _context_ok(c["id"]):
                 return _wd_pick_label(entities.get(c["id"], {}), langs)
         # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
         all_p31 = sorted({p for ps in p31_map.values() for p in ps})
@@ -2831,7 +3105,8 @@ def _wd_label(name, kind, context):
             ps = []
             for p in p31_map.get(c["id"], []):
                 ps.extend(parents.get(p, []))
-            if any(p in want or p in roots for p in ps):
+            if any(p in want or p in roots for p in ps) \
+                    and _context_ok(c["id"]):
                 return _wd_pick_label(entities.get(c["id"], {}), langs)
         return None
     except Exception:
@@ -2968,7 +3243,19 @@ def _loc_city(text):
 
 def _localize_profile_copy(prof):
     """JSON 用 profile 本地化副本: country/region/city 走与文本报告相同
-    的本地化函数; 其余字段原样, 输入不改动 (文本报告仍用原始 profile)。"""
+    的本地化函数; 其余字段原样, 输入不改动 (文本报告仍用原始 profile)。
+    E-430: 先按 _print_basic_block 的前两条 _gjobs 口径填在线地名
+    (本地表未收录时查 Wikidata), 否则 --json 冷进程缺主动报告已填字段。"""
+    if prof.get("city") or prof.get("region"):
+        _jobs = []
+        if prof.get("city"):
+            _jobs.append(("city", prof["city"],
+                          _join_nonempty(prof.get("city"),
+                                         _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")), sep=", ")))
+        if prof.get("region"):
+            _jobs.append(("region", prof["region"],
+                          _join_nonempty(prof.get("region"), prof.get("country"), sep=", ")))
+        _resolve_geo_online(_jobs)
     out = dict(prof)
     if prof.get("country"):
         out["country"] = _loc_country_name(prof["country"])
@@ -3185,6 +3472,9 @@ class ProxyCheck(Provider):
                 # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
                 # 其余字段继续返回，不丢整源（F05）。
                 _risk = None
+            # R4-H-04：风险分钳制到 [0, 100]（150 只溢出进度条，不崩溃）。
+            if _risk is not None:
+                _risk = max(0, min(100, _risk))
 
             def _yn(v):
                 # F09 三态解析: "yes"->True、"no"->False, 缺失或
@@ -3195,13 +3485,15 @@ class ProxyCheck(Provider):
                     return False
                 return None
 
-            _type = d.get("type", "")
+            # R4-H-04：type 只认字符串，非字符串（list/dict/数字）一律视为空，
+            # 防下游 score_fraud / _type_block / _factor_rows 误读。
+            _type = d.get("type") if isinstance(d.get("type"), str) else ""
             _vpn = _yn(d.get("vpn"))
             _tor = _yn(d.get("tor"))
             # VPN/Tor 可继续接受明确的 type 正向证据 (与旧 OR 口径一致)。
             if _type == "VPN":
                 _vpn = True
-            if str(d.get("type") or "").upper() == "TOR":
+            if _type.upper() == "TOR":
                 _tor = True
             return {
                 "ok": True,
@@ -3240,6 +3532,7 @@ class DBIP(Provider):
             return {
                 "ok": True,
                 "country": _cn.strip(),
+                "country_code": _clean_str(d.get("countryCode")),
                 "state": d.get("stateProv") or "",
                 "city": d.get("city") or "",
                 "ts": now_iso(),
@@ -3273,8 +3566,9 @@ class FreeIPAPI(Provider):
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "proxy": d.get("isProxy"),
+                "proxy": _strict_bool(d.get("isProxy")),
                 "country": _cn.strip(),
+                "country_code": _clean_str(d.get("countryCode")),
                 "city": d.get("cityName", ""),
                 "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
@@ -3309,11 +3603,11 @@ class ShodanInternetDB(Provider):
                 return {"ok": False, "err": str(d["error"])[:80]}
             return {
                 "ok": True,
-                "ports": d.get("ports", []),
-                "vulns": d.get("vulns", []),
-                "tags": d.get("tags", []),
-                "hostnames": d.get("hostnames", []),
-                "cpes": d.get("cpes", []),
+                "ports": d.get("ports") if isinstance(d.get("ports"), list) else [],
+                "vulns": d.get("vulns") if isinstance(d.get("vulns"), list) else [],
+                "tags": d.get("tags") if isinstance(d.get("tags"), list) else [],
+                "hostnames": d.get("hostnames") if isinstance(d.get("hostnames"), list) else [],
+                "cpes": d.get("cpes") if isinstance(d.get("cpes"), list) else [],
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3330,7 +3624,10 @@ class FeodoTracker(Provider):
             arr = json.loads(raw)
             if not isinstance(arr, list):
                 return None
-            return {e.get("ip_address") for e in arr if isinstance(e, dict) and e.get("ip_address")}
+            # R4-M-06：空集即解析失败（弃权而非假阴性），与其余 5 个威胁源
+            # 保持一致（_get_threat_list 遇 None 驱逐并返失败）。
+            out = {e.get("ip_address") for e in arr if isinstance(e, dict) and e.get("ip_address")}
+            return out or None
 
         lst = _get_threat_list(
             "feodo",
@@ -3617,11 +3914,14 @@ class IPLocate(Provider):
                 "timezone": d.get("time_zone", ""),
                 "asn": _parse_asn(asn.get("asn")), "asn_type": asn.get("type", ""),
                 "isp": asn.get("name", ""), "org": asn.get("name", ""),
-                "proxy": pv.get("is_proxy"), "vpn": pv.get("is_vpn"),
-                "tor": pv.get("is_tor"), "hosting": pv.get("is_hosting"),
-                "is_abuser": pv.get("is_abuser"),
-                "is_anycast": d.get("is_anycast"), "is_satellite": d.get("is_satellite"),
-                "is_icloud_relay": pv.get("is_icloud_relay"),
+                "proxy": _strict_bool(pv.get("is_proxy")),
+                "vpn": _strict_bool(pv.get("is_vpn")),
+                "tor": _strict_bool(pv.get("is_tor")),
+                "hosting": _strict_bool(pv.get("is_hosting")),
+                "is_abuser": _strict_bool(pv.get("is_abuser")),
+                "is_anycast": _strict_bool(d.get("is_anycast")),
+                "is_satellite": _strict_bool(d.get("is_satellite")),
+                "is_icloud_relay": _strict_bool(pv.get("is_icloud_relay")),
                 "cloud_provider": ho.get("provider", ""),
                 "network": ho.get("network") or asn.get("route", ""),
                 "ts": now_iso(),
@@ -3653,9 +3953,13 @@ class IPQuery(Provider):
                 "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
                 "timezone": loc.get("timezone", ""),
                 "asn": _parse_asn(isp.get("asn")), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
-                "proxy": risk.get("is_proxy"), "vpn": risk.get("is_vpn"),
-                "tor": risk.get("is_tor"), "datacenter": risk.get("is_datacenter"),
-                "mobile": risk.get("is_mobile"), "risk_score": risk.get("risk_score"),
+                "proxy": _strict_bool(risk.get("is_proxy")),
+                "vpn": _strict_bool(risk.get("is_vpn")),
+                "tor": _strict_bool(risk.get("is_tor")),
+                "datacenter": _strict_bool(risk.get("is_datacenter")),
+                "mobile": _strict_bool(risk.get("is_mobile")),
+                # R4-H-04：风险分只认有限数值并钳制到 [0, 100]。
+                "risk_score": _clamp_score(risk.get("risk_score")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3712,7 +4016,7 @@ class TwoIp(Provider):
                 "latitude": d.get("lat"), "longitude": d.get("lon"),
                 "timezone": d.get("timezone", ""),
                 "asn": _parse_asn(asn.get("id")), "isp": asn.get("name", ""),
-                "hosting": asn.get("hosting"),
+                "hosting": _strict_bool(asn.get("hosting")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4065,7 +4369,9 @@ def _build_unified_profile(s):
         country_code = _CC_EN.get(country.strip().lower(), "")
     if not country_code and country:
         _cn = country.strip().lower()
-        for _cand in (wi, wa, gj, il, iq, co, ti):
+        # R3-M-10：db/fp 现已补 country_code 字段，纳入同名借用循环；
+        # 名称不在 _CC_EN 时（如 "Deutschland"），同名源的代码仍可借用。
+        for _cand in (wi, db, fp, wa, gj, il, iq, co, ti):
             _cc_name = _cand.get("country")
             if isinstance(_cc_name, str) and _cc_name.strip().lower() == _cn:
                 _cc_code = _cand.get("country_code")
@@ -4162,7 +4468,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.29 免 Key 公开版):
+评分规则 (v4.14.32 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4194,7 +4500,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.29 免 Key 公開版):
+評分規則 (v4.14.32 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4226,7 +4532,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.29 Keyless Public Edition):
+Scoring rules (v4.14.32 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4259,7 +4565,7 @@ Scoring rules (v4.14.29 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.29 キー不要公開版):
+スコアリングルール (v4.14.32 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4291,7 +4597,7 @@ Scoring rules (v4.14.29 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.29 Публичная версия без ключей):
+Правила оценки (v4.14.32 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4323,7 +4629,7 @@ Scoring rules (v4.14.29 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.29):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.32):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -4385,7 +4691,7 @@ def score_threat(s):
             pts += add
             ev.append(f"Shodan {len(sh['vulns'])} vulns +{add}")
         bad_tags = {"compromised", "malware", "c2", "botnet", "scanner"} & {
-            str(t).lower() for t in sh.get("tags", [])
+            str(t).lower() for t in (sh.get("tags") or [])
         }
         if bad_tags:
             pts += 15
@@ -4421,7 +4727,9 @@ def score_fraud(s):
     pc = s.get("proxycheck", {})
     if pc.get("ok") and (pc.get("risk") or 0) > 0:
         r_score = pc["risk"]
-        if pc.get("tor") or (pc.get("type") or "").upper() == "TOR":
+        # R4-H-04：type 经 check() 已清洗为字符串，手造 sources 仍以 str() 兜底，
+        # 防 list/dict type 在 .upper() 抛错。
+        if pc.get("tor") or (str(pc.get("type") or "").upper() == "TOR"):
             eff = r_score
             ev.append(f"proxycheck risk {r_score}/100 (Tor)")
         else:
@@ -4552,11 +4860,12 @@ def score_platform(s):
     if dc:
         pts += 30
         ev.append(f"DC keyword '{pat}' +30")
-    elif ((wi.get("ok") and wi.get("hosting")) or ("hosting" in pc_type)
-          or (il.get("ok") and (il.get("hosting")
+    elif ((wi.get("ok") and _strict_bool(wi.get("hosting")))
+          or ("hosting" in pc_type)
+          or (il.get("ok") and (_strict_bool(il.get("hosting"))
                                 or il.get("asn_type") == "hosting"))
-          or (iq.get("ok") and iq.get("datacenter"))
-          or (ti.get("ok") and ti.get("hosting"))):
+          or (iq.get("ok") and _strict_bool(iq.get("datacenter")))
+          or (ti.get("ok") and _strict_bool(ti.get("hosting")))):
         pts += 30
         ev.append("Hosting/DC trait +30")
 
@@ -4571,26 +4880,27 @@ def score_platform(s):
     def _p(d):
         # 缺失票约定：源不可用计 None；字段缺失亦计 None（弃权），不计入比较；
         # 已判定才计 True/False。fp/il/iq 与其余源同口径。
+        # R4-H-04：经 _strict_bool 清洗，非布尔值一律弃权（"false" 不得判真）。
         if not d.get("ok"):
             return None
-        return d.get("proxy")
+        return _strict_bool(d.get("proxy"))
 
     def _v(d):
         if not d.get("ok"):
             return None
-        return d.get("vpn")
+        return _strict_bool(d.get("vpn"))
 
     is_prx = _consensus(
         _p(pc), _p(wi),
-        None if (not fp.get("ok") or fp.get("proxy") is None) else bool(fp.get("proxy")),
-        None if (not il.get("ok") or il.get("proxy") is None) else bool(il.get("proxy")),
-        None if (not iq.get("ok") or iq.get("proxy") is None) else bool(iq.get("proxy")),
+        None if (not fp.get("ok") or fp.get("proxy") is None) else _strict_bool(fp.get("proxy")),
+        None if (not il.get("ok") or il.get("proxy") is None) else _strict_bool(il.get("proxy")),
+        None if (not iq.get("ok") or iq.get("proxy") is None) else _strict_bool(iq.get("proxy")),
     )
     is_vpn = _consensus(
         _v(pc), _v(wi),
-        None if (not il.get("ok") or il.get("vpn") is None) else bool(il.get("vpn")),
-        None if (not iq.get("ok") or iq.get("vpn") is None) else bool(iq.get("vpn")),
-        None if (not xv.get("ok") or xv.get("listed") is None) else bool(xv.get("listed")),
+        None if (not il.get("ok") or il.get("vpn") is None) else _strict_bool(il.get("vpn")),
+        None if (not iq.get("ok") or iq.get("vpn") is None) else _strict_bool(iq.get("vpn")),
+        None if (not xv.get("ok") or xv.get("listed") is None) else _strict_bool(xv.get("listed")),
     )
     if is_prx:
         pts += 40
@@ -4599,10 +4909,10 @@ def score_platform(s):
         pts += 40
         ev.append("VPN detected +40")
     if ((te.get("ok") and te.get("is_tor_exit"))
-            or (wi.get("ok") and wi.get("tor")) or ("tor" in pc_type)
-            or (pc.get("ok") and pc.get("tor"))
-            or (il.get("ok") and il.get("tor"))
-            or (iq.get("ok") and iq.get("tor"))):
+            or (wi.get("ok") and _strict_bool(wi.get("tor"))) or ("tor" in pc_type)
+            or (pc.get("ok") and _strict_bool(pc.get("tor")))
+            or (il.get("ok") and _strict_bool(il.get("tor")))
+            or (iq.get("ok") and _strict_bool(iq.get("tor")))):
         pts += 30
         ev.append("Tor node +30")
     return min(pts, 100), ev
@@ -4621,6 +4931,11 @@ def _bar_label_width():
 
 
 def _risk_bar(v, width=30):
+    # R4-H-04：入口兜底——非数值/非有限数守 0，越界钳制到 [0, 100]，
+    # 条长恒为 width，不溢出、不抛错。
+    v = _clamp_score(v)
+    if v is None:
+        v = 0
     filled = int(v / 100 * width)
     bar = "█" * filled + "░" * (width - filled)
     if v < 25:
@@ -4663,7 +4978,7 @@ _V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不
 _V6_POOL = None  # run_passive6 同上
 
 
-def run_passive(ip):
+def run_passive(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
     avail_providers = [p for p in PROVIDERS if p.available()]
@@ -4680,7 +4995,8 @@ def run_passive(ip):
             with _progress_lock:
                 done_cnt[0] += 1
                 if not progress_closed[0]:
-                    _render_progress_locked(done_cnt[0], total_p, p.name)
+                    _render_progress_locked(done_cnt[0], total_p, p.name,
+                                            json_mode=json_mode)
         except Exception:
             pass
         return p.key, res
@@ -4709,7 +5025,7 @@ def run_passive(ip):
             progress_closed[0] = True
         # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
-    if "--json" not in sys.argv:
+    if not json_mode:
         with _progress_lock:
             print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
@@ -4748,12 +5064,21 @@ def run_passive(ip):
                   "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            with urllib.request.urlopen(_rq, timeout=4) as _rp:
+            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
+            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
+            _dl = time.monotonic() + 4
+            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
+            if _rp is not None:
                 try:
-                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                             .get("address") or {})
+                    _addr = (json.loads(_read_limited(
+                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        "utf-8", "replace")).get("address") or {})
                 finally:
                     _resp_shutdown(_rp)
+                    try:
+                        _rp.close()
+                    except Exception:
+                        pass
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -4892,9 +5217,11 @@ def _print_streaming_inference(res):
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
-        or (bool(wi.get("tor")) if wi.get("ok") else False)
-        or (bool(il.get("tor")) if il.get("ok") else False)
-        or (bool(iq.get("tor")) if iq.get("ok") else False)
+        # R4-H-04：同 score_platform，Tor 票须经 _strict_bool 清洗，
+        # "false" 字符串不得判真（仲裁 [4] 节的 is_tor 分支）。
+        or (_strict_bool(wi.get("tor")) is True if wi.get("ok") else False)
+        or (_strict_bool(il.get("tor")) is True if il.get("ok") else False)
+        or (_strict_bool(iq.get("tor")) is True if iq.get("ok") else False)
         or bool(is_tor_exit)
     )
 
@@ -4977,7 +5304,7 @@ def _print_streaming_inference(res):
         (fe.get("ok") and fe.get("listed"))
         or (et.get("ok") and et.get("listed"))
         or (sp.get("ok") and sp.get("listed"))
-        or (sh.get("ok") and len(sh.get("vulns", [])) > 0)
+        or (sh.get("ok") and len(sh.get("vulns") or []) > 0)
     )
     is_tor_exit = te.get("ok") and te.get("is_tor_exit")
 
@@ -5518,16 +5845,16 @@ def _factor_rows(s, wi_server, v6=False):
         ("GreyNoise", [None, None, None, None, None,
                        _h(gn, gn.get("classification") == "malicious")]),
         ("Feodo", [None, None, None, None,
-                   _h(fe, bool(fe.get("listed"))), None]),
+                   _h(fe, _strict_bool(fe.get("listed")) is True), None]),
         ("EmergingThreats", [None, None, None, None,
-                             _h(et, bool(et.get("listed"))), None]),
+                             _h(et, _strict_bool(et.get("listed")) is True), None]),
         ("Spamhaus DROP", [None, None, None, None,
-                           _h(sp, bool(sp.get("listed"))), None]),
-        ("Tor Exit", [None, None, _h(te, bool(te.get("is_tor_exit"))),
+                           _h(sp, _strict_bool(sp.get("listed")) is True), None]),
+        ("Tor Exit", [None, None, _h(te, _strict_bool(te.get("is_tor_exit")) is True),
                       None, None, None]),
         ("proxycheck", [
-            None if pc.get("proxy") is None else _h(pc, bool(pc.get("proxy"))),
-            None if pc.get("vpn") is None else _h(pc, bool(pc.get("vpn"))),
+            None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
+            None if pc.get("vpn") is None else _h(pc, _strict_bool(pc.get("vpn")) is True),
             None if pc.get("type") is None else _h(pc, "tor" in str(pc.get("type")).lower()),
             None if pc.get("type") is None else _h(pc, "hosting" in str(pc.get("type")).lower()),
             None, None]),
@@ -5537,29 +5864,29 @@ def _factor_rows(s, wi_server, v6=False):
             wi.get("tor") if wi.get("ok") else None,
             wi_server, None, None]),
         ("freeipapi", [
-            None if fp.get("proxy") is None else _h(fp, bool(fp.get("proxy"))),
+            None if fp.get("proxy") is None else _h(fp, _strict_bool(fp.get("proxy")) is True),
             None, None, None, None, None]),
         ("iplocate.io", [
-            None if il.get("proxy") is None else _h(il, bool(il.get("proxy"))),
-            None if il.get("vpn") is None else _h(il, bool(il.get("vpn"))),
-            None if il.get("tor") is None else _h(il, bool(il.get("tor"))),
+            None if il.get("proxy") is None else _h(il, _strict_bool(il.get("proxy")) is True),
+            None if il.get("vpn") is None else _h(il, _strict_bool(il.get("vpn")) is True),
+            None if il.get("tor") is None else _h(il, _strict_bool(il.get("tor")) is True),
             None if (il.get("hosting") is None and il.get("asn_type") is None)
-            else _h(il, bool(il.get("hosting")) or il.get("asn_type") == "hosting"),
+            else _h(il, _strict_bool(il.get("hosting")) is True or il.get("asn_type") == "hosting"),
             None,
-            None if il.get("is_abuser") is None else _h(il, bool(il.get("is_abuser")))]),
+            None if il.get("is_abuser") is None else _h(il, _strict_bool(il.get("is_abuser")) is True)]),
         ("ipquery.io", [
-            None if iq.get("proxy") is None else _h(iq, bool(iq.get("proxy"))),
-            None if iq.get("vpn") is None else _h(iq, bool(iq.get("vpn"))),
-            None if iq.get("tor") is None else _h(iq, bool(iq.get("tor"))),
-            None if iq.get("datacenter") is None else _h(iq, bool(iq.get("datacenter"))),
+            None if iq.get("proxy") is None else _h(iq, _strict_bool(iq.get("proxy")) is True),
+            None if iq.get("vpn") is None else _h(iq, _strict_bool(iq.get("vpn")) is True),
+            None if iq.get("tor") is None else _h(iq, _strict_bool(iq.get("tor")) is True),
+            None if iq.get("datacenter") is None else _h(iq, _strict_bool(iq.get("datacenter")) is True),
             None, None]),
         ("2ip.io", [
             None, None, None,
-            None if ti.get("hosting") is None else _h(ti, bool(ti.get("hosting"))),
+            None if ti.get("hosting") is None else _h(ti, _strict_bool(ti.get("hosting")) is True),
             None, None]),
         ("X4BNet VPN", [
             None,
-            _h(xv, bool(xv.get("listed"))),
+            _h(xv, _strict_bool(xv.get("listed")) is True),
             None, None, None, None]),
         ("IPsum", [
             None, None, None, None,
@@ -5581,7 +5908,7 @@ def _factor_rows(s, wi_server, v6=False):
 
 
 def print_report(res, include_streaming_inference=True, sysinfo=None,
-                 tail_completeness=True, dns_rec=False):
+                 tail_completeness=True, dns_rec=False, footnote="passive"):
     _sec_begin()
     s = res["sources"]
     prof = res.get("profile") or _build_unified_profile(s)
@@ -5725,8 +6052,17 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     if include_streaming_inference:
         _done_txt = "✓ " + T("done")
         print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
-        print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+        if footnote == "proxy_diag":
+            # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
+            # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
+            print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
+        else:
+            print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
+            print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+    # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
+    # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
+    # 显式恢复 _SEC["on"]=True（计数保留）。
+    _SEC["on"] = False
 
 
 # ============================================================
@@ -5750,7 +6086,7 @@ V6_PROVIDER_KEYS = ("ipwhois", "ipwhoisapp", "ipapiis", "ipinfo",
                     "ipsum", "blocklistde")
 
 
-def run_passive6(ip):
+def run_passive6(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
     avail = [p for p in PROVIDERS if p.key in V6_PROVIDER_KEYS and p.available()]
@@ -5767,7 +6103,8 @@ def run_passive6(ip):
             with _progress_lock:
                 done_cnt[0] += 1
                 if not progress_closed[0]:
-                    _render_progress_locked(done_cnt[0], total_p, p.name)
+                    _render_progress_locked(done_cnt[0], total_p, p.name,
+                                            json_mode=json_mode)
         except Exception:
             pass
         return p.key, res
@@ -5796,7 +6133,7 @@ def run_passive6(ip):
             progress_closed[0] = True
         # 共享池不 shutdown：复用方持有，关掉即断后续调用
 
-    if "--json" not in sys.argv:
+    if not json_mode:
         with _progress_lock:
             print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
@@ -5812,12 +6149,21 @@ def run_passive6(ip):
                   "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
             _rq = urllib.request.Request(
                 _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            with urllib.request.urlopen(_rq, timeout=4) as _rp:
+            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
+            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
+            _dl = time.monotonic() + 4
+            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
+            if _rp is not None:
                 try:
-                    _addr = (json.loads(_read_limited(_rp, timeout=4).decode("utf-8", "replace"))
-                             .get("address") or {})
+                    _addr = (json.loads(_read_limited(
+                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
+                        "utf-8", "replace")).get("address") or {})
                 finally:
                     _resp_shutdown(_rp)
+                    try:
+                        _rp.close()
+                    except Exception:
+                        pass
             if _addr.get("country"):
                 sources["coordgeo"] = {
                     "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
@@ -6048,6 +6394,8 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     # [5] 完整度
     if tail_completeness:
         _print_report6_tail(res)
+    # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
+    _SEC["on"] = False
 
 
 def get_egress_ip(budget=None):
@@ -6169,15 +6517,49 @@ def _http_te_chunked(head):
 
 
 def _http_content_length(head):
-    """Content-Length 整数；缺失返 None；非法返 False（调用方按失败处理）。"""
+    """Content-Length 整数；缺失返 None；非法返 False（调用方按失败处理）。
+    R3-M-05：冲突重复值拒收（多行不同值，或单行逗号并列不同值）；
+    完全相同重复值返回该值（RFC 9110 §8.6 允许的等值重复）。"""
+    _vals = []
     for ln in head.split(b"\r\n")[1:]:
         if ln.lower().startswith(b"content-length:"):
-            v = ln.split(b":", 1)[1].strip()
-            # 仅纯 ASCII 十进制合法：int() 会放行 "-1"/"+5"/"1_0"，负数随后 body[:cl] 截尾
-            if not v.isascii() or not v.isdigit():
-                return False
-            return int(v)
-    return None
+            for _tok in ln.split(b":", 1)[1].split(b","):
+                _v = _tok.strip()
+                # 仅纯 ASCII 十进制合法：int() 会放行 "-1"/"+5"/"1_0"，负数随后 body[:cl] 截尾
+                if not _v.isascii() or not _v.isdigit():
+                    return False
+                _vals.append(int(_v))
+    if not _vals:
+        return None
+    if len(set(_vals)) > 1:
+        return False
+    return _vals[0]
+
+
+def _http_status_code(head):
+    """首行状态码整数；解析失败返 None。"""
+    try:
+        toks = head.split(b"\r\n", 1)[0].split()
+        return int(toks[1]) if len(toks) >= 2 else None
+    except Exception:
+        return None
+
+
+def _split_final_head(raw):
+    """跳过 1xx 临时头（R3-M-05），返回首个非 1xx 头的 (head, body)；
+    只有 1xx 头或无完整头体分隔符时返 (None, b"")。"""
+    _rest = raw
+    while True:
+        _head, _sep, _body = _rest.partition(b"\r\n\r\n")
+        if not _sep:
+            return None, b""
+        _code = _http_status_code(_head)
+        if _code is None:
+            return None, b""
+        if 100 <= _code < 200:
+            _rest = _body
+            continue
+        return _head, _body
 
 
 def _https_get_pinned6(host, path, timeout=6):
@@ -6217,9 +6599,9 @@ def _https_get_pinned6(host, path, timeout=6):
                 # Content-Length 到量即完；chunked 收到完整终止零块+trailer
                 # 即完；仅关闭定界才等 EOF。未收齐继续读（chunked 解码失败
                 # 可能是体未收全，须与非法体区分：EOF/截止时后随校验拒收）。
-                _head, _sep, _body = raw.partition(b"\r\n\r\n")
-                if not _sep:
-                    continue
+                _head, _body = _split_final_head(raw)
+                if _head is None:
+                    continue  # 尚无完整最终头（含仅有 1xx 临时头）：继续读
                 if not _http_status_ok(_head):
                     break  # 非 200：停读，后随校验进下一地址
                 if _http_te_chunked(_head):
@@ -6232,9 +6614,9 @@ def _https_get_pinned6(host, path, timeout=6):
                     if _cl is not None and len(_body) >= _cl:
                         break
                     # _cl 为 None：关闭定界，继续等 EOF
-            head, sep, body = raw.partition(b"\r\n\r\n")
-            if not sep:
-                continue  # 无头体分隔符：首行不可信，不得当成功
+            head, body = _split_final_head(raw)
+            if head is None:
+                continue  # 无完整最终头：首行不可信，不得当成功
             if not _http_status_ok(head):
                 continue
             if _http_te_chunked(head):
@@ -6316,14 +6698,73 @@ def get_egress_ip6():
     return None
 
 
+def _redirect_host_public(host):
+    """重定向目标主机是否可公开访问（R3-M-05）：字面量 IP 须为全球单播；
+    主机名须解析且全部解析地址为全球单播；解析失败 fail-closed。
+    169.254.169.254 / 100.100.100.200（元数据）与内网/环回/链路本地
+    均非全球单播，一律拒收。"""
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        pass
+    try:
+        _infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC,
+                                    socket.SOCK_STREAM)
+    except Exception:
+        return False
+    if not _infos:
+        return False
+    for _info in _infos:
+        try:
+            _ip = ipaddress.ip_address(_info[4][0])
+        except ValueError:
+            return False
+        if not _ip.is_global:
+            return False
+    return True
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """R3-M-05：重定向白名单——只允许同协议 https→https / http→http；
+    拦截 https→http 降级（与 http→https 升级）、ftp/file 等异协议、
+    内网/环回/链路本地/元数据 IP 目标；重定向上限 5 次。
+    拦截时 raise HTTPError（而非返回 None）：返回 None 会把 302 空体
+    当成功响应交回调用方，http_get 将返 ok=True；raise 则进错误分支
+    返 ok=False，不泄露目标体。"""
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _target = urllib.parse.urljoin(req.full_url, newurl)
+        _parts = urllib.parse.urlsplit(_target)
+        _old_scheme = urllib.parse.urlsplit(req.full_url).scheme.lower()
+        _new_scheme = _parts.scheme.lower()
+        _blocked = None
+        if _new_scheme != _old_scheme:
+            _blocked = "cross-scheme redirect %s->%s" % (_old_scheme, _new_scheme)
+        elif _new_scheme not in ("http", "https"):
+            _blocked = "non-http(s) redirect scheme %s" % _new_scheme
+        elif not _parts.hostname or not _redirect_host_public(_parts.hostname):
+            _blocked = "redirect target host not public: %s" % (_parts.hostname or _target)
+        if _blocked is not None:
+            raise urllib.error.HTTPError(req.full_url, code, _blocked, headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
 
-_opener_follow = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_opener_follow = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}), _SafeRedirectHandler())
 _opener_noredir = urllib.request.build_opener(
     _NoRedirect, urllib.request.ProxyHandler({}))
+
+
+# http_get 路径专用 opener：环境代理语义不变（ProxyHandler() 读环境），
+# 重定向走 _SafeRedirectHandler（不用 urllib.request.urlopen 的默认 opener）。
+_opener_safe = urllib.request.build_opener(
+    urllib.request.ProxyHandler(), _SafeRedirectHandler())
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -6378,10 +6819,15 @@ def _is_challenge(code, body, headers=None):
 
 def _http_fallthrough(code):
     """test_* 落空分支共用状态分类：5xx/429/网络错误不是地区封锁证据。
+    3xx 重定向残留（跟随未完成 / 循环）同样不是地区封锁证据，判 unknown；
+    显式检查 final_url 锁区关键词的分支须排在本函数之前，先验命中锁区
+    URL 的 3xx 仍判 blocked（R4-M-07）。
     返回应判状态（T 值），无明确限制证据时返回 None（调用方再判 blocked）。"""
     if code is None:
         return T("failed")
     if code == 429 or 500 <= code <= 599:
+        return T("unknown")
+    if 300 <= code <= 399:
         return T("unknown")
     return None
 
@@ -6519,6 +6965,11 @@ def _pinned_opener(family, follow_redirects=True):
     handlers = [urllib.request.ProxyHandler({}), _HH(), _HSH()]
     if not follow_redirects:
         handlers.append(_NoRedirect())
+    else:
+        # R3-M-05：跟随时走安全重定向处理器；不跟随（False）时只留
+        # _NoRedirect——两者同放会使安全处理器在 _NoRedirect 返回 None
+        # 后重新跟随，抵消不跟随语义。
+        handlers.append(_SafeRedirectHandler())
     return urllib.request.build_opener(*handlers)
 
 
@@ -6529,14 +6980,16 @@ _STREAM_CHUNK = 65536
 _STREAM_COMP_CAP = 2 * 1024 * 1024
 
 
-def _resp_complete(raw, headers, cap=_STREAM_CAP):
+def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
     """响应体完整性（_active_get 成功/HTTPError 两路径共用）——H-01 新语义：
     区分「真实截断」与「达到本地采样上限」两个独立信号：
     CL 在场且合法时须读满 min(CL, cap)——声明 1000 只到 20 字节的干净
     FIN 仍是不完整；CL 超过 cap 时读满 cap 即算完整（采样上限不是失败）。
     CL 缺失时：走到本函数的读取已是干净 EOF 或已达 cap，两者都算完整；
     真实截断（IncompleteRead/读超时）不经过本函数，调用方直接判 False。
-    CL 非法时不完整（保守，沿用旧行为）。"""
+    CL 非法时不完整（保守，沿用旧行为）。
+    total_len：调用方已知的实际读取字节数（压缩分支传压缩传输字节数，
+    此时 raw 为解压后采样、长度单位不同，不得用 len(raw) 核对 CL）。"""
     cl = None
     if headers is not None:
         try:
@@ -6549,7 +7002,8 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP):
     if cl is False:
         return False
     if cl is not None:
-        return len(raw) >= min(cl, cap)
+        _n = total_len if total_len is not None else len(raw)
+        return _n >= min(cl, cap)
     return True
 
 
@@ -6613,39 +7067,144 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     # H-01：服务端声明 gzip 即流式解压（16+MAX_WBITS 识别 gzip 头），解压后
     # 采样上限 _STREAM_CAP，压缩输入另设 _STREAM_COMP_CAP 防空块旋转与
     # 压缩炸弹。CL 是传输（压缩后）长度，须按压缩字节核对，而非解压后长度。
+    # H-02：Content-Encoding 按逗号拆分编码令牌；identity 为空操作；
+    # gzip/x-gzip 与 deflate（zlib 包装或 raw）解码；其余非空编码
+    # （br/zstd 等，本机无解码器）不可信，正文清空、判不完整，禁止拿
+    # 压缩二进制冒充明文 HTML 判解锁。
     _enc = str(_hdrs.get("content-encoding", "") or "").strip().lower()
-    _gzip = _enc in ("gzip", "x-gzip")
+    _enc_tokens = [t.strip() for t in _enc.split(",") if t.strip()]
+    _enc_core = [t for t in _enc_tokens if t != "identity"]
+    if not _enc_core:
+        _decomp_kind = None
+    elif _enc_core == ["gzip"] or _enc_core == ["x-gzip"]:
+        _decomp_kind = "gzip"
+    elif _enc_core == ["deflate"]:
+        _decomp_kind = "deflate"
+    else:
+        _decomp_kind = None
     try:
-        _decomp = zlib.decompressobj(16 + zlib.MAX_WBITS) if _gzip else None
+        if _decomp_kind is None and _enc_core:
+            # 无法解码的非空编码：正文不可信，清空后判不完整。
+            return _status, "", _loc, False, _hdrs
+        _gz = {"obj": (zlib.decompressobj(16 + zlib.MAX_WBITS)
+                       if _decomp_kind == "gzip" else None),
+               "kind": _decomp_kind, "member_eof": False,
+               "prefix": b"", "decided": _decomp_kind != "deflate",
+               # S1-N1：累计全部压缩输入（供回退重喂）＋决策时输出快照
+               # ＋当前 wbits／是否已重试过。
+               "all_in": bytearray(), "snap": None, "retried": False,
+               "wb": None}
         _st = {"out": [], "n": 0, "trunc": False, "eof": False}
 
-        def _push(_data):
-            # 喂一块传输字节：解压（gzip）或直存，输出截到采样上限。
-            if not _data or _st["n"] >= _STREAM_CAP:
-                return
-            if _decomp is not None:
-                try:
-                    _dec = _decomp.decompress(_data, _STREAM_CAP - _st["n"])
-                except Exception:
-                    _st["trunc"] = True
-                    return
+        def _deflate_wbits(_b):
+            # zlib 包装（RFC 1950）头两字节：CMF 低半字节须为 8（deflate），
+            # 且 (CMF*256+FLG) % 31 == 0；否则按 raw deflate（RFC 1951）解。
+            if len(_b) >= 2 and (_b[0] & 0x0F) == 8 \
+                    and (_b[0] * 256 + _b[1]) % 31 == 0:
+                return zlib.MAX_WBITS
+            return -zlib.MAX_WBITS
+
+        def _feed(_buf):
+            # 喂一串压缩字节到当前解压对象；gzip 成员结束且有 unused_data 时
+            # 换新对象继续喂（多成员直至空串或采样上限）；输出截到采样上限。
+            # 解压异常向上传播，调用方记 trunc（deflate 另有一次回退重试）。
+            while _buf and _st["n"] < _STREAM_CAP:
+                _dec = _gz["obj"].decompress(_buf, _STREAM_CAP - _st["n"])
                 if _dec:
                     _st["out"].append(_dec)
                     _st["n"] += len(_dec)
-                if _decomp.eof:
-                    _st["eof"] = True
-            else:
+                if _gz["obj"].eof:
+                    _rest = _gz["obj"].unused_data
+                    if _rest:
+                        if _gz["kind"] != "gzip":
+                            # deflate 单成员：流结束后的残留字节不可信
+                            _gz["member_eof"] = True
+                            return
+                        _gz["obj"] = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                        _buf = _rest
+                        continue
+                    _gz["member_eof"] = True
+                    return
+                _buf = _gz["obj"].unconsumed_tail
+
+        def _deflate_retry():
+            # deflate 回退重嗅探（S1-N1）：把输出恢复到解码器创建时的
+            # 快照，换另一 wbits 重建解码器，从头重喂至今收到的全部压
+            # 缩字节——分块边界不得决定解码结果。仅重试一次。
+            _n0, _o0 = _gz["snap"]
+            _st["out"] = _st["out"][:_o0]
+            _st["n"] = _n0
+            _gz["member_eof"] = False
+            _gz["wb"] = (-zlib.MAX_WBITS if _gz["wb"] == zlib.MAX_WBITS
+                         else zlib.MAX_WBITS)
+            _gz["obj"] = zlib.decompressobj(_gz["wb"])
+            _gz["retried"] = True
+            _feed(bytes(_gz["all_in"]))
+
+        def _push(_data):
+            # 喂一块传输字节：解压（gzip/deflate）或直存，输出截到采样上限。
+            if not _data or _st["n"] >= _STREAM_CAP:
+                return
+            if _gz["kind"] == "deflate":
+                # S1-N1：累计全部压缩输入，供后续喂入异常时回退重喂。
+                _gz["all_in"] += _data
+            if _gz["obj"] is None and _gz["kind"] is None:
                 _take = _data[:_STREAM_CAP - _st["n"]]
                 _st["out"].append(_take)
                 _st["n"] += len(_take)
+                return
+            if _gz["kind"] == "gzip" and _gz["member_eof"]:
+                # 上一成员已结束：后续块属于下一成员，换新对象
+                # （成员 eof 不停读：底层流未 EOF 时成员 2 可能在下一块）。
+                _gz["obj"] = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                _gz["member_eof"] = False
+            if _gz["kind"] == "deflate" and _gz["member_eof"]:
+                return  # 单成员已结束，后续字节为流外残留，不再喂
+            if _gz["kind"] == "deflate" and not _gz["decided"]:
+                _gz["prefix"] += _data
+                if len(_gz["prefix"]) < 2:
+                    return  # 未满两字节无法嗅探 wbits，等下一块
+                _buf = _gz["prefix"]
+                _gz["prefix"] = b""
+                _gz["decided"] = True
+                _gz["wb"] = _deflate_wbits(_buf)
+                _gz["obj"] = zlib.decompressobj(_gz["wb"])
+                _gz["snap"] = (_st["n"], len(_st["out"]))
+                try:
+                    _feed(_buf)
+                except Exception:
+                    # 嗅探误判：换另一 wbits，从头重喂已收全部字节（此时
+                    # 即前缀），重试一次
+                    try:
+                        _deflate_retry()
+                    except Exception:
+                        _st["trunc"] = True
+                return
+            try:
+                _feed(_data)
+            except Exception:
+                # S1-N1：后续喂入异常也要能回退／重嗅探（首块恰为 zlib
+                # 头、后续块才暴露 raw 时，旧码只记 trunc、无 raw 回退）
+                if _gz["kind"] == "deflate" and not _gz["retried"]:
+                    try:
+                        _deflate_retry()
+                    except Exception:
+                        _st["trunc"] = True
+                else:
+                    _st["trunc"] = True
+                return
+
+        def _partial():
+            # 已读到的部分正文（解压后）：HTTPError 三处早返时保留挑战页特征。
+            return b"".join(_st["out"]).decode("utf-8", errors="replace")
 
         _comp_read = 0
         _hit_cap = False
-        while _st["n"] < _STREAM_CAP and not _st["eof"] and not _st["trunc"]:
+        while _st["n"] < _STREAM_CAP and not _st["trunc"]:
             _remain = _dl - time.monotonic()
             if _remain <= 0:
                 if _is_err:
-                    return _status, "", _loc, False, _hdrs
+                    return _status, _partial(), _loc, False, _hdrs
                 return None, "read deadline exceeded", "", False, {}
             try:
                 _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
@@ -6655,15 +7214,16 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
                 break
             except Exception as e:
                 if _is_err:
-                    return _status, "", _loc, False, _hdrs
+                    return _status, _partial(), _loc, False, _hdrs
                 return None, str(e)[:100], "", False, {}
             if _chunk is None:
                 # M-04：读超时即整体失败（code None），与旧单次读行为一致；
-                # HTTPError 响应沿用旧行为，保留状态码、空正文。
+                # HTTPError 响应保留状态码与已读正文（挑战页特征不丢）。
                 if _is_err:
-                    return _status, "", _loc, False, _hdrs
+                    return _status, _partial(), _loc, False, _hdrs
                 return None, "read deadline exceeded", "", False, {}
             if not _chunk:
+                _st["eof"] = True
                 break  # 干净 EOF
             _comp_read += len(_chunk)
             if _comp_read > _STREAM_COMP_CAP:
@@ -6678,10 +7238,20 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             _complete = False
         elif _hit_cap or _st["n"] >= _STREAM_CAP:
             _complete = True  # 干净读满本地采样上限，不是失败
-        elif _decomp is not None:
-            _complete = bool(_decomp.eof)  # gzip 成员不完整即真实截断
+        elif _gz["obj"] is not None:
+            # 压缩分支：末成员须完整结束、无残留未喂字节，且按压缩传输
+            # 字节数核对 CL（H-02：gzip 分支此前完全不核 CL）。
+            _complete = (bool(_gz["member_eof"])
+                         and not _gz["obj"].unused_data
+                         and _resp_complete(b"", getattr(r, "headers", None),
+                                            cap=_STREAM_COMP_CAP,
+                                            total_len=_comp_read))
         else:
-            _complete = _resp_complete(_raw, getattr(r, "headers", None))
+            # H-02：deflate 解压器从未创建 = 首字节不完整（未满 2 字节
+            # 即 EOF），无从确认正文完整，不得判 complete；明文分支沿
+            # 用旧语义（干净 EOF 或达 cap 即完整）。
+            _complete = (False if _gz["kind"] == "deflate"
+                         else _resp_complete(_raw, getattr(r, "headers", None)))
         return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
@@ -6701,33 +7271,48 @@ def get_unlock_type(domain, local_ip=None):
     真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
     前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
-    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。"""
-    sys_ns = _get_system_nameservers()[0]
+    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。
+    H-03：系统 NS 按序遍历 [:3] 直至拿到响应（ns[0] 失败不再直接返 None）；
+    公共对比 DNS 按出口切换：_FORCE_FAMILY==6 或无 IPv4 出口时用 IPv6 对
+    (2606:4700:4700::1111 / 2001:4860:4860::8888)，否则用 IPv4 对。"""
+    _ns_list = _get_system_nameservers()
     qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)) else 1
-    cache_key = (domain, local_ip or "", sys_ns, qtype)
+    if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
+        _pub = ("2606:4700:4700::1111", "2001:4860:4860::8888")
+    else:
+        _pub = ("1.1.1.1", "8.8.8.8")
+    cache_key = (domain, local_ip or "", tuple(_ns_list[:3]), qtype)
     with _unlock_lock:
         if cache_key in _unlock_cache:
             return _unlock_cache[cache_key]
 
-    sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=sys_ns, timeout=2.5, return_cnames=True)
+    sys_ns = None
+    sys_ips = sys_cnames = None
+    for _cand in _ns_list[:3]:
+        sys_ips, sys_cnames = _dns_query_udp(domain, qtype=qtype, server=_cand, timeout=2.5, return_cnames=True)
+        if sys_ips is not None:
+            sys_ns = _cand
+            break
+    if sys_ns is None:
+        return None
     if not sys_ips:
         # OPT-02 短路：sys 为空时下行 `if not sys_ips or not pub_ips` 必返
         # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
         return None
-    if sys_ns == "1.1.1.1":
-        # OPT-02 复用：sys 查询与 1.1.1.1 公共查询是同一服务器、同一域名、
+    if sys_ns == _pub[0]:
+        # OPT-02 复用：sys 查询与公共查询是同一服务器、同一域名、
         # 同一 qtype，结果直接复用，不再重复查。
         pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
-        pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
-    elif sys_ns == "8.8.8.8":
+        pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
+    elif sys_ns == _pub[1]:
         pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
-        pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
+        pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
     else:
         # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
         # socket），并行发，最坏 7.5 秒 -> 2.5 秒。
         with ThreadPoolExecutor(max_workers=2) as _ex:
-            _f1 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="1.1.1.1", timeout=2.5, return_cnames=True)
-            _f2 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server="8.8.8.8", timeout=2.5, return_cnames=True)
+            _f1 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
+            _f2 = _ex.submit(_dns_query_udp, domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
             pub_ips_1, pub_cnames_1 = _f1.result()
             pub_ips_2, pub_cnames_2 = _f2.result()
 
@@ -6783,6 +7368,25 @@ def _unlock_label(v):
     return T("unknown")
 
 
+def _tiktok_denied(body):
+    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：
+    (1) <title>Access Denied</title>——错误页标题结构，长度不限；
+    (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
+    JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
+    SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
+    阈值不再定生死。"""
+    b = body or ""
+    if re.search(r"<title[^>]*>\s*access denied\s*</title>",
+                 b, re.IGNORECASE):
+        return True
+    if len(b) < 16384 and "Access Denied" in b:
+        _low = b.lower()
+        if ("<html" in _low or "<head" in _low or "<body" in _low
+                or "<h1" in _low):
+            return True
+    return False
+
+
 def test_tiktok(local_ip=None):
     code, body, _, complete, hdrs = _active_get("https://www.tiktok.com/")
     if code is None:
@@ -6791,9 +7395,9 @@ def test_tiktok(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "Access Denied" not in body:
+    if code == 200 and not complete and not _tiktok_denied(body):
         return T("unknown"), "", None
-    if code == 200 and "Access Denied" not in body:
+    if code == 200 and not _tiktok_denied(body):
         m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
         return T("unlocked"), region, get_unlock_type("www.tiktok.com", local_ip)
@@ -6801,6 +7405,27 @@ def test_tiktok(local_ip=None):
     if _ft is not None:
         return _ft, "", None
     return T("blocked"), "", None
+
+
+def _disney_url_blocked(final_url):
+    """Disney+ 锁区 URL 信号（R4-H-01）：最终 URL 来自重定向链，不受正文
+    截断影响。"""
+    u = (final_url or "").lower()
+    return "/unavailable" in u or "preview.disneyplus.com/unavailable" in u
+
+
+def _disney_head_blocked(body):
+    """Disney+ 锁区正文信号（R4-H-01）：只认 <title> 或前 8 KiB 头部里的
+    明确锁区短语。页脚法律文案（如 "Not available in U.S. territories."）
+    在 512 KiB 采样深处，不在此列，不得误判。"""
+    b = body or ""
+    head = b[:8192]
+    m = re.search(r"<title[^>]*>(.*?)</title>", b, re.IGNORECASE | re.DOTALL)
+    title = m.group(1) if m else ""
+    hay = (head + "\n" + title).lower()
+    return ("disney+ is not available" in hay
+            or "not available in your region" in hay
+            or "not available in your country" in hay)
 
 
 def test_disney(local_ip=None):
@@ -6811,11 +7436,17 @@ def test_disney(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    # 最终 URL 来自重定向链、不受正文截断影响：URL 已含 blocked 信号时
-    # 不因正文不完整判 unknown，落入正常分类（6-3）。
-    if code == 200 and not complete and "not available" not in body.lower() and "unavailable" not in final_url.lower():
+    # 最终 URL 来自重定向链、不受正文截断影响：200 与 3xx 命中 /unavailable
+    # 即判 blocked（6-3；M-07 先验 URL 分支须排在 fallthrough 之前）。
+    if (code == 200 or 300 <= code <= 399) and _disney_url_blocked(final_url):
+        return T("blocked"), "", None
+    # 采样不完整：已读部分出现锁区短语也只判 unknown（短语可能来自页脚等
+    # 非锁区文案，见 H-01 加重情节），不判 blocked。
+    if code == 200 and not complete:
         return T("unknown"), "", None
-    if code == 200 and "unavailable" not in final_url.lower() and "not available" not in body.lower():
+    if code == 200 and _disney_head_blocked(body):
+        return T("blocked"), "", None
+    if code == 200:
         return T("unlocked"), "", get_unlock_type("www.disneyplus.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -6851,6 +7482,9 @@ def test_netflix(local_ip=None):
     # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
     # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
     # 次探针 403 会被误判 blocked）。
+    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code <= 399 and "nsfw" in (final_url or "").lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
@@ -6871,6 +7505,9 @@ def test_netflix(local_ip=None):
         orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?", zhtw="自製?")
         region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
+    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code2 <= 399 and "nsfw" in (final_url2 or "").lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code2)
     if _ft is not None:
         return _ft, "", None
@@ -7001,6 +7638,9 @@ def test_gemini(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
+    # M-07：3xx 先验命中锁区 URL（faq）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code <= 399 and "faq" in final_url.lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
@@ -7019,6 +7659,9 @@ def test_claude(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
+    # M-07：3xx 先验命中锁区 URL（app-unavailable）仍判 blocked，须排在 fallthrough 之前。
+    if 300 <= code <= 399 and "app-unavailable" in final_url.lower():
+        return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
@@ -7217,8 +7860,12 @@ def check_mail_port25(family=socket.AF_UNSPEC):
 def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
     """纯 Python 查询域名 MX 记录并测试 25 端口连通性 (无需 nslookup)。"""
     try:
-        sys_ns = _get_system_nameservers()[0]
-        mxs = _dns_query_udp(domain, qtype=15, server=sys_ns, timeout=2.5)
+        # H-03：系统 NS 按序遍历 [:3]，全失败再回退硬编码 1.1.1.1。
+        mxs = None
+        for _cand in _get_system_nameservers()[:3]:
+            mxs = _dns_query_udp(domain, qtype=15, server=_cand, timeout=2.5)
+            if mxs is not None:
+                break
         if mxs is None:
             mxs = _dns_query_udp(domain, qtype=15, server="1.1.1.1", timeout=2.5)
         if mxs is None:
@@ -7517,19 +8164,33 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
 
 
 def regional_speed_test(duration=5, on_result=None, family=0):
-    """逐地区测速: TCP 延迟 (443) + 多连接下载。on_result(row) 逐行回调。"""
+    """逐地区测速: TCP 延迟 (443) + 多连接下载。on_result(row) 逐行回调。
+    OPT-01: 先并发预探全部目标的 TCP 延迟, 再按原顺序串行下载可达节点
+    (on_result 顺序与峰值精度不变); 延迟不通的节点跳过下载。"""
     rows = []
     if family == 6:
         _targets = [(n, h, u) for n, h, u in SPEED6_ENDPOINTS]
     else:
         _targets = [(n, h, "https://%s%s" % (h, _SPEED_FILE))
                     for n, h in SPEED_REGIONS]
-    for name, host, _url in _targets:
-        tp = tcp_ping_stats(host, 443, count=3, timeout=2, family=family)
+
+    def _probe(t):
+        try:
+            return tcp_ping_stats(t[1], 443, count=3, timeout=2, family=family)
+        except Exception:
+            # 单点探针异常按死节点计, 不让一路失败拖垮整表
+            return {"ok": False, "sent": 3, "ok_count": 0, "loss_pct": 100.0}
+
+    with ThreadPoolExecutor(max_workers=14) as _ex:
+        _tps = list(_ex.map(_probe, _targets))
+    for (name, host, _url), tp in zip(_targets, _tps):
         lat = tp["avg_ms"] if tp.get("ok") else None
-        mbps, nbytes = measure_download_direct(_url,
-                                               duration=duration, streams=3,
-                                               family=family)
+        if tp.get("ok"):
+            mbps, nbytes = measure_download_direct(_url,
+                                                   duration=duration, streams=3,
+                                                   family=family)
+        else:
+            mbps, nbytes = None, 0
         row = {"region": name, "host": host,
                "latency_ms": lat, "down_mbps": mbps, "dl_bytes": nbytes}
         rows.append(row)
@@ -7671,6 +8332,39 @@ def _dns_test_ok(d, tid, qpkt):
                 break
             _owners.add(_cmap[_ccur])
             _ccur = _cmap[_ccur]
+        # R3-L-03(b)：链裁决与 _dns_query_udp 对齐（fail-closed）——从查询名
+        # 出发的 CNAME 链畸形（目标解码失败或未恰好消费整个 RDATA）、成环
+        # 或 16 跳未终结时，即便另有直接目标记录也判 False；不可达的畸形
+        # CNAME 不污染结论。逐跳取首条的口径与严格解析侧逐字一致。
+        _cur = (qname_q or "").lower().rstrip(".")
+        _seen = {_cur}
+        _broken = False
+        for _ in range(16):
+            _nxt = None
+            _bad = False
+            for _oan, _oat, _oac, _oroff, _ordlen in _answers:
+                if _oan == _cur and _oat == 5 and _oac == 1:
+                    _tgt, _tend = _decode_dns_name(d, _oroff)
+                    if _tgt is None or _tend - _oroff != _ordlen:
+                        _bad = True
+                    elif _tgt:
+                        _nxt = _tgt.lower().rstrip(".")
+                    break
+            if _bad:
+                _broken = True
+                break
+            if _nxt is None:
+                break
+            if _nxt in _seen:
+                _broken = True
+                break
+            _seen.add(_nxt)
+            _cur = _nxt
+        else:
+            _broken = any(_oan == _cur and _oat == 5 and _oac == 1
+                          for _oan, _oat, _oac, _oroff, _ordlen in _answers)
+        if _broken:
+            return False
         _matched = False
         for _oan, _oat, _oac, _oroff, _ordlen in _answers:
             if _oan not in _owners or _oac != 1 or _oat != qt_q:
@@ -8949,13 +9643,18 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     bl = []
     pbl = []
     done = [0]
-    sys_ns = _get_system_nameservers()[0]
-    is_json = json_mode or "--json" in sys.argv
+    sys_ns_list = _get_system_nameservers()[:3]
+    is_json = json_mode  # R3-M-17：json_mode 由参数传入，不再硬读 sys.argv
 
     def _check(lst):
         qname = f"{rev}.{lst}"
         try:
-            ans = _dns_query_udp(qname, qtype=1, server=sys_ns, timeout=2.5)
+            # H-03：系统 NS 按序遍历 [:3]，全失败再回退硬编码 1.1.1.1。
+            ans = None
+            for _cand in sys_ns_list:
+                ans = _dns_query_udp(qname, qtype=1, server=_cand, timeout=2.5)
+                if ans is not None:
+                    break
             if ans is None:
                 ans = _dns_query_udp(qname, qtype=1, server="1.1.1.1", timeout=2.5)
             if ans is None:
@@ -9080,7 +9779,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
     streaming_json = {}
     for cat_key, cat_name, tests in categories:
         if not json_mode:
-            _print_progress(0, len(tests), cat_name)
+            _print_progress(0, len(tests), cat_name, json_mode=json_mode)
 
         def _run_one(item):
             n, fn = item
@@ -9117,12 +9816,14 @@ def _run_streaming_table_impl(egress, json_mode=False):
 
 def _run_active6(json_mode, egress6):
     """仅 IPv6 自检: v6 报告 + v6 DNS + v6 流媒体 + v6 测速 + 系统/磁盘/25 端口/DNSBL"""
-    res6 = run_passive6(egress6)
+    res6 = run_passive6(egress6, json_mode=json_mode)
     dns6_res = test_dns_servers6()
     si6 = get_system_info()
     io6 = disk_io_test()
     if not json_mode:
         print_report6(res6, sysinfo=(si6, io6), tail_completeness=False)
+        # R3-M-17：报告出口已重置 _SEC，主动流程内继续编号须显式恢复（计数保留）。
+        _SEC["on"] = True
         _section(T("sec_dns") + " (IPv6)")
         print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
@@ -9168,6 +9869,8 @@ def _run_active6(json_mode, egress6):
                 print(f"    {_c(C.yellow, '- ' + b)}")
             print(f"    {_c(C.dim, _L('※ PBL 为策略名单：表示该地址段按策略不应直接发信，非垃圾邮件证据', '※ PBL is a policy list: the range should not send mail directly; not evidence of spam', '※ PBL はポリシーリストです：このアドレス範囲は直接送信すべきでなく、スパムの証拠ではありません', '※ PBL — список политик: диапазон не должен отправлять почту напрямую, это не свидетельство спама', '※ PBL فهرست سیاست است: این بازه نباید مستقیماً نامه ارسال کند؛ مدرکی بر اسپم بودن نیست', zhtw='※ PBL 為策略名單：表示該位址段按策略不應直接發信，非垃圾郵件證據'))}")
         _print_report6_tail(res6)
+        # R3-M-17：流程出口重置章节编号状态，防编号泄漏到后续菜单段落。
+        _SEC["on"] = False
     _dnsbl6 = {
         "valid": dnsbl6_total,
         "clean": dnsbl6_clean,
@@ -9273,12 +9976,14 @@ def run_active(json_mode=False, stack=None):
     if stack == "6":
         return _run_active6(json_mode, egress6)
 
-    res = run_passive(egress)
+    res = run_passive(egress, json_mode=json_mode)
     si = get_system_info()
     io_res = disk_io_test()
     if not json_mode:
         print_report(res, include_streaming_inference=False,
                      sysinfo=(si, io_res), tail_completeness=False)
+        # R3-M-17：报告出口已重置 _SEC，主动流程内继续编号须显式恢复（计数保留）。
+        _SEC["on"] = True
         _section(T("sec_stream"))
 
     streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
@@ -9349,7 +10054,7 @@ def run_active(json_mode=False, stack=None):
     speed6_res = None
     dns6_res = None
     if egress6:
-        res6 = run_passive6(egress6)
+        res6 = run_passive6(egress6, json_mode=json_mode)
         dns6_res = test_dns_servers6()
         if not json_mode:
             _section(T("sec_ipv6"))
@@ -9360,6 +10065,8 @@ def run_active(json_mode=False, stack=None):
             elif _a4 and _a6:
                 print(f"  {_c(C.green, T('v6_same_exit').format(a=_a4))}")
             print_report6(res6, embedded=True, tail_completeness=False)
+            # R3-M-17：报告出口已重置 _SEC，主动流程内继续编号须显式恢复（计数保留）。
+            _SEC["on"] = True
             _section(T("sec_dns") + " (IPv6)")
             print_dns6_test(dns6_res)
             _section(T("sec_stream") + " (IPv6)")
@@ -9426,6 +10133,8 @@ def run_active(json_mode=False, stack=None):
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
         # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
         print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
+    # R3-M-17：流程出口重置章节编号状态，防编号泄漏到后续菜单段落。
+    _SEC["on"] = False
     return res
 
 
@@ -9969,18 +10678,24 @@ def _dl_proxy_worker(ph, pp, user, pwd, host, path, stop, counter, lock,
                     with lock:
                         counter[0] -= _take
                     break  # 窗口已尽未返回，或 EOF：归还预留
-                if time.monotonic() >= stop:
-                    with lock:
-                        counter[0] -= _take
-                    break  # 停滞读在 stop 后才返回时不计入窗口字节
+                # 6-4：读后 stop 检查与锁内结算必须原子化（与 _dl_direct_worker
+                # 对齐）。旧“锁外检查、锁内结算”下，横跨 stop 的迭代可在主
+                # 线程窗口后读数之后才结算，致 32768 字节漏计入窗口。
+                _past_stop = False
                 with lock:
-                    counter[0] += min(len(chunk), _take) - _take
-                    settled[0] += min(len(chunk), _take)
-                    # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
-                    # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
-                    if (settled[0] >= DL_CAP_BYTES and cap_box is not None
-                            and cap_box[0] is None):
-                        cap_box[0] = time.monotonic()
+                    if time.monotonic() >= stop:
+                        counter[0] -= _take
+                        _past_stop = True
+                    else:
+                        counter[0] += min(len(chunk), _take) - _take
+                        settled[0] += min(len(chunk), _take)
+                        # CONF-15.1: 锁内记录首次触顶时间作有效计时终点；
+                        # 触顶判定只看已结算字节（counter 仍含他流在途预留）。
+                        if (settled[0] >= DL_CAP_BYTES and cap_box is not None
+                                and cap_box[0] is None):
+                            cap_box[0] = time.monotonic()
+                if _past_stop:
+                    break  # 停滞读在 stop 后才结算时不计入窗口字节
                 if settled[0] >= DL_CAP_BYTES:
                     _cleanup(conn, resp)
                     return
@@ -10041,6 +10756,11 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
 PROXY_SPEED_HUBS = ["SG Singapore", "JP Tokyo", "US Los Angeles",
                     "DE Frankfurt", "UK London"]
 
+# IPv6 出口时代理测速的代表点（M-03）：与 v4 枢纽同为 5 个，取自
+# SPEED6_ENDPOINTS 中已实测支持 IPv6 的端点（Cloudflare/SG/DE/UK/US）。
+PROXY_SPEED_HUBS6 = ["Global Cloudflare", "SG Singapore",
+                     "DE Falkenstein", "UK London", "US Hillsboro"]
+
 
 def _loc_hub_name(name):
     """代理测速枢纽地区名 -> 界面语言, 仅渲染时转换 (F43)。
@@ -10057,10 +10777,27 @@ def _loc_hub_name(name):
 
 
 def proxy_speed_regions(ph, pp, username=None, password=None, duration=4,
-                        on_result=None):
-    """经 SOCKS5 代理逐枢纽下载测速。返回 (rows, best_row_or_None)。"""
-    hosts = dict(SPEED_REGIONS)
+                        on_result=None, family=0):
+    """经 SOCKS5 代理逐枢纽下载测速。返回 (rows, best_row_or_None)。
+    family==6 时用 IPv6 代表点（PROXY_SPEED_HUBS6，取自 SPEED6_ENDPOINTS
+    的 URL，host/path 由 urllib.parse.urlsplit 解析传入）；其余族用 v4 枢纽。"""
     rows = []
+    if family == 6:
+        _eps = dict((name, url) for name, _h, url in SPEED6_ENDPOINTS)
+        for name in PROXY_SPEED_HUBS6:
+            _u = urllib.parse.urlsplit(_eps[name])
+            _path = _u.path + ("?" + _u.query if _u.query else "")
+            mbps = measure_download_proxy(ph, pp, username, password,
+                                          _u.hostname, _path,
+                                          duration=duration, streams=3)
+            row = {"region": name, "down_mbps": mbps}
+            rows.append(row)
+            if on_result:
+                on_result(row)
+        ok = [r for r in rows if r["down_mbps"] is not None]
+        best = max(ok, key=lambda r: r["down_mbps"]) if ok else None
+        return rows, best
+    hosts = dict(SPEED_REGIONS)
     for name in PROXY_SPEED_HUBS:
         mbps = measure_download_proxy(ph, pp, username, password,
                                       hosts[name], _SPEED_FILE,
@@ -10094,13 +10831,33 @@ def get_resolver_ips(probes=3, timeout=8):
 
 def _ip_asn_org(ip, timeout=8):
     """用 ipwho.is 查 ASN/归属。注意: asn/org 嵌套在 connection 对象内,
-    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。"""
+    fields 必须请求 connection, 直接请求 asn/org 会被丢弃。
+    E-430 F18: 打开（含 DNS 解析）与读体共享 timeout 预算——打开经
+    _open_bounded 纳入绝对截止，DNS 挂起时主线程按时放弃、不等满
+    解析；读体仍用 _read_limited 取剩余预算。"""
     try:
         req = urllib.request.Request(
             "https://ipwho.is/%s?fields=connection,country" % _q_ip(ip),
             headers={"User-Agent": UA_BROWSER})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.loads(r.read(4096).decode("utf-8", errors="replace"))
+        _t0 = time.monotonic()
+        _dl = _t0 + timeout
+
+        def _do_open():
+            return urllib.request.urlopen(
+                req, timeout=max(0.1, _dl - time.monotonic()))
+
+        r = _open_bounded(_do_open, _dl)
+        if r is None:
+            return None, None, None
+        with r:
+            try:
+                d = json.loads(_read_limited(
+                    r, cap=4096,
+                    timeout=max(0.1, _dl - time.monotonic())).decode(
+                    "utf-8", errors="replace"))
+            except Exception:
+                _resp_shutdown(r)
+                raise
         if d.get("success") is False:
             return None, None, None
         conn = d.get("connection") or {}
@@ -10236,6 +10993,9 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     out = {"proxy": "%s:%s" % (proxy_host, proxy_port),
            "socks5": None, "egress": None, "egress_ip": None,
            "egress_reputation": None, "dns_leak": None, "tcp_ping": None}
+    # R3-M-07：入口即定测速门禁（JSON/非交互默认关、--with-speed 开、
+    # 交互终端问一次），吞吐段与 F41 共用此判定，不再只看 _NO_SPEED。
+    _spd_ok = _speed_allowed(json_mode)
 
     def _note(msg):
         if not json_mode:
@@ -10267,7 +11027,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     if _eip is not None:
         _note(T("diag_reputation_testing"))
         try:
-            res = run_passive6(eip) if _ever == 6 else run_passive(eip)
+            res = run_passive6(eip, json_mode=json_mode) if _ever == 6 else run_passive(eip, json_mode=json_mode)
             out["egress_reputation"] = {
                 "risk_level": res.get("verdict"),
                 "threat_score": res.get("scores", {}).get("threat", (None,))[0],
@@ -10277,7 +11037,8 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
                 if _ever == 6:
                     print_report6(res)
                 else:
-                    print_report(res)
+                    # R3-M-17：嵌在主动代理诊断里的信誉报告走 diag 分支脚注。
+                    print_report(res, footnote="proxy_diag")
         except Exception as e:
             _note(_c(C.dim, T("diag_reputation_fail") % e))
 
@@ -10307,8 +11068,8 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
     else:
         _note(_c(C.red, T("diag_tcp_fail")))
 
-    # 6. 吞吐 (经代理, 多地区枢纽节点下载; --no-speed 跳过)
-    _note(T("speed_skipped") if _NO_SPEED else T("diag_speed_testing"))
+    # 6. 吞吐 (经代理, 多地区枢纽节点下载; 门禁关闭时跳过)
+    _note(T("speed_skipped") if not _spd_ok else T("diag_speed_testing"))
 
     def _hub_row(row):
         if not json_mode:
@@ -10319,18 +11080,19 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             print(_c(C.green, line) if available else _c(C.dim, line))
 
     try:
-        trows, tbest = ([], None) if _NO_SPEED else proxy_speed_regions(proxy_host, proxy_port,
+        trows, tbest = ([], None) if not _spd_ok else proxy_speed_regions(proxy_host, proxy_port,
                                            username=username,
                                            password=password,
-                                           on_result=_hub_row)
+                                           on_result=_hub_row,
+                                           family=6 if _ever == 6 else 0)
     except Exception:
         trows, tbest = [], None
     out["throughput"] = {"regions": trows,
                          "best_mbps": tbest["down_mbps"] if tbest else None,
                          "best_region": tbest["region"] if tbest else None}
-    # F41: 仅在实际执行过测速时输出成功或失败; --no-speed 跳过后不再把
+    # F41: 仅在实际执行过测速时输出成功或失败; 门禁跳过后不再把
     # “未执行”显示为“失败” (tbest=None 在此分支下是跳过, 不是失败)。
-    if not _NO_SPEED:
+    if _spd_ok:
         if tbest:
             _note(_c(C.green, T("diag_speed_ok") % (_loc_hub_name(tbest["region"]),
                                                    tbest["down_mbps"])))
@@ -10338,7 +11100,7 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
             _note(_c(C.dim, T("diag_speed_fail")))
 
     if json_mode:
-        print(json.dumps(out, indent=2, default=str, ensure_ascii=False))
+        print(json.dumps(_json_safe(out), indent=2, default=str, ensure_ascii=False))
     else:
         _note(_c(C.green, T("done")))
     return out
@@ -10347,6 +11109,40 @@ def run_proxy_diag(proxy_host, proxy_port, username=None, password=None,
 # ============================================================
 # 批量节点测速优选 (借鉴 yonggekkk 节点优选: 一批节点并发测速排名)
 # ============================================================
+def _parse_host_port_strict(spec):
+    """严格解析 host:port / [ipv6]:port（R4-M-05，--proxy、菜单 7、菜单 9 共用）。
+    显式拒绝含 @（裸 userinfo 账密）、/（scheme 残留）、空白符或控制字符
+    （ord < 32 或 == 127）的 host——socks5://user:pass@host:port 此前靠
+    附带冒号检查才被拒，此处改为显式拦截。
+    注意与 _parse_node_line 的行为差异：后者只拦 Cc/Cf 控制字符与 @，
+    空格（Unicode Zs 类）不拦；本函数明确拦截一切空白符。
+    返回 (host, port) 或 None。"""
+    s = (spec or "").strip()
+    if not s:
+        return None
+    try:
+        if s.startswith("["):
+            hend = s.index("]")
+            if hend + 1 >= len(s) or s[hend + 1] != ":":
+                return None
+            host = s[1:hend]
+            port = int(s[hend + 2:])
+        else:
+            host, _p = s.rsplit(":", 1)
+            port = int(_p)
+            if ":" in host:
+                return None  # 裸 IPv6 须用 [v6]:port
+    except Exception:
+        return None
+    if not host or not (0 < port < 65536):
+        return None
+    if "@" in host or "/" in host:
+        return None  # 裸 userinfo / scheme 残留：账密不得落入 host
+    if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in host):
+        return None  # 空白符与控制字符：防凭据/转义落入 host/标签
+    return (host, port)
+
+
 def _parse_node_line(line):
     """解析一行节点: host:port / [ipv6]:port / socks5://[user:pass@]host:port。
     返回 {host, port, proto, user, pass, raw} 或 None。"""
@@ -10491,8 +11287,10 @@ def _print_batch_results(results):
 
 
 def _batch_best_throughput(results):
-    """排名后对最优 SOCKS5 节点实测经代理多地区下载吞吐 (附加行)。"""
-    if _NO_SPEED:
+    """排名后对最优 SOCKS5 节点实测经代理多地区下载吞吐 (附加行)。
+    R3-M-07：入口即走 _speed_allowed 门禁（与 run_proxy_diag 同款）；
+    门禁关闭时不测速（--batch 绕过仅影响非 JSON 路径，此处即该路径）。"""
+    if not _speed_allowed(False):
         print(f"  {_c(C.dim, T('speed_skipped'))}")
         return
     for r in results:
@@ -10502,9 +11300,28 @@ def _batch_best_throughput(results):
             continue
         print(T("batch_tp_testing"))
         try:
+            # M-03（.31）：批量流加出口族探测——经最优节点查出口 IP
+            # （与 run_proxy_diag 同款 proxy_egress_ip），按出口族选
+            # 枢纽，不再只按节点宿主族；探测失败／出口不明时回退宿主
+            # 族（旧行为）。IPv4 接入＋纯 IPv6 出口的节点至此走 v6 枢纽。
+            _efam = None
+            try:
+                _eip, _eerr = proxy_egress_ip(
+                    nd["host"], nd["port"], username=nd["user"],
+                    password=nd["pass"], timeout=5)
+                if _eip is not None:
+                    _pip, _pver = parse_any_ip(_eip)
+                    if _pver in (4, 6):
+                        _efam = 6 if _pver == 6 else 0
+            except Exception:
+                _efam = None
+            if _efam is None:
+                _bip, _bver = parse_any_ip(nd["host"])
+                _efam = 6 if _bver == 6 else 0
             _, tbest = proxy_speed_regions(nd["host"], nd["port"],
                                            username=nd["user"],
-                                           password=nd["pass"], duration=4)
+                                           password=nd["pass"], duration=4,
+                                           family=_efam)
         except Exception:
             tbest = None
         if tbest:
@@ -10556,6 +11373,12 @@ _LOGO_LINES = [
 _LOGO_PALETTE = [26, 27, 32, 33, 39, 39, 39]  # 按字母: 纯蓝阶 (R=0, 同 A-BOX 标题配色)
 
 _banner_net_cache = None
+# S5 L-01 残留：地理失败的取数结果不进永久缓存，但留一份最近结果与
+# 取数时间供横幅在重试间隔内展示（否则 async 尾部回退会丢出口信息），
+# 间隔过后横幅重取一次。直接调 _banner_net_info() 不节流，每次都重取。
+_banner_net_last_info = None
+_banner_net_last_attempt = 0.0
+_BANNER_NET_RETRY_AFTER = 60  # 地理失败后横幅重试间隔（秒）
 _banner_net_budget = 15  # 横幅网络信息整条任务总截止（秒；裁定未定量，我方取 15）
 _banner_net_started = [False]
 _banner_net_lock = threading.Lock()
@@ -10698,11 +11521,14 @@ def _urlopen_bounded(req, budget):
 def _banner_net_info():
     """横幅网络信息 (进程内缓存, 只查一次): 出口地理 (缓存英文原始字段,
     渲染时按界面语言本地化) + IPv6 出口地址。
-    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。"""
-    global _banner_net_cache
+    整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。
+    S5 L-01 残留：地理取数失败（限流/超时/坏体）时不写入永久缓存，
+    下次调用重取；地理未尝试（无出口 IP）时仍按旧行为缓存。"""
+    global _banner_net_cache, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
-    _deadline = time.monotonic() + _banner_net_budget
+    _t0 = time.monotonic()
+    _deadline = _t0 + _banner_net_budget
 
     def _rem():
         return max(0.0, _deadline - time.monotonic())
@@ -10717,6 +11543,9 @@ def _banner_net_info():
                                                       timeout=min(5, _rem())))
         except Exception:
             info["dns_ok"] = False
+    # S5 L-01 残留：地理失败标记——仅地理步抛错/失败体时置真，末尾
+    # 凭此决定是否写入永久缓存；无出口 IP 时地理步未跑，不置真。
+    _geo_failed = False
     try:
         egress = get_egress_ip(budget=_rem()) if _rem() > 0 else None
         info["egress"] = egress
@@ -10742,14 +11571,22 @@ def _banner_net_info():
                                                   errors="replace"))
                     finally:
                         _resp_shutdown(r)
-                conn = d.get("connection") or {}
+                # R4-L-01：先校验 success（失败体不得填地理字段并缓存），
+                # 再按字典类型取值；conn 非字典的 AttributeError 会被下方
+                # except 吞掉，故校验须在取值之前，不依赖“会抛错”。
+                if not isinstance(d, dict) or not d.get("success", True):
+                    raise ValueError("ipwho.is query failed")
+                conn = d.get("connection") if isinstance(d.get("connection"), dict) else {}
+                sec = d.get("security") if isinstance(d.get("security"), dict) else {}
                 org = (conn.get("org") or conn.get("isp") or "").strip()
                 # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
                 info["geo_country"] = d.get("country") or ""
                 info["geo_city"] = d.get("city") or ""
                 # M-11: 保留机房标记精度: connection 透传 hosting 时认它,
-                # 否则按 org 启发式判定。
-                if conn.get("hosting") or is_datacenter_heuristic(org, org)[0]:
+                # 否则按 org 启发式判定。R4-L-01：security/connection 的
+                # hosting 均须严格布尔判真（字符串 "false" 不得判真），
+                # security 优先于 connection（与 IPWhoIs.check 同口径）。
+                if (sec.get("hosting") is True) or (conn.get("hosting") is True) or is_datacenter_heuristic(org, org)[0]:
                     info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
                     info["geo_net"] = "residential"
@@ -10757,7 +11594,9 @@ def _banner_net_info():
                     info["geo_net"] = ""
                 info["geo_org"] = org
             except Exception:
-                pass
+                # S5 L-01 残留：失败体/超时/坏 JSON 均记地理失败，不再
+                # 走末尾无条件缓存（原 `except: pass` 吞错后照常缓存空地理）。
+                _geo_failed = True
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
@@ -10802,7 +11641,12 @@ def _banner_net_info():
                     pass
     info["ipv6_addr"] = _v6addr
     info["ipv6"] = bool(_v6addr)
-    _banner_net_cache = info
+    _banner_net_last_info = info
+    _banner_net_last_attempt = _t0
+    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；其余情形
+    # （成功、无出口 IP）仍缓存。
+    if not _geo_failed:
+        _banner_net_cache = info
     return info
 
 
@@ -11065,6 +11909,13 @@ def _banner_net_info_async():
         return _banner_net_info()
     if _banner_net_cache is not None:
         return _banner_net_cache
+    # S5 L-01 残留：首轮取数已完成但地理失败、缓存未写时——重试间隔内
+    # 展示上次结果（带出口/IP，不重复发请求）；间隔已过则重取一次。
+    # 上次结果为空说明首轮仍在另一线程进行中，保持旧行为（空回退）。
+    if _banner_net_last_info is not None:
+        if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
+            return _banner_net_last_info
+        return _banner_net_info()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
 
@@ -11257,25 +12108,34 @@ def run_speed_only(json_mode=False):
     _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
     rows = print_speed_section(json_mode=json_mode, family=_fam)
     if json_mode:
-        print(json.dumps({"regions": rows}, indent=2, default=str,
+        print(json.dumps(_json_safe({"regions": rows}), indent=2, default=str,
                          ensure_ascii=False))
     return rows
 
 
 def run_streaming_only():
-    """菜单独立入口: 仅流媒体解锁检测 (取出口 IP 后跑流媒体表)。"""
+    """菜单独立入口: 仅流媒体解锁检测 (取出口 IP 后跑流媒体表)。
+    M-04：对齐菜单 1（run_active）的分栈契约——_FORCE_STACK 钉死
+    地址族时只测该族；默认自动模式下 IPv4 与 IPv6 出口各跑一张表
+    （family 与出口族一致，不再把 IPv4 出口地址当 family=0 测，
+    也不再因无 IPv4 出口就直接失败）。"""
     with _unlock_lock:
         _unlock_cache.clear()
     print(f"  {T('detecting_egress')}")
-    egress = get_egress_ip()
-    if not egress:
+    if _FORCE_STACK == "6":
+        _eg = [(get_egress_ip6(), 6)]
+    elif _FORCE_STACK == "4":
+        _eg = [(get_egress_ip(), 4)]
+    else:
+        _eg = [(get_egress_ip(), 4), (get_egress_ip6(), 6)]
+    _eg = [(e, f) for e, f in _eg if e]
+    if not _eg:
         print(f"  {_c(C.red, T('egress_fail'))}")
         return
-    print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
     _section(T("sec_stream"))
-    # H-05：独立入口亦遵循 _FORCE_STACK（4/6 钉死地址族，默认 0 不变）。
-    _fam = 4 if _FORCE_STACK == "4" else (6 if _FORCE_STACK == "6" else 0)
-    _run_streaming_table(egress, family=_fam)
+    for egress, _fam in _eg:
+        print(f"  {T('current_egress')}: {_c(C.cyan, egress)}")
+        _run_streaming_table(egress, family=_fam)
 
 
 def run_dnsleak_only():
@@ -11284,8 +12144,11 @@ def run_dnsleak_only():
     if asn_mismatch is True:
         print(f"  {_c(C.red, T('diag_dns_leaked'))}")
         for r in dinfo.get("resolvers", []):
-            print("    %s (%s, AS%s)" % (r["resolver"], r.get("org") or "?",
-                                         r.get("asn") or "?"))
+            # R4-M-05：与 run_proxy_diag 的 10293 行同款 _strip_cc，
+            # org/resolver/asn 为上游外部文本，防终端转义注入。
+            print("    %s (%s, AS%s)" % (_strip_cc(r["resolver"]),
+                                         _strip_cc(r.get("org") or "?"),
+                                         _strip_cc(r.get("asn") or "?")))
     elif asn_mismatch is False:
         print(f"  {_c(C.green, T('diag_dns_clean'))}")
     else:
@@ -11298,22 +12161,12 @@ def run_tcpping_only():
         tinp = input(T("prompt_tcp")).strip()
         if tinp.lower() in ("b", "q", ""):
             return
-        try:
-            if tinp.startswith("["):
-                hend = tinp.index("]")
-                if hend + 1 >= len(tinp) or tinp[hend + 1] != ":":
-                    raise ValueError("missing ':' after ']'")
-                th, tp_ = tinp[1:hend], int(tinp[hend + 2:])
-            else:
-                th, tp_ = tinp.rsplit(":", 1)
-                tp_ = int(tp_)
-                if ":" in th:
-                    raise ValueError("bare IPv6 needs brackets")
-            if not th or not (0 < tp_ < 65536):
-                raise ValueError("bad host/port")
-        except Exception:
+        # R4-M-05：走严格解析器，@ / 空白符 / 控制字符一律拒。
+        _hp = _parse_host_port_strict(tinp)
+        if _hp is None:
             print(T("invalid_input"))
             continue
+        th, tp_ = _hp
         tp = tcp_ping_stats(th, tp_)
         if tp["ok"]:
             print("  " + T("diag_tcp_ok") % (tp["avg_ms"], tp["jitter_ms"],
@@ -11334,7 +12187,7 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 # ============================================================
-# 命令入口管理 (快捷键 v4.14.29): acheck / ac 薄启动器
+# 命令入口管理 (快捷键 v4.14.32): acheck / ac 薄启动器
 #
 # 设计 (GPT 比选 (d) 单文件内统一后端, CLI + 菜单共用; 已仲裁):
 # - 默认用户级: 受管理副本 ~/.local/share/acheck/acheck.py
@@ -11394,7 +12247,7 @@ SHORTCUT_AC_RISK = (
     "является встроенным псевдонимом Add-Content.",
     "ac توسط بستهٔ حسابداری acct/psacct ارائه می‌شود؛ نصب بعدی این بسته‌ها "
     "ممکن است این میانبر را پنهان کند. در Windows PowerShell نیز ac نام "
-    "مستعار داخلی Add-Content است。",
+    "مستعار داخلی Add-Content است.",
     "ac 由 acct/psacct 會計軟體套件提供；日後安裝這些軟體套件可能遮蔽此捷徑。"
     "在 Windows PowerShell 中，ac 還是 Add-Content 的內建別名。",
 )
@@ -11497,7 +12350,7 @@ def _shortcut_resolve_interpreter(explicit=None):
                                   "Интерпретатор %s отклонён: %s" % (cand, why),
                                   "مفسر %s رد شد: %s" % (cand, why),
                                   "解譯器 %s 被拒絕：%s" % (cand, why)))
-        return os.path.realpath(cand), ver
+        return cand, ver
     exe = sys.executable
     if not exe or not os.path.isabs(exe):
         raise ShortcutError(_L("无法确定解释器的绝对路径",
@@ -11506,6 +12359,15 @@ def _shortcut_resolve_interpreter(explicit=None):
                               "Не удаётся определить абсолютный путь интерпретатора",
                               "نمی‌توان مسیر مطلق مفسر را تعیین کرد",
                               "無法確定解譯器的絕對路徑"))
+    # R3-M-02: 记原始路径（不 realpath），解析后校验目标存在且可执行；
+    # 首次启动校验由安装时的最小启动检查（--help）完成。
+    if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
+        raise ShortcutError(_L("解释器不可执行：%s" % exe,
+                              "Interpreter is not executable: %s" % exe,
+                              "インタープリタは実行できません：%s" % exe,
+                              "Интерпретатор не исполняется: %s" % exe,
+                              "مفسر قابل اجرا نیست: %s" % exe,
+                              "解譯器不可執行：%s" % exe))
     ok, why = _shortcut_check_interpreter(sys.version_info[:3])
     if not ok:
         raise ShortcutError(_L("当前解释器被拒绝：%s" % why,
@@ -11514,7 +12376,7 @@ def _shortcut_resolve_interpreter(explicit=None):
                               "Запущенный интерпретатор отклонён: %s" % why,
                               "مفسر در حال اجرا رد شد: %s" % why,
                               "目前解譯器被拒絕：%s" % why))
-    return os.path.realpath(exe), tuple(sys.version_info[:3])
+    return exe, tuple(sys.version_info[:3])
 
 
 def shortcut_paths(scope, home=None, sysroot=None):
@@ -11583,32 +12445,19 @@ def _shortcut_sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def _shortcut_sha256_file(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _shortcut_marker(content):
-    """只认启动器第 2 行的 marker (第 1 行是 shebang); 文件中部出现的不算。"""
-    lines = content.split("\n")
-    if len(lines) >= 2:
-        m = re.fullmatch(r"# acheck-managed: ([A-Za-z0-9_-]+)", lines[1])
-        return m.group(1) if m else None
-    return None
-
-
 def _shortcut_canon_entry(path):
     """入口路径规范形: 只解析父目录的符号链接 (绝不 realpath 启动器本身),
     再拼回文件名, 供归属比对用。"""
+    if not isinstance(path, str):
+        return ""
     d = os.path.dirname(path)
     return os.path.join(os.path.realpath(d), os.path.basename(path))
 
 
 def _shortcut_path_in_bin_dir(path, bin_dir):
     """入口路径是否落在启动器目录内 (父目录 realpath 比对)。"""
+    if not isinstance(path, str) or not isinstance(bin_dir, str):
+        return False
     try:
         parent = os.path.realpath(os.path.dirname(os.path.abspath(path)))
         base = os.path.realpath(bin_dir)
@@ -11619,7 +12468,7 @@ def _shortcut_path_in_bin_dir(path, bin_dir):
 
 def _shortcut_sha256_file_nofollow(path):
     """O_NOFOLLOW + fstat 验普通文件后分块算 sha256 (符号链接一律拒绝)。"""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
@@ -11638,9 +12487,12 @@ def _shortcut_sha256_file_nofollow(path):
 def _shortcut_entry_intact(path, entry, instance_id):
     """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
     且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。
-    O_NOFOLLOW 打开 + fstat + 限长读 (4097 字节) + 完整 3 行模板校验。"""
+    O_NOFOLLOW|O_NONBLOCK 打开 (FIFO 不阻塞) + fstat + 限长读 (4097 字节)
+    + 完整 3 行模板校验。"""
+    if not isinstance(path, str) or not isinstance(entry, dict):
+        return False
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         return False
     try:
@@ -11678,6 +12530,54 @@ def _shortcut_entry_intact(path, entry, instance_id):
             and entry.get("marker") != instance_id:
         return False
     return True
+
+
+def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
+    """分叉判定: 磁盘启动器是否为本实例的旧解释器版。
+    须同时满足: 普通文件 (非符号链接, O_NOFOLLOW)、4 行标准模板、
+    marker 与本次安装实例一致、exec 行指向同一受管理脚本、
+    且解释器与目标 interp 不同。任一不满足即不是分叉——他人篡改、
+    外来脚本、符号链接一律不得据此覆盖, 仍走 blocked/人工处理。"""
+    if not isinstance(path, str) or not isinstance(interp, str) \
+            or not isinstance(managed_script, str):
+        return False
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            return False
+        if not stat.S_ISREG(st.st_mode):
+            return False
+        data = os.read(fd, 4097)
+        if os.read(fd, 1):
+            return False
+    finally:
+        os.close(fd)
+    try:
+        text = data.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return False
+    lines = text.split("\n")
+    if len(lines) != 4 or lines[3] != "":
+        return False
+    if lines[0] != "#!/bin/sh":
+        return False
+    if lines[1] != "# acheck-managed: %s" % instance_id:
+        return False
+    try:
+        parts = shlex.split(lines[2])
+    except ValueError:
+        return False
+    if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
+        return False
+    if _shortcut_canon_entry(parts[2]) != \
+            _shortcut_canon_entry(managed_script):
+        return False
+    return parts[1] != interp
 
 
 def shortcut_check_name(name, bin_dir, own_entry_paths=(),
@@ -11799,6 +12699,10 @@ def _shortcut_load_state(paths):
     if not isinstance(state.get("instance_id"), str) \
             or not SHORTCUT_INSTANCE_ID_RE.match(state["instance_id"]):
         return None, True
+    for _k, _v in state.get("entries", {}).items():
+        if not isinstance(_k, str) or not SHORTCUT_NAME_RE.match(_k) \
+                or not isinstance(_v, dict):
+            return None, True
     return state, False
 
 
@@ -12154,14 +13058,46 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
     instance_id = state.get("instance_id") if state else uuid.uuid4().hex
     own_paths = [e.get("path", "") for e in
                  (state or {}).get("entries", {}).values()
-                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 if isinstance(e, dict)
+                 and _shortcut_path_in_bin_dir(e.get("path", ""),
+                                               paths["bin_dir"])
                  and _shortcut_entry_intact(e.get("path", ""), e,
                                             instance_id)]
+    # R3-M-02(3): 分叉入口——磁盘启动器是本实例旧解释器版 (见
+    # _shortcut_launcher_fork)。检查阶段同样视作自有, 否则第一阶段
+    # 会把它判 target_foreign 而整批中止, 分叉永远修不了。
+    fork_names = []
+    fork_paths = []
+    for _nm, _ent in (state or {}).get("entries", {}).items():
+        if not isinstance(_ent, dict):
+            continue
+        _p = _ent.get("path", "")
+        if _p and _shortcut_path_in_bin_dir(_p, paths["bin_dir"]) \
+                and _p not in own_paths \
+                and _shortcut_launcher_fork(
+                    _p, instance_id, paths["managed_script"], interp):
+            fork_names.append(_nm)
+            fork_paths.append(_p)
+    # R4-M-01(1): 本次经冲突交互被替换/降级剔除的旧名，写盘前安全清理。
+    dropped = set()
+    # R3-M-02: 解释器变化时把既有入口一并纳入本次更新，避免新旧启动器
+    # 引用不同解释器路径而分叉。
+    if state is not None and state.get("interpreter") \
+            and state.get("interpreter") != interp:
+        for _nm in state.get("entries", {}):
+            if _nm not in want:
+                want.append(_nm)
+    # R3-M-02(3): 即使记录的解释器与本次相同, 磁盘启动器仍可能分叉
+    # (旧版操作遗留)。分叉入口纳入本次更新, 由第三阶段按分叉覆盖修
+    # 复; 非分叉的篡改不在此列, 仍走 blocked/人工处理。
+    for _nm in fork_names:
+        if _nm not in want:
+            want.append(_nm)
     # ---- 第一阶段: 全部名字检查确认 (不写文件) ----
     checks = {}
     for nm in want:
         checks[nm] = shortcut_check_name(nm, paths["bin_dir"],
-                                         own_entry_paths=own_paths,
+                                         own_entry_paths=own_paths + fork_paths,
                                          path_dirs=path_dirs,
                                          system_dirs=system_dirs)
     risk_names = [nm for nm in want
@@ -12251,6 +13187,8 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                 continue
             if ans == "2":
                 result["degraded"] = True
+                dropped.update(nm for nm in want
+                               if nm in blocked or nm in risk_unconfirmed)
                 want = [nm for nm in want if nm not in blocked
                         and nm not in risk_unconfirmed]
                 blocked = {}
@@ -12296,6 +13234,7 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                 if _shortcut_blocked(fl):
                     print("  %s: %s" % (new, _shortcut_fmt_findings(fl)))
                     continue
+                dropped.add(first_blocked)
                 want = [new if x == first_blocked else x for x in want]
                 checks[new] = fl
                 checks.pop(first_blocked, None)
@@ -12443,7 +13382,12 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
             continue
         content_bytes = content.encode("utf-8")
         if old_entry and os.path.lexists(target):
-            if not _shortcut_entry_intact(target, old_entry, instance_id):
+            # R3-M-02(3): 分叉启动器 (本实例旧解释器版) 允许覆盖修复;
+            # 非分叉的他人修改仍拒绝覆盖、请人工处理。
+            if not _shortcut_entry_intact(target, old_entry, instance_id) \
+                    and not _shortcut_launcher_fork(
+                        target, instance_id, paths["managed_script"],
+                        interp):
                 result["failed"].append(nm)
                 result["errors"].append(
                     _L("%s：已有启动器被他人修改，不覆盖，请人工处理" % nm,
@@ -12535,6 +13479,20 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                        "marker": instance_id}
         result["installed"].append(nm)
     # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
+    # R4-M-01(1): 写盘前清理本次冲突交互剔除的旧名——仅当旧启动器仍属
+    # 自有（在启动器目录内且 intact）时才安全删除文件并移出 entries；
+    # 系统文件或他人文件一律不动。
+    for _nm in sorted(dropped):
+        if _nm in entries:
+            _ent = entries[_nm]
+            _p = _ent.get("path", "") if isinstance(_ent, dict) else ""
+            if _shortcut_path_in_bin_dir(_p, paths["bin_dir"]) \
+                    and _shortcut_entry_intact(_p, _ent, instance_id):
+                try:
+                    os.unlink(_p)
+                except OSError:
+                    continue
+                del entries[_nm]
     new_state = {
         "format_version": SHORTCUT_STATE_VERSION,
         "instance_id": instance_id,
@@ -12544,6 +13502,7 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
         "interpreter": interp,
         "bin_dir": paths["bin_dir"],
         "entries": entries,
+        "install_status": "failed" if not result["installed"] else "ok",
         "installed_version": src_version,
         "source_path": src,
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -12581,20 +13540,27 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
 
 
 def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
-                    system_dirs=None):
-    """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。"""
+                    system_dirs=None, as_json=False):
+    """查看状态: 返回 (文本, rc)。重扫同名命令, 对比已安装版与当前版。
+    as_json=True 时返回 (JSON 文本, rc)，供 --shortcut status --json。"""
     try:
         _shortcut_require_posix()
     except ShortcutError as e:
+        if as_json:
+            return (json.dumps({"scope": scope, "error": str(e)},
+                               ensure_ascii=False) + "\n", 2)
         return str(e), 2
     try:
         paths = shortcut_paths(scope, home=home, sysroot=sysroot)
     except ShortcutError as e:
+        if as_json:
+            return (json.dumps({"scope": scope, "error": str(e)},
+                               ensure_ascii=False) + "\n", 2)
         return str(e), 2
     try:
         state, corrupt = _shortcut_load_state(paths)
     except ShortcutError:
-        return (_L("无权限读取状态文件：%s\n请检查该文件权限，"
+        _msg = _L("无权限读取状态文件：%s\n请检查该文件权限，"
                    "不要直接删除或覆盖入口文件。"
                    % paths["state_path"],
                    "Permission denied reading state file: %s\nCheck the file "
@@ -12608,12 +13574,65 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "напрямую." % paths["state_path"],
                    "دسترسی خواندن پروندهٔ وضعیت ممکن نیست: %s\nدسترسی‌های "
                    "پرونده را بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
-                   "بازنویسی نکنید。" % paths["state_path"],
+                   "بازنویسی نکنید." % paths["state_path"],
                    "無權限讀取狀態檔案：%s\n請檢查該檔案權限，"
-                   "不要直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
+                   "不要直接刪除或覆寫入口檔案。" % paths["state_path"])
+        if as_json:
+            return (json.dumps({"scope": scope, "error": _msg},
+                               ensure_ascii=False) + "\n", 1)
+        return (_msg, 1)
     lines = []
+    def _status_doc():
+        # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
+        doc = {"scope": scope,
+               "managed_dir": paths["data_dir"],
+               "launcher_dir": paths["bin_dir"],
+               "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"]),
+               "installed": state is not None}
+        if state is None:
+            doc["entries"] = []
+            return doc
+        doc["installed_version"] = state.get("installed_version")
+        doc["running_version"] = VERSION
+        doc["version_mismatch"] = \
+            state.get("installed_version") != VERSION
+        # R3-M-17 + GPT-431 S3-N1/M-01(4): JSON 状态与文本状态同源——
+        # 受管理脚本只核对固定路径 paths["managed_script"], 用 nofollow
+        # 哈希 (已删的跟随链接旧函数永不恢复); 入口仅 intact 时才当
+        # 自有路径, 否则须报 target_foreign, 不得再掩盖为 target_own。
+        if state.get("managed_script"):
+            ok_m = False
+            if isinstance(state.get("managed_script"), str) \
+                    and _shortcut_canon_entry(state["managed_script"]) == \
+                    _shortcut_canon_entry(paths["managed_script"]):
+                try:
+                    ok_m = _shortcut_sha256_file_nofollow(
+                        paths["managed_script"]) == state.get("managed_sha256")
+                except OSError:
+                    ok_m = False
+            doc["managed_script"] = {
+                "path": paths["managed_script"],
+                "status": "OK" if ok_m else "CHANGED"}
+        entries = []
+        for nm, entry in sorted((state.get("entries") or {}).items()):
+            p = entry.get("path", "") if isinstance(entry, dict) else ""
+            intact = _shortcut_entry_intact(p, entry, state["instance_id"])
+            findings = shortcut_check_name(
+                nm, paths["bin_dir"], own_entry_paths=[p] if intact else [],
+                path_dirs=path_dirs, system_dirs=system_dirs)
+            shadow = [f for f in findings
+                      if f["kind"] in ("path_hit", "system_hit")]
+            foreign = [f for f in findings
+                       if f["kind"] == "target_foreign"]
+            entries.append({"name": nm, "path": p,
+                            "status": "OK" if intact else "CHANGED",
+                            "warnings": [{"kind": f["kind"], "path": f["path"]}
+                                         for f in shadow + foreign]})
+        doc["entries"] = entries
+        return doc
+
     if corrupt:
-        return (_L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
+        _msg = _L("状态文件已损坏 (corrupt): %s\n请人工检查后再处理，"
                    "不要直接删除或覆盖入口文件。"
                    % paths["state_path"],
                    "State file is corrupt: %s\nInspect it manually before "
@@ -12627,9 +13646,14 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "напрямую." % paths["state_path"],
                    "پروندهٔ وضعیت خراب است (corrupt): %s\nپیش از هر اقدامی "
                    "آن را دستی بررسی کنید؛ راه‌اندازها را مستقیم حذف یا "
-                   "بازنویسی نکنید。" % paths["state_path"],
+                   "بازنویسی نکنید." % paths["state_path"],
                    "狀態檔案已損壞 (corrupt): %s\n請人工檢查後再處理，不要"
-                   "直接刪除或覆寫入口檔案。" % paths["state_path"]), 1)
+                   "直接刪除或覆寫入口檔案。" % paths["state_path"])
+        if as_json:
+            return (json.dumps({"scope": scope, "corrupt": True,
+                                "error": _msg}, ensure_ascii=False)
+                    + "\n", 1)
+        return (_msg, 1)
     lines.append(_L("命令入口状态 (%s):" % scope,
                    "Command shortcut status (%s):" % scope,
                    "コマンド入口の状態 (%s):" % scope,
@@ -12660,10 +13684,33 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                    "Примечание: %s нет в PATH; настройте PATH "
                                    "после установки." % paths["bin_dir"],
                                    "توجه: %s در PATH نیست؛ پس از نصب PATH را "
-                                   "تنظیم کنید。" % paths["bin_dir"],
+                                   "تنظیم کنید." % paths["bin_dir"],
                                    "提示：%s 不在 PATH 中，安裝後需按提示設定 PATH。"
                                    % paths["bin_dir"]))
+        if as_json:
+            return (json.dumps(_status_doc(), ensure_ascii=False)
+                    + "\n", 0)
         return "\n".join(lines) + "\n", 0
+    if state.get("install_status") == "failed":
+        return (_L("上次安装失败，未装好任何入口（状态文件 %s）。"
+                   "请重跑安装，失败原因见安装时的报错。"
+                   % paths["state_path"],
+                   "The last install failed and no entry was installed "
+                   "(state file %s). Re-run install; see the install-time "
+                   "errors for the cause." % paths["state_path"],
+                   "前回のインストールは失敗し、入口は一つもインストールされません"
+                   "でした（状態ファイル %s）。インストールを再実行してください。"
+                   "原因はインストール時のエラーを参照してください。"
+                   % paths["state_path"],
+                   "Последняя установка не удалась, ни один ярлык не "
+                   "установлен (файл состояния %s). Повторите установку; "
+                   "причина — в ошибках установки." % paths["state_path"],
+                   "نصب قبلی ناموفق بود و هیچ ورودی‌ای نصب نشد (پروندهٔ "
+                   "وضعیت %s). نصب را دوباره اجرا کنید؛ علت را در خطاهای "
+                   "زمان نصب ببینید." % paths["state_path"],
+                   "上次安裝失敗，未裝好任何入口（狀態檔案 %s）。"
+                   "請重跑安裝，失敗原因見安裝時的報錯。"
+                   % paths["state_path"]), 1)
     lines.append("  %s: %s" % (_L("已安装脚本版本", "Installed script version",
                                  "インストール済みスクリプトの版",
                                  "Версия установленного скрипта",
@@ -12693,27 +13740,35 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                "提示：已安裝副本與目前執行版本不同，下載新版後"
                                "請重跑安裝更新副本（入口名保留）。"))
     if state.get("managed_script"):
-        ok_m = os.path.isfile(state["managed_script"])
-        if ok_m:
+        # R4-M-01(4): 只核对固定路径 paths["managed_script"]，不用状态里
+        # 写的可疑路径；O_NOFOLLOW + O_NONBLOCK，符号链接/FIFO 一律 CHANGED。
+        ok_m = False
+        if isinstance(state.get("managed_script"), str) \
+                and _shortcut_canon_entry(state["managed_script"]) == \
+                _shortcut_canon_entry(paths["managed_script"]):
             try:
-                ok_m = _shortcut_sha256_file(state["managed_script"]) == \
-                    state.get("managed_sha256")
+                ok_m = _shortcut_sha256_file_nofollow(
+                    paths["managed_script"]) == state.get("managed_sha256")
             except OSError:
                 ok_m = False
         lines.append("  %s: %s (%s)" % (_L("受管理脚本", "Managed script",
                                           "管理スクリプト", "Управляемый скрипт",
                                           "اسکریپت مدیریت‌شده", "受管理指令碼"),
-                                       state["managed_script"],
+                                       paths["managed_script"],
                                        "OK" if ok_m else "CHANGED"))
     for nm, entry in sorted(state.get("entries", {}).items()):
-        p = entry.get("path", "")
+        p = entry.get("path", "") if isinstance(entry, dict) else ""
         intact = _shortcut_entry_intact(p, entry, state["instance_id"])
+        # R4-M-01(4): 仅 intact 为真时才把入口路径当作自有路径传给检查；
+        # 被篡改的入口须报 target_foreign，不得再被掩盖为 target_own。
         findings = shortcut_check_name(nm, paths["bin_dir"],
-                                       own_entry_paths=[p],
+                                       own_entry_paths=[p] if intact else [],
                                        path_dirs=path_dirs,
                                        system_dirs=system_dirs)
         shadow = [f for f in findings
                   if f["kind"] in ("path_hit", "system_hit")]
+        foreign = [f for f in findings
+                   if f["kind"] == "target_foreign"]
         lines.append("  %s: %s (%s)" % (nm, p, "OK" if intact else "CHANGED"))
         if shadow:
             lines.append("    " + _L("警告：出现同名命令：%s，请用管理入口更换短名。"
@@ -12729,10 +13784,36 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                      "менеджер ярлыков."
                                      % ", ".join(f["path"] for f in shadow),
                                      "هشدار: فرمان هم‌نام ظاهر شد: %s؛ با "
-                                     "مدیریت میانبر نام کوتاه را عوض کنید。"
+                                     "مدیریت میانبر نام کوتاه را عوض کنید."
                                      % ", ".join(f["path"] for f in shadow),
                                      "警告：出現同名命令：%s，請用管理入口更換短名。"
                                      % ", ".join(f["path"] for f in shadow)))
+        if foreign:
+            lines.append("    " + _L("警告：入口 %s 的目标文件已被他人替换或占用：%s，"
+                                     "请用管理入口更换短名或人工处理。"
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "Warning: the target file of entry %s was "
+                                     "replaced or taken over by someone else: %s; "
+                                     "rename it via the shortcut manager or handle "
+                                     "it manually."
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "警告：入口 %s の対象ファイルは他人に置き換え"
+                                     "られたか、占有されています：%s。管理入口で短名"
+                                     "を変更するか、手動で対処してください。"
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "Предупреждение: целевой файл записи %s был "
+                                     "заменён или занят кем-то другим: %s; "
+                                     "переименуйте через менеджер ярлыков или "
+                                     "разберитесь вручную."
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "هشدار: پروندهٔ هدف ورودی %s توسط دیگری "
+                                     "جایگزین یا اشغال شده است: %s؛ از راه مدیریت "
+                                     "میانبر نام کوتاه را عوض کنید یا دستی رسیدگی "
+                                     "کنید."
+                                     % (nm, ", ".join(f["path"] for f in foreign)),
+                                     "警告：入口 %s 的目標檔案已被他人替換或佔用：%s，"
+                                     "請用管理入口更換短名或人工處理。"
+                                     % (nm, ", ".join(f["path"] for f in foreign))))
     if not _shortcut_bin_in_path(paths["bin_dir"]):
         lines.append("  " + _L("提示：%s 不在 PATH 中，入口当前无法直接调用；"
                                "请把该目录加入 PATH (如在 ~/.bashrc 或 "
@@ -12758,12 +13839,15 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                "قابل فراخوانی نیستند؛ آن را به PATH اضافه کنید "
                                "(مثلاً export PATH=\"$HOME/.local/bin:$PATH\" "
                                "در ~/.bashrc یا ~/.zshrc) و پوسته را دوباره "
-                               "باز کنید。" % paths["bin_dir"],
+                               "باز کنید." % paths["bin_dir"],
                                "提示：%s 不在 PATH 中，入口目前無法直接呼叫；"
                                "請把該目錄加入 PATH (如在 ~/.bashrc 或 "
                                "~/.zshrc 中加 export PATH=\"$HOME/.local/bin:"
                                "$PATH\") 後重開 shell。"
                                % paths["bin_dir"]))
+    if as_json:
+        return (json.dumps(_status_doc(), ensure_ascii=False)
+                + "\n", 0)
     return "\n".join(lines) + "\n", 0
 
 
@@ -12874,7 +13958,9 @@ def shortcut_change(old_name, new_name=None, scope="user",
                                   "名字 %r 已安裝" % new_name))
         return result
     own_paths = [e.get("path", "") for e in entries.values()
-                 if os.path.dirname(e.get("path", "")) == paths["bin_dir"]
+                 if isinstance(e, dict)
+                 and _shortcut_path_in_bin_dir(e.get("path", ""),
+                                               paths["bin_dir"])
                  and _shortcut_entry_intact(e.get("path", ""), e,
                                             state["instance_id"])]
     findings = shortcut_check_name(new_name, paths["bin_dir"],
@@ -12927,7 +14013,9 @@ def shortcut_change(old_name, new_name=None, scope="user",
     # 状态信任复核: 受管理脚本路径须与当前目录一致 (缺键也不许抛 KeyError),
     # 解释器须重新解析验证 (状态里写的解释器不可直接信任)
     _ms = state.get("managed_script")
-    if _ms != paths["managed_script"]:
+    if not isinstance(_ms, str) \
+            or _shortcut_canon_entry(_ms) != \
+            _shortcut_canon_entry(paths["managed_script"]):
         result["errors"].append(
             _L("状态文件受管理脚本路径与当前目录不一致，拒绝改名",
                "State file managed script path does not match the current "
@@ -13389,7 +14477,7 @@ def _shortcut_menu():
                          "кэш команд." % ", ".join(res["removed"]),
                          "حذف شد: %s. نکته: hash -r (یا rehash) را اجرا کنید "
                          "یا پوسته را دوباره باز کنید تا حافظهٔ فرمان "
-                         "به‌روز شود。" % ", ".join(res["removed"]),
+                         "به‌روز شود." % ", ".join(res["removed"]),
                          "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
                          "shell 以刷新命令快取。" % ", ".join(res["removed"])))
                 else:
@@ -13476,7 +14564,7 @@ def _shortcut_report_install(res):
                      % res.get("bin_dir", ""),
                      "توجه: %s در PATH نیست و میانبرها هنوز مستقیم قابل "
                      "فراخوانی نیستند؛ آن را به PATH اضافه کنید و پوسته را "
-                     "دوباره باز کنید。" % res.get("bin_dir", ""),
+                     "دوباره باز کنید." % res.get("bin_dir", ""),
                      "提示：%s 不在 PATH 中，入口現在還不能直接呼叫；"
                      "請把該目錄加入 PATH 後重開 shell。"
                      % res.get("bin_dir", "")))
@@ -13528,7 +14616,8 @@ def _cmd_shortcut(ns):
     interactive = sys.stdin.isatty()
     action = ns.shortcut
     if action == "status":
-        text, rc = shortcut_status(scope=scope)
+        text, rc = shortcut_status(
+            scope=scope, as_json=getattr(ns, "json", False))
         print(text, end="")
         return rc
     if action == "install":
@@ -13617,7 +14706,7 @@ def _cmd_shortcut(ns):
                      % (", ".join(res["removed"]) if res["removed"]
                         else "нет"),
                      "حذف شد: %s. نکته: hash -r (یا rehash) را اجرا کنید یا "
-                     "پوسته را دوباره باز کنید。"
+                     "پوسته را دوباره باز کنید."
                      % (", ".join(res["removed"]) if res["removed"]
                         else "هیچ"),
                      "已移除：%s。提示：執行 hash -r (或 rehash) 或重開 "
@@ -14016,7 +15105,12 @@ def main():
 
     if ns.explain:
         rule_txt = SCORING_RULES.get(LANG, SCORING_RULES["en"])
-        print(rule_txt)
+        if ns.json:
+            # R3-M-17：--explain --json 输出合法 JSON。
+            print(json.dumps({"explain": rule_txt, "language": LANG},
+                             ensure_ascii=False))
+        else:
+            print(rule_txt)
         return
 
     if ns.shortcut is not None:
@@ -14069,26 +15163,15 @@ def main():
 
     if ns.proxy is not None:
         _pp = ns.proxy.strip()
-        try:
-            if not _pp:
-                raise ValueError("empty --proxy")
-            if _pp.startswith("["):
-                _hend = _pp.index("]")
-                if _hend + 1 >= len(_pp) or _pp[_hend + 1] != ":":
-                    raise ValueError("missing ':' after ']'")
-                _ph, _pt = _pp[1:_hend], int(_pp[_hend + 2:])
-            else:
-                _ph, _pt = _pp.rsplit(":", 1)
-                _pt = int(_pt)
-                if ":" in _ph:
-                    raise ValueError("bare IPv6 needs brackets")
-            if not _ph or not (0 < _pt < 65536):
-                raise ValueError("bad host/port")
-        except Exception:
+        # R4-M-05：走严格解析器，@ / 空白符 / 控制字符一律拒
+        #（socks5://user:pass@host:port 此前靠附带冒号检查才被拒）。
+        _hp = _parse_host_port_strict(_pp)
+        if _hp is None:
             print(json.dumps({"error": "invalid --proxy format, want HOST:PORT"},
                              ensure_ascii=False) if ns.json
                   else T("invalid_proxy_format"))
             sys.exit(2)
+        _ph, _pt = _hp
         if ns.ip and not ns.json:
             print(_c(C.yellow, _ip_ignored_tpl % "--proxy"))
         # M-08(a)：单边账密不得静默降级为无认证；交互追问、非交互报参数错误。
@@ -14125,7 +15208,7 @@ def main():
             print(_c(C.yellow, _ip_ignored_tpl % "--batch"))
         _res = batch_node_test(_nodes)
         if ns.json:
-            print(json.dumps({"batch": _sanitize_batch_results(_res)},
+            print(json.dumps(_json_safe({"batch": _sanitize_batch_results(_res)}),
                              ensure_ascii=False))
         else:
             _print_batch_results(_res)
@@ -14137,7 +15220,7 @@ def main():
         if ip is None:
             print(json.dumps({"error": "invalid or non-public IP address"}, ensure_ascii=False))
             sys.exit(1)
-        res = run_passive6(ip) if ver == 6 else run_passive(ip)
+        res = run_passive6(ip, json_mode=ns.json) if ver == 6 else run_passive(ip, json_mode=ns.json)
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
         # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
@@ -14247,27 +15330,15 @@ def main():
                         return
                     if pinp.lower() == "b" or pinp == "":
                         break
-                    # 解析 host:port
+                    # 解析 host:port（R4-M-05：走严格解析器，
+                    # @ / 空白符 / 控制字符一律拒）。
                     puser, ppass = None, None
                     phost, pport = None, None
-                    try:
-                        if pinp.startswith("["):
-                            # [ipv6]:port
-                            hend = pinp.index("]")
-                            if hend + 1 >= len(pinp) or pinp[hend + 1] != ":":
-                                raise ValueError("missing ':' after ']'")
-                            phost = pinp[1:hend]
-                            pport = int(pinp[hend + 2:])
-                        elif pinp.count(":") == 1:
-                            phost, _pp = pinp.rsplit(":", 1)
-                            pport = int(_pp)
-                        else:
-                            raise ValueError("bad format")
-                        if not phost or not (0 < pport < 65536):
-                            raise ValueError("bad host/port")
-                    except Exception:
+                    _hp = _parse_host_port_strict(pinp)
+                    if _hp is None:
                         print(T("invalid_proxy_format"))
                         continue
+                    phost, pport = _hp
                     _u = input(T("prompt_proxy_user")).strip()
                     if _u:
                         puser = _u

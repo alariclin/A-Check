@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP 纯净度与网络质量检测工具</b> — 多源聚合 · 双模式 · 零依赖单文件</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.29-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@ IPv6 报告（前缀粒度：地理 / ASN / 类型 / 逐源信誉信号 + 同公
 
 ## 这是什么
 
-A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它向 33 个公开数据源查询并交叉核对，汇总为一份报告。所有评分均为多源聚合，单一来源不决定结论。
+A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外部依赖），用于评估一个 IP 地址的**信誉与纯净度**，并检测本机网络的**出口质量**。它向 32 个公开数据源查询并交叉核对，汇总为一份报告。所有评分均为多源聚合，单一来源不决定结论。
 
 ## 双模式
 
@@ -84,7 +84,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 | 12 | 网络测速（多地区） | 28 个地区节点下载测速表（多连接峰值口径），附本机上下行 |
 | 13 | 管理命令入口 | 安装 / 查看 / 改名 / 移除 `acheck` / `ac` 命令入口（`--shortcut`，`--names` / `--old-name` / `--new-name`） |
 
-流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub），区分原生解锁与 DNS 解锁（Smart DNS）。
+流媒体实测覆盖 18 个平台：AI（ChatGPT / Gemini / Claude / Grok / DeepSeek / GitHub）、视频（TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+）、社交及其他（Facebook / Instagram / Reddit / X / WhatsApp / Line），区分原生解锁与 DNS 解锁（Smart DNS）。
 
 ## 快速开始
 
@@ -98,32 +98,32 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意系统（单文件，需 Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN 镜像——GitHub 直连困难的地区（如中国大陆）可用。单文件版，功能完整：**
 gh-proxy（大陆直连）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 也可以直接运行脚本本体（需 Python 3.8+）：
 

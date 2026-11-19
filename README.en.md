@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP reputation & network quality checker</b> — multi-source aggregation · dual mode · single file, zero dependencies</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.29-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.32-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -44,7 +44,7 @@ Batch node speed test & ranking:
 
 ## What it is
 
-A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 33 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
+A-Check is a single-file Python script (`acheck.py`, standard library only, zero external dependencies) that evaluates the **reputation and cleanliness** of an IP address and checks your own network's **egress quality**. It queries 32 public data sources and cross-checks them in a single report. Every score is a multi-source aggregate; a single source never decides the result alone.
 
 ## Dual mode
 
@@ -84,7 +84,7 @@ Self-check mode numbers its sections too. IPv4 runs **[1]–[8]**: measured stre
 | 12 | Network speed test (regions) | Download table for 28 regional nodes (multi-connection peak), plus local up/down speeds |
 | 13 | Manage command shortcuts | Install / check / rename / remove the `acheck` / `ac` command shortcuts (`--shortcut`, `--names` / `--old-name` / `--new-name`) |
 
-Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line / GitHub), distinguishing native unlocks from Smart DNS unlocks.
+Measured streaming coverage spans 18 platforms: AI (ChatGPT / Gemini / Claude / Grok / DeepSeek / GitHub), video (TikTok / Disney+ / Netflix / YouTube / Amazon Prime Video / Apple TV+), social & more (Facebook / Instagram / Reddit / X / WhatsApp / Line), distinguishing native unlocks from Smart DNS unlocks.
 
 ## Quick start
 
@@ -98,32 +98,32 @@ Download the package for your system from [Releases](https://github.com/alaricli
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-mac-app.zip -o acheck-app.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck-app.zip').extractall()" && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.29/A-Check-v4.14.29-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.32/A-Check-v4.14.32-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Any system (single file, Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN mirror — for regions where GitHub is hard to reach (e.g. mainland China). Single file, full features:**
 gh-proxy (mainland China direct):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.29/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.32/acheck.py -o acheck.py && python3 acheck.py
 ```
 Or run the script directly (Python 3.8+):
 
