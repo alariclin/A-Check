@@ -6221,6 +6221,10 @@ def _print_report6_tail(res):
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
         print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+    # 4.14.33 O1：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
+    # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
+    # 调用方共用此尾巴，一并受益，v4 不动。
+    print(f"  {_c(C.dim, T('fail_note'))}")
     print(f"  {_c(C.dim, T('v6_stream_note'))}")
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -13584,11 +13588,16 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
     lines = []
     def _status_doc():
         # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
+        # 4.14.33 E-1：failed 态 state 仍存在，但未装好任何入口，
+        # installed 须为 False；同时透出 install_status 供调用方区分。
         doc = {"scope": scope,
                "managed_dir": paths["data_dir"],
                "launcher_dir": paths["bin_dir"],
                "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"]),
-               "installed": state is not None}
+               "installed": state is not None
+               and state.get("install_status") != "failed"}
+        if state is not None and state.get("install_status"):
+            doc["install_status"] = state["install_status"]
         if state is None:
             doc["entries"] = []
             return doc
@@ -13692,7 +13701,11 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                     + "\n", 0)
         return "\n".join(lines) + "\n", 0
     if state.get("install_status") == "failed":
-        return (_L("上次安装失败，未装好任何入口（状态文件 %s）。"
+        # 4.14.33 E-1：失败态 as_json 也须返回合法 JSON（复用 _status_doc，
+        # 其 installed 已按 failed 态修正为 False），rc 保持 1；文本
+        # 模式原样返回纯文本。状态文件不持久化 install 时的 errors，
+        # error 即文本提示本身（失败原因见安装时的报错）。
+        _msg = _L("上次安装失败，未装好任何入口（状态文件 %s）。"
                    "请重跑安装，失败原因见安装时的报错。"
                    % paths["state_path"],
                    "The last install failed and no entry was installed "
@@ -13710,7 +13723,12 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "زمان نصب ببینید." % paths["state_path"],
                    "上次安裝失敗，未裝好任何入口（狀態檔案 %s）。"
                    "請重跑安裝，失敗原因見安裝時的報錯。"
-                   % paths["state_path"]), 1)
+                   % paths["state_path"])
+        if as_json:
+            _doc = _status_doc()
+            _doc["error"] = _msg
+            return (json.dumps(_doc, ensure_ascii=False) + "\n", 1)
+        return (_msg, 1)
     lines.append("  %s: %s" % (_L("已安装脚本版本", "Installed script version",
                                  "インストール済みスクリプトの版",
                                  "Версия установленного скрипта",
