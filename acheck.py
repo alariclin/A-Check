@@ -7429,7 +7429,15 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     if _status is None:
         _status = getattr(r, "code", None)
     if _is_err:
+        # B-09b-2：无 Location 的终态 HTTP 错误亦须保留最终 URL——
+        # Location 在场时仍优先（重定向链的落点），缺失时回落到
+        # r.geturl() 已知的最终 URL，不留空（final-URL 限制检查的证据）。
         _loc = r.headers.get("Location", "") if getattr(r, "headers", None) else ""
+        if not _loc:
+            try:
+                _loc = r.geturl()
+            except Exception:
+                _loc = ""
     else:
         try:
             _loc = r.geturl()
