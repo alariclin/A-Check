@@ -2202,10 +2202,14 @@ def _decode_dns_name(pkt, offset):
 
 
 def _dns_name_term(pkt, offset):
-    """返回 offset 处 DNS 名的根终止符偏移（B-3-5）：沿标签/指针走到
-    长度为 0 的根标签，返回该零字节在包内的偏移；指针循环、越界或
-    非法高位标签均返 None。压缩指针指向的名字终止符即指针目标的
-    终止符（与 _decode_dns_name 的跳转语义一致）。"""
+    """返回 offset 处 DNS 名的根终止符偏移（B-3-5）：只沿本名物理编码
+    的标签走到长度为 0 的根标签，返回该零字节在包内的偏移；命中压缩
+    指针、指针循环、越界或非法高位标签均返 None。G1（2026-11-24 GPT
+    复审）：属主名以指针收尾时不跟随——指针目标可能是 RDATA 内的零字
+    节（如偏好值高字节），跟随会把该偏移洗入 _name_terms 白名单，
+    使同一偏移的交换指针被误认为合法压缩 Null MX 根；指针目标若为
+    真实名字（QNAME 或更早 RR 属主），其终止符在处理该名字时已登记，
+    不跟随不损失合法情形。"""
     seen = set()
     while offset < len(pkt):
         if offset in seen:
@@ -2215,9 +2219,8 @@ def _dns_name_term(pkt, offset):
         if length == 0:
             return offset
         if (length & 0xC0) == 0xC0:
-            if offset + 1 >= len(pkt):
-                return None
-            offset = ((length & 0x3F) << 8) | pkt[offset + 1]
+            # 压缩指针：终止符不在本名物理编码内，不注册（见 G1）。
+            return None
         elif (length & 0xC0) != 0x00:
             return None
         else:
