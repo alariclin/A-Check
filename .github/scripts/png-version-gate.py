@@ -7,7 +7,8 @@ This gate closes that hole at the change-set level:
 
   If acheck.py's VERSION differs between the base commit and HEAD,
   then all 12 docs/showcase-report-*.png and docs/showcase-ipv6-*.png
-  must be among the files changed in that range (git diff base...HEAD).
+  must be among the files changed in that range (git diff base...HEAD)
+  and still exist at HEAD (a deletion also shows up in --name-only).
   Otherwise the run fails, naming the untouched PNGs.
 
 Base resolution:
@@ -112,6 +113,18 @@ def main():
         print(f"ERROR: VERSION changed {base_ver} -> {head_ver} but "
               f"{len(missing)}/12 showcase PNGs were not changed:")
         for p in missing:
+            print(f"  - {p}")
+        print("VERDICT: FAIL")
+        return 1
+    # A deleted PNG also appears in --name-only, so "changed" alone does not
+    # prove the screenshots still exist: verify each one is present at HEAD.
+    gone = [p for p in PNGS
+            if git("cat-file", "-e", f"HEAD:{p}").returncode != 0]
+    if gone:
+        print(f"ERROR: VERSION changed {base_ver} -> {head_ver} but "
+              f"{len(gone)}/12 showcase PNGs are missing at HEAD "
+              f"(deleted in range):")
+        for p in gone:
             print(f"  - {p}")
         print("VERDICT: FAIL")
         return 1
