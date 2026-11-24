@@ -1423,10 +1423,12 @@ class C:
 
 
 def _ru_plural(n, one, few, many):
-    """俄语数量屈折：1 → one；2–4 → few；其余 → many（含 11–14 例外）；小数一律属格单数（1.5 года、5.5 года）。"""
+    """俄语数量屈折：1 → one；2–4 → few；其余 → many（含 11–14 例外）；小数一律属格单数（1.5 года、5.5 года）。非有限值（NaN/±inf）与超大数（float 转换溢出）落入 fallback，返 many，不抛错。"""
     try:
         v = float(n)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return many
+    if not math.isfinite(v):
         return many
     i = int(v)
     if i % 10 == 1 and i % 100 != 11:
