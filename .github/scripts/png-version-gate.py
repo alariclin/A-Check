@@ -14,11 +14,16 @@ This gate closes that hole at the change-set level:
 Base resolution:
   1. $BASE_SHA            (pull_request: github.event.pull_request.base.sha)
   2. $BEFORE_SHA          (push: github.event.before; all-zero is unusable)
-  3. HEAD~1               (workflow_dispatch / manual run fallback)
+  3. No fallback. C-02: the old HEAD~1 fallback is removed -- on a new
+     branch's first push or a workflow_dispatch run, a bump that predates
+     HEAD~1 with untouched PNGs compared equal at HEAD~1 and passed
+     vacuously. When neither variable yields a usable base, the gate
+     returns ERROR (exit 2) and names the missing base explicitly; the
+     caller must supply BASE_SHA / BEFORE_SHA. PR and push paths, which
+     always provide one of the two, are unaffected.
 A provided non-zero BASE_SHA/BEFORE_SHA that cannot be resolved is an
 ERROR (exit 2), not a silent fallback to HEAD~1: falling back would let a
-bump outside the last commit pass vacuously. HEAD~1 is used only when
-neither variable is provided (or both are all-zero).
+bump outside the last commit pass vacuously.
 The workflow checks out with fetch-depth: 0 so the base commit is present
 even for shallow-clone runners; without it `git show $BASE:...` fails and
 this gate errors out instead of silently passing.
@@ -72,9 +77,12 @@ def resolve_base():
             return before, "BEFORE_SHA"
         print(f"ERROR: BEFORE_SHA {before} not present in this checkout")
         return None, None
-    head_parent = git("rev-parse", "HEAD~1")
-    if head_parent.returncode == 0:
-        return head_parent.stdout.strip(), "HEAD~1 (dispatch fallback)"
+    # C-02: no HEAD~1 fallback. A bump older than HEAD~1 with untouched
+    # PNGs would compare equal and pass vacuously; fail loudly instead.
+    print("ERROR: no usable base commit: BASE_SHA/BEFORE_SHA unset, "
+          "empty, all-zero, or unresolvable, and there is no HEAD~1 "
+          "fallback (removed by C-02). Supply BASE_SHA (PR) or "
+          "BEFORE_SHA (push) to run this gate.")
     return None, None
 
 
@@ -82,7 +90,7 @@ def main():
     base, how = resolve_base()
     if base is None:
         print("ERROR: no usable base commit (BASE_SHA/BEFORE_SHA unset or "
-              "unresolvable, and no HEAD~1)")
+              "unresolvable; no HEAD~1 fallback since C-02)")
         print("VERDICT: ERROR")
         return 2
     print(f"base: {base} (via {how})")
