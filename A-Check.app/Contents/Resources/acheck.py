@@ -8034,17 +8034,25 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
         # 约 400s；截止过期返 None（调用方全 None 时印“无法核实”），不返
         # False（“无连通”的确定性否定）。单次尝试超时亦按剩余时间封顶。
         _mx_deadline = time.monotonic() + _MX_PORT25_BUDGET
+        _mx_last_short = False
         for mx in mxs:
             _mx_remain = _mx_deadline - time.monotonic()
             if _mx_remain <= 0:
                 return None
+            _try_timeout = min(timeout, max(0.1, _mx_remain))
             try:
                 _connect_host(mx.rstrip("."), 25,
-                              min(timeout, max(0.1, _mx_remain)),
+                              _try_timeout,
                               family).close()
                 return True
             except Exception:
+                # GPT-H3：末次尝试若被预算实质截短（所给额度 < timeout），
+                # 它没得到足额超时即失败，不得断言“无连通”；循环结束
+                # 后返 None。0.1s 为调度抖动容差（与单次超时下限同量级）。
+                _mx_last_short = (_try_timeout < timeout - 0.1)
                 continue
+        if _mx_last_short:
+            return None
         return False
     except Exception:
         return None
