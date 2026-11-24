@@ -28,6 +28,10 @@ IP 信誉检测 v4.14.34 — 全量修复与并发优化公开版 (零 API Key �
 import base64
 import bisect
 import errno
+try:
+    import fcntl
+except ImportError:  # Windows 等无 fcntl 的平台: 快捷键管理本就不支持
+    fcntl = None
 import hashlib
 import http.client
 import ipaddress
@@ -1470,7 +1474,12 @@ def _strict_bool(v):
 
 def _clamp_score(v):
     """风险分清洗 (R4-H-04)：有限数值钳制到 [0, 100]（整值返 int）；
-    非数值/非有限数（NaN/Inf/字符串）返 None（未知）。"""
+    非数值/非有限数（NaN/Inf/字符串）返 None（未知）。
+    字符串一律拒收（含可解析的数字串，如 "85"）：调用点只传数值/None
+    （ipquery risk_score 为 JSON 数值；_risk_bar 只传 round()/int() 结果），
+    无一处依赖数字串解析；宽松解析会把上游类型异常静默当分值。"""
+    if isinstance(v, (str, bytes)):
+        return None
     try:
         f = float(v)
     except (TypeError, ValueError, OverflowError):
@@ -1487,7 +1496,7 @@ def _clean_coord(v, lo, hi):
     float('nan')/float('inf') 本身不抛错，故须 math.isfinite 显式拦截。"""
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(f) or not (lo <= f <= hi):
         return None
@@ -2120,7 +2129,12 @@ def _encode_dns_name(domain):
 def _decode_dns_name(pkt, offset):
     """解码 DNS 名：沿合法标签/指针路径到达零字节终止符才成功；
     指针循环、标签越界、报文结束仍无终止符均返 (None, offset)（调用方
-    据此丢弃该记录或判查询失败，不以部分标签冒充有效记录）。"""
+    据此丢弃该记录或判查询失败，不以部分标签冒充有效记录）。
+    标签内字面点/反斜杠按 DNS 呈现格式转义（点前加反斜杠，反斜杠
+    本身先加倍）：单标签 a.b 解为 a 反斜杠点 b，双标签 a/b 解为 a.b，
+    两者不再碰撞（B-3-2；否则伪造应答的错属主记录可被接受）。不含点/
+    反斜杠的常规标签解码结果与此前逐字节一致，全部比对点语义不变；
+    根名仍解为 ""。"""
     labels = []
     jumped = False
     orig_offset = offset
@@ -2154,7 +2168,12 @@ def _decode_dns_name(pkt, offset):
             wire_len += 1 + length
             if wire_len > 255:
                 break
-            labels.append(pkt[offset:offset + length].decode("ascii", errors="replace"))
+            # B-3-2：标签内字面点/反斜杠须转义后再以 "." 拼接，否则
+            # 单标签 "a.b" 与双标签 "a"/"b" 同解为 "a.b"（标签边界丢失）。
+            # 先转义反斜杠再转义点，否则 "a\\" + "b" 两标签仍可与单标签
+            # "a.b" 碰撞；不含点/反斜杠的常规标签结果逐字节不变。
+            labels.append(pkt[offset:offset + length].decode(
+                "ascii", errors="replace").replace("\\", "\\\\").replace(".", "\\."))
             offset += length
     if not terminated:
         return None, (orig_offset if jumped else offset)
@@ -2209,9 +2228,10 @@ def _ns_addr_usable(s):
     拒绝 IPv6 site-local（fec0::/10，哨兵地址不可路由）；
     拒绝无有效 scope_id 的链路本地 IPv6（fe80::/10 裸地址无出口接口）；
     单栈环境下剔除无对应协议栈出口的异族全局地址——本地/ULA/环回
-    保留（链路上可达，无需全局出口）。IPv6 全局地址按目标本身测路由
-    （S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 仍用
-    _has_ipv4_egress 门。解析失败返 False。"""
+    保留（链路上可达，无需全局出口）。IPv4/IPv6 全局地址均按目标本身
+    测路由（S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 此前
+    用 _has_ipv4_egress（到 1.1.1.1 的路由）作门，分流环境下有到某 NS
+    的路由、无到 1.1.1.1 的路由时误判该 NS 不可用（B-3-1）。解析失败返 False。"""
     try:
         ip = ipaddress.ip_address(s)
     except ValueError:
@@ -2225,7 +2245,7 @@ def _ns_addr_usable(s):
                 str(ip).split("%", 1)[0], socket.AF_INET6):
             return False
     else:
-        if ip.is_global and not _has_ipv4_egress():
+        if ip.is_global and not _has_route_to(str(ip), socket.AF_INET):
             return False
     return True
 
@@ -2508,9 +2528,11 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
                     # 已存在 CNAME，但目标名称畸形，不能当作链正常结束。
                     _cname_bad = True
                     break
-                if _tgt:
-                    _nxt = _tgt.lower().rstrip(".")
-                    break
+                # B-3-3：空串即 DNS 根目标，不得按 falsy 丢弃——解码失败已
+                # 由 None 单独表示（上行已判 _cname_bad），"" 是合法解码
+                # 结果。CNAME 到根是合法链终结，须记入 cnames/allowed_owners。
+                _nxt = _tgt.lower().rstrip(".")
+                break
         if _cname_bad:
             _chain_broken = True
             break
@@ -2779,9 +2801,12 @@ class PTRCheck(Provider):
     def check(self, ip):
         try:
             _ip_obj = ipaddress.ip_address(str(ip))
+            # B-4-1：reverse_pointer 须在 try 内——带作用域的链路本地
+            # IPv6（如 fe80::1%eth0）解析成功，但 .reverse_pointer 抛
+            # AddressValueError；此前在 try 外，check() 直接抛错而非返结果 dict。
+            rev_ip = _ip_obj.reverse_pointer
         except ValueError:
             return {"ok": False, "err": "invalid ip"}
-        rev_ip = _ip_obj.reverse_pointer
         _fwd_qtype = 28 if _ip_obj.version == 6 else 1
         sys_ns_list = _get_system_nameservers()
         ptrs = None
@@ -2799,9 +2824,12 @@ class PTRCheck(Provider):
         fcrdns = False
         got_data = False
         any_failed = False
-        # R3-L-03(a)：正查只跟前 2 条 PTR，与 MX 只试前 2（mxs[:2]）同口径；
-        # 8 条 PTR 曾触发 8 次正查。
-        for h in ptrs[:2]:
+        # B-4-2：正向校验须覆盖全部 PTR。R3-L-03(a) 的 ptrs[:2] 上限本为
+        # 省查询（8 条 PTR 曾触发 8 次正查），但只查前 2 条就返 fcrdns
+        # False 是对未查 PTR 的确定性否定——第三条可解析时误判无 FCrDNS。
+        # 改为全量校验，首条匹配即 break，常见情形查询数不变；未查完之
+        # 前不作确定性否定。
+        for h in ptrs:
             fwd_ips = None
             for _ns in sys_ns_list:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns, timeout=2.5)
@@ -4201,7 +4229,12 @@ class IPsum(Provider):
                         continue
                     if not parts[1].isdigit():
                         continue
-                    out[str(addr)] = int(parts[1])
+                    # B-7-1: "²".isdigit() 为 True 而 int("²") 抛 ValueError；
+                    # 坏计数行只跳过该行, 不得以整表解析中止为代价。
+                    try:
+                        out[str(addr)] = int(parts[1])
+                    except ValueError:
+                        continue
             return out or None
 
         lst = _get_threat_list(
@@ -5181,13 +5214,16 @@ def _print_streaming_inference(res):
     ti = s.get("twoip", {})
     if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
-    if wi.get("ok") and wi.get("hosting"):
+    # B-8-2: 同 score_platform, Hosting/DC 旗标须经 _strict_bool 判定；
+    # 字符串 "false" 不得置 is_dc (truthiness 误判)。
+    if wi.get("ok") and _strict_bool(wi.get("hosting")):
         is_dc = True
-    if il.get("ok") and (il.get("hosting") or il.get("asn_type") == "hosting"):
+    if il.get("ok") and (_strict_bool(il.get("hosting"))
+                         or il.get("asn_type") == "hosting"):
         is_dc = True
-    if iq.get("ok") and iq.get("datacenter"):
+    if iq.get("ok") and _strict_bool(iq.get("datacenter")):
         is_dc = True
-    if ti.get("ok") and ti.get("hosting"):
+    if ti.get("ok") and _strict_bool(ti.get("hosting")):
         is_dc = True
 
     def _consensus(*vals):
@@ -5217,6 +5253,8 @@ def _print_streaming_inference(res):
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
+        # B-8-1: 同 score_platform, proxycheck 的 tor 字段亦为 Tor 票。
+        or (_strict_bool(pc.get("tor")) is True if pc.get("ok") else False)
         # R4-H-04：同 score_platform，Tor 票须经 _strict_bool 清洗，
         # "false" 字符串不得判真（仲裁 [4] 节的 is_tor 分支）。
         or (_strict_bool(wi.get("tor")) is True if wi.get("ok") else False)
@@ -5380,9 +5418,16 @@ def _print_streaming_inference(res):
     _risk_srcs = (pc, wi, il, iq, fp, xv, sc, fe, et, sp, sh, te, sf)
     _risk_ok = sum(1 for _s in _risk_srcs
                    if isinstance(_s, dict) and _s.get("ok"))
-    _proxy_vote_ok = any(isinstance(_s, dict) and _s.get("ok")
-                         for _s in (pc, wi, fp, il, iq))
-    _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok"))
+    # B-8-3: 按注释口径, 三类门查的须是可用证据而非源级 ok——代理/VPN 门
+    # 须至少一源投出真实布尔票 (字段缺失/非布尔皆为弃权, 不是证据)；欺诈门
+    # 须 scamalytics 给出 fraud_score (ok 但分数缺失即无欺诈证据)。
+    _proxy_vote_ok = any(
+        isinstance(_s, dict) and _s.get("ok")
+        and (_strict_bool(_s.get("proxy")) is not None
+             or _strict_bool(_s.get("vpn")) is not None)
+        for _s in (pc, wi, fp, il, iq))
+    _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok")
+                     and sc.get("fraud_score") is not None)
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
                      for _s in (fe, et, sp, sh, sf))
 
@@ -6426,6 +6471,9 @@ def get_egress_ip(budget=None):
             _to = min(6, _rem)
         else:
             _to = 6
+        # B-9-1: 按 docstring, 每源各取 min(6, 剩余) 的绝对截止；打开与读
+        # 阶段皆受每源截止约束, 不得用总 deadline 令首源吃光整预算。
+        _src_dl = time.monotonic() + _to
         try:
             _ua = {"User-Agent": "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
@@ -6436,7 +6484,7 @@ def get_egress_ip(budget=None):
             try:
                 _resp = _open_bounded(
                     lambda req=req, _to=_to: urllib.request.urlopen(req, timeout=_to),
-                    _dl if _dl is not None else time.monotonic() + _to)
+                    _src_dl)
             except Exception:
                 continue
             if _resp is None:
@@ -6454,7 +6502,8 @@ def get_egress_ip(budget=None):
 
                 _rt = threading.Thread(target=_do_read, daemon=True)
                 _rt.start()
-                _rrem = (_dl - time.monotonic()) if _dl is not None else _to
+                # B-9-1: 读阶段亦按每源截止 join, 而非总预算。
+                _rrem = _src_dl - time.monotonic()
                 _rt.join(_rrem)
                 if _rt.is_alive():
                     # F20：先 shutdown 唤醒读线程再退 with 调 close()，
@@ -7002,7 +7051,15 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
             v = None
         if v is not None:
             v = str(v).strip()
-            cl = int(v) if (v.isascii() and v.isdigit()) else False
+            # B-10-1: 超长数字串 (Python 3.11+ int 转换上限 4300 位) 会使
+            # int() 抛 ValueError；按"CL 非法时不完整"口径守住, 不外逃。
+            if v.isascii() and v.isdigit():
+                try:
+                    cl = int(v)
+                except (ValueError, OverflowError):
+                    cl = False
+            else:
+                cl = False
     if cl is False:
         return False
     if cl is not None:
@@ -7229,6 +7286,12 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if not _chunk:
                 _st["eof"] = True
                 break  # 干净 EOF
+            # B-10-2: deflate 单成员已结束, 后续非空块为流外残留：不计入
+            # 压缩已读, 且判不完整。同块残留已由 unused_data 判 False；
+            # 分块边界不得决定结论, 故跨块残留亦判 False (S1-N1 同款原则)。
+            if _gz["kind"] == "deflate" and _gz["member_eof"]:
+                _st["trunc"] = True
+                break
             _comp_read += len(_chunk)
             if _comp_read > _STREAM_COMP_CAP:
                 _st["trunc"] = True
@@ -7881,7 +7944,9 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
             # 成功查询无记录且非 Null MX：按 RFC 5321 §5.1 隐式 MX，尝试域名自身。
             # Null MX 域不走此分支（标记已置位，仍返 False）。
             mxs = [domain]
-        for mx in mxs[:2]:
+        # B-11a-1：遍历全部 MX（原 mxs[:2] 使第三条及之后的可达 MX 永不尝试，
+        # 前两条不可达即误判 25 端口不通）。
+        for mx in mxs:
             try:
                 _connect_host(mx.rstrip("."), 25, timeout, family).close()
                 return True
@@ -8161,7 +8226,9 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
         # 不得按 100ms 计（50ms 触顶按 100ms 计会把速率报成一半）。
         elapsed = max(1e-6, cap_box[0] - t0)
     else:
-        elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
+        # B-11a-2：与触顶分支同款修正——未触顶路径亦用真实 elapsed，仅以
+        # 极小值防除零；原 max(0.1, ...) 下限使 50ms 窗口速率报一半。
+        elapsed = max(1e-6, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:
         return None, 0
     return round((settled[0] * 8 / 1e6) / elapsed, 2), settled[0]
@@ -8311,17 +8378,28 @@ def _dns_test_ok(d, tid, qpkt):
         # F28：继续遍历 Authority／Additional 段，至少验证每条记录的
         # owner name、固定字段和 RDLENGTH 边界；头部声明存在、实际缺失
         # 的记录不得通过（这些记录不用于答案匹配，只验结构完整性）。
+        # B-11b-2：顺带取 OPT（type 41）TTL 高 8 位的扩展 RCODE——完整
+        # RCODE = (扩展 << 4) | 头 RCODE，非零即判败（原只看头 4 位，
+        # 扩展 RCODE 1 + 头 0 = BADVERS 16 仍返 True）。
+        _ext_rcode = 0
         for _n in range(nscount + arcount):
             _rn, _aoff = _decode_dns_name(d, _aoff)
             if _rn is None or _aoff + 10 > len(d):
                 return False
+            _rt, _rc = struct.unpack(">HH", d[_aoff:_aoff + 4])
+            _rttl = struct.unpack(">I", d[_aoff + 4:_aoff + 8])[0]
             _rdlen = struct.unpack(">H", d[_aoff + 8:_aoff + 10])[0]
             if _aoff + 10 + _rdlen > len(d):
                 return False
+            if _rt == 41:
+                _ext_rcode |= (_rttl >> 24) & 0xFF
             _aoff += 10 + _rdlen
+        if _ext_rcode != 0:
+            return False
         # CNAME 链：从查询名出发跟随 IN 类 CNAME 记录（16 跳上限、防环）
         _owners = {(qname_q or "").lower().rstrip(".")}
         _cmap = {}
+        _cname_conflict = False
         for _oan, _oat, _oac, _oroff, _ordlen in _answers:
             if _oat == 5 and _oac == 1:
                 _tgt, _tend = _decode_dns_name(d, _oroff)
@@ -8329,7 +8407,16 @@ def _dns_test_ok(d, tid, qpkt):
                 # 关联（7a-2；本函数 _dns_test_ok，与融合轮 2-3 所修的
                 # _dns_query_udp 不同函数，不得以“已修”关闭本条）。
                 if _tgt and _tend - _oroff == _ordlen:
-                    _cmap[_oan] = _tgt.lower().rstrip(".")
+                    _ntgt = _tgt.lower().rstrip(".")
+                    # B-11b-1：同一 owner 出现不同目标的 CNAME 即冲突
+                    # （_cmap 只留最后一条、链裁决取首条即 break，两者
+                    # 口径不一会让冲突 CNAME 通过校验），fail-closed 判败；
+                    # 重复相同目标不是冲突。
+                    if _oan in _cmap and _cmap[_oan] != _ntgt:
+                        _cname_conflict = True
+                    _cmap[_oan] = _ntgt
+        if _cname_conflict:
+            return False
         _ccur = (qname_q or "").lower().rstrip(".")
         for _ in range(16):
             if _ccur not in _cmap or _cmap[_ccur] in _owners:
@@ -9425,8 +9512,22 @@ def _get_real_disk_tempdir():
         real_d = os.path.realpath(d)
         best_ft = best_opts = None
         best_len = -1
-        for mp, ft, opts in mounts:
+        for _midx, (mp, ft, opts) in enumerate(mounts):
             if real_d == mp or real_d.startswith(mp + "/" if mp != "/" else "/"):
+                # B-12-1：后挂载在祖先路径上的挂载会遮盖先挂载的子挂载
+                # （如先挂 /tmp/disk 磁盘、后挂 /tmp tmpfs，则 /tmp/disk
+                # 已不可达，路径实际落在 tmpfs 上）；最长前缀仍会命中
+                # 它，误把 tmpfs 当磁盘。按 /proc/mounts 顺序（后出现 =
+                # 后挂载），若存在后出现的挂载点是 mp 的严格祖先，则 mp
+                # 已被遮盖，跳过（同路径后挂载仍由下行的后来者胜处理）。
+                _shadowed = False
+                for _mp2, _ft2, _opts2 in mounts[_midx + 1:]:
+                    if _mp2 != mp and mp.startswith(
+                            _mp2 + "/" if _mp2 != "/" else "/"):
+                        _shadowed = True
+                        break
+                if _shadowed:
+                    continue
                 if len(mp) >= best_len:  # 同长后来者胜（后挂载遮蔽先挂载）
                     best_len, best_ft, best_opts = len(mp), ft, opts
         if best_ft == "overlay":
@@ -9620,7 +9721,10 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     ip_s = str(ip)
     # CONF-13b2b.1: 按地址族分流。旧码对 IPv6 沿用 IPv4 八位反转，生成含冒号的
     # 非法查询名、空应答计 clean（假阴性）。IPv6 仅查 _DNSBL_IPV6_LISTS；不可
-    # 解析输入无有效查询可构造，fail-closed 直接返全 unknown，不发任何查询。
+    # 解析输入无有效查询可构造，不发任何查询，返零计数 (0, 0, 0, [], [])：
+    # total=0 表“未查任何列表”（无数据），并非逐项 unknown，也不是 clean；
+    # 调用方按 total==0 视作无 DNSBL 数据（N1：注释按此口径修正，返回不变，
+    # 三处调用方均按 6 元组解包，改返回会破契约）。
     try:
         _addr = ipaddress.ip_address(ip_s)
     except ValueError:
@@ -10135,6 +10239,18 @@ def run_active(json_mode=False, stack=None):
     if json_mode:
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
+        # F4-1: 嵌套 active.ipv6_report.profile 同样本地化。浅拷贝须逐层
+        # 做副本再本地化, 不得原地改 res / res["active"] / res6。
+        _act = res.get("active")
+        if isinstance(_act, dict):
+            _act_json = dict(_act)
+            _v6rep = _act.get("ipv6_report")
+            if isinstance(_v6rep, dict):
+                _v6rep_json = dict(_v6rep)
+                _v6rep_json["profile"] = _localize_profile_copy(
+                    _v6rep.get("profile") or {})
+                _act_json["ipv6_report"] = _v6rep_json
+            _res_json["active"] = _act_json
         # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
         print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
     # R3-M-17：流程出口重置章节编号状态，防编号泄漏到后续菜单段落。
@@ -10525,8 +10641,15 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._user, self._pwd = username, password
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
         self._hs_closed = False  # 8-2：握手期内被 close 的标记
+        self._hs_resp_sock = None  # B-13-1：已交 response 的活 socket，
+        # getresponse() 在 will_close 时调 self.close() 把连接交给
+        # response（stdlib 设计：只关 socket 对象、fd 由 response 的
+        # makefile 续管），close 不得 shutdown 它，否则头后 body 被截断。
 
     def connect(self):
+        # B-13-1：新一次握手开始，尚无 response 在途，清掉上轮的
+        # response socket 标记，握手期 close 仍可关断全部 socket。
+        self._hs_resp_sock = None
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
                                 username=self._user, password=self._pwd,
                                 timeout=self.timeout, rdns=True,
@@ -10579,11 +10702,28 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
 
+    def getresponse(self):
+        # B-13-1：先登记活 socket 再进 stdlib getresponse——其在
+        # will_close 时调 self.close() 把连接交给 response，close 内
+        # 须跳过该 socket 的 shutdown（见 close）。
+        self._hs_resp_sock = self.sock
+        return super().getresponse()
+
     def close(self):
         # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
         # 的 socket（shutdown 唤醒阻塞 recv），最后走标准关闭。
+        # B-13-1：已交 response 的活 socket 只 close 不 shutdown——
+        # shutdown(SHUT_RDWR) 会立即掐断 fd，头后未读的 body 直接 EOF；
+        # 其余 box 内 socket（已脱离的 raw、废弃握手 socket）照旧关断。
+        # socket.close() 本身按 makefile 引用计数，不会提前关 fd。
         self._hs_closed = True
         for _s in self._hs_box:
+            if _s is self._hs_resp_sock:
+                try:
+                    _s.close()
+                except Exception:
+                    pass
+                continue
             try:
                 _s.shutdown(socket.SHUT_RDWR)
             except Exception:
@@ -11919,6 +12059,9 @@ def _banner_net_info_async():
     if _banner_net_last_info is not None:
         if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
             return _banner_net_last_info
+        # B-15a-1：重试开新取数须刷新 deadline（首轮 deadline 已过期；
+        # 沿用它会使随后 join 立即返回、新登记 worker 无人等）。
+        _banner_net_deadline = time.monotonic() + _banner_net_budget
         return _banner_net_info()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
@@ -12043,6 +12186,13 @@ def check_update():
         if _timed_out:
             cause = "timeout"
         elif _err is not None:
+            # B-15b-1：错误响应体亦须关闭（成功分支有 with +
+            # _resp_shutdown；HTTPError 携 fp，不关则体泄漏；本函数
+            # 并不读错误体，故在此关，不等调用方）。
+            try:
+                _err.close()
+            except Exception:
+                pass
             raise _err
         elif r is None:
             cause = "unknown"
@@ -12517,15 +12667,21 @@ def _shortcut_entry_intact(path, entry, instance_id):
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return False
-    lines = text.split("\n")
-    if len(lines) != 4 or lines[3] != "":
+    # B-15b-2：按字段解析，不按全行计数——shlex.quote 会把含 LF 的合法
+    # 路径包进单引号，exec 行随之跨行；行数校验会把自家生成器产物当
+    # 外来文件拒掉。结构仍须恰为 shebang 行 + marker 行 + 一条 exec
+    # 命令加单个换行结尾（exec 行后追加垃圾行会使字段数超 4 而被拒）。
+    if not text.startswith("#!/bin/sh\n"):
         return False
-    if lines[0] != "#!/bin/sh":
+    _rest = text[len("#!/bin/sh\n"):]
+    _marker_line = "# acheck-managed: %s\n" % instance_id
+    if not _rest.startswith(_marker_line):
         return False
-    if lines[1] != "# acheck-managed: %s" % instance_id:
+    _exec_text = _rest[len(_marker_line):]
+    if not _exec_text.endswith("\n") or _exec_text[:-1].endswith("\n"):
         return False
     try:
-        parts = shlex.split(lines[2])
+        parts = shlex.split(_exec_text[:-1])
     except ValueError:
         return False
     if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
@@ -12584,6 +12740,21 @@ def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
     return parts[1] != interp
 
 
+def _shortcut_unlink_if_intact(path, entry, instance_id):
+    """B-17-3 终验紧贴删除: 删除前立即重验归属, 仅重验通过才 unlink。
+    返回 (True, "") 或 (False, 原因串)；调用方须把重验失败按保留处理
+    （记 kept/errors，不报成功）。
+    注意：重验与 unlink 之间仍有极小窗口——攻击者须有同目录写权限
+    才能在该窗口掉包，不构成提权（见 NOTES.md B-17-3 节）。"""
+    if not _shortcut_entry_intact(path, entry, instance_id):
+        return False, "recheck"
+    try:
+        os.unlink(path)
+    except OSError as e:
+        return False, str(e)
+    return True, ""
+
+
 def shortcut_check_name(name, bin_dir, own_entry_paths=(),
                         path_dirs=None, system_dirs=None):
     """单名全量检查, 返回 findings 列表 (kind ∈ invalid/target_own/
@@ -12616,10 +12787,9 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
     seen = set()
     first = True
     for d in path_dirs:
-        if not d:
-            continue
-        nd = os.path.normpath(d)
-        rd = os.path.realpath(d)
+        # B-16-3: 空分量按 POSIX 语义即 cwd ("" 视同 ".")，不得丢弃。
+        nd = os.path.normpath(d or ".")
+        rd = os.path.realpath(d or ".")
         if rd in seen:
             continue
         seen.add(rd)
@@ -12865,7 +13035,8 @@ def _shortcut_verify_launcher(path, timeout=20):
 def _shortcut_bin_in_path(bin_dir):
     base = os.path.realpath(bin_dir)
     for d in os.environ.get("PATH", "").split(os.pathsep):
-        if d and os.path.realpath(d) == base:
+        # B-16-3: 空分量按 POSIX 语义即 cwd ("" 视同 ".")，不得丢弃。
+        if os.path.realpath(d or ".") == base:
             return True
     return False
 
@@ -12935,11 +13106,102 @@ def _shortcut_fmt_findings(findings):
     return "; ".join(parts)
 
 
+class _ShortcutStateLock:
+    """B-16-1: 状态文件旁的 flock 互斥锁 (POSIX)。
+    锁文件为 <state_path>.lock, 与状态文件同目录；flock 随进程死亡自动
+    释放，不主动删锁文件（删文件会与另一持锁者竞态）。锁只覆盖 POSIX
+    路径（快捷键管理本就仅 POSIX 入口，Windows 门在前）。"""
+
+    def __init__(self, paths):
+        self.paths = paths
+        self.fd = None
+
+    def __enter__(self):
+        lock_path = self.paths["state_path"] + ".lock"
+        try:
+            os.makedirs(self.paths["data_dir"], exist_ok=True)
+            self.fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        except OSError as e:
+            raise ShortcutError(_L("无法创建状态锁文件 %s：%s"
+                                  % (lock_path, e),
+                                  "Cannot create state lock file %s: %s"
+                                  % (lock_path, e),
+                                  "状態ロックファイル %s を作成できません：%s"
+                                  % (lock_path, e),
+                                  "Не удаётся создать файл блокировки "
+                                  "состояния %s: %s" % (lock_path, e),
+                                  "نمی‌توان پروندهٔ قفل وضعیت %s را ساخت: %s"
+                                  % (lock_path, e),
+                                  "無法建立狀態鎖定檔案 %s：%s"
+                                  % (lock_path, e)))
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
+        except OSError as e:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+            raise ShortcutError(_L("无法锁定状态文件 %s：%s"
+                                  % (self.paths["state_path"], e),
+                                  "Cannot lock state file %s: %s"
+                                  % (self.paths["state_path"], e),
+                                  "状態ファイル %s をロックできません：%s"
+                                  % (self.paths["state_path"], e),
+                                  "Не удаётся заблокировать файл состояния "
+                                  "%s: %s" % (self.paths["state_path"], e),
+                                  "نمی‌توان پروندهٔ وضعیت %s را قفل کرد: %s"
+                                  % (self.paths["state_path"], e),
+                                  "無法鎖定狀態檔案 %s：%s"
+                                  % (self.paths["state_path"], e)))
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self.fd)
+                self.fd = None
+        return False
+
+
 def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                      interactive=False, input_fn=None, home=None,
                      sysroot=None, source_path=None, interpreter=None,
                      path_dirs=None, system_dirs=None):
     """安装/更新双入口。先完成全部名字的检查确认, 再开始写文件。
+    返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。
+    B-16-1: load-modify-save 全程持状态锁串行化，防并发安装丢条目；
+    拿不到锁（建锁/加锁失败）时明确报错返回，绝不静默丢条目。"""
+    _kw = dict(names=names, scope=scope, accept_ac_risk=accept_ac_risk,
+               interactive=interactive, input_fn=input_fn, home=home,
+               sysroot=sysroot, source_path=source_path,
+               interpreter=interpreter, path_dirs=path_dirs,
+               system_dirs=system_dirs)
+    result = {"ok": False, "rc": 2, "installed": [], "failed": [],
+              "skipped": [], "degraded": False, "errors": [], "scope": scope}
+    if sys.platform == "win32" or fcntl is None:
+        return _shortcut_install_impl(**_kw)
+    try:
+        paths = shortcut_paths(scope, home=home, sysroot=sysroot)
+    except ShortcutError:
+        return _shortcut_install_impl(**_kw)
+    try:
+        with _ShortcutStateLock(paths):
+            return _shortcut_install_impl(**_kw)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
+
+
+def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
+                           interactive=False, input_fn=None, home=None,
+                           sysroot=None, source_path=None, interpreter=None,
+                           path_dirs=None, system_dirs=None):
+    """安装/更新双入口实现（须经 shortcut_install 持锁调用）。
+    先完成全部名字的检查确认, 再开始写文件。
     返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。"""
     result = {"ok": False, "rc": 2, "installed": [], "failed": [],
               "skipped": [], "degraded": False, "errors": [], "scope": scope}
@@ -13429,6 +13691,33 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                            "نگذراند" % nm,
                            "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
                     continue
+                # B-16-2: 终验——验证最长 20s，替换前立即重验归属；验证期
+                # 内目标被换外来内容时拒绝覆盖（分叉仍按原口径允许修复）。
+                if not _shortcut_entry_intact(target, old_entry,
+                                              instance_id) \
+                        and not _shortcut_launcher_fork(
+                            target, instance_id, paths["managed_script"],
+                            interp):
+                    result["failed"].append(nm)
+                    result["errors"].append(
+                        _L("%s：替换前重验归属失败，目标启动器在验证期间"
+                           "被改动，不覆盖，请人工处理" % nm,
+                           "%s: pre-replace ownership re-check failed; the "
+                           "target launcher changed during verification, "
+                           "not overwriting, handle manually" % nm,
+                           "%s：置き換え前の所有権再検査に失敗しました。"
+                           "検証中にランチャーが変更されました。上書き"
+                           "しません。手動で対処してください" % nm,
+                           "%s: повторная проверка владельца перед "
+                           "заменой не пройдена; лаунчер изменился во "
+                           "время проверки, перезапись запрещена, "
+                           "разберитесь вручную" % nm,
+                           "%s: بازبینی مالکیت پیش از جایگزینی ناموفق بود؛ "
+                           "راه‌انداز در هنگام بررسی تغییر کرد، بازنویسی "
+                           "نمی‌شود، دستی رسیدگی کنید" % nm,
+                           "%s：取代前重驗歸屬失敗，目標啟動器在驗證期間"
+                           "被改動，不覆寫，請人工處理" % nm))
+                    continue
                 try:
                     os.replace(tmp, target)
                 except OSError as e:
@@ -13492,11 +13781,27 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
             _p = _ent.get("path", "") if isinstance(_ent, dict) else ""
             if _shortcut_path_in_bin_dir(_p, paths["bin_dir"]) \
                     and _shortcut_entry_intact(_p, _ent, instance_id):
-                try:
-                    os.unlink(_p)
-                except OSError:
+                # B-16-4: 删除失败不得静默吞掉——记 failed/errors，终态
+                # ok 置 False、rc 置 1；条目保留，待下次安装重试。
+                # B-17-3: 终验紧贴删除（重验失败同样按删除失败记）。
+                _ok_del, _why = _shortcut_unlink_if_intact(
+                    _p, _ent, instance_id)
+                if _ok_del:
+                    del entries[_nm]
+                else:
+                    result["failed"].append(_nm)
+                    result["errors"].append(
+                        _L("无法删除已剔除的旧启动器 %s：%s" % (_p, _why),
+                           "Cannot remove dropped old launcher %s: %s"
+                           % (_p, _why),
+                           "除外された古いランチャー %s を削除できません：%s"
+                           % (_p, _why),
+                           "Не удаётся удалить исключённый старый лаунчер "
+                           "%s: %s" % (_p, _why),
+                           "نمی‌توان راه‌انداز قدیمی حذف‌شده %s را حذف کرد: "
+                           "%s" % (_p, _why),
+                           "無法刪除已剔除的舊啟動器 %s：%s" % (_p, _why)))
                     continue
-                del entries[_nm]
     new_state = {
         "format_version": SHORTCUT_STATE_VERSION,
         "instance_id": instance_id,
@@ -14091,13 +14396,50 @@ def shortcut_change(old_name, new_name=None, scope="user",
     try:
         _shortcut_save_state(paths, trans)
     except OSError as e:
-        result["errors"].append(_L("无法保存过渡状态：%s" % e,
-                                  "Cannot save transitional state: %s" % e,
-                                  "遷移中の状態を保存できません：%s" % e,
-                                  "Не удаётся сохранить переходное состояние: %s"
-                                  % e,
-                                  "نمی‌توان وضعیت گذار را ذخیره کرد: %s" % e,
-                                  "無法儲存過渡狀態：%s" % e))
+        # B-17-2: 过渡状态存不下时回滚——删已发布的新启动器，不留未登记
+        # 的可执行启动器，并明确报错。
+        try:
+            os.unlink(new_path)
+        except OSError as e2:
+            result["errors"].append(
+                _L("无法保存过渡状态：%s；回滚删除新启动器 %s 也失败：%s"
+                   % (e, new_path, e2),
+                   "Cannot save transitional state: %s; rollback removing "
+                   "the new launcher %s also failed: %s" % (e, new_path, e2),
+                   "遷移中の状態を保存できません：%s；新しいランチャー %s "
+                   "のロールバック削除も失敗しました：%s"
+                   % (e, new_path, e2),
+                   "Не удаётся сохранить переходное состояние: %s; откат "
+                   "с удалением нового лаунчера %s также не удался: %s"
+                   % (e, new_path, e2),
+                   "نمی‌توان وضعیت گذار را ذخیره کرد: %s؛ حذف بازگردانی "
+                   "راه‌انداز جدید %s نیز ناموفق بود: %s"
+                   % (e, new_path, e2),
+                   "無法儲存過渡狀態：%s；回滾刪除新啟動器 %s 也失敗：%s"
+                   % (e, new_path, e2)))
+            result["rc"] = 1
+            return result
+        result["errors"].append(_L("无法保存过渡状态：%s；已删除新启动器 %s"
+                                  "（回滚），旧入口 %s 未动" % (e, new_path, old_name),
+                                  "Cannot save transitional state: %s; the "
+                                  "new launcher %s was removed (rolled back), "
+                                  "the old entry %s is untouched"
+                                  % (e, new_path, old_name),
+                                  "遷移中の状態を保存できません：%s；新しい"
+                                  "ランチャー %s は削除されました（ロール"
+                                  "バック）。古い入口 %s は変更されていません"
+                                  % (e, new_path, old_name),
+                                  "Не удаётся сохранить переходное состояние: "
+                                  "%s; новый лаунчер %s удалён (откат), "
+                                  "старая запись %s не тронута"
+                                  % (e, new_path, old_name),
+                                  "نمی‌توان وضعیت گذار را ذخیره کرد: %s؛ "
+                                  "راه‌انداز جدید %s حذف شد (بازگردانی)، "
+                                  "ورودی قدیمی %s دست‌نخورده است"
+                                  % (e, new_path, old_name),
+                                  "無法儲存過渡狀態：%s；已刪除新啟動器 %s"
+                                  "（回滾），舊入口 %s 未動"
+                                  % (e, new_path, old_name)))
         result["rc"] = 1
         return result
     old_path = entries[old_name]["path"]
@@ -14135,19 +14477,28 @@ def shortcut_change(old_name, new_name=None, scope="user",
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
-    try:
-        os.unlink(old_path)
-    except OSError as e:
-        result["errors"].append(_L("无法删除旧启动器 %s：%s" % (old_path, e),
-                                  "Cannot remove old launcher %s: %s"
-                                  % (old_path, e),
-                                  "古いランチャー %s を削除できません：%s"
-                                  % (old_path, e),
-                                  "Не удаётся удалить старый лаунчер %s: %s"
-                                  % (old_path, e),
-                                  "نمی‌توان راه‌انداز قدیمی %s را حذف کرد: %s"
-                                  % (old_path, e),
-                                  "無法刪除舊啟動器 %s：%s" % (old_path, e)))
+    # B-17-3: 终验紧贴删除——删除前立即重验归属，仅重验通过才删同一文件；
+    # 重验失败或删除失败均保留两个入口，请人工处理。
+    _ok_del, _why = _shortcut_unlink_if_intact(old_path, old_entry,
+                                               state["instance_id"])
+    if not _ok_del:
+        result["errors"].append(
+            _L("旧启动器 %s 删除前重验失败或无法删除（%s）；保留两个入口，"
+               "请人工处理旧入口" % (old_path, _why),
+               "Old launcher %s failed the pre-delete re-check or could "
+               "not be removed (%s); keeping both entries, handle the old "
+               "one manually" % (old_path, _why),
+               "古いランチャー %s は削除前再検査に失敗したか削除できません"
+               "でした（%s）。両方の入口を保持します。古い方を手動で対処"
+               "してください" % (old_path, _why),
+               "Старый лаунчер %s не прошёл повторную проверку перед "
+               "удалением или не удаляется (%s); обе записи сохранены, "
+               "разберитесь со старой вручную" % (old_path, _why),
+               "راه‌انداز قدیمی %s در بازبینی پیش از حذف ناموفق بود یا حذف "
+               "نشد (%s)؛ هر دو ورودی حفظ می‌شوند، ورودی قدیمی را دستی "
+               "رسیدگی کنید" % (old_path, _why),
+               "舊啟動器 %s 刪除前重驗失敗或無法刪除（%s）；保留兩個入口，"
+               "請人工處理舊入口" % (old_path, _why)))
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
@@ -14273,18 +14624,39 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                 result["removed"].append(nm)
             continue
         if _shortcut_entry_intact(p, entry, state["instance_id"]):
-            try:
-                os.unlink(p)
+            # B-17-3: 终验紧贴删除——删除前立即重验，仅重验通过才删；
+            # 重验失败按保留处理（与“无法确认归属”同口径）。
+            _ok_del, _why = _shortcut_unlink_if_intact(
+                p, entry, state["instance_id"])
+            if _ok_del:
                 result["removed"].append(nm)
                 del entries[nm]
-            except OSError as e:
+            elif _why == "recheck":
                 result["kept"].append(nm)
-                result["errors"].append(_L("无法删除 %s：%s" % (p, e),
-                                          "Cannot remove %s: %s" % (p, e),
-                                          "%s を削除できません：%s" % (p, e),
-                                          "Не удаётся удалить %s: %s" % (p, e),
-                                          "نمی‌توان %s را حذف کرد: %s" % (p, e),
-                                          "無法刪除 %s：%s" % (p, e)))
+                result["errors"].append(
+                    _L("%s（%s）在删除前重验失败，已保留，请人工处理"
+                       % (nm, p),
+                       "%s (%s) failed the pre-delete re-check; kept, "
+                       "handle manually" % (nm, p),
+                       "%s（%s）は削除前再検査に失敗しました。保持します。"
+                       "手動で対処してください" % (nm, p),
+                       "%s (%s) не прошёл повторную проверку перед "
+                       "удалением; сохранён, разберитесь вручную"
+                       % (nm, p),
+                       "%s (%s) در بازبینی پیش از حذف ناموفق بود؛ حفظ شد، "
+                       "دستی رسیدگی کنید" % (nm, p),
+                       "%s（%s）在刪除前重驗失敗，已保留，請人工處理"
+                       % (nm, p)))
+            else:
+                result["kept"].append(nm)
+                result["errors"].append(_L("无法删除 %s：%s" % (p, _why),
+                                          "Cannot remove %s: %s" % (p, _why),
+                                          "%s を削除できません：%s" % (p, _why),
+                                          "Не удаётся удалить %s: %s"
+                                          % (p, _why),
+                                          "نمی‌توان %s را حذف کرد: %s"
+                                          % (p, _why),
+                                          "無法刪除 %s：%s" % (p, _why)))
         elif not os.path.lexists(p):
             # 文件已失: 允许清理状态记录 (不再死锁); 存在但非己所有才保留
             del entries[nm]
@@ -14304,20 +14676,73 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                    "رسیدگی کنید" % (nm, p),
                    "%s（%s）無法確認為我方所有，已保留，請人工處理"
                    % (nm, p)))
+    # B-17-1: 清理阶段任何一处删除失败都须记 errors 且 ok 为 False
+    # （此前两处 except OSError: pass，报成功而文件残留）。
+    _cleanup_failed = False
     if not entries:
         # 入口清零: 再删受管理副本 (只删当前目录下的副本, 且 sha 须与状态一致,
         # O_NOFOLLOW 防符号链接; 绝不信任状态里写的 managed_script 路径) 与状态文件
         ms = paths["managed_script"]
+        _ms_match = False
         try:
-            if _shortcut_sha256_file_nofollow(ms) == \
-                    state.get("managed_sha256"):
-                os.unlink(ms)
+            _ms_match = (_shortcut_sha256_file_nofollow(ms) ==
+                         state.get("managed_sha256"))
         except OSError:
-            pass
-        try:
-            os.unlink(paths["state_path"])
-        except OSError:
-            pass
+            _ms_match = False
+        if _ms_match:
+            # B-17-3: 终验紧贴删除——sha 校验与删除之间副本可能被掉包，
+            # 删除前立即再验一次，仅两次均通过才删。
+            try:
+                _ms_match = (_shortcut_sha256_file_nofollow(ms) ==
+                             state.get("managed_sha256"))
+            except OSError:
+                _ms_match = False
+            if _ms_match:
+                try:
+                    os.unlink(ms)
+                except OSError as e:
+                    result["errors"].append(
+                        _L("无法删除受管理副本 %s：%s" % (ms, e),
+                           "Cannot remove managed script %s: %s" % (ms, e),
+                           "管理スクリプト %s を削除できません：%s" % (ms, e),
+                           "Не удаётся удалить управляемый скрипт %s: %s"
+                           % (ms, e),
+                           "نمی‌توان اسکریپت مدیریت‌شده %s را حذف کرد: %s"
+                           % (ms, e),
+                           "無法刪除受管理副本 %s：%s" % (ms, e)))
+                    _cleanup_failed = True
+            else:
+                result["errors"].append(
+                    _L("受管理副本 %s 在删除前重验失败，已保留，请人工处理"
+                       % ms,
+                       "Managed script %s failed the pre-delete re-check; "
+                       "kept, handle manually" % ms,
+                       "管理スクリプト %s は削除前再検査に失敗しました。"
+                       "保持します。手動で対処してください" % ms,
+                       "Управляемый скрипт %s не прошёл повторную проверку "
+                       "перед удалением; сохранён, разберитесь вручную" % ms,
+                       "اسکریپت مدیریت‌شده %s در بازبینی پیش از حذف ناموفق "
+                       "بود؛ حفظ شد، دستی رسیدگی کنید" % ms,
+                       "受管理副本 %s 在刪除前重驗失敗，已保留，請人工處理"
+                       % ms))
+                _cleanup_failed = True
+        if not _cleanup_failed:
+            try:
+                os.unlink(paths["state_path"])
+            except OSError as e:
+                result["errors"].append(
+                    _L("无法删除状态文件 %s：%s" % (paths["state_path"], e),
+                       "Cannot remove state file %s: %s"
+                       % (paths["state_path"], e),
+                       "状態ファイル %s を削除できません：%s"
+                       % (paths["state_path"], e),
+                       "Не удаётся удалить файл состояния %s: %s"
+                       % (paths["state_path"], e),
+                       "نمی‌توان پروندهٔ وضعیت %s را حذف کرد: %s"
+                       % (paths["state_path"], e),
+                       "無法刪除狀態檔案 %s：%s" % (paths["state_path"], e)))
+                _cleanup_failed = True
+        # 受管理副本未删干净时保留状态文件，避免状态与磁盘不一致。
     else:
         new_state = dict(state)
         new_state["entries"] = entries
@@ -14333,7 +14758,7 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                                       "無法儲存狀態：%s" % e))
             result["rc"] = 1
             return result
-    result["ok"] = not result["kept"]
+    result["ok"] = not result["kept"] and not _cleanup_failed
     result["rc"] = 0 if result["ok"] else 1
     return result
 
@@ -14624,15 +15049,38 @@ def _shortcut_report_install(res):
 
 
 def _cmd_shortcut(ns):
-    """CLI --shortcut 分发, 返回进程退出码。"""
+    """CLI --shortcut 分发, 返回进程退出码。
+    F2: install/change/remove 不支持 --json，明确拒绝（exit 2 + stderr
+    说明），不静默忽略；仅 status 支持 --json。
+    F1: status --json 在 Windows 上亦返回 JSON 错误文档（stdout 合法
+    JSON 含 error，rc 仍为 2），不走纯文本 stderr。"""
+    action = ns.shortcut
+    scope = "system" if getattr(ns, "system", False) else "user"
+    as_json = getattr(ns, "json", False)
+    if action in ("install", "change", "remove") and as_json:
+        print(_L("--shortcut %s 不支持 --json（仅 status 支持 --json）"
+                 % action,
+                 "--shortcut %s does not support --json (only status does)"
+                 % action,
+                 "--shortcut %s は --json に対応していません"
+                 "（status のみ --json に対応）" % action,
+                 "--shortcut %s не поддерживает --json (только status)"
+                 % action,
+                 "--shortcut %s از --json پشتیبانی نمی‌کند (فقط status)"
+                 % action,
+                 "--shortcut %s 不支援 --json（僅 status 支援 --json）"
+                 % action), file=sys.stderr)
+        return 2
     try:
         _shortcut_require_posix()
     except ShortcutError as e:
+        if action == "status" and as_json:
+            print(json.dumps({"scope": scope, "error": str(e)},
+                             ensure_ascii=False))
+            return 2
         print(str(e), file=sys.stderr)
         return 2
-    scope = "system" if getattr(ns, "system", False) else "user"
     interactive = sys.stdin.isatty()
-    action = ns.shortcut
     if action == "status":
         text, rc = shortcut_status(
             scope=scope, as_json=getattr(ns, "json", False))
@@ -14731,6 +15179,11 @@ def _cmd_shortcut(ns):
                      "shell 以刷新命令快取。"
                      % (", ".join(res["removed"]) if res["removed"]
                         else "無")))
+            # N2: 未安装时 ok 分支也打印 errors 里的原因（此前只印
+            # “已移除：无”，"No shortcuts installed" 说明被丢弃）。
+            if not res["removed"] and res.get("errors"):
+                for e in res["errors"]:
+                    print("  " + e)
         else:
             for e in res.get("errors", []):
                 print("  " + e)
@@ -14759,7 +15212,7 @@ def _print_cli_help():
   --no-speed      自检时跳过网速测试
   --with-speed    自检时强制进行网速测试
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
-  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用；--shortcut 仅 status 支持 --json)
   --explain       输出评分维度与扣分规则说明
   --shortcut install|status|change|remove
                   管理命令入口：安装 / 查看状态 / 改名 / 移除
@@ -14806,7 +15259,7 @@ Options:
   --no-speed      Skip the speed test during self-check
   --with-speed    Force the speed test during self-check
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
-  --json          Output results in JSON format (works with passive IP, --active or --proxy)
+  --json          Output results in JSON format (works with passive IP, --active or --proxy; for --shortcut, only status supports --json)
   --explain       Show transparent scoring rules and weights
   --shortcut install|status|change|remove
                   Manage command shortcuts: install / status / change / remove
@@ -14854,7 +15307,7 @@ Examples:
   --no-speed      自檢時跳過網速測試
   --with-speed    自檢時強制進行網速測試
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
-  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
+  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用；--shortcut 僅 status 支援 --json)
   --explain       輸出評分維度與扣分規則說明
   --shortcut install|status|change|remove
                   管理命令入口：安裝 / 查看狀態 / 改名 / 移除
@@ -14901,7 +15354,7 @@ Examples:
   --no-speed      セルフチェック時に速度テストをスキップ
   --with-speed    セルフチェック時に速度テストを強制実行
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
-  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
+  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可；--shortcut では status のみ --json に対応)
   --explain       スコアリングのルールと重みを表示
   --shortcut install|status|change|remove
                   コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
@@ -14948,7 +15401,7 @@ Examples:
   --no-speed      Пропустить тест скорости при самопроверке
   --with-speed    Принудительно выполнять тест скорости при самопроверке
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
-  --json          Вывод в JSON (с IP, --active или --proxy)
+  --json          Вывод в JSON (с IP, --active или --proxy; для --shortcut --json поддерживает только status)
   --explain       Правила и веса скоринга
   --shortcut install|status|change|remove
                   Управление ярлыками: установка / состояние / переименование / удаление
@@ -14996,7 +15449,7 @@ Examples:
   --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
-  --json          خروجی JSON (با IP، --active یا --proxy)
+  --json          خروجی JSON (با IP، --active یا --proxy؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
   --shortcut install|status|change|remove
                   مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
