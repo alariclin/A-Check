@@ -3288,14 +3288,18 @@ def _loc_region(text, ctx=None):
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
         _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["region"].items() if n == t]
+        if ctx is not None:
+            # GPT-H1：先按上下文过滤再判唯一——多条目同译文时只验首条
+            # 会随插入序拒掉有效译文；无匹配条目时不取译文、亦不回落
+            # 无上下文静态表（B-06a-2 规则）。
+            _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
+            _pairs = [(c, v) for (c, v) in _pairs
+                      if _geo_ctx_ok(c, t, _ctx_words)]
+            if not _pairs:
+                return text
         _matches = [v for _, v in _pairs]
         if len(set(_matches)) == 1:
-            if ctx is None or _geo_ctx_ok(_pairs[0][0], t,
-                                          set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))):
-                return _matches[0]
-            # B-06a-2: 单候选上下文不符时不取译文——亦不回落无上下文的
-            # 静态表（静态表同名条目正是同一错误译文），原样返回。
-            return text
+            return _matches[0]
         # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
     if en:
@@ -3321,15 +3325,18 @@ def _loc_city(text, ctx=None):
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
             _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["city"].items() if n == cand]
+            if ctx is not None:
+                # GPT-H1：同 _loc_region，先按上下文过滤再判唯一；无匹配
+                # 条目时记下后跳过本候选的无上下文静态表回落。
+                _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
+                _pairs = [(c, v) for (c, v) in _pairs
+                          if _geo_ctx_ok(c, cand, _ctx_words)]
+                if not _pairs:
+                    _ctx_rejected = True
+                    continue
             _matches = [v for _, v in _pairs]
             if len(set(_matches)) == 1:
-                if ctx is None or _geo_ctx_ok(_pairs[0][0], cand,
-                                              set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))):
-                    return _matches[0]
-                # B-06a-2: 单候选上下文不符时不取译文；记下后跳过本候选
-                # 的无上下文静态表回落（静态表同名条目正是同一错误译文）。
-                _ctx_rejected = True
-                continue
+                return _matches[0]
             # 多候选：不盲取首项，退静态表/原文（落到下行静态查表）
         if _ctx_rejected:
             continue
