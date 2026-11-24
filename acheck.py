@@ -2793,6 +2793,10 @@ class RIPEstat(Provider):
             return {"ok": False, "err": str(e)[:80]}
 
 
+# G4：PTR 正向校验全量遍历的单调总截止（秒）。见 PTRCheck.check 内注释。
+_PTR_FWD_BUDGET = 12.0
+
+
 @register
 class PTRCheck(Provider):
     key = "ptr"
@@ -2829,17 +2833,27 @@ class PTRCheck(Provider):
         # False 是对未查 PTR 的确定性否定——第三条可解析时误判无 FCrDNS。
         # 改为全量校验，首条匹配即 break，常见情形查询数不变；未查完之
         # 前不作确定性否定。
+        # G4：全量遍历加单调总截止。PTR 多、每条正查慢时无界；截止过期
+        # 返 ok False（调用方印“无法核实”，亦不计“No PTR”风险分），不返
+        # fcrdns False 的确定性否定。单次正查超时亦按剩余时间封顶。
+        _fwd_deadline = time.monotonic() + _PTR_FWD_BUDGET
+        _fwd_expired = False
         for h in ptrs:
+            if time.monotonic() >= _fwd_deadline:
+                _fwd_expired = True
+                break
             fwd_ips = None
             for _ns in sys_ns_list:
-                _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns, timeout=2.5)
+                _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns,
+                                    timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is None:
                     continue
                 fwd_ips = _r
                 if _r:
                     break
             if (fwd_ips is None or not fwd_ips) and "1.1.1.1" not in sys_ns_list:
-                _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1", timeout=2.5)
+                _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1",
+                                    timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is not None:
                     fwd_ips = _r
                 # 全部失败时 fwd_ips 仍为 None（后续 any_failed 分支处理）；[] 是数据，
@@ -2862,6 +2876,10 @@ class PTRCheck(Provider):
                 break
         if not got_data:
             return {"ok": False, "err": "forward query timeout"}
+        if _fwd_expired and not fcrdns:
+            # G4：总截止已过、剩余 PTR 未查，不得断言无 FCrDNS。返 ok False
+            #（调用方印“无法核实”），与既有 any_failed 不完整分支同一处理。
+            return {"ok": False, "err": "partial forward query failure"}
         if not fcrdns and any_failed:
             return {"ok": False, "err": "partial forward query failure"}
         return {"ok": True, "ptr": host, "fcrdns": fcrdns, "ts": now_iso()}
@@ -7924,6 +7942,10 @@ def check_mail_port25(family=socket.AF_UNSPEC):
     return False
 
 
+# G4：check_mx_port25 全量遍历的单调总截止（秒）。见函数内注释。
+_MX_PORT25_BUDGET = 12.0
+
+
 def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
     """纯 Python 查询域名 MX 记录并测试 25 端口连通性 (无需 nslookup)。"""
     try:
@@ -7946,9 +7968,18 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
             mxs = [domain]
         # B-11a-1：遍历全部 MX（原 mxs[:2] 使第三条及之后的可达 MX 永不尝试，
         # 前两条不可达即误判 25 端口不通）。
+        # G4：全量遍历加单调总截止。单条 timeout=4s、无总截止时 100 条 MX
+        # 约 400s；截止过期返 None（调用方全 None 时印“无法核实”），不返
+        # False（“无连通”的确定性否定）。单次尝试超时亦按剩余时间封顶。
+        _mx_deadline = time.monotonic() + _MX_PORT25_BUDGET
         for mx in mxs:
+            _mx_remain = _mx_deadline - time.monotonic()
+            if _mx_remain <= 0:
+                return None
             try:
-                _connect_host(mx.rstrip("."), 25, timeout, family).close()
+                _connect_host(mx.rstrip("."), 25,
+                              min(timeout, max(0.1, _mx_remain)),
+                              family).close()
                 return True
             except Exception:
                 continue
@@ -9964,7 +9995,9 @@ def _run_active6(json_mode, egress6):
         elif all(r is None for r in mx6_results):
             # H-07：三次 MX 查询全失败是“无法核实”，不是“异常”。
             print(f"  {T('mx_port25')}: {_c(C.yellow, T('unverifiable'))}")
-        elif mx6_ok == 0:
+        elif mx6_ok == 0 and not any(r is None for r in mx6_results):
+            # G4：0/N 且无未知项才是“全部不通”；有域名因总截止返 None
+            #（未判定）时落入下方的黄色部分计数，不印红色“异常”。
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx6_ok}/{len(mx_domains6)}')}")
@@ -10137,7 +10170,9 @@ def run_active(json_mode=False, stack=None):
         elif all(r is None for r in mx_results):
             # H-07：三次 MX 查询全失败是“无法核实”，不是“异常”。
             print(f"  {T('mx_port25')}: {_c(C.yellow, T('unverifiable'))}")
-        elif mx_ok == 0:
+        elif mx_ok == 0 and not any(r is None for r in mx_results):
+            # G4：0/N 且无未知项才是“全部不通”；有域名因总截止返 None
+            #（未判定）时落入下方的黄色部分计数，不印红色“异常”。
             print(f"  {T('mx_port25')}: {_c(C.red, T('abnormal'))}")
         else:
             print(f"  {T('mx_port25')}: {_c(C.yellow, f'{mx_ok}/{mx_total}')}")
