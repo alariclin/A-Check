@@ -6908,8 +6908,10 @@ def get_egress_ip6():
             # R3-H07: 上游返回的出口地址亦可能含 %scope_id/注入, 丢弃
             if ip and "%" not in str(ip):
                 _p = ipaddress.ip_address(str(ip).strip())
+                # B-09a-3：组播地址不得当作出口地址（ff02::1 同时满足
+                # is_global 且 not is_reserved，须显式排除 is_multicast）。
                 if (isinstance(_p, ipaddress.IPv6Address) and _p.is_global
-                        and not _p.is_reserved
+                        and not _p.is_reserved and not _p.is_multicast
                         and getattr(_p, "scope_id", None) is None):
                     return str(_p)
         except Exception:
