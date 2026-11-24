@@ -7916,13 +7916,37 @@ def _error_title_or_h1(body, phrase):
     """错误页结构信号（B-10-3）：短语须出现在 <title> 或 <h1> 里才算
     锁区/拒绝信号；正文散文、JS 代码、JSON 值里的裸短语不算。
     phrase 为正则片段（调用方自定，如 r"not\\s+available"），匹配
-    大小写不敏感。"""
+    大小写不敏感。
+    G4/G5（2026-11-24 GPT 复审）：旧实现用 <title[^>]*>[^<]*短语[^<]*
+    </title> 两段 [^<]* 扫描，未闭合标题 + 重复短语时二次方耗时
+    （512 KiB 采样上限下约 13 秒）；且 [^<]* 禁内层标签，<h1><span>
+    …</span></h1> 形嵌套标题误判为未锁区。现改为 str.find 线性定位
+    标题起止、去内层标签后再搜短语：单次前向扫描、无回溯，嵌套标
+    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。"""
     b = body or ""
-    return bool(
-        re.search(r"<title[^>]*>[^<]*" + phrase + r"[^<]*</title>",
-                  b, re.IGNORECASE)
-        or re.search(r"<h1[^>]*>[^<]*" + phrase + r"[^<]*</h1>",
-                     b, re.IGNORECASE))
+    if not b:
+        return False
+    _bl = b.lower()
+    for _tag in ("title", "h1"):
+        _pos = 0
+        _open_tag = "<" + _tag
+        _close_tag = "</" + _tag + ">"
+        while True:
+            _open = _bl.find(_open_tag, _pos)
+            if _open < 0:
+                break
+            _gt = _bl.find(">", _open + len(_open_tag))
+            if _gt < 0:
+                break
+            _close = _bl.find(_close_tag, _gt + 1)
+            if _close < 0:
+                _pos = _gt + 1
+                continue
+            _text = re.sub(r"<[^>]*>", "", b[_gt + 1:_close])
+            if re.search(phrase, _text, re.IGNORECASE):
+                return True
+            _pos = _close + len(_close_tag)
+    return False
 
 
 def _reddit_blocked(body):
