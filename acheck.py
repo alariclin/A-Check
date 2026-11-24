@@ -14435,6 +14435,13 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                 _rolled_back.append(_nm)
             else:
                 _kept_orphans.append((_nm, _p, _why_rb))
+        # G6（2026-11-24 GPT 复审）：回滚已删的启动器不得继续留在
+        # result["installed"] 里——结构化调用方据此判断安装结果，
+        # 不应再靠解析本地化报错文本；另以 result["rolled_back"] 明示。
+        if _rolled_back:
+            result["installed"] = [n for n in result["installed"]
+                                   if n not in _rolled_back]
+            result["rolled_back"] = list(_rolled_back)
         result["errors"].append(_L("无法保存状态：%s" % e,
                                   "Cannot save state: %s" % e,
                                   "状態を保存できません：%s" % e,
