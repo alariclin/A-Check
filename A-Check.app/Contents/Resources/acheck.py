@@ -2176,8 +2176,25 @@ def _decode_dns_name(pkt, offset):
             # 单标签 "a.b" 与双标签 "a"/"b" 同解为 "a.b"（标签边界丢失）。
             # 先转义反斜杠再转义点，否则 "a\\" + "b" 两标签仍可与单标签
             # "a.b" 碰撞；不含点/反斜杠的常规标签结果逐字节不变。
-            labels.append(pkt[offset:offset + length].decode(
-                "ascii", errors="replace").replace("\\", "\\\\").replace(".", "\\."))
+            # B-3-4：非 ASCII/控制字节不得以 errors="replace" 解为 U+FFFD
+            # （\x80/\x81/\x82 会全塌成同一字符，不同属主经 owner 过滤
+            # 碰撞通过）。改为按字节无损转义：可打印 ASCII 原样，反斜杠/
+            # 点按 B-3-2 转义，其余字节一律写成 \xhh（小写十六进制）。
+            # 该编码是单射的——\xhh 只来自非 ASCII/控制字节（字面反斜杠
+            # 已先行转义为 \\，故 "\\x80" 与 "\x80" 不会混淆）；纯 ASCII
+            # 标签的解码结果与此前逐字节一致。
+            _raw_label = pkt[offset:offset + length]
+            _parts = []
+            for _c in _raw_label:
+                if _c == 0x5C:
+                    _parts.append("\\\\")
+                elif _c == 0x2E:
+                    _parts.append("\\.")
+                elif 0x20 <= _c < 0x7F:
+                    _parts.append(chr(_c))
+                else:
+                    _parts.append("\\x%02x" % _c)
+            labels.append("".join(_parts))
             offset += length
     if not terminated:
         return None, (orig_offset if jumped else offset)
