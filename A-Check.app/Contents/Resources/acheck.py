@@ -10898,7 +10898,9 @@ def measure_download_proxy(ph, pp, user, pwd, host, path, duration=4,
         # F29（同型，代理测速路径）：用真实的正 elapsed，仅以极小值防除零。
         elapsed = max(1e-6, cap_box[0] - t0)
     else:
-        elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
+        # B-speed01（候选，B-11a-2 同型）：未触顶路径亦用真实 elapsed，仅以
+        # 极小值防除零；原 max(0.1, ...) 下限使 50ms 窗口速率报一半。
+        elapsed = max(1e-6, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:
         return None
     return round((settled[0] * 8 / 1e6) / elapsed, 2)
