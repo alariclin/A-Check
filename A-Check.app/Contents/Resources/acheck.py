@@ -5044,7 +5044,7 @@ def score_platform(s):
         pts += 40
         ev.append("VPN detected +40")
     if ((te.get("ok") and te.get("is_tor_exit"))
-            or (wi.get("ok") and _strict_bool(wi.get("tor"))) or ("tor" in pc_type)
+            or (wi.get("ok") and _strict_bool(wi.get("tor"))) or (str(pc.get("type") or "").upper() == "TOR")
             or (pc.get("ok") and _strict_bool(pc.get("tor")))
             or (il.get("ok") and _strict_bool(il.get("tor")))
             or (iq.get("ok") and _strict_bool(iq.get("tor")))):
@@ -5354,7 +5354,9 @@ def _print_streaming_inference(res):
     )
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
-        ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
+        # B-7-2：精确比对（同 4849 行正确写法）——子串 "tor" 会把
+        # type="Operator"（tor=False）误判为 Tor 节点。
+        (str(pc.get("type") or "").upper() == "TOR" if pc.get("ok") else False)
         # B-8-1: 同 score_platform, proxycheck 的 tor 字段亦为 Tor 票。
         or (_strict_bool(pc.get("tor")) is True if pc.get("ok") else False)
         # R4-H-04：同 score_platform，Tor 票须经 _strict_bool 清洗，
@@ -6002,7 +6004,7 @@ def _factor_rows(s, wi_server, v6=False):
         ("proxycheck", [
             None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
             None if pc.get("vpn") is None else _h(pc, _strict_bool(pc.get("vpn")) is True),
-            None if pc.get("type") is None else _h(pc, "tor" in str(pc.get("type")).lower()),
+            None if pc.get("type") is None else _h(pc, str(pc.get("type") or "").upper() == "TOR"),
             None if pc.get("type") is None else _h(pc, "hosting" in str(pc.get("type")).lower()),
             None, None]),
         ("ipwho.is", [
