@@ -5,6 +5,7 @@ name: A-Check CI
 #   harness: harness 本地模式（py_compile + --help + --explain + Python >= 3.8 门），
 #            在 Python 3.8-3.13 矩阵上各跑一遍。
 #   consistency: 根文件与包内副本逐字节一致；全仓版本号一致、无旧版残留；
+#            版本变化时 12 张 report/ipv6 截图须同批改动（PNG 版本门禁）；
 #            run.bat 全行 CRLF；两个测试脚本 bash 语法通过。
 # 不覆盖：170 份回归夹具（在 ~/workspace/.astra_review/fix-tools/，不在仓库内，
 # 故 CI 跑不到；如要进 CI，须先把夹具审过后提交进仓库，另立项决定）。
@@ -45,6 +46,9 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          # PNG gate needs the base commit present: push `before` / PR base
+          # are not in a shallow checkout, so fetch full history here.
+          fetch-depth: 0
       - name: Package copy identical to root file
         run: cmp acheck.py A-Check.app/Contents/Resources/acheck.py
       - name: Version consistency (no stale version anywhere)
@@ -93,6 +97,11 @@ jobs:
               sys.exit(1)
           print(f"OK: all version strings are {ver}")
           PY
+      - name: PNG version gate (screenshots follow VERSION bumps)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: python3 .github/scripts/png-version-gate.py
       - name: run.bat is CRLF throughout
         run: |
           python3 - <<'PY'

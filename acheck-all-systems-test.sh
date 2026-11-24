@@ -154,6 +154,15 @@ echo "A-Check 全系统兼容性测试: $ACHEK_ABS"
 echo "=========================================="
 echo ""
 
+# F5: docker 模式须先确认 docker 可用；缺失时一次明确报错退出，
+# 不进入 14 系统循环（否则每系统各记一 FAIL，掩盖真正原因）。
+# 本地模式 (ACHECK_LOCAL_ONLY=1) 不用 docker，不受影响。
+if [ "${ACHECK_LOCAL_ONLY:-0}" != "1" ] && ! command -v docker >/dev/null 2>&1; then
+    echo "ERROR: docker 未找到 (docker not found)，无法运行 docker 模式的 14 系统测试" >&2
+    echo "请先安装 Docker，或改用本地模式: ACHECK_LOCAL_ONLY=1 bash acheck-all-systems-test.sh [./acheck.py]" >&2
+    exit 2
+fi
+
 if [ "${ACHECK_LOCAL_ONLY:-0}" = "1" ]; then
     echo "--- local (host python3) ---"
     log="$(mktemp)"
