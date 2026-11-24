@@ -1470,7 +1470,12 @@ def _strict_bool(v):
 
 def _clamp_score(v):
     """风险分清洗 (R4-H-04)：有限数值钳制到 [0, 100]（整值返 int）；
-    非数值/非有限数（NaN/Inf/字符串）返 None（未知）。"""
+    非数值/非有限数（NaN/Inf/字符串）返 None（未知）。
+    字符串一律拒收（含可解析的数字串，如 "85"）：调用点只传数值/None
+    （ipquery risk_score 为 JSON 数值；_risk_bar 只传 round()/int() 结果），
+    无一处依赖数字串解析；宽松解析会把上游类型异常静默当分值。"""
+    if isinstance(v, (str, bytes)):
+        return None
     try:
         f = float(v)
     except (TypeError, ValueError, OverflowError):
@@ -1487,7 +1492,7 @@ def _clean_coord(v, lo, hi):
     float('nan')/float('inf') 本身不抛错，故须 math.isfinite 显式拦截。"""
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if not math.isfinite(f) or not (lo <= f <= hi):
         return None
@@ -2120,7 +2125,12 @@ def _encode_dns_name(domain):
 def _decode_dns_name(pkt, offset):
     """解码 DNS 名：沿合法标签/指针路径到达零字节终止符才成功；
     指针循环、标签越界、报文结束仍无终止符均返 (None, offset)（调用方
-    据此丢弃该记录或判查询失败，不以部分标签冒充有效记录）。"""
+    据此丢弃该记录或判查询失败，不以部分标签冒充有效记录）。
+    标签内字面点/反斜杠按 DNS 呈现格式转义（点前加反斜杠，反斜杠
+    本身先加倍）：单标签 a.b 解为 a 反斜杠点 b，双标签 a/b 解为 a.b，
+    两者不再碰撞（B-3-2；否则伪造应答的错属主记录可被接受）。不含点/
+    反斜杠的常规标签解码结果与此前逐字节一致，全部比对点语义不变；
+    根名仍解为 ""。"""
     labels = []
     jumped = False
     orig_offset = offset
@@ -2154,7 +2164,12 @@ def _decode_dns_name(pkt, offset):
             wire_len += 1 + length
             if wire_len > 255:
                 break
-            labels.append(pkt[offset:offset + length].decode("ascii", errors="replace"))
+            # B-3-2：标签内字面点/反斜杠须转义后再以 "." 拼接，否则
+            # 单标签 "a.b" 与双标签 "a"/"b" 同解为 "a.b"（标签边界丢失）。
+            # 先转义反斜杠再转义点，否则 "a\\" + "b" 两标签仍可与单标签
+            # "a.b" 碰撞；不含点/反斜杠的常规标签结果逐字节不变。
+            labels.append(pkt[offset:offset + length].decode(
+                "ascii", errors="replace").replace("\\", "\\\\").replace(".", "\\."))
             offset += length
     if not terminated:
         return None, (orig_offset if jumped else offset)
@@ -2209,9 +2224,10 @@ def _ns_addr_usable(s):
     拒绝 IPv6 site-local（fec0::/10，哨兵地址不可路由）；
     拒绝无有效 scope_id 的链路本地 IPv6（fe80::/10 裸地址无出口接口）；
     单栈环境下剔除无对应协议栈出口的异族全局地址——本地/ULA/环回
-    保留（链路上可达，无需全局出口）。IPv6 全局地址按目标本身测路由
-    （S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 仍用
-    _has_ipv4_egress 门。解析失败返 False。"""
+    保留（链路上可达，无需全局出口）。IPv4/IPv6 全局地址均按目标本身
+    测路由（S2-N1，不再以到 Cloudflare 单点的路由否决全部）；IPv4 此前
+    用 _has_ipv4_egress（到 1.1.1.1 的路由）作门，分流环境下有到某 NS
+    的路由、无到 1.1.1.1 的路由时误判该 NS 不可用（B-3-1）。解析失败返 False。"""
     try:
         ip = ipaddress.ip_address(s)
     except ValueError:
@@ -2225,7 +2241,7 @@ def _ns_addr_usable(s):
                 str(ip).split("%", 1)[0], socket.AF_INET6):
             return False
     else:
-        if ip.is_global and not _has_ipv4_egress():
+        if ip.is_global and not _has_route_to(str(ip), socket.AF_INET):
             return False
     return True
 
@@ -2508,9 +2524,11 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
                     # 已存在 CNAME，但目标名称畸形，不能当作链正常结束。
                     _cname_bad = True
                     break
-                if _tgt:
-                    _nxt = _tgt.lower().rstrip(".")
-                    break
+                # B-3-3：空串即 DNS 根目标，不得按 falsy 丢弃——解码失败已
+                # 由 None 单独表示（上行已判 _cname_bad），"" 是合法解码
+                # 结果。CNAME 到根是合法链终结，须记入 cnames/allowed_owners。
+                _nxt = _tgt.lower().rstrip(".")
+                break
         if _cname_bad:
             _chain_broken = True
             break
@@ -2779,9 +2797,12 @@ class PTRCheck(Provider):
     def check(self, ip):
         try:
             _ip_obj = ipaddress.ip_address(str(ip))
+            # B-4-1：reverse_pointer 须在 try 内——带作用域的链路本地
+            # IPv6（如 fe80::1%eth0）解析成功，但 .reverse_pointer 抛
+            # AddressValueError；此前在 try 外，check() 直接抛错而非返结果 dict。
+            rev_ip = _ip_obj.reverse_pointer
         except ValueError:
             return {"ok": False, "err": "invalid ip"}
-        rev_ip = _ip_obj.reverse_pointer
         _fwd_qtype = 28 if _ip_obj.version == 6 else 1
         sys_ns_list = _get_system_nameservers()
         ptrs = None
@@ -2799,9 +2820,12 @@ class PTRCheck(Provider):
         fcrdns = False
         got_data = False
         any_failed = False
-        # R3-L-03(a)：正查只跟前 2 条 PTR，与 MX 只试前 2（mxs[:2]）同口径；
-        # 8 条 PTR 曾触发 8 次正查。
-        for h in ptrs[:2]:
+        # B-4-2：正向校验须覆盖全部 PTR。R3-L-03(a) 的 ptrs[:2] 上限本为
+        # 省查询（8 条 PTR 曾触发 8 次正查），但只查前 2 条就返 fcrdns
+        # False 是对未查 PTR 的确定性否定——第三条可解析时误判无 FCrDNS。
+        # 改为全量校验，首条匹配即 break，常见情形查询数不变；未查完之
+        # 前不作确定性否定。
+        for h in ptrs:
             fwd_ips = None
             for _ns in sys_ns_list:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns, timeout=2.5)
