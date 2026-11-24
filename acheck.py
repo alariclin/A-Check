@@ -3779,10 +3779,11 @@ class EmergingThreats(Provider):
                 if not line or line.startswith("#"):
                     continue
                 try:
-                    ipaddress.ip_address(line)
+                    # B-6-2：存规范化形式——原行展开式 IPv6 对压缩式查询
+                    # 全漏报；查询用 str(ip)（压缩式）。
+                    out.add(str(ipaddress.ip_address(line)))
                 except ValueError:
                     continue
-                out.add(line)
             return out or None
 
         lst = _get_threat_list(
@@ -3808,10 +3809,10 @@ class TorExitNodes(Provider):
                 if not line or line.startswith("#"):
                     continue
                 try:
-                    ipaddress.ip_address(line)
+                    # B-6-2：存规范化形式（同 EmergingThreats）。
+                    out.add(str(ipaddress.ip_address(line)))
                 except ValueError:
                     continue
-                out.add(line)
             return out or None
 
         lst = _get_threat_list(
