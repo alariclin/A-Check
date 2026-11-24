@@ -3517,7 +3517,11 @@ class GreyNoise(Provider):
     name = "GreyNoise"
 
     def check(self, ip):
-        # 免费版 Community 限 25 次/周，进程内缓存减少重复消耗
+        # GreyNoise 限额按档分述（官方 Community API 文档，2026-10-02 更新，
+        # 2026-11-24 复核）：未认证 10 次/天；免费账号（工作邮箱）50 次/周
+        # （API+可视化合计）。A-Check 不带 key 调用，走未认证档；429 响应体
+        # 实测逐字为 rate_limit "25-W"（2026-11-24 探针），与文档口径不一致。
+        # 进程内缓存减少重复消耗。
         ok, raw = http_get(f"https://api.greynoise.io/v3/community/{_q_ip(ip)}", use_cache=True)
         if not ok:
             # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
