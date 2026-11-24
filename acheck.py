@@ -14133,17 +14133,17 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
     lines = []
     def _status_doc():
         # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
-        # 4.14.34 E-1：failed 态 state 仍存在，但未装好任何入口，
-        # installed 须为 False；同时透出 install_status 供调用方区分。
+        # B-16-6：installed 按实际条目是否 OK 计算——更新失败写入 failed
+        # 态时保留的 OK 条目仍算已安装；install_status 仅作补充状态透出。
+        # 4.14.34 E-1 仍成立：failed 态且无任何 OK 条目时 installed 为 False。
         doc = {"scope": scope,
                "managed_dir": paths["data_dir"],
                "launcher_dir": paths["bin_dir"],
-               "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"]),
-               "installed": state is not None
-               and state.get("install_status") != "failed"}
+               "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"])}
         if state is not None and state.get("install_status"):
             doc["install_status"] = state["install_status"]
         if state is None:
+            doc["installed"] = False
             doc["entries"] = []
             return doc
         doc["installed_version"] = state.get("installed_version")
@@ -14183,6 +14183,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                             "warnings": [{"kind": f["kind"], "path": f["path"]}
                                          for f in shadow + foreign]})
         doc["entries"] = entries
+        doc["installed"] = any(e["status"] == "OK" for e in entries)
         return doc
 
     if corrupt:
@@ -14245,10 +14246,20 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
             return (json.dumps(_status_doc(), ensure_ascii=False)
                     + "\n", 0)
         return "\n".join(lines) + "\n", 0
-    if state.get("install_status") == "failed":
-        # 4.14.34 E-1：失败态 as_json 也须返回合法 JSON（复用 _status_doc，
-        # 其 installed 已按 failed 态修正为 False），rc 保持 1；文本
-        # 模式原样返回纯文本。状态文件不持久化 install 时的 errors，
+    # B-16-6: failed 态是否按“未装好任何入口”处理，取决于是否仍有
+    # OK 条目（而非 install_status 本身）；保留条目仍 OK 时落到
+    # 正常状态展示（_status_doc 的 installed 已按条目 OK 计算）。
+    _failed_no_ok = False
+    if state is not None and state.get("install_status") == "failed":
+        _failed_no_ok = not any(
+            _shortcut_entry_intact(
+                _e.get("path", "") if isinstance(_e, dict) else "",
+                _e, state["instance_id"])
+            for _e in (state.get("entries") or {}).values())
+    if _failed_no_ok:
+        # 4.14.34 E-1：失败态且无任何 OK 条目时 as_json 也须返回合法
+        # JSON（复用 _status_doc，其 installed 已为 False），rc 保持 1；
+        # 文本模式原样返回纯文本。状态文件不持久化 install 时的 errors，
         # error 即文本提示本身（失败原因见安装时的报错）。
         _msg = _L("上次安装失败，未装好任何入口（状态文件 %s）。"
                    "请重跑安装，失败原因见安装时的报错。"
