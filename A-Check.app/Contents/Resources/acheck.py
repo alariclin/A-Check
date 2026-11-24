@@ -12757,11 +12757,33 @@ def _shortcut_sha256_file_nofollow(path):
         os.close(fd)
 
 
+# C-05/B-15-3: 启动器限长读上限——自家生成器对近 PATH_MAX 的解释器/
+# 脚本路径会产出逾 4097 字节的合法启动器 (实测 8302/4341 字节)，
+# 4097 上限会把它判外来。64KiB 容纳两条 PATH_MAX 级路径加引用开销
+# 仍有余量，超限文件仍拒 (防无界读)。
+_SHORTCUT_LAUNCHER_MAX_BYTES = 65536
+
+
+def _shortcut_read_launcher_capped(fd):
+    """限长读启动器全文：逾 _SHORTCUT_LAUNCHER_MAX_BYTES 即返回 None。"""
+    chunks = []
+    total = 0
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > _SHORTCUT_LAUNCHER_MAX_BYTES:
+            return None
+    return b"".join(chunks)
+
+
 def _shortcut_entry_intact(path, entry, instance_id):
     """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
     且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。
-    O_NOFOLLOW|O_NONBLOCK 打开 (FIFO 不阻塞) + fstat + 限长读 (4097 字节)
-    + 完整 3 行模板校验。"""
+    O_NOFOLLOW|O_NONBLOCK 打开 (FIFO 不阻塞) + fstat + 限长读 (64KiB，
+    C-05/B-15-3) + 完整 3 行模板校验。"""
     if not isinstance(path, str) or not isinstance(entry, dict):
         return False
     try:
@@ -12775,8 +12797,8 @@ def _shortcut_entry_intact(path, entry, instance_id):
             return False
         if not stat.S_ISREG(st.st_mode):
             return False
-        data = os.read(fd, 4097)
-        if os.read(fd, 1):
+        data = _shortcut_read_launcher_capped(fd)
+        if data is None:
             return False
     finally:
         os.close(fd)
@@ -12832,8 +12854,8 @@ def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
             return False
         if not stat.S_ISREG(st.st_mode):
             return False
-        data = os.read(fd, 4097)
-        if os.read(fd, 1):
+        data = _shortcut_read_launcher_capped(fd)
+        if data is None:
             return False
     finally:
         os.close(fd)
