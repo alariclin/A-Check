@@ -10,10 +10,11 @@ _py_ok() {  # $1=解释器路径：存在、可执行且版本 >= 3.8 即真
 
 PY=""
 if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-    # macOS：候选解释器按序，与 A-Check.app 启动器同款（R4-L-02）：
+    # macOS：候选解释器按序与 A-Check.app 启动器一致（R4-L-02）：
     # Homebrew (Apple Silicon)、Homebrew (Intel)、python.org 框架版，
     # 最后取 PATH 中的 python3。/usr/bin/python3 在未装 CLT 时是 xcrun 桩，
-    # 调用会弹安装提示；须先用 xcode-select -p 确认 CLT 已装，才可取用。
+    # 调用会弹安装提示；仅该路径须先用 xcode-select -p 确认 CLT 已装，
+    # 其余 PATH 中的 python3 只验版本，不要求 xcode-select -p 成功。
     for _cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 \
         /Library/Frameworks/Python.framework/Versions/Current/bin/python3; do
         if [ -x "$_cand" ]; then
@@ -31,7 +32,7 @@ if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
                 if xcode-select -p >/dev/null 2>&1 && _py_ok "$_pv"; then
                     PY="$_pv"
                 fi
-            elif xcode-select -p >/dev/null 2>&1 && _py_ok "$_pv"; then
+            elif _py_ok "$_pv"; then
                 PY="$_pv"
             fi
         fi

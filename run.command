@@ -34,7 +34,7 @@ if [ -z "$PY" ]; then
             if xcode-select -p >/dev/null 2>&1 && _py_ok "$_pv"; then
                 PY="$_pv"
             fi
-        elif xcode-select -p >/dev/null 2>&1 && _py_ok "$_pv"; then
+        elif _py_ok "$_pv"; then
             PY="$_pv"
         fi
     fi
