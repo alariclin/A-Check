@@ -10916,6 +10916,24 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
 
 
 
+def _probe_headers_complete(s, deadline=None):
+    """B-13-2：204 兼容校验——读满头块至空行才算完整响应；EOF、超 32 行
+    或无 CRLF 截断皆不认（与 _probe_body_empty 对 200 的要求一致，
+    仅不校验 Content-Length：204 无体、无 CL 亦可完整）。"""
+    try:
+        for _ in range(32):
+            ln = _sock_readline(s, deadline=deadline)
+            if ln == b"\r\n":
+                return True  # 头块完整：见终止空行
+            if ln == b"":
+                return False  # EOF：头块不完整
+            if not ln.endswith(b"\r\n"):
+                return False  # 超限截断的无 CRLF 片段（见 _probe_body_empty）
+        return False  # 32 行未见空行：头块不完整
+    except OSError:
+        return False
+
+
 def socks5_probe(ph, pp, username=None, password=None, timeout=8):
     """SOCKS5 握手冒烟测试: 对 clients3.google.com:80 做 CONNECT,
     发 HTTP 探测, 200/204 即代理可用。返回 dict。"""
@@ -10942,7 +10960,10 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         m = re.match(rb"HTTP/\d\.\d (\d{3})(?:[ \t].*)?\r\n$", line)
         ok = False
         if m and m.group(1) == b"204":
-            ok = True
+            # B-13-2：仅状态行不算完整响应，须读满头块至空行（与 200
+            # 分支经 _probe_body_empty 的要求一致）；对端只发状态行
+            # 即关闭时不得报代理可用。
+            ok = _probe_headers_complete(s, deadline=_deadline)
         elif m and m.group(1) == b"200":
             ok = _probe_body_empty(s, deadline=_deadline)
         return {"ok": ok, "latency_ms": round(hs_ms, 1),
