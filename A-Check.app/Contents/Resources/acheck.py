@@ -7778,8 +7778,10 @@ def _denied_error_page(body):
     if re.search(r"<title[^>]*>\s*access denied\s*</title>",
                  b, re.IGNORECASE):
         return True
-    if len(b) < 16384 and "Access Denied" in b:
-        _low = b.lower()
+    # B-10-4：短 HTML 检查与标题检查一致，大小写不敏感——"Access Denied"
+    # 须按小写比对，否则小写/大写拒绝页被漏判为 unlocked。
+    _low = b.lower()
+    if len(b) < 16384 and "access denied" in _low:
         if ("<html" in _low or "<head" in _low or "<body" in _low
                 or "<h1" in _low):
             return True
