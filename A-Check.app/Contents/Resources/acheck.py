@@ -2704,8 +2704,10 @@ class Urlscan(Provider):
     name = "urlscan.io"
 
     def check(self, ip):
+        # B-4-3：Lucene 值加引号——未加引号的 IPv6 冒号致 urlscan.io
+        # HTTP 400（live 实测 2026-11-24）；加引号后 200。IPv4 同口径。
         q = urllib.parse.quote(
-            f"page.ip:{ip} AND (task.source:urlhaus OR task.source:openphish "
+            f"page.ip:\"{ip}\" AND (task.source:urlhaus OR task.source:openphish "
             f"OR task.source:phishtank OR task.tags:phishing OR task.tags:malware)")
         ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
