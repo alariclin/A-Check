@@ -3288,10 +3288,12 @@ def _loc_region(text, ctx=None):
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
         _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["region"].items() if n == t]
-        if ctx is not None:
+        if ctx is not None and _pairs:
             # GPT-H1：先按上下文过滤再判唯一——多条目同译文时只验首条
             # 会随插入序拒掉有效译文；无匹配条目时不取译文、亦不回落
-            # 无上下文静态表（B-06a-2 规则）。
+            # 无上下文静态表（B-06a-2 规则）。注意：仅当确有条目时才
+            # 过滤——无条目时沿旧行为退静态表（空 _pairs 提前返回会
+            # 截断静态表回落，致 f_city/json_geo/p2a 三支回归失败）。
             _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
             _pairs = [(c, v) for (c, v) in _pairs
                       if _geo_ctx_ok(c, t, _ctx_words)]
@@ -3325,9 +3327,11 @@ def _loc_city(text, ctx=None):
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
             _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["city"].items() if n == cand]
-            if ctx is not None:
+            if ctx is not None and _pairs:
                 # GPT-H1：同 _loc_region，先按上下文过滤再判唯一；无匹配
-                # 条目时记下后跳过本候选的无上下文静态表回落。
+                # 条目时记下后跳过本候选的无上下文静态表回落。仅当确有
+                # 条目时才过滤——无条目时沿旧行为退静态表（见 _loc_region
+                # 同款注记；空 _pairs 提前返回会截断静态表回落）。
                 _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
                 _pairs = [(c, v) for (c, v) in _pairs
                           if _geo_ctx_ok(c, cand, _ctx_words)]
