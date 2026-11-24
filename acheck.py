@@ -9520,10 +9520,18 @@ def _get_real_disk_tempdir():
                 # 它，误把 tmpfs 当磁盘。按 /proc/mounts 顺序（后出现 =
                 # 后挂载），若存在后出现的挂载点是 mp 的严格祖先，则 mp
                 # 已被遮盖，跳过（同路径后挂载仍由下行的后来者胜处理）。
+                # B-12-1 修正：根挂载 / 不作遮盖者——真实 /proc/mounts 里
+                # / 是启动时挂载、几乎总在首位；后列出的 / 行只是表位
+                # 置（如夹具把它附在末尾作回退归属），并非一次迟到的、
+                # 遮住整棵树的挂载。把它当遮盖者会把一切先列子挂载
+                # （tmpfs / overlay）全部跳过、回落到 / ext4，误把
+                # 内存盘当磁盘。真在 / 上后挂载会遮住全部候选，函数
+                # 的回退逻辑本就无意义，故豁免它不损失真遮盖判定；
+                # 非根祖先（如 /tmp tmpfs 遮 /tmp/disk）的遮盖不受影响。
                 _shadowed = False
                 for _mp2, _ft2, _opts2 in mounts[_midx + 1:]:
-                    if _mp2 != mp and mp.startswith(
-                            _mp2 + "/" if _mp2 != "/" else "/"):
+                    if _mp2 != "/" and _mp2 != mp and mp.startswith(
+                            _mp2 + "/"):
                         _shadowed = True
                         break
                 if _shadowed:
