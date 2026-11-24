@@ -4474,8 +4474,11 @@ def _build_unified_profile(s):
 
     # H-10: 文本字段逐源清洗后取首个非空；非字符串源（dict/list/int）在清洗
     # 时即被丢弃为空，不再靠 `or` 链把原始对象透传进画像。
-    isp = _clean_str(wi.get("isp")) or _clean_str(pc.get("provider")) or _clean_str(ii.get("org")) or _clean_str(ai.get("isp")) or _clean_str(il.get("isp")) or _clean_str(iq.get("isp")) or _clean_str(ti.get("isp")) or _clean_str(ox.get("isp")) or _clean_str(gu.get("isp")) or _clean_str(gj.get("isp")) or _clean_str(co.get("isp")) or ""
-    org = _clean_str(wi.get("org")) or _clean_str(ii.get("org")) or _clean_str(pc.get("provider")) or _clean_str(ai.get("org")) or _clean_str(gu.get("org")) or _clean_str(gj.get("org")) or _clean_str(il.get("org")) or _clean_str(iq.get("org")) or _clean_str(co.get("org")) or _clean_str(rd.get("org")) or _clean_str(rd.get("netname")) or ""
+    # B-6-3：isp/org 链补 ipwhoisapp（wa）——此前 ASN/region/city/
+    # timezone 均已含 wa，唯 isp/org 漏，致仅 wa 成功时画像 isp/org 为空。
+    # 放链尾：仅当前链无值时补位，不抢高优先级源。
+    isp = _clean_str(wi.get("isp")) or _clean_str(pc.get("provider")) or _clean_str(ii.get("org")) or _clean_str(ai.get("isp")) or _clean_str(il.get("isp")) or _clean_str(iq.get("isp")) or _clean_str(ti.get("isp")) or _clean_str(ox.get("isp")) or _clean_str(gu.get("isp")) or _clean_str(gj.get("isp")) or _clean_str(co.get("isp")) or _clean_str(wa.get("isp")) or ""
+    org = _clean_str(wi.get("org")) or _clean_str(ii.get("org")) or _clean_str(pc.get("provider")) or _clean_str(ai.get("org")) or _clean_str(gu.get("org")) or _clean_str(gj.get("org")) or _clean_str(il.get("org")) or _clean_str(iq.get("org")) or _clean_str(co.get("org")) or _clean_str(rd.get("org")) or _clean_str(rd.get("netname")) or _clean_str(wa.get("org")) or ""
     _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ox.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
