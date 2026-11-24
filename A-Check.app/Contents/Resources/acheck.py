@@ -3124,11 +3124,24 @@ def _wd_label(name, kind, context):
                 return False
             toks = [t.strip() for t in (context or "").split(",")]
             toks = [t for t in toks if t and t.lower() != name.lower()]
+            qids = []
             for tok in toks:
                 qid = _resolve_qid(tok)
-                if qid and (qid in countries or qid in placed):
-                    return True
-            return False
+                if qid:
+                    qids.append(qid)
+            if not qids:
+                return False
+            # B-06a-1: 须命中最具体的可解析上下文成分——任一成分命中
+            # P131 链（州/省级）即确认；否则任一可解析成分若既非国家亦
+            # 非 P131 链成员，说明上下文指明了另一具体行政区（如 Illinois
+            # 之于 Massachusetts 实体），仅国家级命中不得取地方译名；
+            # 全部可解析成分皆为国家级时，国家级命中即确认（上下文无
+            # 州级成分时国家即最具体成分）。
+            if any(q in placed for q in qids):
+                return True
+            if any(q not in countries for q in qids):
+                return False
+            return any(q in countries for q in qids)
 
         p31_map = {}
         for c in cands:
