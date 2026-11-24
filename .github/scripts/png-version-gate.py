@@ -10,10 +10,14 @@ This gate closes that hole at the change-set level:
   must be among the files changed in that range (git diff base...HEAD).
   Otherwise the run fails, naming the untouched PNGs.
 
-Base resolution (first usable wins):
+Base resolution:
   1. $BASE_SHA            (pull_request: github.event.pull_request.base.sha)
   2. $BEFORE_SHA          (push: github.event.before; all-zero is unusable)
   3. HEAD~1               (workflow_dispatch / manual run fallback)
+A provided non-zero BASE_SHA/BEFORE_SHA that cannot be resolved is an
+ERROR (exit 2), not a silent fallback to HEAD~1: falling back would let a
+bump outside the last commit pass vacuously. HEAD~1 is used only when
+neither variable is provided (or both are all-zero).
 The workflow checks out with fetch-depth: 0 so the base commit is present
 even for shallow-clone runners; without it `git show $BASE:...` fails and
 this gate errors out instead of silently passing.
@@ -59,12 +63,14 @@ def resolve_base():
     if base and base != ZERO_SHA:
         if git("cat-file", "-e", f"{base}^{{commit}}").returncode == 0:
             return base, "BASE_SHA"
-        print(f"WARNING: BASE_SHA {base} not present in this checkout")
+        print(f"ERROR: BASE_SHA {base} not present in this checkout")
+        return None, None
     before = os.environ.get("BEFORE_SHA", "").strip()
     if before and before != ZERO_SHA:
         if git("cat-file", "-e", f"{before}^{{commit}}").returncode == 0:
             return before, "BEFORE_SHA"
-        print(f"WARNING: BEFORE_SHA {before} not present in this checkout")
+        print(f"ERROR: BEFORE_SHA {before} not present in this checkout")
+        return None, None
     head_parent = git("rev-parse", "HEAD~1")
     if head_parent.returncode == 0:
         return head_parent.stdout.strip(), "HEAD~1 (dispatch fallback)"
