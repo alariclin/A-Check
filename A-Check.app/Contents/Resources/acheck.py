@@ -4029,6 +4029,9 @@ class SpamhausDROP(Provider):
 # ============================================================
 @register
 class IPLocate(Provider):
+    """iplocate.io：无 key 档 50 次/天/按 IP（官方 quota 页，2026-11-24 复核；
+    免费 key 1,000/天）。探针证据 2026-11-24：响应头 X-RateLimit-Limit: 50、
+    X-RateLimit-Remaining: 46，与 50/天口径一致；超限回 429。"""
     key = "iplocate"
     name = "iplocate.io"
 
