@@ -7944,7 +7944,9 @@ def check_mx_port25(domain, timeout=4, family=socket.AF_UNSPEC):
             # 成功查询无记录且非 Null MX：按 RFC 5321 §5.1 隐式 MX，尝试域名自身。
             # Null MX 域不走此分支（标记已置位，仍返 False）。
             mxs = [domain]
-        for mx in mxs[:2]:
+        # B-11a-1：遍历全部 MX（原 mxs[:2] 使第三条及之后的可达 MX 永不尝试，
+        # 前两条不可达即误判 25 端口不通）。
+        for mx in mxs:
             try:
                 _connect_host(mx.rstrip("."), 25, timeout, family).close()
                 return True
@@ -8224,7 +8226,9 @@ def measure_download_direct(url, duration=5, streams=3, family=0):
         # 不得按 100ms 计（50ms 触顶按 100ms 计会把速率报成一半）。
         elapsed = max(1e-6, cap_box[0] - t0)
     else:
-        elapsed = max(0.1, min(time.monotonic() - t0, duration or 1e9))
+        # B-11a-2：与触顶分支同款修正——未触顶路径亦用真实 elapsed，仅以
+        # 极小值防除零；原 max(0.1, ...) 下限使 50ms 窗口速率报一半。
+        elapsed = max(1e-6, min(time.monotonic() - t0, duration or 1e9))
     if settled[0] == 0:
         return None, 0
     return round((settled[0] * 8 / 1e6) / elapsed, 2), settled[0]
@@ -8374,17 +8378,28 @@ def _dns_test_ok(d, tid, qpkt):
         # F28：继续遍历 Authority／Additional 段，至少验证每条记录的
         # owner name、固定字段和 RDLENGTH 边界；头部声明存在、实际缺失
         # 的记录不得通过（这些记录不用于答案匹配，只验结构完整性）。
+        # B-11b-2：顺带取 OPT（type 41）TTL 高 8 位的扩展 RCODE——完整
+        # RCODE = (扩展 << 4) | 头 RCODE，非零即判败（原只看头 4 位，
+        # 扩展 RCODE 1 + 头 0 = BADVERS 16 仍返 True）。
+        _ext_rcode = 0
         for _n in range(nscount + arcount):
             _rn, _aoff = _decode_dns_name(d, _aoff)
             if _rn is None or _aoff + 10 > len(d):
                 return False
+            _rt, _rc = struct.unpack(">HH", d[_aoff:_aoff + 4])
+            _rttl = struct.unpack(">I", d[_aoff + 4:_aoff + 8])[0]
             _rdlen = struct.unpack(">H", d[_aoff + 8:_aoff + 10])[0]
             if _aoff + 10 + _rdlen > len(d):
                 return False
+            if _rt == 41:
+                _ext_rcode |= (_rttl >> 24) & 0xFF
             _aoff += 10 + _rdlen
+        if _ext_rcode != 0:
+            return False
         # CNAME 链：从查询名出发跟随 IN 类 CNAME 记录（16 跳上限、防环）
         _owners = {(qname_q or "").lower().rstrip(".")}
         _cmap = {}
+        _cname_conflict = False
         for _oan, _oat, _oac, _oroff, _ordlen in _answers:
             if _oat == 5 and _oac == 1:
                 _tgt, _tend = _decode_dns_name(d, _oroff)
@@ -8392,7 +8407,16 @@ def _dns_test_ok(d, tid, qpkt):
                 # 关联（7a-2；本函数 _dns_test_ok，与融合轮 2-3 所修的
                 # _dns_query_udp 不同函数，不得以“已修”关闭本条）。
                 if _tgt and _tend - _oroff == _ordlen:
-                    _cmap[_oan] = _tgt.lower().rstrip(".")
+                    _ntgt = _tgt.lower().rstrip(".")
+                    # B-11b-1：同一 owner 出现不同目标的 CNAME 即冲突
+                    # （_cmap 只留最后一条、链裁决取首条即 break，两者
+                    # 口径不一会让冲突 CNAME 通过校验），fail-closed 判败；
+                    # 重复相同目标不是冲突。
+                    if _oan in _cmap and _cmap[_oan] != _ntgt:
+                        _cname_conflict = True
+                    _cmap[_oan] = _ntgt
+        if _cname_conflict:
+            return False
         _ccur = (qname_q or "").lower().rstrip(".")
         for _ in range(16):
             if _ccur not in _cmap or _cmap[_ccur] in _owners:
@@ -9488,8 +9512,22 @@ def _get_real_disk_tempdir():
         real_d = os.path.realpath(d)
         best_ft = best_opts = None
         best_len = -1
-        for mp, ft, opts in mounts:
+        for _midx, (mp, ft, opts) in enumerate(mounts):
             if real_d == mp or real_d.startswith(mp + "/" if mp != "/" else "/"):
+                # B-12-1：后挂载在祖先路径上的挂载会遮盖先挂载的子挂载
+                # （如先挂 /tmp/disk 磁盘、后挂 /tmp tmpfs，则 /tmp/disk
+                # 已不可达，路径实际落在 tmpfs 上）；最长前缀仍会命中
+                # 它，误把 tmpfs 当磁盘。按 /proc/mounts 顺序（后出现 =
+                # 后挂载），若存在后出现的挂载点是 mp 的严格祖先，则 mp
+                # 已被遮盖，跳过（同路径后挂载仍由下行的后来者胜处理）。
+                _shadowed = False
+                for _mp2, _ft2, _opts2 in mounts[_midx + 1:]:
+                    if _mp2 != mp and mp.startswith(
+                            _mp2 + "/" if _mp2 != "/" else "/"):
+                        _shadowed = True
+                        break
+                if _shadowed:
+                    continue
                 if len(mp) >= best_len:  # 同长后来者胜（后挂载遮蔽先挂载）
                     best_len, best_ft, best_opts = len(mp), ft, opts
         if best_ft == "overlay":
@@ -10603,8 +10641,15 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._user, self._pwd = username, password
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
         self._hs_closed = False  # 8-2：握手期内被 close 的标记
+        self._hs_resp_sock = None  # B-13-1：已交 response 的活 socket，
+        # getresponse() 在 will_close 时调 self.close() 把连接交给
+        # response（stdlib 设计：只关 socket 对象、fd 由 response 的
+        # makefile 续管），close 不得 shutdown 它，否则头后 body 被截断。
 
     def connect(self):
+        # B-13-1：新一次握手开始，尚无 response 在途，清掉上轮的
+        # response socket 标记，握手期 close 仍可关断全部 socket。
+        self._hs_resp_sock = None
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
                                 username=self._user, password=self._pwd,
                                 timeout=self.timeout, rdns=True,
@@ -10657,11 +10702,28 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
 
+    def getresponse(self):
+        # B-13-1：先登记活 socket 再进 stdlib getresponse——其在
+        # will_close 时调 self.close() 把连接交给 response，close 内
+        # 须跳过该 socket 的 shutdown（见 close）。
+        self._hs_resp_sock = self.sock
+        return super().getresponse()
+
     def close(self):
         # 先记已关闭（供 wrap 返回后的 connect 复核），再关断握手中
         # 的 socket（shutdown 唤醒阻塞 recv），最后走标准关闭。
+        # B-13-1：已交 response 的活 socket 只 close 不 shutdown——
+        # shutdown(SHUT_RDWR) 会立即掐断 fd，头后未读的 body 直接 EOF；
+        # 其余 box 内 socket（已脱离的 raw、废弃握手 socket）照旧关断。
+        # socket.close() 本身按 makefile 引用计数，不会提前关 fd。
         self._hs_closed = True
         for _s in self._hs_box:
+            if _s is self._hs_resp_sock:
+                try:
+                    _s.close()
+                except Exception:
+                    pass
+                continue
             try:
                 _s.shutdown(socket.SHUT_RDWR)
             except Exception:
@@ -11997,6 +12059,9 @@ def _banner_net_info_async():
     if _banner_net_last_info is not None:
         if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
             return _banner_net_last_info
+        # B-15a-1：重试开新取数须刷新 deadline（首轮 deadline 已过期；
+        # 沿用它会使随后 join 立即返回、新登记 worker 无人等）。
+        _banner_net_deadline = time.monotonic() + _banner_net_budget
         return _banner_net_info()
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
             "ipv6_verified": False, "dns_ok": False}
@@ -12121,6 +12186,13 @@ def check_update():
         if _timed_out:
             cause = "timeout"
         elif _err is not None:
+            # B-15b-1：错误响应体亦须关闭（成功分支有 with +
+            # _resp_shutdown；HTTPError 携 fp，不关则体泄漏；本函数
+            # 并不读错误体，故在此关，不等调用方）。
+            try:
+                _err.close()
+            except Exception:
+                pass
             raise _err
         elif r is None:
             cause = "unknown"
@@ -12595,15 +12667,21 @@ def _shortcut_entry_intact(path, entry, instance_id):
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return False
-    lines = text.split("\n")
-    if len(lines) != 4 or lines[3] != "":
+    # B-15b-2：按字段解析，不按全行计数——shlex.quote 会把含 LF 的合法
+    # 路径包进单引号，exec 行随之跨行；行数校验会把自家生成器产物当
+    # 外来文件拒掉。结构仍须恰为 shebang 行 + marker 行 + 一条 exec
+    # 命令加单个换行结尾（exec 行后追加垃圾行会使字段数超 4 而被拒）。
+    if not text.startswith("#!/bin/sh\n"):
         return False
-    if lines[0] != "#!/bin/sh":
+    _rest = text[len("#!/bin/sh\n"):]
+    _marker_line = "# acheck-managed: %s\n" % instance_id
+    if not _rest.startswith(_marker_line):
         return False
-    if lines[1] != "# acheck-managed: %s" % instance_id:
+    _exec_text = _rest[len(_marker_line):]
+    if not _exec_text.endswith("\n") or _exec_text[:-1].endswith("\n"):
         return False
     try:
-        parts = shlex.split(lines[2])
+        parts = shlex.split(_exec_text[:-1])
     except ValueError:
         return False
     if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
