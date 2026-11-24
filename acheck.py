@@ -1830,7 +1830,7 @@ def _urlopen_deadline(req, timeout):
 
     def _run():
         try:
-            _box["resp"] = _opener_safe.open(
+            _box["resp"] = _get_opener_safe().open(
                 req, timeout=max(0.1, _dl - time.monotonic()))
         except Exception as _e:
             _box["err"] = _e
@@ -5227,6 +5227,43 @@ _V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不
 _V6_POOL = None  # run_passive6 同上
 
 
+def _fetch_coordgeo(latitude, longitude):
+    """Nominatim 逆地理单次查询（OPT-4：供 run_passive/run_passive6 提前
+    提交到共享池、与评分并行，评分后回收）。失败返 None，永不抛错——
+    与原地 try/except 同语义：coordgeo 失败不影响主流程。
+    请求体与超时口径与原串行块逐字一致（_urlopen_deadline 4s 绝对
+    截止；_addr 预置 {}，仅消除原块 _rp 为 None 时的 NameError 路径，
+    结果一致：无 country 即不写 coordgeo）。"""
+    try:
+        _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
+              "&format=json&zoom=3&accept-language=%s" % (latitude, longitude, _nominatim_lang()))
+        _rq = urllib.request.Request(
+            _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
+        # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
+        # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
+        _dl = time.monotonic() + 4
+        _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
+        _addr = {}
+        if _rp is not None:
+            try:
+                _addr = (json.loads(_read_limited(
+                    _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
+                    "utf-8", "replace")).get("address") or {})
+            finally:
+                _resp_shutdown(_rp)
+                try:
+                    _rp.close()
+                except Exception:
+                    pass
+        if _addr.get("country"):
+            return {
+                "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
+                "cc": (_addr.get("country_code") or "").upper()}
+    except Exception:
+        pass
+    return None
+
+
 def run_passive(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
@@ -5278,6 +5315,14 @@ def run_passive(ip, json_mode=False):
         with _progress_lock:
             print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
+    # OPT-4：画像只读 sources（score_* 亦只读、不写 sources），故 _prof
+    # 可前移到评分之前；逆地理随即提交到共享池，与评分/完整度/verdict
+    # 并行，return 前回收。coordgeo 失败不影响主流程（见 _fetch_coordgeo）。
+    _prof = _build_unified_profile(sources)
+    _cg_fut = None
+    if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
+        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"])
+
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
     r_pts, r_ev = score_reputation(sources)
@@ -5306,34 +5351,15 @@ def run_passive(ip, json_mode=False):
         for k in ("feodo", "et_compromised", "spamhaus"))
     verdict = _verdict_label(combined, core_ok, completeness, _malicious_listed)
 
-    _prof = _build_unified_profile(sources)
-    if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
+    # OPT-4 回收：逆地理与评分并行跑完后取回（_prof 已在评分前建成，
+    # 见上；score_* 不读 coordgeo，回收点不影响评分与 verdict）。
+    if _cg_fut is not None:
         try:
-            _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
-                  "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
-            _rq = urllib.request.Request(
-                _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
-            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
-            _dl = time.monotonic() + 4
-            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
-            if _rp is not None:
-                try:
-                    _addr = (json.loads(_read_limited(
-                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
-                        "utf-8", "replace")).get("address") or {})
-                finally:
-                    _resp_shutdown(_rp)
-                    try:
-                        _rp.close()
-                    except Exception:
-                        pass
-            if _addr.get("country"):
-                sources["coordgeo"] = {
-                    "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
-                    "cc": (_addr.get("country_code") or "").upper()}
+            _cg = _cg_fut.result()
         except Exception:
-            pass
+            _cg = None
+        if _cg:
+            sources["coordgeo"] = _cg
 
     return {
         "ip": ip_s,
@@ -6409,33 +6435,11 @@ def run_passive6(ip, json_mode=False):
     completeness = int(ok_count / total * 100) if total else 0
 
     _prof = _build_unified_profile(sources)
+    # OPT-4（v6）：与 run_passive 同理——逆地理提交到共享池，与评分并行，
+    # _verdict6 后回收；score_* 不读 coordgeo。
+    _cg_fut = None
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
-        try:
-            _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
-                  "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
-            _rq = urllib.request.Request(
-                _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
-            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
-            _dl = time.monotonic() + 4
-            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
-            if _rp is not None:
-                try:
-                    _addr = (json.loads(_read_limited(
-                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
-                        "utf-8", "replace")).get("address") or {})
-                finally:
-                    _resp_shutdown(_rp)
-                    try:
-                        _rp.close()
-                    except Exception:
-                        pass
-            if _addr.get("country"):
-                sources["coordgeo"] = {
-                    "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
-                    "cc": (_addr.get("country_code") or "").upper()}
-        except Exception:
-            pass
+        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"])
 
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
@@ -6455,6 +6459,15 @@ def run_passive6(ip, json_mode=False):
     _confidence6 = min(100, int(round(completeness * 0.7 + (_core_ok6 / len(_core_checks6)) * 30)))
     _malicious6 = bool(sources.get("spamhaus", {}).get("ok") and sources.get("spamhaus", {}).get("listed"))
     _verdict6 = _verdict_label(combined6, _core_ok6, completeness, _malicious6)
+
+    # OPT-4 回收（v6）：见 run_passive 同款注释。
+    if _cg_fut is not None:
+        try:
+            _cg = _cg_fut.result()
+        except Exception:
+            _cg = None
+        if _cg:
+            sources["coordgeo"] = _cg
 
     return {
         "ip": ip_s,
@@ -7204,18 +7217,41 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener_follow = urllib.request.build_opener(
-    urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
-    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
-_opener_noredir = urllib.request.build_opener(
-    _NoRedirect, urllib.request.ProxyHandler({}))
+# OPT-3：三个 opener 改为懒加载——模块导入时只留 None 哨兵，首次使用
+# 时再建；--help 等不走网络的路径不再触发 ssl.create_default_context
+#（冷启动约 −0.027s）。构建参数与原模块级赋值逐字一致；各 getter
+# 只建一次、重复调用返回同一对象（构建本身无副作用，仅 build_opener）。
+_opener_follow = None
+_opener_noredir = None
+_opener_safe = None
+
+
+def _get_opener_follow():
+    global _opener_follow
+    if _opener_follow is None:
+        _opener_follow = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
+            _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+    return _opener_follow
+
+
+def _get_opener_noredir():
+    global _opener_noredir
+    if _opener_noredir is None:
+        _opener_noredir = urllib.request.build_opener(
+            _NoRedirect, urllib.request.ProxyHandler({}))
+    return _opener_noredir
 
 
 # http_get 路径专用 opener：环境代理语义不变（ProxyHandler() 读环境），
 # 重定向走 _SafeRedirectHandler（不用 urllib.request.urlopen 的默认 opener）。
-_opener_safe = urllib.request.build_opener(
-    urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
-    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+def _get_opener_safe():
+    global _opener_safe
+    if _opener_safe is None:
+        _opener_safe = urllib.request.build_opener(
+            urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
+            _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+    return _opener_safe
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -7516,7 +7552,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     if _FORCE_FAMILY:
         opener = _pinned_opener(_FORCE_FAMILY, follow_redirects)
     else:
-        opener = _opener_follow if follow_redirects else _opener_noredir
+        opener = _get_opener_follow() if follow_redirects else _get_opener_noredir()
     req = urllib.request.Request(url, headers=h)
     _dl = time.monotonic() + timeout
 
@@ -10613,30 +10649,41 @@ def run_active(json_mode=False, stack=None):
         print(f"{_c(C.bold, '=' * 60)}")
         print(f"  {T('detecting_egress')}")
 
+    # OPT-5：v4/v6 出口查询并行（两者独立无依赖，各自内部仍按源轮询）。
+    # auto 栈同时查两路；定向栈（4/6）只查对应一路，与改前一致。
+    # 回退语义不变：auto 下无 v4 出口但有 v6 时仍降级走 IPv6 全流程。
     egress = None
-    if stack != "6":
-        egress = get_egress_ip()
-        if not egress and stack == "auto":
-            # 纯 IPv6 主机：无 IPv4 出口时不直接失败，降级走 IPv6 全流程
-            egress6_try = get_egress_ip6()
-            if egress6_try:
-                return _run_active6(json_mode, egress6_try)
-        if not egress:
-            if json_mode:
-                print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
-            else:
-                print(f"  {_c(C.red, T('egress_fail'))}")
-            return None
-
     egress6 = None
-    if stack != "4":
+    if stack == "auto":
+        _eg_ex = ThreadPoolExecutor(max_workers=2)
+        try:
+            _f4 = _eg_ex.submit(get_egress_ip)
+            _f6 = _eg_ex.submit(get_egress_ip6)
+            egress = _f4.result()
+            egress6 = _f6.result()
+        finally:
+            # 正常路径 .result() 已等齐；异常路径不等另一路（后台跑完即弃）。
+            _eg_ex.shutdown(wait=False)
+        if not egress and egress6:
+            # 纯 IPv6 主机：无 IPv4 出口时不直接失败，降级走 IPv6 全流程
+            return _run_active6(json_mode, egress6)
+    elif stack != "6":
+        egress = get_egress_ip()
+    elif stack != "4":
         egress6 = get_egress_ip6()
-        if stack == "6" and not egress6:
-            if json_mode:
-                print(json.dumps({"error": T("egress6_fail")}, ensure_ascii=False))
-            else:
-                print(f"  {_c(C.red, T('egress6_fail'))}")
-            return None
+    if stack != "6" and not egress:
+        if json_mode:
+            print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
+        else:
+            print(f"  {_c(C.red, T('egress_fail'))}")
+        return None
+
+    if stack == "6" and not egress6:
+        if json_mode:
+            print(json.dumps({"error": T("egress6_fail")}, ensure_ascii=False))
+        else:
+            print(f"  {_c(C.red, T('egress6_fail'))}")
+        return None
 
     if not json_mode:
         if egress:
