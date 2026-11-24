@@ -13759,10 +13759,13 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                 result["errors"].append(str(e))
                 continue
             if not _shortcut_verify_launcher(target):
-                try:
-                    os.unlink(target)
-                except OSError:
-                    pass
+                # G6: 回滚删目标前重核归属 (B-17-3 助手); 重核失败或删除
+                # 失败均保留文件并报"回滚不完整", 不得静默吞掉。
+                _rb_entry = {"path": target,
+                             "sha256": _shortcut_sha256_bytes(content_bytes),
+                             "marker": instance_id}
+                _ok_rb, _why_rb = _shortcut_unlink_if_intact(
+                    target, _rb_entry, instance_id)
                 entries.pop(nm, None)
                 result["failed"].append(nm)
                 result["errors"].append(
@@ -13776,6 +13779,25 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                        "%s: راه‌انداز بررسی حداقلی راه‌اندازی (--help) را "
                        "نگذراند" % nm,
                        "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
+                if not _ok_rb:
+                    result["errors"].append(
+                        _L("%s：回滚不完整：启动器 %s 在删除前重验失败（%s），"
+                           "已保留文件，请人工处理" % (nm, target, _why_rb),
+                           "%s: rollback incomplete: launcher %s failed the "
+                           "pre-delete re-check (%s); file kept, handle "
+                           "manually" % (nm, target, _why_rb),
+                           "%s：ロールバックが不完全です：ランチャー %s は削除前"
+                           "再検査に失敗しました（%s）。ファイルを保持しました。"
+                           "手動で対処してください" % (nm, target, _why_rb),
+                           "%s: откат неполный: лаунчер %s не прошёл "
+                           "повторную проверку перед удалением (%s); файл "
+                           "сохранён, разберитесь вручную"
+                           % (nm, target, _why_rb),
+                           "%s: بازگردانی ناقص است: راه‌انداز %s در بازبینی "
+                           "پیش از حذف ناموفق بود (%s)؛ پرونده حفظ شد، دستی "
+                           "رسیدگی کنید" % (nm, target, _why_rb),
+                           "%s：回滾不完整：啟動器 %s 在刪除前重驗失敗（%s），"
+                           "已保留檔案，請人工處理" % (nm, target, _why_rb)))
                 continue
         entries[nm] = {"path": target,
                        "sha256": _shortcut_sha256_bytes(content_bytes),
@@ -14382,10 +14404,14 @@ def shortcut_change(old_name, new_name=None, scope="user",
         result["errors"].append(str(e))
         return result
     if not _shortcut_verify_launcher(new_path):
-        try:
-            os.unlink(new_path)
-        except OSError:
-            pass
+        # G6: 回滚删新启动器前重核归属 (B-17-3 助手); 重核失败或删除
+        # 失败均保留文件并报"回滚不完整", 不得静默吞掉。
+        _rb_entry = {"path": new_path,
+                     "sha256": _shortcut_sha256_bytes(
+                         content.encode("utf-8")),
+                     "marker": state["instance_id"]}
+        _ok_rb, _why_rb = _shortcut_unlink_if_intact(
+            new_path, _rb_entry, state["instance_id"])
         result["errors"].append(
             _L("新启动器未通过最小启动检查 (--help)",
                "New launcher failed minimal startup check (--help)",
@@ -14393,6 +14419,24 @@ def shortcut_change(old_name, new_name=None, scope="user",
                "Новый лаунчер не прошёл минимальную проверку запуска (--help)",
                "راه‌انداز جدید بررسی حداقلی راه‌اندازی (--help) را نگذراند",
                "新啟動器未通過最小啟動檢查 (--help)"))
+        if not _ok_rb:
+            result["errors"].append(
+                _L("回滚不完整：新启动器 %s 在删除前重验失败（%s），"
+                   "已保留文件，请人工处理" % (new_path, _why_rb),
+                   "Rollback incomplete: new launcher %s failed the "
+                   "pre-delete re-check (%s); file kept, handle manually"
+                   % (new_path, _why_rb),
+                   "ロールバックが不完全です：新しいランチャー %s は削除前"
+                   "再検査に失敗しました（%s）。ファイルを保持しました。"
+                   "手動で対処してください" % (new_path, _why_rb),
+                   "Откат неполный: новый лаунчер %s не прошёл повторную "
+                   "проверку перед удалением (%s); файл сохранён, "
+                   "разберитесь вручную" % (new_path, _why_rb),
+                   "بازگردانی ناقص است: راه‌انداز جدید %s در بازبینی پیش از "
+                   "حذف ناموفق بود (%s)؛ پرونده حفظ شد، دستی رسیدگی کنید"
+                   % (new_path, _why_rb),
+                   "回滾不完整：新啟動器 %s 在刪除前重驗失敗（%s），"
+                   "已保留檔案，請人工處理" % (new_path, _why_rb)))
         result["rc"] = 1
         return result
     entries[new_name] = {"path": new_path,
@@ -14408,25 +14452,30 @@ def shortcut_change(old_name, new_name=None, scope="user",
     except OSError as e:
         # B-17-2: 过渡状态存不下时回滚——删已发布的新启动器，不留未登记
         # 的可执行启动器，并明确报错。
-        try:
-            os.unlink(new_path)
-        except OSError as e2:
+        # G6: 回滚前重核归属 (B-17-3 助手, entries[new_name] 即刚登记的
+        # 条目); 重核失败或删除失败均保留文件并报"回滚不完整"。
+        _ok_rb, _why_rb = _shortcut_unlink_if_intact(
+            new_path, entries[new_name], state["instance_id"])
+        if not _ok_rb:
             result["errors"].append(
-                _L("无法保存过渡状态：%s；回滚删除新启动器 %s 也失败：%s"
-                   % (e, new_path, e2),
-                   "Cannot save transitional state: %s; rollback removing "
-                   "the new launcher %s also failed: %s" % (e, new_path, e2),
-                   "遷移中の状態を保存できません：%s；新しいランチャー %s "
-                   "のロールバック削除も失敗しました：%s"
-                   % (e, new_path, e2),
+                _L("无法保存过渡状态：%s；回滚不完整：新启动器 %s 未删除"
+                   "（%s），已保留文件，请人工处理" % (e, new_path, _why_rb),
+                   "Cannot save transitional state: %s; rollback "
+                   "incomplete: new launcher %s was not removed (%s); "
+                   "file kept, handle manually" % (e, new_path, _why_rb),
+                   "遷移中の状態を保存できません：%s；ロールバックが不完全"
+                   "です：新しいランチャー %s は削除されませんでした"
+                   "（%s）。ファイルを保持しました。手動で対処して"
+                   "ください" % (e, new_path, _why_rb),
                    "Не удаётся сохранить переходное состояние: %s; откат "
-                   "с удалением нового лаунчера %s также не удался: %s"
-                   % (e, new_path, e2),
-                   "نمی‌توان وضعیت گذار را ذخیره کرد: %s؛ حذف بازگردانی "
-                   "راه‌انداز جدید %s نیز ناموفق بود: %s"
-                   % (e, new_path, e2),
-                   "無法儲存過渡狀態：%s；回滾刪除新啟動器 %s 也失敗：%s"
-                   % (e, new_path, e2)))
+                   "неполный: новый лаунчер %s не удалён (%s); файл "
+                   "сохранён, разберитесь вручную"
+                   % (e, new_path, _why_rb),
+                   "نمی‌توان وضعیت گذار را ذخیره کرد: %s؛ بازگردانی ناقص "
+                   "است: راه‌انداز جدید %s حذف نشد (%s)؛ پرونده حفظ شد، "
+                   "دستی رسیدگی کنید" % (e, new_path, _why_rb),
+                   "無法儲存過渡狀態：%s；回滾不完整：新啟動器 %s 未刪除"
+                   "（%s），已保留檔案，請人工處理" % (e, new_path, _why_rb)))
             result["rc"] = 1
             return result
         result["errors"].append(_L("无法保存过渡状态：%s；已删除新启动器 %s"
