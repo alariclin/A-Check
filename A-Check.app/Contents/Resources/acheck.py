@@ -12704,10 +12704,11 @@ def _shortcut_entry_intact(path, entry, instance_id):
 
 def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
     """分叉判定: 磁盘启动器是否为本实例的旧解释器版。
-    须同时满足: 普通文件 (非符号链接, O_NOFOLLOW)、4 行标准模板、
-    marker 与本次安装实例一致、exec 行指向同一受管理脚本、
-    且解释器与目标 interp 不同。任一不满足即不是分叉——他人篡改、
-    外来脚本、符号链接一律不得据此覆盖, 仍走 blocked/人工处理。"""
+    须同时满足: 普通文件 (非符号链接, O_NOFOLLOW)、标准 3 段模板
+    (按字段解析, 含 LF 的合法路径可使 exec 行跨行)、marker 与本次
+    安装实例一致、exec 行指向同一受管理脚本、且解释器与目标 interp
+    不同。任一不满足即不是分叉——他人篡改、外来脚本、符号链接一律
+    不得据此覆盖, 仍走 blocked/人工处理。"""
     if not isinstance(path, str) or not isinstance(interp, str) \
             or not isinstance(managed_script, str):
         return False
@@ -12731,15 +12732,21 @@ def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
         text = data.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
         return False
-    lines = text.split("\n")
-    if len(lines) != 4 or lines[3] != "":
+    # B-fork（候选，B-15b-2 同型）：按字段解析，不按全行计数——shlex.quote
+    # 会把含 LF 的合法路径包进单引号，exec 行随之跨行；行数校验会把自家
+    # 生成器产物当外来文件拒掉。结构仍须恰为 shebang 行 + marker 行 +
+    # 一条 exec 命令加单个换行结尾（exec 行后追加垃圾行会使字段数超 4 而被拒）。
+    if not text.startswith("#!/bin/sh\n"):
         return False
-    if lines[0] != "#!/bin/sh":
+    _rest = text[len("#!/bin/sh\n"):]
+    _marker_line = "# acheck-managed: %s\n" % instance_id
+    if not _rest.startswith(_marker_line):
         return False
-    if lines[1] != "# acheck-managed: %s" % instance_id:
+    _exec_text = _rest[len(_marker_line):]
+    if not _exec_text.endswith("\n") or _exec_text[:-1].endswith("\n"):
         return False
     try:
-        parts = shlex.split(lines[2])
+        parts = shlex.split(_exec_text[:-1])
     except ValueError:
         return False
     if len(parts) != 4 or parts[0] != "exec" or parts[3] != "$@":
