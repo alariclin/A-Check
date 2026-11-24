@@ -10814,7 +10814,12 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
     域名调 create_connection。F37：建连+握手共享单调时钟截止 _dl，
     _sock_readn 每次读前按剩余重设超时。F38：rdns=False 时对解析结果
     逐个尝试，可重试的 CONNECT 错误关闭当前会话、重建会话再试下一
-    地址；认证失败等非地址错误立即停。"""
+    地址；认证失败等非地址错误立即停。C-06：单边账密（仅用户名或仅
+    密码）不得静默降级为无认证（与 M-08(a) 同口径，覆盖批量入口）：
+    入口即报 ValueError，调用方按失败处理并明示账密不全。"""
+    if bool(username) != bool(password):
+        raise ValueError("proxy auth needs both username and password "
+                         "(one-sided auth is not silently downgraded)")
     t0 = time.perf_counter()
     _dl = time.monotonic() + timeout
     _has_auth = bool(username) and bool(password)
