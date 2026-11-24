@@ -4161,6 +4161,9 @@ class IpapiCo(Provider):
 
 @register
 class TwoIp(Provider):
+    """2ip.io：城市级精度偏差持续——2026-11-24 实测 8.8.8.8 报城市 New York
+    （lat 40.71/lon -74.00），多源共识为 Mountain View（D 腿两轮同一偏差）。
+    单源城市不可信，靠多源投票稀释；本源保持启用，不作无据降权。"""
     key = "twoip"
     name = "2ip.io"
 
