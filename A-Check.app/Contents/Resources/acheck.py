@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.34 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.35 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -64,7 +64,7 @@ import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.34"
+VERSION = "4.14.35"
 
 
 def _init_console():
@@ -4662,7 +4662,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.34 免 Key 公开版):
+评分规则 (v4.14.35 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4694,7 +4694,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.34 免 Key 公開版):
+評分規則 (v4.14.35 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4726,7 +4726,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.34 Keyless Public Edition):
+Scoring rules (v4.14.35 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4759,7 +4759,7 @@ Scoring rules (v4.14.34 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.34 キー不要公開版):
+スコアリングルール (v4.14.35 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4791,7 +4791,7 @@ Scoring rules (v4.14.34 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.34 Публичная версия без ключей):
+Правила оценки (v4.14.35 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4823,7 +4823,7 @@ Scoring rules (v4.14.34 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.34):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.35):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -6432,7 +6432,7 @@ def _print_report6_tail(res):
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
         print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
-    # 4.14.34 O1：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
+    # 4.14.35 O1：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
     print(f"  {_c(C.dim, T('fail_note'))}")
@@ -12544,7 +12544,7 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 # ============================================================
-# 命令入口管理 (快捷键 v4.14.34): acheck / ac 薄启动器
+# 命令入口管理 (快捷键 v4.14.35): acheck / ac 薄启动器
 #
 # 设计 (GPT 比选 (d) 单文件内统一后端, CLI + 菜单共用; 已仲裁):
 # - 默认用户级: 受管理副本 ~/.local/share/acheck/acheck.py
@@ -14241,7 +14241,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
         # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
         # B-16-6：installed 按实际条目是否 OK 计算——更新失败写入 failed
         # 态时保留的 OK 条目仍算已安装；install_status 仅作补充状态透出。
-        # 4.14.34 E-1 仍成立：failed 态且无任何 OK 条目时 installed 为 False。
+        # 4.14.35 E-1 仍成立：failed 态且无任何 OK 条目时 installed 为 False。
         doc = {"scope": scope,
                "managed_dir": paths["data_dir"],
                "launcher_dir": paths["bin_dir"],
@@ -14363,7 +14363,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                 _e, state["instance_id"])
             for _e in (state.get("entries") or {}).values())
     if _failed_no_ok:
-        # 4.14.34 E-1：失败态且无任何 OK 条目时 as_json 也须返回合法
+        # 4.14.35 E-1：失败态且无任何 OK 条目时 as_json 也须返回合法
         # JSON（复用 _status_doc，其 installed 已为 False），rc 保持 1；
         # 文本模式原样返回纯文本。状态文件不持久化 install 时的 errors，
         # error 即文本提示本身（失败原因见安装时的报错）。
