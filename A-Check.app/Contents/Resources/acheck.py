@@ -12851,6 +12851,17 @@ def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
     if _shortcut_canon_entry(parts[2]) != \
             _shortcut_canon_entry(managed_script):
         return False
+    # GPT-H2：shlex.split 把未加引号的换行当空白，分行篡改文件（exec
+    # '/old/python' 另起一行 '/managed/acheck.py' "$@"）亦能通过 4 字段
+    # 检查，而 /bin/sh 会把它当两条命令执行——它不是生成器模板，却被
+    # 判为旧解释器分叉。字段校验后用生成器重建规范启动器并要求逐字
+    # 节相等：含 LF 合法路径的生成器产物仍重合，分行篡改则不等。
+    try:
+        _canon = shortcut_launcher_content(parts[1], parts[2], instance_id)
+    except ShortcutError:
+        return False
+    if text != _canon:
+        return False
     return parts[1] != interp
 
 
