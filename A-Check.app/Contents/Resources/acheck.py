@@ -2730,69 +2730,88 @@ class RIPEstat(Provider):
     name = "RIPEstat"
 
     def check(self, ip):
+        # N6：prefix-overview 瞬时断连不再致整源失败——2026-11-24 沙箱两次
+        # RemoteDisconnected，而 routing-history 同日 200、browser.open 独立
+        # 路径 prefix-overview 亦 200（服务在线）。prefix-overview 失败时仍
+        # 试 routing-history：有历史则返部分 ok（asn/announced 为 None、
+        # partial True）；两端点皆败才返失败，不崩溃、不误判。
         ok, raw = http_get(
             f"https://stat.ripe.net/data/prefix-overview/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
+        _pre_err = "" if ok else raw
+        asn, announced = None, None
+        if ok:
+            try:
+                d = json.loads(raw).get("data", {})
+                if not d:
+                    return {"ok": False, "err": "empty data"}
+                asns = d.get("asns", [])
+                asn = asns[0].get("asn") if asns else None
+                announced = d.get("announced", False)
+            except Exception as e:
+                return {"ok": False, "err": str(e)[:80]}
+        age_years, first_seen, visibility = None, None, None
+        ok2, raw2 = http_get(
+            f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
+            use_cache=False,
+        )
+        if ok2:
+            try:
+                h = json.loads(raw2).get("data", {})
+                origins = h.get("by_origin", [])
+                earliest = None
+                max_peers = 0
+                for o in origins:
+                    for pfx in o.get("prefixes", []):
+                        for tl in pfx.get("timelines", []):
+                            st = tl.get("starttime", "")
+                            if st and (earliest is None or st < earliest):
+                                earliest = st
+                            fp = tl.get("full_peers_seeing", 0) or 0
+                            # 字符串计数值先规范化：旧版直接比较，字符串
+                            # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                            # （first_seen/visibility 全丢；F04）。
+                            try:
+                                fp = int(fp)
+                            except (TypeError, ValueError, OverflowError):
+                                fp = 0
+                            if fp > max_peers:
+                                max_peers = fp
+                if earliest:
+                    first_seen = earliest[:10]
+                    try:
+                        dt0 = datetime.strptime(first_seen, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                        days = (datetime.now(timezone.utc) - dt0).days
+                        age_years = round(max(0.0, days / 365.25), 1)
+                    except Exception:
+                        pass
+                if max_peers:
+                    visibility = f"{max_peers}"
+            except Exception:
+                pass
         if not ok:
-            return {"ok": False, "err": raw}
-        try:
-            d = json.loads(raw).get("data", {})
-            if not d:
-                return {"ok": False, "err": "empty data"}
-            asns = d.get("asns", [])
-            asn = asns[0].get("asn") if asns else None
-            announced = d.get("announced", False)
-            age_years, first_seen, visibility = None, None, None
-            ok2, raw2 = http_get(
-                f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
-                use_cache=False,
-            )
-            if ok2:
-                try:
-                    h = json.loads(raw2).get("data", {})
-                    origins = h.get("by_origin", [])
-                    earliest = None
-                    max_peers = 0
-                    for o in origins:
-                        for pfx in o.get("prefixes", []):
-                            for tl in pfx.get("timelines", []):
-                                st = tl.get("starttime", "")
-                                if st and (earliest is None or st < earliest):
-                                    earliest = st
-                                fp = tl.get("full_peers_seeing", 0) or 0
-                                # 字符串计数值先规范化：旧版直接比较，字符串
-                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
-                                # （first_seen/visibility 全丢；F04）。
-                                try:
-                                    fp = int(fp)
-                                except (TypeError, ValueError, OverflowError):
-                                    fp = 0
-                                if fp > max_peers:
-                                    max_peers = fp
-                    if earliest:
-                        first_seen = earliest[:10]
-                        try:
-                            dt0 = datetime.strptime(first_seen, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                            days = (datetime.now(timezone.utc) - dt0).days
-                            age_years = round(max(0.0, days / 365.25), 1)
-                        except Exception:
-                            pass
-                    if max_peers:
-                        visibility = f"{max_peers}"
-                except Exception:
-                    pass
+            if first_seen is None and not visibility:
+                return {"ok": False, "err": _pre_err}
             return {
                 "ok": True,
-                "asn": _parse_asn(asn),
-                "announced": announced,
+                "asn": None,
+                "announced": None,
                 "age_years": age_years,
                 "first_seen": first_seen,
                 "visibility": visibility,
+                "partial": True,
                 "ts": now_iso(),
             }
-        except Exception as e:
-            return {"ok": False, "err": str(e)[:80]}
+        return {
+            "ok": True,
+            "asn": _parse_asn(asn),
+            "announced": announced,
+            "age_years": age_years,
+            "first_seen": first_seen,
+            "visibility": visibility,
+            "ts": now_iso(),
+        }
 
 
 # G4：PTR 正向校验全量遍历的单调总截止（秒）。见 PTRCheck.check 内注释。
