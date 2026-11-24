@@ -3219,10 +3219,24 @@ def _resolve_geo_online(jobs):
             list(ex.map(_one, todo))
 
 
+def _geo_ctx_ok(stored_ctx, name, ctx_words):
+    """单候选缓存条目上下文检查（B-06a-2）：缓存条目上下文词（去变体
+    本身）须为当前上下文词集的子集；条目无上下文信息时无法核对，
+    沿用旧行为（视为通过）。"""
+    _stored = set(re.findall(r"[A-Za-z0-9]+", str(stored_ctx or "").lower())) \
+        - set(re.findall(r"[A-Za-z0-9]+", str(name or "").lower()))
+    if not _stored:
+        return True
+    return _stored <= set(ctx_words)
+
+
 def _extra_sub(disp, kind, ctx_text=None):
     """把在线兜底命中的地名替换进对比行整串（disp 为待替换串）。
     同一变体有多个上下文候选时，只采用上下文成分出现在整串中的唯一候选；
-    无法消歧时不任意采用首项（该变体原样保留）。
+    无法消歧时不任意采用首项（该变体原样保留）。单候选亦须过上下文检查
+    （B-06a-2）：缓存条目上下文词不在整串词集中且整串带逗号分隔的结构化
+    上下文成分时不取译文；整串无结构化上下文成分时（如 "Zork City"）
+    无可核成分，沿用旧行为直取。
     ctx_text：消歧上下文来源，默认 disp；调用方可传整串以保留跨字段上下文
     （CONF-FIXES-2.1），同时把替换限定在本字段内。"""
     if _GEO_EXTRA.get("lang") != LANG:
@@ -3238,7 +3252,12 @@ def _extra_sub(disp, kind, ctx_text=None):
         if not variant:
             continue
         if len(cands) == 1:
-            loc = cands[0][1]
+            _sctx, loc = cands[0]
+            if not _geo_ctx_ok(_sctx, variant, _orig_words):
+                _src = ctx_text if ctx_text is not None else disp
+                _parts = [p.strip() for p in _src.split(",")]
+                if any(p and variant.lower() not in p.lower() for p in _parts):
+                    continue
         else:
             _disp_words = _orig_words
             _variant_words = set(re.findall(r"[A-Za-z0-9]+", variant.lower()))
@@ -3258,17 +3277,25 @@ def _extra_sub(disp, kind, ctx_text=None):
             disp = disp.replace(variant, loc, 1)
     return disp
 
-def _loc_region(text):
-    """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。"""
+def _loc_region(text, ctx=None):
+    """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。
+    ctx：调用方上下文（国家等，逗号分隔串）；给出时单候选亦须过上下文
+    检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
-        _matches = [v for (n, _ctx), v in _GEO_EXTRA["region"].items() if n == t]
+        _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["region"].items() if n == t]
+        _matches = [v for _, v in _pairs]
         if len(set(_matches)) == 1:
-            return _matches[0]
+            if ctx is None or _geo_ctx_ok(_pairs[0][0], t,
+                                          set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))):
+                return _matches[0]
+            # B-06a-2: 单候选上下文不符时不取译文——亦不回落无上下文的
+            # 静态表（静态表同名条目正是同一错误译文），原样返回。
+            return text
         # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
     if en:
@@ -3276,8 +3303,10 @@ def _loc_region(text):
     return text
 
 
-def _loc_city(text):
-    """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。"""
+def _loc_city(text, ctx=None):
+    """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。
+    ctx：调用方上下文（州/省、国家，逗号分隔串）；给出时单候选亦须过
+    上下文检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
@@ -3288,12 +3317,22 @@ def _loc_city(text):
                      if not unicodedata.combining(c))
     if folded != t:
         cands.append(folded)
+    _ctx_rejected = False
     for cand in cands:
         if _GEO_EXTRA.get("lang") == LANG:
-            _matches = [v for (n, _ctx), v in _GEO_EXTRA["city"].items() if n == cand]
+            _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["city"].items() if n == cand]
+            _matches = [v for _, v in _pairs]
             if len(set(_matches)) == 1:
-                return _matches[0]
+                if ctx is None or _geo_ctx_ok(_pairs[0][0], cand,
+                                              set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))):
+                    return _matches[0]
+                # B-06a-2: 单候选上下文不符时不取译文；记下后跳过本候选
+                # 的无上下文静态表回落（静态表同名条目正是同一错误译文）。
+                _ctx_rejected = True
+                continue
             # 多候选：不盲取首项，退静态表/原文（落到下行静态查表）
+        if _ctx_rejected:
+            continue
         en = _ANY_CITY2EN.get(cand)
         if en:
             return _CITY_L10N.get(LANG, {}).get(en, text)
@@ -3319,9 +3358,12 @@ def _localize_profile_copy(prof):
     if prof.get("country"):
         out["country"] = _loc_country_name(prof["country"])
     if prof.get("region"):
-        out["region"] = _loc_region(prof["region"])
+        # B-06a-2: region 单候选须过国家上下文检查
+        out["region"] = _loc_region(prof["region"], ctx=prof.get("country"))
     if prof.get("city"):
-        out["city"] = _loc_city(prof["city"])
+        # B-06a-2: city 单候选须过州/省 + 国家上下文检查
+        out["city"] = _loc_city(prof["city"],
+                                ctx=_join_nonempty(prof.get("region"), prof.get("country"), sep=", "))
     return out
 
 
