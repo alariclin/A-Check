@@ -3862,7 +3862,13 @@ class IPWhoisApp(Provider):
 
 @register
 class IPApiIs(Provider):
-    """ipapi.is 免费档: 地理 + 公司/ASN (旗标在付费档, 此处只取画像)。"""
+    """ipapi.is 匿名档：地理 + 公司/ASN（旗标在付费档，此处只取画像）。
+    匿名限额 30 次/客户端 IP/UTC 天（官方 free-tier 页，2026-11-24 复核；
+    上轮引的 1,000/天是免费账号档，已过时）；超限先回 429（10 次），无视
+    继续发则防火墙封 24 小时。A-Check 每 IP 每轮一次、无重试，不会自己
+    触发 24h 封禁；但共享出口（机场前置）下 30 次与他人共用、极易耗尽，
+    可用率风险见 N2。检测旗标 2026-09-01 起移至 key 后，匿名响应 11 键。
+    """
     key = "ipapiis"
     name = "ipapi.is"
 
