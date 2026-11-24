@@ -12984,10 +12984,12 @@ def _shortcut_blocked(findings):
 def _shortcut_load_state(paths):
     """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。
     PermissionError 单独抛 ShortcutError, 绝不误报为 corrupt;
-    instance_id 须合字符集 [A-Za-z0-9_-]{1,64}, 否则按损坏处理。"""
+    instance_id 须合字符集 [A-Za-z0-9_-]{1,64}, 否则按损坏处理。
+    B-15-2: O_NONBLOCK + fstat 验普通文件后才读——FIFO/设备/目录一律
+    按损坏处理, 绝不在 open() 处无限阻塞。"""
     try:
-        with open(paths["state_path"], "r", encoding="utf-8") as f:
-            state = json.load(f)
+        fd = os.open(paths["state_path"],
+                     os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
         return None, False
     except PermissionError:
@@ -13003,8 +13005,26 @@ def _shortcut_load_state(paths):
                               % paths["state_path"],
                               "無權限讀取狀態檔案：%s"
                               % paths["state_path"]))
+    except OSError:
+        return None, True
+    try:
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            return None, True
+        if not stat.S_ISREG(st.st_mode):
+            return None, True
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            fd = None
+            state = json.load(f)
     except Exception:
         return None, True
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     if not isinstance(state, dict) \
             or state.get("format_version") != SHORTCUT_STATE_VERSION \
             or not isinstance(state.get("entries"), dict) \
