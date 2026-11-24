@@ -5894,8 +5894,11 @@ def _print_basic_block(s, prof):
     _cg = s.get("coordgeo", {})
     _pcc = prof.get("country_code") or ""
     if not _pcc and locs and _order:
+        # B-8-4：回退只取与画像国家一致的最大位置组——此前不校验，
+        # 画像 US、无 country_code 时会取最大组 France 的徽章 [FR]。
         _k0 = _order[0][0]
-        if len(_k0) == 2 and _k0.isalpha():
+        _prof_cc = _norm(prof.get("country", ""), True)
+        if _prof_cc and _k0 == _prof_cc and len(_k0) == 2 and _k0.isalpha():
             _pcc = _k0.upper()
     if not _pcc and _cg.get("ok"):
         _pcc = _cg.get("cc") or ""
