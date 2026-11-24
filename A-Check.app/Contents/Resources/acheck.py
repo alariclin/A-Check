@@ -10505,10 +10505,10 @@ def _run_active6(json_mode, egress6):
                 print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name6 + ')')}")
         _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)", zhtw="IP 位址黑名單資料庫")
         print(
-            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_c(C.cyan, str(dnsbl6_total))}  "
-            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_c(C.green, str(dnsbl6_clean))}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
-            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
+            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных:', 'معتبر'))} {_c(C.cyan, str(dnsbl6_total))}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых:', 'پاک'))} {_c(C.green, str(dnsbl6_clean))}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке:', 'در فهرست', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL:', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
         )
         for b in dnsbl6_bl[:10]:
             print(f"    {_c(C.red, '- ' + b)}")
@@ -10659,7 +10659,7 @@ def run_active(json_mode=False, stack=None):
         else:
             print(f"  {p25_lbl}: {_c(C.red, T('abnormal'))}")
             print(
-                f"  {_c(C.dim, _L('※ AWS/GCP 等云厂商默认封锁 25 端口出站，属正常限制', '※ Cloud providers block outbound port 25 by default', '※ AWS/GCP などのクラウド事業者は、既定でアウトバウンドのポート 25 をブロックしています（正常な制限です）', '※ Облачные провайдеры (AWS/GCP и др.) по умолчанию блокируют исходящий порт 25 — это нормальное ограничение', '※ ارائه‌دهندگان ابری مانند AWS/GCP به‌طور پیش‌فرض پورت ۲۵ خروجی را مسدود می‌کنند؛ این یک محدودیت عادی است', zhtw='※ AWS/GCP 等雲廠商預設封鎖 25 端口出站，屬正常限制'))}"
+                f"  {_c(C.dim, _L('※ AWS/GCP 等云厂商默认封锁 25 端口出站，属正常限制', '※ Cloud providers block outbound port 25 by default (a normal restriction)', '※ AWS/GCP などのクラウド事業者は、既定でアウトバウンドのポート 25 をブロックしています（正常な制限です）', '※ Облачные провайдеры (AWS/GCP и др.) по умолчанию блокируют исходящий порт 25 — это нормальное ограничение', '※ ارائه‌دهندگان ابری مانند AWS/GCP به‌طور پیش‌فرض پورت ۲۵ خروجی را مسدود می‌کنند؛ این یک محدودیت عادی است', zhtw='※ AWS/GCP 等雲廠商預設封鎖 25 端口出站，屬正常限制'))}"
             )
 
         mx_ok = sum(1 for r in mx_results if r is True)
@@ -10684,10 +10684,10 @@ def run_active(json_mode=False, stack=None):
         _ok = _c(C.green, str(clean))
         _bl = _c(C.red if marked > 0 else C.green, str(marked))
         print(
-            f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_eff}  "
-            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_ok}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_bl}  "
-            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(pbl)))}"
+            f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных:', 'معتبر'))} {_eff}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых:', 'پاک'))} {_ok}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке:', 'در فهرست', zhtw='黑名單命中'))} {_bl}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL:', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(pbl)))}"
         )
         if bl:
             for b in bl[:10]:
@@ -10729,10 +10729,10 @@ def run_active(json_mode=False, stack=None):
             _ok6 = _c(C.green, str(dnsbl6_clean))
             _bl6 = _c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))
             print(
-                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_eff6}  "
-                f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_ok6}  "
-                f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_bl6}  "
-            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
+                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных:', 'معتبر'))} {_eff6}  "
+                f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых:', 'پاک'))} {_ok6}  "
+                f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке:', 'در فهرست', zhtw='黑名單命中'))} {_bl6}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL:', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
             )
             for b in dnsbl6_bl[:10]:
                 print(f"    {_c(C.red, '- ' + b)}")
@@ -12994,7 +12994,7 @@ def _shortcut_win32_msg():
               "not Windows.",
               "コマンド入口の管理は Linux と macOS のみ対応し、Windows には"
               "対応していません。",
-              "Управление ярлыками команд поддерживается только в Linux и "
+              "Управление записями команд поддерживается только в Linux и "
               "macOS, но не в Windows.",
               "مدیریت میانبرهای فرمان فقط در Linux و macOS پشتیبانی می‌شود، "
               "نه در Windows.",
@@ -14019,7 +14019,7 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
         print(_L("检测到命令入口冲突：",
                  "Command shortcut conflicts detected:",
                  "コマンド入口の競合を検出しました：",
-                 "Обнаружены конфликты ярлыков команд:",
+                 "Обнаружены конфликты команд:",
                  "تداخل در میانبرهای فرمان شناسایی شد:",
                  "檢測到命令入口衝突："))
         for nm, fl in blocked.items():
@@ -14455,7 +14455,7 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                            % (_p, _why),
                            "Не удаётся удалить исключённый старый лаунчер "
                            "%s: %s" % (_p, _why),
-                           "نمی‌توان راه‌انداز قدیمی حذف‌شده %s را حذف کرد: "
+                           "نمی‌توان راه‌انداز قدیمی کنار گذاشته‌شده %s را حذف کرد: "
                            "%s" % (_p, _why),
                            "無法刪除已剔除的舊啟動器 %s：%s" % (_p, _why)))
                     continue
@@ -14696,16 +14696,16 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "وضعیت میانبرهای فرمان (%s):" % scope,
                    "命令入口狀態 (%s):" % scope))
     lines.append("  %s: %s" % (_L("受管理目录", "Managed dir", "管理ディレクトリ",
-                                 "Каталог", "پوشهٔ مدیریت‌شده", "受管理目錄"),
+                                 "Управляемый каталог", "پوشهٔ مدیریت‌شده", "受管理目錄"),
                               paths["data_dir"]))
-    lines.append("  %s: %s" % (_L("启动器目录", "Launcher dir", "ランチャー",
+    lines.append("  %s: %s" % (_L("启动器目录", "Launcher dir", "ランチャーディレクトリ",
                                  "Каталог лаунчеров", "پوشهٔ راه‌اندازها",
                                  "啟動器目錄"), paths["bin_dir"]))
     if state is None:
         lines.append("  " + _L("未安装任何入口。",
                                "No shortcuts installed.",
                                "入口はインストールされていません。",
-                               "Ярлыки не установлены.",
+                               "Команды запуска не установлены.",
                                "هیچ میانبری نصب نشده است.",
                                "未安裝任何入口。"))
         if not _shortcut_bin_in_path(paths["bin_dir"]):
@@ -15665,7 +15665,7 @@ def _shortcut_menu_scope():
                            "ユーザー単位とシステム全体の両方に入口がインストール"
                            "されています。どちらを使いますか？[1] ユーザー単位  "
                            "[2] システム全体 (既定 1): ",
-                           "Ярлыки установлены и на уровне пользователя, и "
+                           "Команды запуска установлены и на уровне пользователя, и "
                            "системно. Какую область? [1] Пользователь  "
                            "[2] Системная (по умолчанию 1): ",
                            "میانبرها هم در سطح کاربر و هم سیستمی نصب شده‌اند. "
@@ -15826,7 +15826,7 @@ def _shortcut_report_install(res):
                  % ", ".join(res["installed"]),
                  "インストール済みコマンド入口：%s"
                  % ", ".join(res["installed"]),
-                 "Установлены ярлыки команд: %s"
+                 "Установлены команды запуска: %s"
                  % ", ".join(res["installed"]),
                  "میانبرهای فرمان نصب شد: %s"
                  % ", ".join(res["installed"]),
@@ -15878,16 +15878,16 @@ def _shortcut_report_install(res):
                      % res.get("bin_dir", ""),
                      "Note: %s is not in PATH, so the shortcuts cannot be "
                      "invoked directly yet; add it to PATH and reopen the "
-                     "shell." % res.get("bin_dir", ""),
+                     "shell (don't just look for \"installation complete\")." % res.get("bin_dir", ""),
                      "注意：%s は PATH にありません。入口はまだ直接呼べません。"
-                     "PATH に追加してシェルを開き直してください。"
+                     "PATH に追加してシェルを開き直してください。（「インストール完了」だけを見て安心しないでください）。"
                      % res.get("bin_dir", ""),
-                     "Примечание: %s нет в PATH, ярлыки пока нельзя вызывать "
-                     "напрямую; добавьте каталог в PATH и переоткройте shell."
+                     "Примечание: %s нет в PATH, команды запуска пока нельзя вызывать "
+                     "напрямую; добавьте каталог в PATH и переоткройте shell (не ориентируйтесь только на сообщение «установка завершена»)."
                      % res.get("bin_dir", ""),
                      "توجه: %s در PATH نیست و میانبرها هنوز مستقیم قابل "
                      "فراخوانی نیستند؛ آن را به PATH اضافه کنید و پوسته را "
-                     "دوباره باز کنید." % res.get("bin_dir", ""),
+                     "دوباره باز کنید. (فقط به پیام «نصب کامل شد» اکتفا نکنید.)" % res.get("bin_dir", ""),
                      "提示：%s 不在 PATH 中，入口現在還不能直接呼叫；"
                      "請把該目錄加入 PATH 後重開 shell。"
                      % res.get("bin_dir", "")))
@@ -15900,23 +15900,23 @@ def _shortcut_report_install(res):
                      "type -a that the entries point to this install "
                      "(aliases/functions/cache cannot be detected here). "
                      "To rename or remove later, use the manager in "
-                     "acheck.py.",
+                     "acheck.py or the acheck/ac commands.",
                      "ヒント：実際のシェルで command -v や type -a を使って、"
                      "入口が今回のインストールを指しているか確認してください"
                      "（エイリアス・関数・キャッシュはここでは検出できません）。"
-                     "改名・削除は acheck.py の管理入口から行えます。",
+                     "改名・削除は acheck.py の管理入口または acheck/ac コマンドから行えます。",
                      "Подсказка: проверьте в своём shell через command -v "
-                     "или type -a, что ярлыки указывают на эту установку "
+                     "или type -a, что команды запуска указывают на эту установку "
                      "(алиасы/функции/кэш здесь не видны). Для переименования "
-                     "или удаления используйте менеджер в acheck.py.",
+                     "или удаления используйте менеджер в acheck.py или команды acheck/ac.",
                      "نکته: در پوستهٔ واقعی خود با command -v یا type -a "
                      "بررسی کنید که میانبرها به همین نصب اشاره می‌کنند "
                      "(نام مستعار/تابع/حافظه در اینجا قابل شناسایی نیست). "
                      "برای تغییر نام یا حذف بعدی، از مدیریت در acheck.py "
-                     "استفاده کنید.",
+                     "یا دستورات acheck/ac استفاده کنید.",
                      "提示：在實際 shell 裡用 command -v 或 type -a 核驗 "
                      "入口指向的是本次安裝（別名/函數/快取程式發現不了）。"
-                     "裝好之後如需改名或移除，用 acheck.py 的管理入口操作。"))
+                     "裝好之後如需改名或移除，用 acheck.py 的管理入口或 acheck/ac 命令操作。"))
     for e in res.get("errors", []):
         print("  " + e)
     if res.get("failed"):
