@@ -28,6 +28,10 @@ IP 信誉检测 v4.14.34 — 全量修复与并发优化公开版 (零 API Key �
 import base64
 import bisect
 import errno
+try:
+    import fcntl
+except ImportError:  # Windows 等无 fcntl 的平台: 快捷键管理本就不支持
+    fcntl = None
 import hashlib
 import http.client
 import ipaddress
@@ -9679,7 +9683,10 @@ def check_dnsbl(ip, max_lists=29, json_mode=False):
     ip_s = str(ip)
     # CONF-13b2b.1: 按地址族分流。旧码对 IPv6 沿用 IPv4 八位反转，生成含冒号的
     # 非法查询名、空应答计 clean（假阴性）。IPv6 仅查 _DNSBL_IPV6_LISTS；不可
-    # 解析输入无有效查询可构造，fail-closed 直接返全 unknown，不发任何查询。
+    # 解析输入无有效查询可构造，不发任何查询，返零计数 (0, 0, 0, [], [])：
+    # total=0 表“未查任何列表”（无数据），并非逐项 unknown，也不是 clean；
+    # 调用方按 total==0 视作无 DNSBL 数据（N1：注释按此口径修正，返回不变，
+    # 三处调用方均按 6 元组解包，改返回会破契约）。
     try:
         _addr = ipaddress.ip_address(ip_s)
     except ValueError:
@@ -10194,6 +10201,18 @@ def run_active(json_mode=False, stack=None):
     if json_mode:
         _res_json = dict(res)
         _res_json["profile"] = _localize_profile_copy(res.get("profile") or {})
+        # F4-1: 嵌套 active.ipv6_report.profile 同样本地化。浅拷贝须逐层
+        # 做副本再本地化, 不得原地改 res / res["active"] / res6。
+        _act = res.get("active")
+        if isinstance(_act, dict):
+            _act_json = dict(_act)
+            _v6rep = _act.get("ipv6_report")
+            if isinstance(_v6rep, dict):
+                _v6rep_json = dict(_v6rep)
+                _v6rep_json["profile"] = _localize_profile_copy(
+                    _v6rep.get("profile") or {})
+                _act_json["ipv6_report"] = _v6rep_json
+            _res_json["active"] = _act_json
         # H-10: 输出边界清洗非有限 float，保证 --json 为标准 JSON。
         print(json.dumps(_json_safe(_res_json), indent=2, default=str, ensure_ascii=False))
     # R3-M-17：流程出口重置章节编号状态，防编号泄漏到后续菜单段落。
@@ -12643,6 +12662,21 @@ def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
     return parts[1] != interp
 
 
+def _shortcut_unlink_if_intact(path, entry, instance_id):
+    """B-17-3 终验紧贴删除: 删除前立即重验归属, 仅重验通过才 unlink。
+    返回 (True, "") 或 (False, 原因串)；调用方须把重验失败按保留处理
+    （记 kept/errors，不报成功）。
+    注意：重验与 unlink 之间仍有极小窗口——攻击者须有同目录写权限
+    才能在该窗口掉包，不构成提权（见 NOTES.md B-17-3 节）。"""
+    if not _shortcut_entry_intact(path, entry, instance_id):
+        return False, "recheck"
+    try:
+        os.unlink(path)
+    except OSError as e:
+        return False, str(e)
+    return True, ""
+
+
 def shortcut_check_name(name, bin_dir, own_entry_paths=(),
                         path_dirs=None, system_dirs=None):
     """单名全量检查, 返回 findings 列表 (kind ∈ invalid/target_own/
@@ -12675,10 +12709,9 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
     seen = set()
     first = True
     for d in path_dirs:
-        if not d:
-            continue
-        nd = os.path.normpath(d)
-        rd = os.path.realpath(d)
+        # B-16-3: 空分量按 POSIX 语义即 cwd ("" 视同 ".")，不得丢弃。
+        nd = os.path.normpath(d or ".")
+        rd = os.path.realpath(d or ".")
         if rd in seen:
             continue
         seen.add(rd)
@@ -12924,7 +12957,8 @@ def _shortcut_verify_launcher(path, timeout=20):
 def _shortcut_bin_in_path(bin_dir):
     base = os.path.realpath(bin_dir)
     for d in os.environ.get("PATH", "").split(os.pathsep):
-        if d and os.path.realpath(d) == base:
+        # B-16-3: 空分量按 POSIX 语义即 cwd ("" 视同 ".")，不得丢弃。
+        if os.path.realpath(d or ".") == base:
             return True
     return False
 
@@ -12994,11 +13028,102 @@ def _shortcut_fmt_findings(findings):
     return "; ".join(parts)
 
 
+class _ShortcutStateLock:
+    """B-16-1: 状态文件旁的 flock 互斥锁 (POSIX)。
+    锁文件为 <state_path>.lock, 与状态文件同目录；flock 随进程死亡自动
+    释放，不主动删锁文件（删文件会与另一持锁者竞态）。锁只覆盖 POSIX
+    路径（快捷键管理本就仅 POSIX 入口，Windows 门在前）。"""
+
+    def __init__(self, paths):
+        self.paths = paths
+        self.fd = None
+
+    def __enter__(self):
+        lock_path = self.paths["state_path"] + ".lock"
+        try:
+            os.makedirs(self.paths["data_dir"], exist_ok=True)
+            self.fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+        except OSError as e:
+            raise ShortcutError(_L("无法创建状态锁文件 %s：%s"
+                                  % (lock_path, e),
+                                  "Cannot create state lock file %s: %s"
+                                  % (lock_path, e),
+                                  "状態ロックファイル %s を作成できません：%s"
+                                  % (lock_path, e),
+                                  "Не удаётся создать файл блокировки "
+                                  "состояния %s: %s" % (lock_path, e),
+                                  "نمی‌توان پروندهٔ قفل وضعیت %s را ساخت: %s"
+                                  % (lock_path, e),
+                                  "無法建立狀態鎖定檔案 %s：%s"
+                                  % (lock_path, e)))
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
+        except OSError as e:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+            raise ShortcutError(_L("无法锁定状态文件 %s：%s"
+                                  % (self.paths["state_path"], e),
+                                  "Cannot lock state file %s: %s"
+                                  % (self.paths["state_path"], e),
+                                  "状態ファイル %s をロックできません：%s"
+                                  % (self.paths["state_path"], e),
+                                  "Не удаётся заблокировать файл состояния "
+                                  "%s: %s" % (self.paths["state_path"], e),
+                                  "نمی‌توان پروندهٔ وضعیت %s را قفل کرد: %s"
+                                  % (self.paths["state_path"], e),
+                                  "無法鎖定狀態檔案 %s：%s"
+                                  % (self.paths["state_path"], e)))
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            try:
+                fcntl.flock(self.fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self.fd)
+                self.fd = None
+        return False
+
+
 def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                      interactive=False, input_fn=None, home=None,
                      sysroot=None, source_path=None, interpreter=None,
                      path_dirs=None, system_dirs=None):
     """安装/更新双入口。先完成全部名字的检查确认, 再开始写文件。
+    返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。
+    B-16-1: load-modify-save 全程持状态锁串行化，防并发安装丢条目；
+    拿不到锁（建锁/加锁失败）时明确报错返回，绝不静默丢条目。"""
+    _kw = dict(names=names, scope=scope, accept_ac_risk=accept_ac_risk,
+               interactive=interactive, input_fn=input_fn, home=home,
+               sysroot=sysroot, source_path=source_path,
+               interpreter=interpreter, path_dirs=path_dirs,
+               system_dirs=system_dirs)
+    result = {"ok": False, "rc": 2, "installed": [], "failed": [],
+              "skipped": [], "degraded": False, "errors": [], "scope": scope}
+    if sys.platform == "win32" or fcntl is None:
+        return _shortcut_install_impl(**_kw)
+    try:
+        paths = shortcut_paths(scope, home=home, sysroot=sysroot)
+    except ShortcutError:
+        return _shortcut_install_impl(**_kw)
+    try:
+        with _ShortcutStateLock(paths):
+            return _shortcut_install_impl(**_kw)
+    except ShortcutError as e:
+        result["errors"].append(str(e))
+        result["rc"] = 1
+        return result
+
+
+def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
+                           interactive=False, input_fn=None, home=None,
+                           sysroot=None, source_path=None, interpreter=None,
+                           path_dirs=None, system_dirs=None):
+    """安装/更新双入口实现（须经 shortcut_install 持锁调用）。
+    先完成全部名字的检查确认, 再开始写文件。
     返回 dict(ok, rc, installed, failed, skipped, degraded, errors)。"""
     result = {"ok": False, "rc": 2, "installed": [], "failed": [],
               "skipped": [], "degraded": False, "errors": [], "scope": scope}
@@ -13488,6 +13613,33 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
                            "نگذراند" % nm,
                            "%s：啟動器未通過最小啟動檢查 (--help)" % nm))
                     continue
+                # B-16-2: 终验——验证最长 20s，替换前立即重验归属；验证期
+                # 内目标被换外来内容时拒绝覆盖（分叉仍按原口径允许修复）。
+                if not _shortcut_entry_intact(target, old_entry,
+                                              instance_id) \
+                        and not _shortcut_launcher_fork(
+                            target, instance_id, paths["managed_script"],
+                            interp):
+                    result["failed"].append(nm)
+                    result["errors"].append(
+                        _L("%s：替换前重验归属失败，目标启动器在验证期间"
+                           "被改动，不覆盖，请人工处理" % nm,
+                           "%s: pre-replace ownership re-check failed; the "
+                           "target launcher changed during verification, "
+                           "not overwriting, handle manually" % nm,
+                           "%s：置き換え前の所有権再検査に失敗しました。"
+                           "検証中にランチャーが変更されました。上書き"
+                           "しません。手動で対処してください" % nm,
+                           "%s: повторная проверка владельца перед "
+                           "заменой не пройдена; лаунчер изменился во "
+                           "время проверки, перезапись запрещена, "
+                           "разберитесь вручную" % nm,
+                           "%s: بازبینی مالکیت پیش از جایگزینی ناموفق بود؛ "
+                           "راه‌انداز در هنگام بررسی تغییر کرد، بازنویسی "
+                           "نمی‌شود، دستی رسیدگی کنید" % nm,
+                           "%s：取代前重驗歸屬失敗，目標啟動器在驗證期間"
+                           "被改動，不覆寫，請人工處理" % nm))
+                    continue
                 try:
                     os.replace(tmp, target)
                 except OSError as e:
@@ -13551,11 +13703,27 @@ def shortcut_install(names=None, scope="user", accept_ac_risk=False,
             _p = _ent.get("path", "") if isinstance(_ent, dict) else ""
             if _shortcut_path_in_bin_dir(_p, paths["bin_dir"]) \
                     and _shortcut_entry_intact(_p, _ent, instance_id):
-                try:
-                    os.unlink(_p)
-                except OSError:
+                # B-16-4: 删除失败不得静默吞掉——记 failed/errors，终态
+                # ok 置 False、rc 置 1；条目保留，待下次安装重试。
+                # B-17-3: 终验紧贴删除（重验失败同样按删除失败记）。
+                _ok_del, _why = _shortcut_unlink_if_intact(
+                    _p, _ent, instance_id)
+                if _ok_del:
+                    del entries[_nm]
+                else:
+                    result["failed"].append(_nm)
+                    result["errors"].append(
+                        _L("无法删除已剔除的旧启动器 %s：%s" % (_p, _why),
+                           "Cannot remove dropped old launcher %s: %s"
+                           % (_p, _why),
+                           "除外された古いランチャー %s を削除できません：%s"
+                           % (_p, _why),
+                           "Не удаётся удалить исключённый старый лаунчер "
+                           "%s: %s" % (_p, _why),
+                           "نمی‌توان راه‌انداز قدیمی حذف‌شده %s را حذف کرد: "
+                           "%s" % (_p, _why),
+                           "無法刪除已剔除的舊啟動器 %s：%s" % (_p, _why)))
                     continue
-                del entries[_nm]
     new_state = {
         "format_version": SHORTCUT_STATE_VERSION,
         "instance_id": instance_id,
@@ -14150,13 +14318,50 @@ def shortcut_change(old_name, new_name=None, scope="user",
     try:
         _shortcut_save_state(paths, trans)
     except OSError as e:
-        result["errors"].append(_L("无法保存过渡状态：%s" % e,
-                                  "Cannot save transitional state: %s" % e,
-                                  "遷移中の状態を保存できません：%s" % e,
-                                  "Не удаётся сохранить переходное состояние: %s"
-                                  % e,
-                                  "نمی‌توان وضعیت گذار را ذخیره کرد: %s" % e,
-                                  "無法儲存過渡狀態：%s" % e))
+        # B-17-2: 过渡状态存不下时回滚——删已发布的新启动器，不留未登记
+        # 的可执行启动器，并明确报错。
+        try:
+            os.unlink(new_path)
+        except OSError as e2:
+            result["errors"].append(
+                _L("无法保存过渡状态：%s；回滚删除新启动器 %s 也失败：%s"
+                   % (e, new_path, e2),
+                   "Cannot save transitional state: %s; rollback removing "
+                   "the new launcher %s also failed: %s" % (e, new_path, e2),
+                   "遷移中の状態を保存できません：%s；新しいランチャー %s "
+                   "のロールバック削除も失敗しました：%s"
+                   % (e, new_path, e2),
+                   "Не удаётся сохранить переходное состояние: %s; откат "
+                   "с удалением нового лаунчера %s также не удался: %s"
+                   % (e, new_path, e2),
+                   "نمی‌توان وضعیت گذار را ذخیره کرد: %s؛ حذف بازگردانی "
+                   "راه‌انداز جدید %s نیز ناموفق بود: %s"
+                   % (e, new_path, e2),
+                   "無法儲存過渡狀態：%s；回滾刪除新啟動器 %s 也失敗：%s"
+                   % (e, new_path, e2)))
+            result["rc"] = 1
+            return result
+        result["errors"].append(_L("无法保存过渡状态：%s；已删除新启动器 %s"
+                                  "（回滚），旧入口 %s 未动" % (e, new_path, old_name),
+                                  "Cannot save transitional state: %s; the "
+                                  "new launcher %s was removed (rolled back), "
+                                  "the old entry %s is untouched"
+                                  % (e, new_path, old_name),
+                                  "遷移中の状態を保存できません：%s；新しい"
+                                  "ランチャー %s は削除されました（ロール"
+                                  "バック）。古い入口 %s は変更されていません"
+                                  % (e, new_path, old_name),
+                                  "Не удаётся сохранить переходное состояние: "
+                                  "%s; новый лаунчер %s удалён (откат), "
+                                  "старая запись %s не тронута"
+                                  % (e, new_path, old_name),
+                                  "نمی‌توان وضعیت گذار را ذخیره کرد: %s؛ "
+                                  "راه‌انداز جدید %s حذف شد (بازگردانی)، "
+                                  "ورودی قدیمی %s دست‌نخورده است"
+                                  % (e, new_path, old_name),
+                                  "無法儲存過渡狀態：%s；已刪除新啟動器 %s"
+                                  "（回滾），舊入口 %s 未動"
+                                  % (e, new_path, old_name)))
         result["rc"] = 1
         return result
     old_path = entries[old_name]["path"]
@@ -14194,19 +14399,28 @@ def shortcut_change(old_name, new_name=None, scope="user",
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
-    try:
-        os.unlink(old_path)
-    except OSError as e:
-        result["errors"].append(_L("无法删除旧启动器 %s：%s" % (old_path, e),
-                                  "Cannot remove old launcher %s: %s"
-                                  % (old_path, e),
-                                  "古いランチャー %s を削除できません：%s"
-                                  % (old_path, e),
-                                  "Не удаётся удалить старый лаунчер %s: %s"
-                                  % (old_path, e),
-                                  "نمی‌توان راه‌انداز قدیمی %s را حذف کرد: %s"
-                                  % (old_path, e),
-                                  "無法刪除舊啟動器 %s：%s" % (old_path, e)))
+    # B-17-3: 终验紧贴删除——删除前立即重验归属，仅重验通过才删同一文件；
+    # 重验失败或删除失败均保留两个入口，请人工处理。
+    _ok_del, _why = _shortcut_unlink_if_intact(old_path, old_entry,
+                                               state["instance_id"])
+    if not _ok_del:
+        result["errors"].append(
+            _L("旧启动器 %s 删除前重验失败或无法删除（%s）；保留两个入口，"
+               "请人工处理旧入口" % (old_path, _why),
+               "Old launcher %s failed the pre-delete re-check or could "
+               "not be removed (%s); keeping both entries, handle the old "
+               "one manually" % (old_path, _why),
+               "古いランチャー %s は削除前再検査に失敗したか削除できません"
+               "でした（%s）。両方の入口を保持します。古い方を手動で対処"
+               "してください" % (old_path, _why),
+               "Старый лаунчер %s не прошёл повторную проверку перед "
+               "удалением или не удаляется (%s); обе записи сохранены, "
+               "разберитесь со старой вручную" % (old_path, _why),
+               "راه‌انداز قدیمی %s در بازبینی پیش از حذف ناموفق بود یا حذف "
+               "نشد (%s)؛ هر دو ورودی حفظ می‌شوند، ورودی قدیمی را دستی "
+               "رسیدگی کنید" % (old_path, _why),
+               "舊啟動器 %s 刪除前重驗失敗或無法刪除（%s）；保留兩個入口，"
+               "請人工處理舊入口" % (old_path, _why)))
         result["installed"] = [new_name]
         result["rc"] = 1
         return result
@@ -14332,18 +14546,39 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                 result["removed"].append(nm)
             continue
         if _shortcut_entry_intact(p, entry, state["instance_id"]):
-            try:
-                os.unlink(p)
+            # B-17-3: 终验紧贴删除——删除前立即重验，仅重验通过才删；
+            # 重验失败按保留处理（与“无法确认归属”同口径）。
+            _ok_del, _why = _shortcut_unlink_if_intact(
+                p, entry, state["instance_id"])
+            if _ok_del:
                 result["removed"].append(nm)
                 del entries[nm]
-            except OSError as e:
+            elif _why == "recheck":
                 result["kept"].append(nm)
-                result["errors"].append(_L("无法删除 %s：%s" % (p, e),
-                                          "Cannot remove %s: %s" % (p, e),
-                                          "%s を削除できません：%s" % (p, e),
-                                          "Не удаётся удалить %s: %s" % (p, e),
-                                          "نمی‌توان %s را حذف کرد: %s" % (p, e),
-                                          "無法刪除 %s：%s" % (p, e)))
+                result["errors"].append(
+                    _L("%s（%s）在删除前重验失败，已保留，请人工处理"
+                       % (nm, p),
+                       "%s (%s) failed the pre-delete re-check; kept, "
+                       "handle manually" % (nm, p),
+                       "%s（%s）は削除前再検査に失敗しました。保持します。"
+                       "手動で対処してください" % (nm, p),
+                       "%s (%s) не прошёл повторную проверку перед "
+                       "удалением; сохранён, разберитесь вручную"
+                       % (nm, p),
+                       "%s (%s) در بازبینی پیش از حذف ناموفق بود؛ حفظ شد، "
+                       "دستی رسیدگی کنید" % (nm, p),
+                       "%s（%s）在刪除前重驗失敗，已保留，請人工處理"
+                       % (nm, p)))
+            else:
+                result["kept"].append(nm)
+                result["errors"].append(_L("无法删除 %s：%s" % (p, _why),
+                                          "Cannot remove %s: %s" % (p, _why),
+                                          "%s を削除できません：%s" % (p, _why),
+                                          "Не удаётся удалить %s: %s"
+                                          % (p, _why),
+                                          "نمی‌توان %s را حذف کرد: %s"
+                                          % (p, _why),
+                                          "無法刪除 %s：%s" % (p, _why)))
         elif not os.path.lexists(p):
             # 文件已失: 允许清理状态记录 (不再死锁); 存在但非己所有才保留
             del entries[nm]
@@ -14363,20 +14598,73 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                    "رسیدگی کنید" % (nm, p),
                    "%s（%s）無法確認為我方所有，已保留，請人工處理"
                    % (nm, p)))
+    # B-17-1: 清理阶段任何一处删除失败都须记 errors 且 ok 为 False
+    # （此前两处 except OSError: pass，报成功而文件残留）。
+    _cleanup_failed = False
     if not entries:
         # 入口清零: 再删受管理副本 (只删当前目录下的副本, 且 sha 须与状态一致,
         # O_NOFOLLOW 防符号链接; 绝不信任状态里写的 managed_script 路径) 与状态文件
         ms = paths["managed_script"]
+        _ms_match = False
         try:
-            if _shortcut_sha256_file_nofollow(ms) == \
-                    state.get("managed_sha256"):
-                os.unlink(ms)
+            _ms_match = (_shortcut_sha256_file_nofollow(ms) ==
+                         state.get("managed_sha256"))
         except OSError:
-            pass
-        try:
-            os.unlink(paths["state_path"])
-        except OSError:
-            pass
+            _ms_match = False
+        if _ms_match:
+            # B-17-3: 终验紧贴删除——sha 校验与删除之间副本可能被掉包，
+            # 删除前立即再验一次，仅两次均通过才删。
+            try:
+                _ms_match = (_shortcut_sha256_file_nofollow(ms) ==
+                             state.get("managed_sha256"))
+            except OSError:
+                _ms_match = False
+            if _ms_match:
+                try:
+                    os.unlink(ms)
+                except OSError as e:
+                    result["errors"].append(
+                        _L("无法删除受管理副本 %s：%s" % (ms, e),
+                           "Cannot remove managed script %s: %s" % (ms, e),
+                           "管理スクリプト %s を削除できません：%s" % (ms, e),
+                           "Не удаётся удалить управляемый скрипт %s: %s"
+                           % (ms, e),
+                           "نمی‌توان اسکریپت مدیریت‌شده %s را حذف کرد: %s"
+                           % (ms, e),
+                           "無法刪除受管理副本 %s：%s" % (ms, e)))
+                    _cleanup_failed = True
+            else:
+                result["errors"].append(
+                    _L("受管理副本 %s 在删除前重验失败，已保留，请人工处理"
+                       % ms,
+                       "Managed script %s failed the pre-delete re-check; "
+                       "kept, handle manually" % ms,
+                       "管理スクリプト %s は削除前再検査に失敗しました。"
+                       "保持します。手動で対処してください" % ms,
+                       "Управляемый скрипт %s не прошёл повторную проверку "
+                       "перед удалением; сохранён, разберитесь вручную" % ms,
+                       "اسکریپت مدیریت‌شده %s در بازبینی پیش از حذف ناموفق "
+                       "بود؛ حفظ شد، دستی رسیدگی کنید" % ms,
+                       "受管理副本 %s 在刪除前重驗失敗，已保留，請人工處理"
+                       % ms))
+                _cleanup_failed = True
+        if not _cleanup_failed:
+            try:
+                os.unlink(paths["state_path"])
+            except OSError as e:
+                result["errors"].append(
+                    _L("无法删除状态文件 %s：%s" % (paths["state_path"], e),
+                       "Cannot remove state file %s: %s"
+                       % (paths["state_path"], e),
+                       "状態ファイル %s を削除できません：%s"
+                       % (paths["state_path"], e),
+                       "Не удаётся удалить файл состояния %s: %s"
+                       % (paths["state_path"], e),
+                       "نمی‌توان پروندهٔ وضعیت %s را حذف کرد: %s"
+                       % (paths["state_path"], e),
+                       "無法刪除狀態檔案 %s：%s" % (paths["state_path"], e)))
+                _cleanup_failed = True
+        # 受管理副本未删干净时保留状态文件，避免状态与磁盘不一致。
     else:
         new_state = dict(state)
         new_state["entries"] = entries
@@ -14392,7 +14680,7 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                                       "無法儲存狀態：%s" % e))
             result["rc"] = 1
             return result
-    result["ok"] = not result["kept"]
+    result["ok"] = not result["kept"] and not _cleanup_failed
     result["rc"] = 0 if result["ok"] else 1
     return result
 
@@ -14683,15 +14971,38 @@ def _shortcut_report_install(res):
 
 
 def _cmd_shortcut(ns):
-    """CLI --shortcut 分发, 返回进程退出码。"""
+    """CLI --shortcut 分发, 返回进程退出码。
+    F2: install/change/remove 不支持 --json，明确拒绝（exit 2 + stderr
+    说明），不静默忽略；仅 status 支持 --json。
+    F1: status --json 在 Windows 上亦返回 JSON 错误文档（stdout 合法
+    JSON 含 error，rc 仍为 2），不走纯文本 stderr。"""
+    action = ns.shortcut
+    scope = "system" if getattr(ns, "system", False) else "user"
+    as_json = getattr(ns, "json", False)
+    if action in ("install", "change", "remove") and as_json:
+        print(_L("--shortcut %s 不支持 --json（仅 status 支持 --json）"
+                 % action,
+                 "--shortcut %s does not support --json (only status does)"
+                 % action,
+                 "--shortcut %s は --json に対応していません"
+                 "（status のみ --json に対応）" % action,
+                 "--shortcut %s не поддерживает --json (только status)"
+                 % action,
+                 "--shortcut %s از --json پشتیبانی نمی‌کند (فقط status)"
+                 % action,
+                 "--shortcut %s 不支援 --json（僅 status 支援 --json）"
+                 % action), file=sys.stderr)
+        return 2
     try:
         _shortcut_require_posix()
     except ShortcutError as e:
+        if action == "status" and as_json:
+            print(json.dumps({"scope": scope, "error": str(e)},
+                             ensure_ascii=False))
+            return 2
         print(str(e), file=sys.stderr)
         return 2
-    scope = "system" if getattr(ns, "system", False) else "user"
     interactive = sys.stdin.isatty()
-    action = ns.shortcut
     if action == "status":
         text, rc = shortcut_status(
             scope=scope, as_json=getattr(ns, "json", False))
@@ -14790,6 +15101,11 @@ def _cmd_shortcut(ns):
                      "shell 以刷新命令快取。"
                      % (", ".join(res["removed"]) if res["removed"]
                         else "無")))
+            # N2: 未安装时 ok 分支也打印 errors 里的原因（此前只印
+            # “已移除：无”，"No shortcuts installed" 说明被丢弃）。
+            if not res["removed"] and res.get("errors"):
+                for e in res["errors"]:
+                    print("  " + e)
         else:
             for e in res.get("errors", []):
                 print("  " + e)
@@ -14818,7 +15134,7 @@ def _print_cli_help():
   --no-speed      自检时跳过网速测试
   --with-speed    自检时强制进行网速测试
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
-  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用；--shortcut 仅 status 支持 --json)
   --explain       输出评分维度与扣分规则说明
   --shortcut install|status|change|remove
                   管理命令入口：安装 / 查看状态 / 改名 / 移除
@@ -14865,7 +15181,7 @@ Options:
   --no-speed      Skip the speed test during self-check
   --with-speed    Force the speed test during self-check
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
-  --json          Output results in JSON format (works with passive IP, --active or --proxy)
+  --json          Output results in JSON format (works with passive IP, --active or --proxy; for --shortcut, only status supports --json)
   --explain       Show transparent scoring rules and weights
   --shortcut install|status|change|remove
                   Manage command shortcuts: install / status / change / remove
@@ -14913,7 +15229,7 @@ Examples:
   --no-speed      自檢時跳過網速測試
   --with-speed    自檢時強制進行網速測試
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
-  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用)
+  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用；--shortcut 僅 status 支援 --json)
   --explain       輸出評分維度與扣分規則說明
   --shortcut install|status|change|remove
                   管理命令入口：安裝 / 查看狀態 / 改名 / 移除
@@ -14960,7 +15276,7 @@ Examples:
   --no-speed      セルフチェック時に速度テストをスキップ
   --with-speed    セルフチェック時に速度テストを強制実行
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
-  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可)
+  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可；--shortcut では status のみ --json に対応)
   --explain       スコアリングのルールと重みを表示
   --shortcut install|status|change|remove
                   コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
@@ -15007,7 +15323,7 @@ Examples:
   --no-speed      Пропустить тест скорости при самопроверке
   --with-speed    Принудительно выполнять тест скорости при самопроверке
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
-  --json          Вывод в JSON (с IP, --active или --proxy)
+  --json          Вывод в JSON (с IP, --active или --proxy; для --shortcut --json поддерживает только status)
   --explain       Правила и веса скоринга
   --shortcut install|status|change|remove
                   Управление ярлыками: установка / состояние / переименование / удаление
@@ -15055,7 +15371,7 @@ Examples:
   --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
-  --json          خروجی JSON (با IP، --active یا --proxy)
+  --json          خروجی JSON (با IP، --active یا --proxy؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
   --shortcut install|status|change|remove
                   مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
