@@ -26,7 +26,7 @@ elif [ -n "$VPS_TEST_LOCAL_ONLY" ]; then
     cp "$_LOCAL" acheck.py || { echo "FAIL: [本地] 复制本地脚本失败"; exit 1; }
     echo "本地仓库脚本 OK: $_LOCAL"
 else
-    # C-01：不再 pin 写死的发版 tag（如 v4.14.34 在发版前不存在，
+    # C-01：不再 pin 写死的发版 tag（新版本号的 tag 在发版前不存在，
     # curl -f 遇 404，[1/10] 发版前必败）。改为解析最新已存在 tag：
     # GitHub Tags API 按创建时间倒序取首条；解析失败或取空即硬 FAIL，
     # 不静默回落 main/旧版，避免测到非预期版本还报通过。
