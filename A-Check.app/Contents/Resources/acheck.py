@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.34 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.35 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -64,7 +64,7 @@ import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.34"
+VERSION = "4.14.35"
 
 
 def _init_console():
@@ -1423,10 +1423,12 @@ class C:
 
 
 def _ru_plural(n, one, few, many):
-    """俄语数量屈折：1 → one；2–4 → few；其余 → many（含 11–14 例外）；小数一律属格单数（1.5 года、5.5 года）。"""
+    """俄语数量屈折：1 → one；2–4 → few；其余 → many（含 11–14 例外）；小数一律属格单数（1.5 года、5.5 года）。非有限值（NaN/±inf）与超大数（float 转换溢出）落入 fallback，返 many，不抛错。"""
     try:
         v = float(n)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        return many
+    if not math.isfinite(v):
         return many
     i = int(v)
     if i % 10 == 1 and i % 100 != 11:
@@ -1801,9 +1803,11 @@ def _read_limited(resp, cap=1048576, timeout=10):
             raise TimeoutError("response read deadline exceeded")
         if not chunk:
             if _expected is not None and total < _expected:
+                # B-2-4：expected 语义与 stdlib _safe_read 一致，取仍缺
+                # 的剩余量（_expected - total），而非已宣告的总量。
                 raise http.client.IncompleteRead(
                     b"".join(buf),
-                    _expected)
+                    _expected - total)
             break
         total += len(chunk)
         if total > cap:
@@ -2172,12 +2176,56 @@ def _decode_dns_name(pkt, offset):
             # 单标签 "a.b" 与双标签 "a"/"b" 同解为 "a.b"（标签边界丢失）。
             # 先转义反斜杠再转义点，否则 "a\\" + "b" 两标签仍可与单标签
             # "a.b" 碰撞；不含点/反斜杠的常规标签结果逐字节不变。
-            labels.append(pkt[offset:offset + length].decode(
-                "ascii", errors="replace").replace("\\", "\\\\").replace(".", "\\."))
+            # B-3-4：非 ASCII/控制字节不得以 errors="replace" 解为 U+FFFD
+            # （\x80/\x81/\x82 会全塌成同一字符，不同属主经 owner 过滤
+            # 碰撞通过）。改为按字节无损转义：可打印 ASCII 原样，反斜杠/
+            # 点按 B-3-2 转义，其余字节一律写成 \xhh（小写十六进制）。
+            # 该编码是单射的——\xhh 只来自非 ASCII/控制字节（字面反斜杠
+            # 已先行转义为 \\，故 "\\x80" 与 "\x80" 不会混淆）；纯 ASCII
+            # 标签的解码结果与此前逐字节一致。
+            _raw_label = pkt[offset:offset + length]
+            _parts = []
+            for _c in _raw_label:
+                if _c == 0x5C:
+                    _parts.append("\\\\")
+                elif _c == 0x2E:
+                    _parts.append("\\.")
+                elif 0x20 <= _c < 0x7F:
+                    _parts.append(chr(_c))
+                else:
+                    _parts.append("\\x%02x" % _c)
+            labels.append("".join(_parts))
             offset += length
     if not terminated:
         return None, (orig_offset if jumped else offset)
     return ".".join(labels), (orig_offset if jumped else offset)
+
+
+def _dns_name_term(pkt, offset):
+    """返回 offset 处 DNS 名的根终止符偏移（B-3-5）：只沿本名物理编码
+    的标签走到长度为 0 的根标签，返回该零字节在包内的偏移；命中压缩
+    指针、指针循环、越界或非法高位标签均返 None。G1（2026-11-24 GPT
+    复审）：属主名以指针收尾时不跟随——指针目标可能是 RDATA 内的零字
+    节（如偏好值高字节），跟随会把该偏移洗入 _name_terms 白名单，
+    使同一偏移的交换指针被误认为合法压缩 Null MX 根；指针目标若为
+    真实名字（QNAME 或更早 RR 属主），其终止符在处理该名字时已登记，
+    不跟随不损失合法情形。"""
+    seen = set()
+    while offset < len(pkt):
+        if offset in seen:
+            return None
+        seen.add(offset)
+        length = pkt[offset]
+        if length == 0:
+            return offset
+        if (length & 0xC0) == 0xC0:
+            # 压缩指针：终止符不在本名物理编码内，不注册（见 G1）。
+            return None
+        elif (length & 0xC0) != 0x00:
+            return None
+        else:
+            offset += 1 + length
+    return None
 
 
 def _has_ipv4_egress():
@@ -2415,7 +2463,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             _srv_scope = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
-        # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的唯一合法目标。
+        # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的合法目标之一
+        #（另一类为各答案 RR 属主的终止符，见 _name_terms；B-3-5）。
         _qname_term = 12 + len(_encode_dns_name(domain_q)) - 1
         tid = random.randint(1, 65534)
         header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
@@ -2492,12 +2541,19 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
     records = []
     parsed = 0
+    # B-3-5：包内真实名字终止符集合——问题段 QNAME 终止符 + 各答案 RR
+    # 属主的终止符；压缩 Null MX 的指针只接受指向其中之一的根。
+    _name_terms = {_qname_term}
     for _ in range(ancount):
         if offset >= len(data):
             break
+        _owner_start = offset
         owner, offset = _decode_dns_name(data, offset)
         if owner is None:
             break  # 属主名畸形：无法定位固定段与 rdlength，只能整包判败
+        _oterm = _dns_name_term(data, _owner_start)
+        if _oterm is not None:
+            _name_terms.add(_oterm)
         if offset + 10 > len(data):
             break
         rtype, rclass, _, rdlength = struct.unpack(">HHIH", data[offset:offset + 10])
@@ -2590,11 +2646,14 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             mx_host, mend = _decode_dns_name(data, _off + 2)
             if mx_host == "":
                 # 解出根交换域名：仅当交换名为恰好 4 字节（偏好值 + 单指针）且指针
-                # 指向问题段 QNAME 根终止符时，才视为合法压缩 Null MX（偏好 0 置
-                # 标记，非零偏好仅跳过）；指向包内任意零字节（如偏好值高字节）的
-                # “根”属畸形，判查询失败（fail-closed；selfaudit F5 覆盖此情形）。
+                # 指向包内某一真实名字终止符（问题段 QNAME 或任一答案 RR 属主的
+                # 根终止符，见 _name_terms）时，才视为合法压缩 Null MX（偏好 0 置
+                # 标记，非零偏好仅跳过）；指向包内任意零字节（如偏好值高字节等
+                # RDATA 内零字节）的“根”属畸形，判查询失败（fail-closed；
+                # selfaudit F5 覆盖此情形）。B-3-5：此前只认 _qname_term 一个
+                # 目标，指向较早 RR 属主终止符的合法压缩根被误判失败。
                 if (len(_rd) == 4 and _rd[2] & 0xC0 == 0xC0
-                        and (((_rd[2] & 0x3F) << 8) | _rd[3]) == _qname_term):
+                        and (((_rd[2] & 0x3F) << 8) | _rd[3]) in _name_terms):
                     if pref == 0:
                         _null_mx = True
                     continue
@@ -2704,8 +2763,10 @@ class Urlscan(Provider):
     name = "urlscan.io"
 
     def check(self, ip):
+        # B-4-3：Lucene 值加引号——未加引号的 IPv6 冒号致 urlscan.io
+        # HTTP 400（live 实测 2026-11-24）；加引号后 200。IPv4 同口径。
         q = urllib.parse.quote(
-            f"page.ip:{ip} AND (task.source:urlhaus OR task.source:openphish "
+            f"page.ip:\"{ip}\" AND (task.source:urlhaus OR task.source:openphish "
             f"OR task.source:phishtank OR task.tags:phishing OR task.tags:malware)")
         ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
@@ -2728,69 +2789,88 @@ class RIPEstat(Provider):
     name = "RIPEstat"
 
     def check(self, ip):
+        # N6：prefix-overview 瞬时断连不再致整源失败——2026-11-24 沙箱两次
+        # RemoteDisconnected，而 routing-history 同日 200、browser.open 独立
+        # 路径 prefix-overview 亦 200（服务在线）。prefix-overview 失败时仍
+        # 试 routing-history：有历史则返部分 ok（asn/announced 为 None、
+        # partial True）；两端点皆败才返失败，不崩溃、不误判。
         ok, raw = http_get(
             f"https://stat.ripe.net/data/prefix-overview/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
+        _pre_err = "" if ok else raw
+        asn, announced = None, None
+        if ok:
+            try:
+                d = json.loads(raw).get("data", {})
+                if not d:
+                    return {"ok": False, "err": "empty data"}
+                asns = d.get("asns", [])
+                asn = asns[0].get("asn") if asns else None
+                announced = d.get("announced", False)
+            except Exception as e:
+                return {"ok": False, "err": str(e)[:80]}
+        age_years, first_seen, visibility = None, None, None
+        ok2, raw2 = http_get(
+            f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
+            use_cache=False,
+        )
+        if ok2:
+            try:
+                h = json.loads(raw2).get("data", {})
+                origins = h.get("by_origin", [])
+                earliest = None
+                max_peers = 0
+                for o in origins:
+                    for pfx in o.get("prefixes", []):
+                        for tl in pfx.get("timelines", []):
+                            st = tl.get("starttime", "")
+                            if st and (earliest is None or st < earliest):
+                                earliest = st
+                            fp = tl.get("full_peers_seeing", 0) or 0
+                            # 字符串计数值先规范化：旧版直接比较，字符串
+                            # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                            # （first_seen/visibility 全丢；F04）。
+                            try:
+                                fp = int(fp)
+                            except (TypeError, ValueError, OverflowError):
+                                fp = 0
+                            if fp > max_peers:
+                                max_peers = fp
+                if earliest:
+                    first_seen = earliest[:10]
+                    try:
+                        dt0 = datetime.strptime(first_seen, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                        days = (datetime.now(timezone.utc) - dt0).days
+                        age_years = round(max(0.0, days / 365.25), 1)
+                    except Exception:
+                        pass
+                if max_peers:
+                    visibility = f"{max_peers}"
+            except Exception:
+                pass
         if not ok:
-            return {"ok": False, "err": raw}
-        try:
-            d = json.loads(raw).get("data", {})
-            if not d:
-                return {"ok": False, "err": "empty data"}
-            asns = d.get("asns", [])
-            asn = asns[0].get("asn") if asns else None
-            announced = d.get("announced", False)
-            age_years, first_seen, visibility = None, None, None
-            ok2, raw2 = http_get(
-                f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
-                use_cache=False,
-            )
-            if ok2:
-                try:
-                    h = json.loads(raw2).get("data", {})
-                    origins = h.get("by_origin", [])
-                    earliest = None
-                    max_peers = 0
-                    for o in origins:
-                        for pfx in o.get("prefixes", []):
-                            for tl in pfx.get("timelines", []):
-                                st = tl.get("starttime", "")
-                                if st and (earliest is None or st < earliest):
-                                    earliest = st
-                                fp = tl.get("full_peers_seeing", 0) or 0
-                                # 字符串计数值先规范化：旧版直接比较，字符串
-                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
-                                # （first_seen/visibility 全丢；F04）。
-                                try:
-                                    fp = int(fp)
-                                except (TypeError, ValueError, OverflowError):
-                                    fp = 0
-                                if fp > max_peers:
-                                    max_peers = fp
-                    if earliest:
-                        first_seen = earliest[:10]
-                        try:
-                            dt0 = datetime.strptime(first_seen, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                            days = (datetime.now(timezone.utc) - dt0).days
-                            age_years = round(max(0.0, days / 365.25), 1)
-                        except Exception:
-                            pass
-                    if max_peers:
-                        visibility = f"{max_peers}"
-                except Exception:
-                    pass
+            if first_seen is None and not visibility:
+                return {"ok": False, "err": _pre_err}
             return {
                 "ok": True,
-                "asn": _parse_asn(asn),
-                "announced": announced,
+                "asn": None,
+                "announced": None,
                 "age_years": age_years,
                 "first_seen": first_seen,
                 "visibility": visibility,
+                "partial": True,
                 "ts": now_iso(),
             }
-        except Exception as e:
-            return {"ok": False, "err": str(e)[:80]}
+        return {
+            "ok": True,
+            "asn": _parse_asn(asn),
+            "announced": announced,
+            "age_years": age_years,
+            "first_seen": first_seen,
+            "visibility": visibility,
+            "ts": now_iso(),
+        }
 
 
 # G4：PTR 正向校验全量遍历的单调总截止（秒）。见 PTRCheck.check 内注释。
@@ -3031,7 +3111,7 @@ def _wd_label(name, kind, context):
     不可作类型依据 ("state" 会命中 "city in the united states of america",
     同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
     时返 None。S6-N2: 裸名回退的候选另须验证国家/行政区与 context 一致
-    (P17 国家、P131 行政归属上溯一级), 无法确认时返 None——回退不
+    (P17 国家、P131 行政归属沿链多级上溯，上限 8 跳), 无法确认时返 None——回退不
     得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
     (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
@@ -3101,24 +3181,39 @@ def _wd_label(name, kind, context):
         want = _WD_ADMIN_QIDS if kind == "region" else _WD_PLACE_QIDS
 
         def _context_ok(eid):
-            """裸名回退校验：实体 P17 国家 / P131 行政归属（上溯一级）
-            须与 context 某一成分的 QID 相符；非回退路径恒真；实体无
-            P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            """裸名回退校验：实体 P17 国家 / P131 行政归属（沿链多级
+            上溯，上限 8 跳防循环）须与 context 某一成分的 QID 相符；
+            非回退路径恒真；实体无 P17/P131 或 context 成分全解不出
+            时返 False（无法确认）。"""
             if not _fallback:
                 return True
             ent = entities.get(eid, {})
             countries = set(_wd_claim_ids(ent, "P17"))
             placed = _wd_claim_ids(ent, "P131")
             if placed:
-                ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                                     f"&ids={'|'.join(placed)}&props=claims&format=json",
-                                     timeout=5, retries=1, use_cache=False)
-                if ok2:
+                # C-03：单级上溯会误拒深层行政链（如村→市镇→区→州）；
+                # 沿 P131 链逐级上溯，上限 8 跳，seen 去重防循环。
+                seen = set(placed)
+                frontier = list(placed)
+                for _hop in range(8):
+                    if not frontier:
+                        break
+                    ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                         f"&ids={'|'.join(frontier)}&props=claims&format=json",
+                                         timeout=5, retries=1, use_cache=False)
+                    if not ok2:
+                        break
                     try:
+                        nxt = []
                         for tent in json.loads(raw2).get("entities", {}).values():
-                            placed.extend(_wd_claim_ids(tent, "P131"))
+                            for q in _wd_claim_ids(tent, "P131"):
+                                if q not in seen:
+                                    seen.add(q)
+                                    nxt.append(q)
+                        placed.extend(nxt)
+                        frontier = nxt
                     except Exception:
-                        pass
+                        break
             placed = set(placed)
             if not countries and not placed:
                 return False
@@ -3515,7 +3610,11 @@ class GreyNoise(Provider):
     name = "GreyNoise"
 
     def check(self, ip):
-        # 免费版 Community 限 25 次/周，进程内缓存减少重复消耗
+        # GreyNoise 限额按档分述（官方 Community API 文档，2026-10-02 更新，
+        # 2026-11-24 复核）：未认证 10 次/天；免费账号（工作邮箱）50 次/周
+        # （API+可视化合计）。A-Check 不带 key 调用，走未认证档；429 响应体
+        # 实测逐字为 rate_limit "25-W"（2026-11-24 探针），与文档口径不一致。
+        # 进程内缓存减少重复消耗。
         ok, raw = http_get(f"https://api.greynoise.io/v3/community/{_q_ip(ip)}", use_cache=True)
         if not ok:
             # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
@@ -3564,6 +3663,11 @@ class IPApi(Provider):
 
 @register
 class ProxyCheck(Provider):
+    """proxycheck.io：当前仍调 v2 端点。官方 changelog（2026-11-24 复核）：
+    v3 已于 2026-09-13 结束 open beta 转正为当前稳定版，v2 标签同日由
+    "Stable v2 API" 改名 "Legacy v2 API"；全文检索 changelog 未见 v2
+    下线日期（下线日期官方未公布，不写日期）。迁移评估待排期，见 04-07。
+    """
     key = "proxycheck"
     name = "proxycheck.io"
 
@@ -3738,7 +3842,19 @@ class FeodoTracker(Provider):
                 return None
             # R4-M-06：空集即解析失败（弃权而非假阴性），与其余 5 个威胁源
             # 保持一致（_get_threat_list 遇 None 驱逐并返失败）。
-            out = {e.get("ip_address") for e in arr if isinstance(e, dict) and e.get("ip_address")}
+            # B-6-1：ip_address 须为合法 IP——任意 truthy 字符串即接受会
+            # 把垃圾条目当有效名单，致假阴性；非法项丢弃，全非法返 None。
+            out = set()
+            for e in arr:
+                if not isinstance(e, dict):
+                    continue
+                _v = e.get("ip_address")
+                if not isinstance(_v, str) or not _v:
+                    continue
+                try:
+                    out.add(str(ipaddress.ip_address(_v)))
+                except ValueError:
+                    continue
             return out or None
 
         lst = _get_threat_list(
@@ -3765,10 +3881,11 @@ class EmergingThreats(Provider):
                 if not line or line.startswith("#"):
                     continue
                 try:
-                    ipaddress.ip_address(line)
+                    # B-6-2：存规范化形式——原行展开式 IPv6 对压缩式查询
+                    # 全漏报；查询用 str(ip)（压缩式）。
+                    out.add(str(ipaddress.ip_address(line)))
                 except ValueError:
                     continue
-                out.add(line)
             return out or None
 
         lst = _get_threat_list(
@@ -3794,10 +3911,10 @@ class TorExitNodes(Provider):
                 if not line or line.startswith("#"):
                     continue
                 try:
-                    ipaddress.ip_address(line)
+                    # B-6-2：存规范化形式（同 EmergingThreats）。
+                    out.add(str(ipaddress.ip_address(line)))
                 except ValueError:
                     continue
-                out.add(line)
             return out or None
 
         lst = _get_threat_list(
@@ -3843,7 +3960,13 @@ class IPWhoisApp(Provider):
 
 @register
 class IPApiIs(Provider):
-    """ipapi.is 免费档: 地理 + 公司/ASN (旗标在付费档, 此处只取画像)。"""
+    """ipapi.is 匿名档：地理 + 公司/ASN（旗标在付费档，此处只取画像）。
+    匿名限额 30 次/客户端 IP/UTC 天（官方 free-tier 页，2026-11-24 复核；
+    上轮引的 1,000/天是免费账号档，已过时）；超限先回 429（10 次），无视
+    继续发则防火墙封 24 小时。A-Check 每 IP 每轮一次、无重试，不会自己
+    触发 24h 封禁；但共享出口（机场前置）下 30 次与他人共用、极易耗尽，
+    可用率风险见 N2。检测旗标 2026-09-01 起移至 key 后，匿名响应 11 键。
+    """
     key = "ipapiis"
     name = "ipapi.is"
 
@@ -4004,6 +4127,9 @@ class SpamhausDROP(Provider):
 # ============================================================
 @register
 class IPLocate(Provider):
+    """iplocate.io：无 key 档 50 次/天/按 IP（官方 quota 页，2026-11-24 复核；
+    免费 key 1,000/天）。探针证据 2026-11-24：响应头 X-RateLimit-Limit: 50、
+    X-RateLimit-Remaining: 46，与 50/天口径一致；超限回 429。"""
     key = "iplocate"
     name = "iplocate.io"
 
@@ -4109,6 +4235,9 @@ class IpapiCo(Provider):
 
 @register
 class TwoIp(Provider):
+    """2ip.io：城市级精度偏差持续——2026-11-24 实测 8.8.8.8 报城市 New York
+    （lat 40.71/lon -74.00），多源共识为 Mountain View（D 腿两轮同一偏差）。
+    单源城市不可信，靠多源投票稀释；本源保持启用，不作无据降权。"""
     key = "twoip"
     name = "2ip.io"
 
@@ -4459,8 +4588,11 @@ def _build_unified_profile(s):
 
     # H-10: 文本字段逐源清洗后取首个非空；非字符串源（dict/list/int）在清洗
     # 时即被丢弃为空，不再靠 `or` 链把原始对象透传进画像。
-    isp = _clean_str(wi.get("isp")) or _clean_str(pc.get("provider")) or _clean_str(ii.get("org")) or _clean_str(ai.get("isp")) or _clean_str(il.get("isp")) or _clean_str(iq.get("isp")) or _clean_str(ti.get("isp")) or _clean_str(ox.get("isp")) or _clean_str(gu.get("isp")) or _clean_str(gj.get("isp")) or _clean_str(co.get("isp")) or ""
-    org = _clean_str(wi.get("org")) or _clean_str(ii.get("org")) or _clean_str(pc.get("provider")) or _clean_str(ai.get("org")) or _clean_str(gu.get("org")) or _clean_str(gj.get("org")) or _clean_str(il.get("org")) or _clean_str(iq.get("org")) or _clean_str(co.get("org")) or _clean_str(rd.get("org")) or _clean_str(rd.get("netname")) or ""
+    # B-6-3：isp/org 链补 ipwhoisapp（wa）——此前 ASN/region/city/
+    # timezone 均已含 wa，唯 isp/org 漏，致仅 wa 成功时画像 isp/org 为空。
+    # 放链尾：仅当前链无值时补位，不抢高优先级源。
+    isp = _clean_str(wi.get("isp")) or _clean_str(pc.get("provider")) or _clean_str(ii.get("org")) or _clean_str(ai.get("isp")) or _clean_str(il.get("isp")) or _clean_str(iq.get("isp")) or _clean_str(ti.get("isp")) or _clean_str(ox.get("isp")) or _clean_str(gu.get("isp")) or _clean_str(gj.get("isp")) or _clean_str(co.get("isp")) or _clean_str(wa.get("isp")) or ""
+    org = _clean_str(wi.get("org")) or _clean_str(ii.get("org")) or _clean_str(pc.get("provider")) or _clean_str(ai.get("org")) or _clean_str(gu.get("org")) or _clean_str(gj.get("org")) or _clean_str(il.get("org")) or _clean_str(iq.get("org")) or _clean_str(co.get("org")) or _clean_str(rd.get("org")) or _clean_str(rd.get("netname")) or _clean_str(wa.get("org")) or ""
     _asn_raw = wi.get("asn") or rs.get("asn") or ii.get("asn") or pc.get("asn") or fp.get("asn") or wa.get("asn") or ai.get("asn") or gu.get("asn") or gj.get("asn") or il.get("asn") or iq.get("asn") or ti.get("asn") or co.get("asn") or ht.get("asn") or ox.get("asn") or ""
     try:
         asn = int(str(_asn_raw).upper().replace("AS", "").strip() or 0) or None
@@ -4585,7 +4717,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.34 免 Key 公开版):
+评分规则 (v4.14.35 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4617,7 +4749,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.34 免 Key 公開版):
+評分規則 (v4.14.35 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4649,7 +4781,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.34 Keyless Public Edition):
+Scoring rules (v4.14.35 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4682,7 +4814,7 @@ Scoring rules (v4.14.34 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.34 キー不要公開版):
+スコアリングルール (v4.14.35 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4714,7 +4846,7 @@ Scoring rules (v4.14.34 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.34 Публичная версия без ключей):
+Правила оценки (v4.14.35 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4746,7 +4878,7 @@ Scoring rules (v4.14.34 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.34):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.35):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -5026,7 +5158,7 @@ def score_platform(s):
         pts += 40
         ev.append("VPN detected +40")
     if ((te.get("ok") and te.get("is_tor_exit"))
-            or (wi.get("ok") and _strict_bool(wi.get("tor"))) or ("tor" in pc_type)
+            or (wi.get("ok") and _strict_bool(wi.get("tor"))) or (str(pc.get("type") or "").upper() == "TOR")
             or (pc.get("ok") and _strict_bool(pc.get("tor")))
             or (il.get("ok") and _strict_bool(il.get("tor")))
             or (iq.get("ok") and _strict_bool(iq.get("tor")))):
@@ -5336,7 +5468,9 @@ def _print_streaming_inference(res):
     )
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
-        ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
+        # B-7-2：精确比对（同 4849 行正确写法）——子串 "tor" 会把
+        # type="Operator"（tor=False）误判为 Tor 节点。
+        (str(pc.get("type") or "").upper() == "TOR" if pc.get("ok") else False)
         # B-8-1: 同 score_platform, proxycheck 的 tor 字段亦为 Tor 票。
         or (_strict_bool(pc.get("tor")) is True if pc.get("ok") else False)
         # R4-H-04：同 score_platform，Tor 票须经 _strict_bool 清洗，
@@ -5874,8 +6008,11 @@ def _print_basic_block(s, prof):
     _cg = s.get("coordgeo", {})
     _pcc = prof.get("country_code") or ""
     if not _pcc and locs and _order:
+        # B-8-4：回退只取与画像国家一致的最大位置组——此前不校验，
+        # 画像 US、无 country_code 时会取最大组 France 的徽章 [FR]。
         _k0 = _order[0][0]
-        if len(_k0) == 2 and _k0.isalpha():
+        _prof_cc = _norm(prof.get("country", ""), True)
+        if _prof_cc and _k0 == _prof_cc and len(_k0) == 2 and _k0.isalpha():
             _pcc = _k0.upper()
     if not _pcc and _cg.get("ok"):
         _pcc = _cg.get("cc") or ""
@@ -5984,7 +6121,7 @@ def _factor_rows(s, wi_server, v6=False):
         ("proxycheck", [
             None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
             None if pc.get("vpn") is None else _h(pc, _strict_bool(pc.get("vpn")) is True),
-            None if pc.get("type") is None else _h(pc, "tor" in str(pc.get("type")).lower()),
+            None if pc.get("type") is None else _h(pc, str(pc.get("type") or "").upper() == "TOR"),
             None if pc.get("type") is None else _h(pc, "hosting" in str(pc.get("type")).lower()),
             None, None]),
         ("ipwho.is", [
@@ -6350,7 +6487,7 @@ def _print_report6_tail(res):
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
         print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
-    # 4.14.34 O1：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
+    # 4.14.35 O1：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
     print(f"  {_c(C.dim, T('fail_note'))}")
@@ -6826,8 +6963,10 @@ def get_egress_ip6():
             # R3-H07: 上游返回的出口地址亦可能含 %scope_id/注入, 丢弃
             if ip and "%" not in str(ip):
                 _p = ipaddress.ip_address(str(ip).strip())
+                # B-09a-3：组播地址不得当作出口地址（ff02::1 同时满足
+                # is_global 且 not is_reserved，须显式排除 is_multicast）。
                 if (isinstance(_p, ipaddress.IPv6Address) and _p.is_global
-                        and not _p.is_reserved
+                        and not _p.is_reserved and not _p.is_multicast
                         and getattr(_p, "scope_id", None) is None):
                     return str(_p)
         except Exception:
@@ -6835,30 +6974,168 @@ def get_egress_ip6():
     return None
 
 
-def _redirect_host_public(host):
-    """重定向目标主机是否可公开访问（R3-M-05）：字面量 IP 须为全球单播；
-    主机名须解析且全部解析地址为全球单播；解析失败 fail-closed。
-    169.254.169.254 / 100.100.100.200（元数据）与内网/环回/链路本地
-    均非全球单播，一律拒收。"""
+def _resolve_public_ips(host):
+    """重定向目标主机名解析一次、校验全部地址为全球单播（R3-M-05）：
+    字面量 IP 须为全球单播；主机名须解析且全部解析地址为全球单播；
+    解析失败 fail-closed。169.254.169.254 / 100.100.100.200（元数据）
+    与内网/环回/链路本地均非全球单播，一律拒收。
+    B-09a-1：返回经校验的地址列表，供调用方把连接钉在同一次解析
+    结果上（校验与连接不得各解析一次，否则 DNS 重绑定可取到环回）。
+    失败返 None。"""
     try:
-        return ipaddress.ip_address(host).is_global
+        _lit = ipaddress.ip_address(host)
+        return [str(_lit)] if _lit.is_global else None
     except ValueError:
         pass
     try:
         _infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC,
                                     socket.SOCK_STREAM)
     except Exception:
-        return False
+        return None
     if not _infos:
-        return False
+        return None
+    _ips = []
     for _info in _infos:
         try:
             _ip = ipaddress.ip_address(_info[4][0])
         except ValueError:
-            return False
+            return None
         if not _ip.is_global:
-            return False
-    return True
+            return None
+        _ips.append(str(_ip))
+    return _ips if _ips else None
+
+
+def _redirect_host_public(host):
+    """重定向目标主机是否可公开访问（R3-M-05）：见 _resolve_public_ips。"""
+    _ips = _resolve_public_ips(host)
+    return bool(_ips)
+
+
+def _redirect_pinned_connect(conn, pin_ips, family=None):
+    """连向校验时钉住的字面量 IP（B-09a-1）：主机名只在重定向校验时
+    解析一次，连接不再二次解析；Host/SNI 仍用原域名（conn.host），故
+    虚拟主机与证书校验不受影响。代理隧道（_tunnel_host）时由代理方
+    解析，本钉住不适用，退回默认连接。pin_ips 为校验时解析出的全部
+    公网地址（单串亦可）；family 给出时只取该族（G2：定族 opener 的
+    重定向不得跨族），无符合地址即失败；多地址按序逐个试连、共用同
+    一截止预算（G2：首地址不可达不再直接失败）。"""
+    if getattr(conn, "_tunnel_host", None):
+        http.client.HTTPConnection.connect(conn)
+        return
+    if isinstance(pin_ips, str):
+        pin_ips = [pin_ips]
+    _cands = []
+    for _pin in pin_ips or []:
+        try:
+            _ip = ipaddress.ip_address(_pin)
+        except ValueError:
+            continue
+        if family is not None and (
+                (family == socket.AF_INET6) != (_ip.version == 6)):
+            continue
+        _cands.append(str(_ip))
+    if not _cands:
+        raise OSError("redirect pin has no address for the requested family")
+    _to = conn.timeout
+    if _to is None or _to is getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None):
+        _to = 5
+    _dl = time.monotonic() + _to
+    _last = None
+    for _pin in _cands:
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            break
+        _ip = ipaddress.ip_address(_pin)
+        _fam = socket.AF_INET6 if _ip.version == 6 else socket.AF_INET
+        _s = socket.socket(_fam, socket.SOCK_STREAM)
+        try:
+            _s.settimeout(_rem)
+            _s.connect((_pin, conn.port))
+            conn.sock = _s
+            return
+        except Exception as _e:
+            _last = _e
+            try:
+                _s.close()
+            except Exception:
+                pass
+    raise _last if _last is not None else OSError("redirect pin connect failed")
+
+
+class _RedirectPinHTTPConnection(http.client.HTTPConnection):
+    """B-09a-1：带重定向钉住 IP 的 HTTP 连接（无钉住时沿用默认行为）。"""
+
+    def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
+        super().__init__(*a, **k)
+        self._redirect_pin_ip = pin_ip
+        self._redirect_pin_ips = pin_ips
+
+    def connect(self):
+        _pins = getattr(self, "_redirect_pin_ips", None) \
+            or getattr(self, "_redirect_pin_ip", None)
+        if _pins:
+            _redirect_pinned_connect(self, _pins)
+        else:
+            super().connect()
+
+
+class _RedirectPinHTTPSConnection(http.client.HTTPSConnection):
+    """B-09a-1：带重定向钉住 IP 的 HTTPS 连接（SNI/证书仍用原域名）。"""
+
+    def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
+        super().__init__(*a, **k)
+        self._redirect_pin_ip = pin_ip
+        self._redirect_pin_ips = pin_ips
+
+    def connect(self):
+        _pins = getattr(self, "_redirect_pin_ips", None) \
+            or getattr(self, "_redirect_pin_ip", None)
+        if _pins \
+                and not getattr(self, "_tunnel_host", None):
+            _redirect_pinned_connect(self, _pins)
+            try:
+                self.sock = self._context.wrap_socket(
+                    self.sock, server_hostname=self._tunnel_host or self.host)
+            except Exception:
+                try:
+                    self.sock.close()
+                except Exception:
+                    pass
+                self.sock = None
+                raise
+        else:
+            super().connect()
+
+
+class _RedirectPinHTTPHandler(urllib.request.HTTPHandler):
+    """B-09a-1：把请求上的 _redirect_pin_ip 传给连接。"""
+
+    def http_open(self, req):
+        _pin = getattr(req, "_redirect_pin_ip", None)
+        _pins = getattr(req, "_redirect_pin_ips", None)
+        if _pin is not None and req.has_proxy():
+            # G3：代理请求不钉住——经代理时连接目标是代理（conn.host/
+            # port 为代理），钉住目的 IP 会错连代理端口；代理方自行解析。
+            _pin = None
+            _pins = None
+        return self.do_open(_RedirectPinHTTPConnection, req,
+                            pin_ip=_pin, pin_ips=_pins)
+
+
+class _RedirectPinHTTPSHandler(urllib.request.HTTPSHandler):
+    """B-09a-1：把请求上的 _redirect_pin_ip 传给连接。"""
+
+    def https_open(self, req):
+        _pin = getattr(req, "_redirect_pin_ip", None)
+        _pins = getattr(req, "_redirect_pin_ips", None)
+        if _pin is not None and req.has_proxy():
+            # G3：同 HTTP；隧道情形 _redirect_pinned_connect 内亦有
+            # _tunnel_host 早退，此处为双重保障。
+            _pin = None
+            _pins = None
+        return self.do_open(_RedirectPinHTTPSConnection, req,
+                            pin_ip=_pin, pin_ips=_pins)
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -6876,15 +7153,50 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         _old_scheme = urllib.parse.urlsplit(req.full_url).scheme.lower()
         _new_scheme = _parts.scheme.lower()
         _blocked = None
+        _ips = None
         if _new_scheme != _old_scheme:
             _blocked = "cross-scheme redirect %s->%s" % (_old_scheme, _new_scheme)
         elif _new_scheme not in ("http", "https"):
             _blocked = "non-http(s) redirect scheme %s" % _new_scheme
-        elif not _parts.hostname or not _redirect_host_public(_parts.hostname):
-            _blocked = "redirect target host not public: %s" % (_parts.hostname or _target)
+        elif not _parts.hostname:
+            _blocked = "redirect target host not public: %s" % _target
+        else:
+            # B-09a-1：主机名只解析一次——本次解析结果既作公开性校验，
+            # 又钉住首个地址随请求下发（_redirect_pin_ip），连接层直连
+            # 该字面量 IP，不再二次解析；Host/SNI 仍用原域名。
+            _ips = _resolve_public_ips(_parts.hostname)
+            if not _ips:
+                _blocked = "redirect target host not public: %s" % (_parts.hostname or _target)
         if _blocked is not None:
             raise urllib.error.HTTPError(req.full_url, code, _blocked, headers, fp)
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        _new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if _new_req is not None:
+            if _ips:
+                # G2：钉住全量校验地址（不只首个），连接层按需按族筛选+
+                # 逐个试连；_redirect_pin_ip 留作单地址兼容。
+                _new_req._redirect_pin_ips = list(_ips)
+                _new_req._redirect_pin_ip = _ips[0]
+            # B-09a-2：跨源重定向剥离 Authorization/Cookie（urllib 的
+            # redirect_request 只剥离 content-length/type，普通头原样
+            # 保留）。同源（协议+主机+端口，默认端口归一化）保留不变。
+            # 纵深防御：仓库内无带凭据调用方（全文 grep Authorization/
+            # Cookie 在调用方侧 0 命中），本次修补为共享基础设施的
+            # 凭据泄漏隐患兜底，非已生效的凭据泄漏。
+            _old_parts = urllib.parse.urlsplit(req.full_url)
+            _def_port = {"http": 80, "https": 443}.get(_new_scheme)
+            _same_origin = (
+                _old_parts.scheme.lower() == _new_scheme
+                and (_old_parts.hostname or "").lower()
+                == (_parts.hostname or "").lower()
+                and (_old_parts.port or _def_port)
+                == (_parts.port or _def_port))
+            if not _same_origin:
+                for _h in ("Authorization", "Cookie"):
+                    try:
+                        _new_req.remove_header(_h)
+                    except Exception:
+                        pass
+        return _new_req
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -6893,7 +7205,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _opener_follow = urllib.request.build_opener(
-    urllib.request.ProxyHandler({}), _SafeRedirectHandler())
+    urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
+    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
 _opener_noredir = urllib.request.build_opener(
     _NoRedirect, urllib.request.ProxyHandler({}))
 
@@ -6901,7 +7214,8 @@ _opener_noredir = urllib.request.build_opener(
 # http_get 路径专用 opener：环境代理语义不变（ProxyHandler() 读环境），
 # 重定向走 _SafeRedirectHandler（不用 urllib.request.urlopen 的默认 opener）。
 _opener_safe = urllib.request.build_opener(
-    urllib.request.ProxyHandler(), _SafeRedirectHandler())
+    urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
+    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -7073,12 +7387,32 @@ def _pinned_opener(family, follow_redirects=True):
     fam = socket.AF_INET6 if family == 6 else socket.AF_INET
 
     class _HC(http.client.HTTPConnection):
+        def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
+            super().__init__(*a, **k)
+            self._redirect_pin_ip = pin_ip
+            self._redirect_pin_ips = pin_ips
+
         def connect(self):
-            _pinned_connect(self, fam)
+            _pins = getattr(self, "_redirect_pin_ips", None) \
+                or getattr(self, "_redirect_pin_ip", None)
+            if _pins:
+                _redirect_pinned_connect(self, _pins, family=fam)
+            else:
+                _pinned_connect(self, fam)
 
     class _HSC(http.client.HTTPSConnection):
+        def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
+            super().__init__(*a, **k)
+            self._redirect_pin_ip = pin_ip
+            self._redirect_pin_ips = pin_ips
+
         def connect(self):
-            _pinned_connect(self, fam)
+            _pins = getattr(self, "_redirect_pin_ips", None) \
+                or getattr(self, "_redirect_pin_ip", None)
+            if _pins:
+                _redirect_pinned_connect(self, _pins, family=fam)
+            else:
+                _pinned_connect(self, fam)
             try:
                 self.sock = self._context.wrap_socket(
                     self.sock, server_hostname=self._tunnel_host or self.host)
@@ -7093,11 +7427,15 @@ def _pinned_opener(family, follow_redirects=True):
 
     class _HH(urllib.request.HTTPHandler):
         def http_open(self, req):
-            return self.do_open(_HC, req)
+            return self.do_open(_HC, req,
+                                pin_ip=getattr(req, "_redirect_pin_ip", None),
+                                pin_ips=getattr(req, "_redirect_pin_ips", None))
 
     class _HSH(urllib.request.HTTPSHandler):
         def https_open(self, req):
-            return self.do_open(_HSC, req, context=self._context)
+            return self.do_open(_HSC, req, context=self._context,
+                                pin_ip=getattr(req, "_redirect_pin_ip", None),
+                                pin_ips=getattr(req, "_redirect_pin_ips", None))
 
     handlers = [urllib.request.ProxyHandler({}), _HH(), _HSH()]
     if not follow_redirects:
@@ -7202,7 +7540,15 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     if _status is None:
         _status = getattr(r, "code", None)
     if _is_err:
+        # B-09b-2：无 Location 的终态 HTTP 错误亦须保留最终 URL——
+        # Location 在场时仍优先（重定向链的落点），缺失时回落到
+        # r.geturl() 已知的最终 URL，不留空（final-URL 限制检查的证据）。
         _loc = r.headers.get("Location", "") if getattr(r, "headers", None) else ""
+        if not _loc:
+            try:
+                _loc = r.geturl()
+            except Exception:
+                _loc = ""
     else:
         try:
             _loc = r.geturl()
@@ -7384,6 +7730,18 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if _st["n"] >= _STREAM_CAP:
                 _hit_cap = True
                 break
+        # B-09b-1：deflate 嗅探误判的重试触发点——错选的解码器在传输
+        # EOF 时不抛异常（静默产出错误正文、eof 仍 False），异常触发的
+        # _deflate_retry() 因此永不执行。干净 EOF 且解码器未达 eof 即
+        # 为第二触发点：换另一 wbits 从头重喂一次；重喂后仍未达 eof
+        # （如真实截断）则仍判不完整，不把截断洗成完整。
+        if (_gz["kind"] == "deflate" and _st["eof"] and not _st["trunc"]
+                and not _gz["retried"] and _gz["obj"] is not None
+                and not _gz["obj"].eof):
+            try:
+                _deflate_retry()
+            except Exception:
+                _st["trunc"] = True
         _raw = b"".join(_st["out"])
         if _st["trunc"]:
             _complete = False
@@ -7519,8 +7877,9 @@ def _unlock_label(v):
     return T("unknown")
 
 
-def _tiktok_denied(body):
-    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：
+def _denied_error_page(body):
+    """\"Access Denied\" 错误页结构（B-10-3；原 _tiktok_denied 的逻辑，
+    现为 TikTok/Grok 共用）：
     (1) <title>Access Denied</title>——错误页标题结构，长度不限；
     (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
     JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
@@ -7530,12 +7889,19 @@ def _tiktok_denied(body):
     if re.search(r"<title[^>]*>\s*access denied\s*</title>",
                  b, re.IGNORECASE):
         return True
-    if len(b) < 16384 and "Access Denied" in b:
-        _low = b.lower()
+    # B-10-4：短 HTML 检查与标题检查一致，大小写不敏感——"Access Denied"
+    # 须按小写比对，否则小写/大写拒绝页被漏判为 unlocked。
+    _low = b.lower()
+    if len(b) < 16384 and "access denied" in _low:
         if ("<html" in _low or "<head" in _low or "<body" in _low
                 or "<h1" in _low):
             return True
     return False
+
+
+def _tiktok_denied(body):
+    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：见 _denied_error_page。"""
+    return _denied_error_page(body)
 
 
 def test_tiktok(local_ip=None):
@@ -7605,10 +7971,63 @@ def test_disney(local_ip=None):
     return T("blocked"), "", None
 
 
+def _error_title_or_h1(body, phrase):
+    """错误页结构信号（B-10-3）：短语须出现在 <title> 或 <h1> 里才算
+    锁区/拒绝信号；正文散文、JS 代码、JSON 值里的裸短语不算。
+    phrase 为正则片段（调用方自定，如 r"not\\s+available"），匹配
+    大小写不敏感。
+    G4/G5（2026-11-24 GPT 复审）：旧实现用 <title[^>]*>[^<]*短语[^<]*
+    </title> 两段 [^<]* 扫描，未闭合标题 + 重复短语时二次方耗时
+    （512 KiB 采样上限下约 13 秒）；且 [^<]* 禁内层标签，<h1><span>
+    …</span></h1> 形嵌套标题误判为未锁区。现改为 str.find 线性定位
+    标题起止、去内层标签后再搜短语：单次前向扫描、无回溯，嵌套标
+    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。"""
+    b = body or ""
+    if not b:
+        return False
+    _bl = b.lower()
+    for _tag in ("title", "h1"):
+        _pos = 0
+        _open_tag = "<" + _tag
+        _close_tag = "</" + _tag + ">"
+        while True:
+            _open = _bl.find(_open_tag, _pos)
+            if _open < 0:
+                break
+            _gt = _bl.find(">", _open + len(_open_tag))
+            if _gt < 0:
+                break
+            _close = _bl.find(_close_tag, _gt + 1)
+            if _close < 0:
+                _pos = _gt + 1
+                continue
+            _text = re.sub(r"<[^>]*>", "", b[_gt + 1:_close])
+            if re.search(phrase, _text, re.IGNORECASE):
+                return True
+            _pos = _close + len(_close_tag)
+    return False
+
+
+def _reddit_blocked(body):
+    """Reddit 锁区信号（B-10-3）："Blocked" 须在 <title>/<h1> 里；
+    JS 代码（如 isBlocked=false）与散文提及不算。"""
+    return _error_title_or_h1(body, r"blocked")
+
+
+def _claude_unavailable(body):
+    """Claude 锁区信号（B-10-3）："unavailable" 须在 <title>/<h1> 里；
+    JS 字典键等裸提及不算。URL 侧 app-unavailable 信号另由调用方处理。"""
+    return _error_title_or_h1(body, r"unavailable")
+
+
 def _netflix_unavailable(final_url, body):
-    """Netflix 不可用信号（两探针共用，F23）：正文含 "Not Available"
-    或最终 URL 含 nsfw；URL 信号不受正文截断影响。"""
-    return "Not Available" in (body or "") or "nsfw" in (final_url or "")
+    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 含 nsfw，
+    或 "Not Available" 出现在错误页结构（<title>/<h1>）里；正文散文
+    或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾因此误判
+    blocked）。URL 信号不受正文截断影响。"""
+    if "nsfw" in (final_url or ""):
+        return True
+    return _error_title_or_h1(body, r"not\s+available")
 
 
 def test_netflix(local_ip=None):
@@ -7718,9 +8137,9 @@ def test_reddit(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not _complete and "Blocked" not in body[:4096]:
+    if code == 200 and not _complete and not _reddit_blocked(body):
         return T("unknown"), "", None
-    if code == 200 and "Blocked" not in body[:4096]:
+    if code == 200 and not _reddit_blocked(body):
         return T("unlocked"), "", get_unlock_type("www.reddit.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -7806,9 +8225,9 @@ def test_claude(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
+    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
         return T("unknown"), "", None
-    if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
+    if code == 200 and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
     # M-07：3xx 先验命中锁区 URL（app-unavailable）仍判 blocked，须排在 fallthrough 之前。
     if 300 <= code <= 399 and "app-unavailable" in final_url.lower():
@@ -7827,9 +8246,13 @@ def test_grok(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "Access Denied" not in body:
+    # B-10-3：Grok 的 "Access Denied" 只认 <title>/<h1> 结构——短 HTML
+    # 分支（<html/<body 结构 + 裸短语）会把仅提及该短语的完整 200 页
+    # 也判 blocked，故此处不用 _denied_error_page（TikTok 自身保留
+    # 其既有短页规则，仅由 B-10-4 修大小写）。
+    if code == 200 and not complete and not _error_title_or_h1(body, r"access\s+denied"):
         return T("unknown"), "", None
-    if code == 200 and "Access Denied" not in body:
+    if code == 200 and not _error_title_or_h1(body, r"access\s+denied"):
         return T("unlocked"), "", get_unlock_type("grok.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -9497,6 +9920,8 @@ def get_system_info():
                             pass
                 hv_dmi = any(k in dmi_text for k in (
                     "kvm", "qemu", "vmware", "virtualbox", "xen", "hyper-v",
+                    # B-12-2：补 "bochs"（与 Windows 分支一致，F29 同款）。
+                    "bochs",
                 ))
                 hv_cpu = False
                 cpu_read = False
@@ -10472,7 +10897,12 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
     域名调 create_connection。F37：建连+握手共享单调时钟截止 _dl，
     _sock_readn 每次读前按剩余重设超时。F38：rdns=False 时对解析结果
     逐个尝试，可重试的 CONNECT 错误关闭当前会话、重建会话再试下一
-    地址；认证失败等非地址错误立即停。"""
+    地址；认证失败等非地址错误立即停。C-06：单边账密（仅用户名或仅
+    密码）不得静默降级为无认证（与 M-08(a) 同口径，覆盖批量入口）：
+    入口即报 ValueError，调用方按失败处理并明示账密不全。"""
+    if bool(username) != bool(password):
+        raise ValueError("proxy auth needs both username and password "
+                         "(one-sided auth is not silently downgraded)")
     t0 = time.perf_counter()
     _dl = time.monotonic() + timeout
     _has_auth = bool(username) and bool(password)
@@ -10626,6 +11056,24 @@ def socks5_connect(ph, pp, dh, dp, username=None, password=None,
 
 
 
+def _probe_headers_complete(s, deadline=None):
+    """B-13-2：204 兼容校验——读满头块至空行才算完整响应；EOF、超 32 行
+    或无 CRLF 截断皆不认（与 _probe_body_empty 对 200 的要求一致，
+    仅不校验 Content-Length：204 无体、无 CL 亦可完整）。"""
+    try:
+        for _ in range(32):
+            ln = _sock_readline(s, deadline=deadline)
+            if ln == b"\r\n":
+                return True  # 头块完整：见终止空行
+            if ln == b"":
+                return False  # EOF：头块不完整
+            if not ln.endswith(b"\r\n"):
+                return False  # 超限截断的无 CRLF 片段（见 _probe_body_empty）
+        return False  # 32 行未见空行：头块不完整
+    except OSError:
+        return False
+
+
 def socks5_probe(ph, pp, username=None, password=None, timeout=8):
     """SOCKS5 握手冒烟测试: 对 clients3.google.com:80 做 CONNECT,
     发 HTTP 探测, 200/204 即代理可用。返回 dict。"""
@@ -10652,7 +11100,10 @@ def socks5_probe(ph, pp, username=None, password=None, timeout=8):
         m = re.match(rb"HTTP/\d\.\d (\d{3})(?:[ \t].*)?\r\n$", line)
         ok = False
         if m and m.group(1) == b"204":
-            ok = True
+            # B-13-2：仅状态行不算完整响应，须读满头块至空行（与 200
+            # 分支经 _probe_body_empty 的要求一致）；对端只发状态行
+            # 即关闭时不得报代理可用。
+            ok = _probe_headers_complete(s, deadline=_deadline)
         elif m and m.group(1) == b"200":
             ok = _probe_body_empty(s, deadline=_deadline)
         return {"ok": ok, "latency_ms": round(hs_ms, 1),
@@ -12460,7 +12911,7 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 # ============================================================
-# 命令入口管理 (快捷键 v4.14.34): acheck / ac 薄启动器
+# 命令入口管理 (快捷键 v4.14.35): acheck / ac 薄启动器
 #
 # 设计 (GPT 比选 (d) 单文件内统一后端, CLI + 菜单共用; 已仲裁):
 # - 默认用户级: 受管理副本 ~/.local/share/acheck/acheck.py
@@ -12757,11 +13208,33 @@ def _shortcut_sha256_file_nofollow(path):
         os.close(fd)
 
 
+# C-05/B-15-3: 启动器限长读上限——自家生成器对近 PATH_MAX 的解释器/
+# 脚本路径会产出逾 4097 字节的合法启动器 (实测 8302/4341 字节)，
+# 4097 上限会把它判外来。64KiB 容纳两条 PATH_MAX 级路径加引用开销
+# 仍有余量，超限文件仍拒 (防无界读)。
+_SHORTCUT_LAUNCHER_MAX_BYTES = 65536
+
+
+def _shortcut_read_launcher_capped(fd):
+    """限长读启动器全文：逾 _SHORTCUT_LAUNCHER_MAX_BYTES 即返回 None。"""
+    chunks = []
+    total = 0
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > _SHORTCUT_LAUNCHER_MAX_BYTES:
+            return None
+    return b"".join(chunks)
+
+
 def _shortcut_entry_intact(path, entry, instance_id):
     """归属核对: 须为普通文件 (非符号链接) 且内容 sha256 与状态记录一致、
     且 marker 与本次安装实例一致。内容里出现 acheck.py 不算归属。
-    O_NOFOLLOW|O_NONBLOCK 打开 (FIFO 不阻塞) + fstat + 限长读 (4097 字节)
-    + 完整 3 行模板校验。"""
+    O_NOFOLLOW|O_NONBLOCK 打开 (FIFO 不阻塞) + fstat + 限长读 (64KiB，
+    C-05/B-15-3) + 完整 3 行模板校验。"""
     if not isinstance(path, str) or not isinstance(entry, dict):
         return False
     try:
@@ -12775,8 +13248,8 @@ def _shortcut_entry_intact(path, entry, instance_id):
             return False
         if not stat.S_ISREG(st.st_mode):
             return False
-        data = os.read(fd, 4097)
-        if os.read(fd, 1):
+        data = _shortcut_read_launcher_capped(fd)
+        if data is None:
             return False
     finally:
         os.close(fd)
@@ -12832,8 +13305,8 @@ def _shortcut_launcher_fork(path, instance_id, managed_script, interp):
             return False
         if not stat.S_ISREG(st.st_mode):
             return False
-        data = os.read(fd, 4097)
-        if os.read(fd, 1):
+        data = _shortcut_read_launcher_capped(fd)
+        if data is None:
             return False
     finally:
         os.close(fd)
@@ -12925,12 +13398,15 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
     first = True
     for d in path_dirs:
         # B-16-3: 空分量按 POSIX 语义即 cwd ("" 视同 ".")，不得丢弃。
-        nd = os.path.normpath(d or ".")
+        # B-15-1: 候选路径不得用 normpath 词法塌缩——"link/.." 经 shell
+        # 解析走符号链接到 real/，而 normpath 会塌成 link 的父目录，
+        # 致冲突漏检。候选一律用原文分量拼接 (与 shell 解析一致)，
+        # 去重仍按 realpath。
         rd = os.path.realpath(d or ".")
         if rd in seen:
             continue
         seen.add(rd)
-        cand = os.path.join(nd, name)
+        cand = os.path.join(d or ".", name)
         if _shortcut_canon_entry(cand) in own:
             continue
         try:
@@ -12948,12 +13424,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
     for d in system_dirs:
         if not d:
             continue
-        nd = os.path.normpath(d)
+        # B-15-1: 同 PATH 扫描——候选不用 normpath 塌缩 (见上)。
         rd = os.path.realpath(d)
         if rd in seen:
             continue
         seen.add(rd)
-        cand = os.path.join(nd, name)
+        cand = os.path.join(d, name)
         if _shortcut_canon_entry(cand) in own:
             continue
         try:
@@ -12981,10 +13457,12 @@ def _shortcut_blocked(findings):
 def _shortcut_load_state(paths):
     """返回 (state 或 None, corrupt 布尔)。损坏的状态不许据此删/盖任何文件。
     PermissionError 单独抛 ShortcutError, 绝不误报为 corrupt;
-    instance_id 须合字符集 [A-Za-z0-9_-]{1,64}, 否则按损坏处理。"""
+    instance_id 须合字符集 [A-Za-z0-9_-]{1,64}, 否则按损坏处理。
+    B-15-2: O_NONBLOCK + fstat 验普通文件后才读——FIFO/设备/目录一律
+    按损坏处理, 绝不在 open() 处无限阻塞。"""
     try:
-        with open(paths["state_path"], "r", encoding="utf-8") as f:
-            state = json.load(f)
+        fd = os.open(paths["state_path"],
+                     os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
         return None, False
     except PermissionError:
@@ -13000,8 +13478,26 @@ def _shortcut_load_state(paths):
                               % paths["state_path"],
                               "無權限讀取狀態檔案：%s"
                               % paths["state_path"]))
+    except OSError:
+        return None, True
+    try:
+        try:
+            st = os.fstat(fd)
+        except OSError:
+            return None, True
+        if not stat.S_ISREG(st.st_mode):
+            return None, True
+        with os.fdopen(fd, "r", encoding="utf-8") as f:
+            fd = None
+            state = json.load(f)
     except Exception:
         return None, True
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     if not isinstance(state, dict) \
             or state.get("format_version") != SHORTCUT_STATE_VERSION \
             or not isinstance(state.get("entries"), dict) \
@@ -13931,6 +14427,8 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                        "marker": instance_id}
         result["installed"].append(nm)
     # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
+    # B-16-5: 保存失败时本轮已写启动器不得成孤儿——见下方 except 分支
+    # (回滚已写启动器 + 恢复指引；重试不再因目标已存在被拒)。
     # R4-M-01(1): 写盘前清理本次冲突交互剔除的旧名——仅当旧启动器仍属
     # 自有（在启动器目录内且 intact）时才安全删除文件并移出 entries；
     # 系统文件或他人文件一律不动。
@@ -13978,12 +14476,75 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
     try:
         _shortcut_save_state(paths, new_state)
     except OSError as e:
+        # B-16-5: 保存失败不得留下无登记的孤儿启动器——回滚本轮已写
+        # 的全部启动器 (终验 _shortcut_unlink_if_intact，仅重验通过
+        # 才删；更新入口的旧内容已被替换，留盘只会留一个 sha 失配、
+        # 阻塞重试的启动器，删后旧状态条目仍在，下次安装可重新发布)。
+        # 回滚不完整的孤儿须在报错里点名路径与恢复办法。
+        _rolled_back = []
+        _kept_orphans = []
+        for _nm in result["installed"]:
+            _ent = entries.get(_nm)
+            _p = _ent.get("path", "") if isinstance(_ent, dict) else ""
+            if not _p:
+                continue
+            _ok_rb, _why_rb = _shortcut_unlink_if_intact(
+                _p, _ent, instance_id)
+            if _ok_rb:
+                _rolled_back.append(_nm)
+            else:
+                _kept_orphans.append((_nm, _p, _why_rb))
+        # G6（2026-11-24 GPT 复审）：回滚已删的启动器不得继续留在
+        # result["installed"] 里——结构化调用方据此判断安装结果，
+        # 不应再靠解析本地化报错文本；另以 result["rolled_back"] 明示。
+        if _rolled_back:
+            result["installed"] = [n for n in result["installed"]
+                                   if n not in _rolled_back]
+            result["rolled_back"] = list(_rolled_back)
         result["errors"].append(_L("无法保存状态：%s" % e,
                                   "Cannot save state: %s" % e,
                                   "状態を保存できません：%s" % e,
                                   "Не удаётся сохранить состояние: %s" % e,
                                   "نمی‌توان وضعیت را ذخیره کرد: %s" % e,
                                   "無法儲存狀態：%s" % e))
+        result["errors"].append(
+            _L("已回滚本次写入的启动器 %s；请重跑安装重试。"
+               "回滚不完整的孤儿启动器 %s，请先手动删除后再重跑安装。"
+               % (_rolled_back or "无",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "无"),
+               "Rolled back the launchers written in this run: %s; "
+               "re-run install to retry. Orphaned launchers that could "
+               "not be rolled back %s must be removed manually before "
+               "re-running install."
+               % (_rolled_back or "none",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "none"),
+               "今回書き込んだランチャー %s をロールバックしました。"
+               "インストールを再実行して再試行してください。ロールバック"
+               "できなかった孤立したランチャー %s は、再実行する前に手動"
+               "で削除してください。"
+               % (_rolled_back or "なし",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "なし"),
+               "Выполнен откат записанных в этом запуске лаунчеров: %s; "
+               "повторите установку. Лаунчеры-сироты, откат которых не "
+               "удался %s, удалите вручную перед повторной установкой."
+               % (_rolled_back or "нет",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "нет"),
+               "راه‌اندازهای نوشته‌شده در این اجرا %s بازگردانده شدند؛ "
+               "برای تلاش دوباره نصب را دوباره اجرا کنید. راه‌اندازهای "
+               "یتیم که بازگردانده نشدند %s را پیش از اجرای دوبارهٔ نصب "
+               "دستی حذف کنید."
+               % (_rolled_back or "هیچ",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "هیچ"),
+               "已回滾本次寫入的啟動器 %s；請重跑安裝重試。"
+               "回滾不完整的孤兒啟動器 %s，請先手動刪除後再重跑安裝。"
+               % (_rolled_back or "無",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "無")))
         return result
     result["ok"] = bool(result["installed"]) and not result["failed"]
     result["rc"] = 0 if result["ok"] else 1
@@ -14052,17 +14613,17 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
     lines = []
     def _status_doc():
         # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
-        # 4.14.34 E-1：failed 态 state 仍存在，但未装好任何入口，
-        # installed 须为 False；同时透出 install_status 供调用方区分。
+        # B-16-6：installed 按实际条目是否 OK 计算——更新失败写入 failed
+        # 态时保留的 OK 条目仍算已安装；install_status 仅作补充状态透出。
+        # 4.14.35 E-1 仍成立：failed 态且无任何 OK 条目时 installed 为 False。
         doc = {"scope": scope,
                "managed_dir": paths["data_dir"],
                "launcher_dir": paths["bin_dir"],
-               "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"]),
-               "installed": state is not None
-               and state.get("install_status") != "failed"}
+               "bin_in_path": _shortcut_bin_in_path(paths["bin_dir"])}
         if state is not None and state.get("install_status"):
             doc["install_status"] = state["install_status"]
         if state is None:
+            doc["installed"] = False
             doc["entries"] = []
             return doc
         doc["installed_version"] = state.get("installed_version")
@@ -14102,6 +14663,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                             "warnings": [{"kind": f["kind"], "path": f["path"]}
                                          for f in shadow + foreign]})
         doc["entries"] = entries
+        doc["installed"] = any(e["status"] == "OK" for e in entries)
         return doc
 
     if corrupt:
@@ -14164,10 +14726,20 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
             return (json.dumps(_status_doc(), ensure_ascii=False)
                     + "\n", 0)
         return "\n".join(lines) + "\n", 0
-    if state.get("install_status") == "failed":
-        # 4.14.34 E-1：失败态 as_json 也须返回合法 JSON（复用 _status_doc，
-        # 其 installed 已按 failed 态修正为 False），rc 保持 1；文本
-        # 模式原样返回纯文本。状态文件不持久化 install 时的 errors，
+    # B-16-6: failed 态是否按“未装好任何入口”处理，取决于是否仍有
+    # OK 条目（而非 install_status 本身）；保留条目仍 OK 时落到
+    # 正常状态展示（_status_doc 的 installed 已按条目 OK 计算）。
+    _failed_no_ok = False
+    if state is not None and state.get("install_status") == "failed":
+        _failed_no_ok = not any(
+            _shortcut_entry_intact(
+                _e.get("path", "") if isinstance(_e, dict) else "",
+                _e, state["instance_id"])
+            for _e in (state.get("entries") or {}).values())
+    if _failed_no_ok:
+        # 4.14.35 E-1：失败态且无任何 OK 条目时 as_json 也须返回合法
+        # JSON（复用 _status_doc，其 installed 已为 False），rc 保持 1；
+        # 文本模式原样返回纯文本。状态文件不持久化 install 时的 errors，
         # error 即文本提示本身（失败原因见安装时的报错）。
         _msg = _L("上次安装失败，未装好任何入口（状态文件 %s）。"
                    "请重跑安装，失败原因见安装时的报错。"
@@ -14695,6 +15267,17 @@ def shortcut_change(old_name, new_name=None, scope="user",
     try:
         _shortcut_save_state(paths, final)
     except OSError as e:
+        # C-04 残留：最终保存失败时磁盘状态仍为过渡态——旧名条目 stale
+        # 残留（文件已删）且报错无恢复指引。先尽力重存一次最终状态
+        # （entries 已不含旧名）；重存成功即旧名已清理；重存仍失败
+        # 则报错须指明残局与恢复办法。核心断言已证伪：新启动器已在
+        # 过渡态中登记，未成孤儿，此处不做回滚删除。
+        _repaired = False
+        try:
+            _shortcut_save_state(paths, final)
+            _repaired = True
+        except OSError:
+            _repaired = False
         result["errors"].append(_L("无法保存最终状态：%s" % e,
                                   "Cannot save final state: %s" % e,
                                   "最終状態を保存できません：%s" % e,
@@ -14702,6 +15285,82 @@ def shortcut_change(old_name, new_name=None, scope="user",
                                   % e,
                                   "نمی‌توان وضعیت نهایی را ذخیره کرد: %s" % e,
                                   "無法儲存最終狀態：%s" % e))
+        if _repaired:
+            result["errors"].append(
+                _L("最终状态首次保存失败，已重试保存并清理旧入口 %s 的"
+                   "状态条目（已恢复一致）；新入口 %s 已登记。"
+                   "请运行状态检查确认。" % (old_name, new_name),
+                   "The first save of the final state failed; the save "
+                   "was retried and the stale entry for old name %s was "
+                   "removed (state is consistent again); the new entry "
+                   "%s is registered. Run the status check to confirm."
+                   % (old_name, new_name),
+                   "最終状態の最初の保存に失敗しました。再保存して古い"
+                   "入口 %s の状態エントリを削除しました（状態は再び"
+                   "一致しています）。新しい入口 %s は登録済みです。状態"
+                   "を確認してください。" % (old_name, new_name),
+                   "Первая запись итогового состояния не удалась; запись "
+                   "повторена, устаревшая запись старого имени %s удалена "
+                   "(состояние снова согласовано); новая запись %s "
+                   "зарегистрирована. Проверьте состояние."
+                   % (old_name, new_name),
+                   "نخستین ذخیرهٔ وضعیت نهایی ناموفق بود؛ ذخیره دوباره "
+                   "انجام شد و ورودی کهنهٔ نام قدیمی %s حذف شد (وضعیت "
+                   "دوباره سازگار است)؛ ورودی جدید %s ثبت شده است. برای "
+                   "تأیید، بررسی وضعیت را اجرا کنید."
+                   % (old_name, new_name),
+                   "最終狀態首次儲存失敗，已重試儲存並清理舊入口 %s 的"
+                   "狀態條目（已恢復一致）；新入口 %s 已登記。"
+                   "請執行狀態檢查確認。" % (old_name, new_name)))
+        else:
+            result["errors"].append(
+                _L("恢复：状态文件 %s 仍登记旧入口 %s（其启动器已删除），"
+                   "新入口 %s 已登记在过渡状态中、启动器在盘。请重跑"
+                   "安装重新登记（或手动删除状态文件中 %s 的旧条目后"
+                   "重跑安装）；不要直接删除新启动器 %s。"
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "Recovery: the state file %s still lists the old entry "
+                   "%s (its launcher was deleted), while the new entry %s "
+                   "is already registered in the transitional state and "
+                   "its launcher is on disk. Re-run install to re-register "
+                   "(or manually remove the old entry %s from the state "
+                   "file first, then re-run install); do not delete the "
+                   "new launcher %s directly."
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "回復方法：状態ファイル %s には古い入口 %s が残って"
+                   "います（ランチャーは削除済み）。新しい入口 %s は遷移"
+                   "中の状態に登録済みで、ランチャーは存在します。再登録"
+                   "のためインストールを再実行してください（または状態"
+                   "ファイルから古い入口 %s を手動で削除してから再実行）。"
+                   "新しいランチャー %s を直接削除しないでください。"
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "Восстановление: файл состояния %s по-прежнему содержит "
+                   "старую запись %s (её лаунчер удалён), а новая запись %s "
+                   "уже зарегистрирована в переходном состоянии, и её "
+                   "лаунчер на диске. Повторите установку для повторной "
+                   "регистрации (или сначала вручную удалите старую запись "
+                   "%s из файла состояния, затем повторите установку); не "
+                   "удаляйте новый лаунчер %s напрямую."
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "بازیابی: پروندهٔ وضعیت %s هنوز ورودی قدیمی %s را دارد "
+                   "(راه‌انداز آن حذف شده است)، در حالی که ورودی جدید %s "
+                   "در وضعیت گذار ثبت شده و راه‌انداز آن روی دیسک است. "
+                   "برای ثبت دوباره نصب را دوباره اجرا کنید (یا ابتدا "
+                   "ورودی قدیمی %s را دستی از پروندهٔ وضعیت حذف کنید، سپس "
+                   "نصب را دوباره اجرا کنید)؛ راه‌انداز جدید %s را مستقیم "
+                   "حذف نکنید."
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "恢復：狀態檔案 %s 仍登記舊入口 %s（其啟動器已刪除），"
+                   "新入口 %s 已登記在過渡狀態中、啟動器在盤。請重跑"
+                   "安裝重新登記（或手動刪除狀態檔案中 %s 的舊條目後"
+                   "重跑安裝）；不要直接刪除新啟動器 %s。"
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path)))
         result["installed"] = [new_name]
         result["removed"] = [old_name]
         result["rc"] = 1
@@ -14912,6 +15571,41 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                        "受管理副本 %s 在刪除前重驗失敗，已保留，請人工處理"
                        % ms))
                 _cleanup_failed = True
+        else:
+            # B-17-4: 首次哈希失配即须报错并保留状态——此前直接跳过
+            # 整个 if 块、静默删状态报成功，留被篡改的受管理副本在盘
+            # 且无人再清理。恢复：人工核对受管理副本内容后，自行删除
+            # 该副本与状态文件，或重跑安装重新登记。
+            result["errors"].append(
+                _L("受管理副本 %s 与状态记录不一致（首次重验失败），"
+                   "已保留状态文件与该副本，请人工处理：核对副本内容后"
+                   "自行删除副本与状态文件，或重跑安装重新登记"
+                   % ms,
+                   "Managed script %s does not match the state record "
+                   "(first re-check failed); the state file and the copy "
+                   "were kept, handle manually: inspect the copy, then "
+                   "remove the copy and the state file yourself, or "
+                   "re-run install to re-register" % ms,
+                   "管理スクリプト %s が状態記録と一致しません（最初の再"
+                   "検査に失敗）。状態ファイルとコピーを保持しました。手動"
+                   "で対処してください。コピーを確認してからコピーと状態"
+                   "ファイルを自分で削除するか、インストールを再実行して"
+                   "再登録してください" % ms,
+                   "Управляемый скрипт %s не совпадает с записью состояния "
+                   "(первая повторная проверка не пройдена); файл состояния "
+                   "и копия сохранены, разберитесь вручную: проверьте "
+                   "копию, затем удалите копию и файл состояния сами или "
+                   "повторите установку для повторной регистрации" % ms,
+                   "اسکریپت مدیریت‌شده %s با رکورد وضعیت مطابقت ندارد "
+                   "(بازبینی نخست ناموفق بود)؛ پروندهٔ وضعیت و نسخه حفظ "
+                   "شدند، دستی رسیدگی کنید: نسخه را بررسی کنید، سپس نسخه و "
+                   "پروندهٔ وضعیت را خودتان حذف کنید یا نصب را دوباره اجرا "
+                   "کنید تا دوباره ثبت شود" % ms,
+                   "受管理副本 %s 與狀態記錄不一致（首次重驗失敗），"
+                   "已保留狀態檔案與該副本，請人工處理：核對副本內容後"
+                   "自行刪除副本與狀態檔案，或重跑安裝重新登記"
+                   % ms))
+            _cleanup_failed = True
         if not _cleanup_failed:
             try:
                 os.unlink(paths["state_path"])
@@ -15996,7 +16690,11 @@ def main():
                         print(T("invalid_proxy_format"))
                         continue
                     phost, pport = _hp
-                    _u = input(T("prompt_proxy_user")).strip()
+                    # B-18-2: 交互入口用户名原样保留，不得 strip——SOCKS5
+                    # 用户名可含空格 (RFC 1929)，传输层原样发送；仅空串
+                    # 表示跳过。CLI 路径 _resolve_proxy_auth 的 strip
+                    # 为 docstring 明言设计，不属本项。
+                    _u = input(T("prompt_proxy_user"))
                     if _u:
                         puser = _u
                         import getpass

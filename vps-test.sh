@@ -26,7 +26,16 @@ elif [ -n "$VPS_TEST_LOCAL_ONLY" ]; then
     cp "$_LOCAL" acheck.py || { echo "FAIL: [本地] 复制本地脚本失败"; exit 1; }
     echo "本地仓库脚本 OK: $_LOCAL"
 else
-    curl -fSL --connect-timeout 10 --max-time 60 -o acheck.py https://raw.githubusercontent.com/alariclin/A-Check/v4.14.34/acheck.py || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
+    # C-01：不再 pin 写死的发版 tag（新版本号的 tag 在发版前不存在，
+    # curl -f 遇 404，[1/10] 发版前必败）。改为解析最新已存在 tag：
+    # GitHub Tags API 按创建时间倒序取首条；解析失败或取空即硬 FAIL，
+    # 不静默回落 main/旧版，避免测到非预期版本还报通过。
+    # C-01 BEGIN
+    _TAG="$(curl -fsSL --connect-timeout 10 --max-time 30 'https://api.github.com/repos/alariclin/A-Check/tags?per_page=1' | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["name"] if isinstance(d, list) and d else "")')" || { echo "FAIL: [联网] 解析最新 tag 失败"; exit 2; }
+    [ -n "$_TAG" ] || { echo "FAIL: [联网] 未取到最新 tag"; exit 2; }
+    echo "最新已发布 tag: $_TAG"
+    curl -fSL --connect-timeout 10 --max-time 60 -o acheck.py "https://raw.githubusercontent.com/alariclin/A-Check/${_TAG}/acheck.py" || { echo "FAIL: [联网] 下载失败（网络/发布问题）"; exit 2; }
+    # C-01 END
 fi
 python3 -m py_compile acheck.py || { echo "FAIL: [本地] 编译失败"; exit 1; }
 echo "编译 OK"
