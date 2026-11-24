@@ -16145,7 +16145,11 @@ def main():
                         print(T("invalid_proxy_format"))
                         continue
                     phost, pport = _hp
-                    _u = input(T("prompt_proxy_user")).strip()
+                    # B-18-2: 交互入口用户名原样保留，不得 strip——SOCKS5
+                    # 用户名可含空格 (RFC 1929)，传输层原样发送；仅空串
+                    # 表示跳过。CLI 路径 _resolve_proxy_auth 的 strip
+                    # 为 docstring 明言设计，不属本项。
+                    _u = input(T("prompt_proxy_user"))
                     if _u:
                         puser = _u
                         import getpass
