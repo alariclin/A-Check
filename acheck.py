@@ -12925,12 +12925,15 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
     first = True
     for d in path_dirs:
         # B-16-3: 空分量按 POSIX 语义即 cwd ("" 视同 ".")，不得丢弃。
-        nd = os.path.normpath(d or ".")
+        # B-15-1: 候选路径不得用 normpath 词法塌缩——"link/.." 经 shell
+        # 解析走符号链接到 real/，而 normpath 会塌成 link 的父目录，
+        # 致冲突漏检。候选一律用原文分量拼接 (与 shell 解析一致)，
+        # 去重仍按 realpath。
         rd = os.path.realpath(d or ".")
         if rd in seen:
             continue
         seen.add(rd)
-        cand = os.path.join(nd, name)
+        cand = os.path.join(d or ".", name)
         if _shortcut_canon_entry(cand) in own:
             continue
         try:
@@ -12948,12 +12951,12 @@ def shortcut_check_name(name, bin_dir, own_entry_paths=(),
     for d in system_dirs:
         if not d:
             continue
-        nd = os.path.normpath(d)
+        # B-15-1: 同 PATH 扫描——候选不用 normpath 塌缩 (见上)。
         rd = os.path.realpath(d)
         if rd in seen:
             continue
         seen.add(rd)
-        cand = os.path.join(nd, name)
+        cand = os.path.join(d, name)
         if _shortcut_canon_entry(cand) in own:
             continue
         try:
