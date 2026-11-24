@@ -7068,8 +7068,29 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         if _blocked is not None:
             raise urllib.error.HTTPError(req.full_url, code, _blocked, headers, fp)
         _new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if _new_req is not None and _ips:
-            _new_req._redirect_pin_ip = _ips[0]
+        if _new_req is not None:
+            if _ips:
+                _new_req._redirect_pin_ip = _ips[0]
+            # B-09a-2：跨源重定向剥离 Authorization/Cookie（urllib 的
+            # redirect_request 只剥离 content-length/type，普通头原样
+            # 保留）。同源（协议+主机+端口，默认端口归一化）保留不变。
+            # 纵深防御：仓库内无带凭据调用方（全文 grep Authorization/
+            # Cookie 在调用方侧 0 命中），本次修补为共享基础设施的
+            # 凭据泄漏隐患兜底，非已生效的凭据泄漏。
+            _old_parts = urllib.parse.urlsplit(req.full_url)
+            _def_port = {"http": 80, "https": 443}.get(_new_scheme)
+            _same_origin = (
+                _old_parts.scheme.lower() == _new_scheme
+                and (_old_parts.hostname or "").lower()
+                == (_parts.hostname or "").lower()
+                and (_old_parts.port or _def_port)
+                == (_parts.port or _def_port))
+            if not _same_origin:
+                for _h in ("Authorization", "Cookie"):
+                    try:
+                        _new_req.remove_header(_h)
+                    except Exception:
+                        pass
         return _new_req
 
 
