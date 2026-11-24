@@ -3570,6 +3570,11 @@ class IPApi(Provider):
 
 @register
 class ProxyCheck(Provider):
+    """proxycheck.io：当前仍调 v2 端点。官方 changelog（2026-11-24 复核）：
+    v3 已于 2026-09-13 结束 open beta 转正为当前稳定版，v2 标签同日由
+    "Stable v2 API" 改名 "Legacy v2 API"；全文检索 changelog 未见 v2
+    下线日期（下线日期官方未公布，不写日期）。迁移评估待排期，见 04-07。
+    """
     key = "proxycheck"
     name = "proxycheck.io"
 
