@@ -4225,7 +4225,12 @@ class IPsum(Provider):
                         continue
                     if not parts[1].isdigit():
                         continue
-                    out[str(addr)] = int(parts[1])
+                    # B-7-1: "²".isdigit() 为 True 而 int("²") 抛 ValueError；
+                    # 坏计数行只跳过该行, 不得以整表解析中止为代价。
+                    try:
+                        out[str(addr)] = int(parts[1])
+                    except ValueError:
+                        continue
             return out or None
 
         lst = _get_threat_list(
@@ -5205,13 +5210,16 @@ def _print_streaming_inference(res):
     ti = s.get("twoip", {})
     if pc.get("ok") and "hosting" in str(pc.get("type", "")).lower():
         is_dc = True
-    if wi.get("ok") and wi.get("hosting"):
+    # B-8-2: 同 score_platform, Hosting/DC 旗标须经 _strict_bool 判定；
+    # 字符串 "false" 不得置 is_dc (truthiness 误判)。
+    if wi.get("ok") and _strict_bool(wi.get("hosting")):
         is_dc = True
-    if il.get("ok") and (il.get("hosting") or il.get("asn_type") == "hosting"):
+    if il.get("ok") and (_strict_bool(il.get("hosting"))
+                         or il.get("asn_type") == "hosting"):
         is_dc = True
-    if iq.get("ok") and iq.get("datacenter"):
+    if iq.get("ok") and _strict_bool(iq.get("datacenter")):
         is_dc = True
-    if ti.get("ok") and ti.get("hosting"):
+    if ti.get("ok") and _strict_bool(ti.get("hosting")):
         is_dc = True
 
     def _consensus(*vals):
@@ -5241,6 +5249,8 @@ def _print_streaming_inference(res):
     is_tor_exit = s.get("tor_exit", {}).get("ok") and s.get("tor_exit", {}).get("is_tor_exit")
     is_tor = (
         ("tor" in str(pc.get("type", "")).lower() if pc.get("ok") else False)
+        # B-8-1: 同 score_platform, proxycheck 的 tor 字段亦为 Tor 票。
+        or (_strict_bool(pc.get("tor")) is True if pc.get("ok") else False)
         # R4-H-04：同 score_platform，Tor 票须经 _strict_bool 清洗，
         # "false" 字符串不得判真（仲裁 [4] 节的 is_tor 分支）。
         or (_strict_bool(wi.get("tor")) is True if wi.get("ok") else False)
@@ -5404,9 +5414,16 @@ def _print_streaming_inference(res):
     _risk_srcs = (pc, wi, il, iq, fp, xv, sc, fe, et, sp, sh, te, sf)
     _risk_ok = sum(1 for _s in _risk_srcs
                    if isinstance(_s, dict) and _s.get("ok"))
-    _proxy_vote_ok = any(isinstance(_s, dict) and _s.get("ok")
-                         for _s in (pc, wi, fp, il, iq))
-    _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok"))
+    # B-8-3: 按注释口径, 三类门查的须是可用证据而非源级 ok——代理/VPN 门
+    # 须至少一源投出真实布尔票 (字段缺失/非布尔皆为弃权, 不是证据)；欺诈门
+    # 须 scamalytics 给出 fraud_score (ok 但分数缺失即无欺诈证据)。
+    _proxy_vote_ok = any(
+        isinstance(_s, dict) and _s.get("ok")
+        and (_strict_bool(_s.get("proxy")) is not None
+             or _strict_bool(_s.get("vpn")) is not None)
+        for _s in (pc, wi, fp, il, iq))
+    _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok")
+                     and sc.get("fraud_score") is not None)
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
                      for _s in (fe, et, sp, sh, sf))
 
@@ -6450,6 +6467,9 @@ def get_egress_ip(budget=None):
             _to = min(6, _rem)
         else:
             _to = 6
+        # B-9-1: 按 docstring, 每源各取 min(6, 剩余) 的绝对截止；打开与读
+        # 阶段皆受每源截止约束, 不得用总 deadline 令首源吃光整预算。
+        _src_dl = time.monotonic() + _to
         try:
             _ua = {"User-Agent": "A-Check/" + VERSION + " (+https://github.com/alariclin/A-Check)"} if "ipinfo.io" in url else {"User-Agent": UA_BROWSER}
             req = urllib.request.Request(url, headers=_ua)
@@ -6460,7 +6480,7 @@ def get_egress_ip(budget=None):
             try:
                 _resp = _open_bounded(
                     lambda req=req, _to=_to: urllib.request.urlopen(req, timeout=_to),
-                    _dl if _dl is not None else time.monotonic() + _to)
+                    _src_dl)
             except Exception:
                 continue
             if _resp is None:
@@ -6478,7 +6498,8 @@ def get_egress_ip(budget=None):
 
                 _rt = threading.Thread(target=_do_read, daemon=True)
                 _rt.start()
-                _rrem = (_dl - time.monotonic()) if _dl is not None else _to
+                # B-9-1: 读阶段亦按每源截止 join, 而非总预算。
+                _rrem = _src_dl - time.monotonic()
                 _rt.join(_rrem)
                 if _rt.is_alive():
                     # F20：先 shutdown 唤醒读线程再退 with 调 close()，
@@ -7026,7 +7047,15 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
             v = None
         if v is not None:
             v = str(v).strip()
-            cl = int(v) if (v.isascii() and v.isdigit()) else False
+            # B-10-1: 超长数字串 (Python 3.11+ int 转换上限 4300 位) 会使
+            # int() 抛 ValueError；按"CL 非法时不完整"口径守住, 不外逃。
+            if v.isascii() and v.isdigit():
+                try:
+                    cl = int(v)
+                except (ValueError, OverflowError):
+                    cl = False
+            else:
+                cl = False
     if cl is False:
         return False
     if cl is not None:
@@ -7253,6 +7282,12 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if not _chunk:
                 _st["eof"] = True
                 break  # 干净 EOF
+            # B-10-2: deflate 单成员已结束, 后续非空块为流外残留：不计入
+            # 压缩已读, 且判不完整。同块残留已由 unused_data 判 False；
+            # 分块边界不得决定结论, 故跨块残留亦判 False (S1-N1 同款原则)。
+            if _gz["kind"] == "deflate" and _gz["member_eof"]:
+                _st["trunc"] = True
+                break
             _comp_read += len(_chunk)
             if _comp_read > _STREAM_COMP_CAP:
                 _st["trunc"] = True
