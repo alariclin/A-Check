@@ -2201,6 +2201,30 @@ def _decode_dns_name(pkt, offset):
     return ".".join(labels), (orig_offset if jumped else offset)
 
 
+def _dns_name_term(pkt, offset):
+    """返回 offset 处 DNS 名的根终止符偏移（B-3-5）：沿标签/指针走到
+    长度为 0 的根标签，返回该零字节在包内的偏移；指针循环、越界或
+    非法高位标签均返 None。压缩指针指向的名字终止符即指针目标的
+    终止符（与 _decode_dns_name 的跳转语义一致）。"""
+    seen = set()
+    while offset < len(pkt):
+        if offset in seen:
+            return None
+        seen.add(offset)
+        length = pkt[offset]
+        if length == 0:
+            return offset
+        if (length & 0xC0) == 0xC0:
+            if offset + 1 >= len(pkt):
+                return None
+            offset = ((length & 0x3F) << 8) | pkt[offset + 1]
+        elif (length & 0xC0) != 0x00:
+            return None
+        else:
+            offset += 1 + length
+    return None
+
+
 def _has_ipv4_egress():
     """有无 IPv4 出口：UDP connect 只做本地路由查询，不发包；
     无 IPv4 路由时抛 OSError（纯 IPv6 主机）。"""
@@ -2436,7 +2460,8 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             _srv_scope = None
     try:
         domain_q = domain.encode("idna").decode("ascii")
-        # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的唯一合法目标。
+        # 问题段 QNAME 根终止符偏移：压缩 Null MX 指针的合法目标之一
+        #（另一类为各答案 RR 属主的终止符，见 _name_terms；B-3-5）。
         _qname_term = 12 + len(_encode_dns_name(domain_q)) - 1
         tid = random.randint(1, 65534)
         header = struct.pack(">HHHHHH", tid, 0x0100, 1, 0, 0, 0)
@@ -2513,12 +2538,19 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
 
     records = []
     parsed = 0
+    # B-3-5：包内真实名字终止符集合——问题段 QNAME 终止符 + 各答案 RR
+    # 属主的终止符；压缩 Null MX 的指针只接受指向其中之一的根。
+    _name_terms = {_qname_term}
     for _ in range(ancount):
         if offset >= len(data):
             break
+        _owner_start = offset
         owner, offset = _decode_dns_name(data, offset)
         if owner is None:
             break  # 属主名畸形：无法定位固定段与 rdlength，只能整包判败
+        _oterm = _dns_name_term(data, _owner_start)
+        if _oterm is not None:
+            _name_terms.add(_oterm)
         if offset + 10 > len(data):
             break
         rtype, rclass, _, rdlength = struct.unpack(">HHIH", data[offset:offset + 10])
@@ -2611,11 +2643,14 @@ def _dns_query_udp(domain, qtype=1, server="1.1.1.1", timeout=2.5, return_cnames
             mx_host, mend = _decode_dns_name(data, _off + 2)
             if mx_host == "":
                 # 解出根交换域名：仅当交换名为恰好 4 字节（偏好值 + 单指针）且指针
-                # 指向问题段 QNAME 根终止符时，才视为合法压缩 Null MX（偏好 0 置
-                # 标记，非零偏好仅跳过）；指向包内任意零字节（如偏好值高字节）的
-                # “根”属畸形，判查询失败（fail-closed；selfaudit F5 覆盖此情形）。
+                # 指向包内某一真实名字终止符（问题段 QNAME 或任一答案 RR 属主的
+                # 根终止符，见 _name_terms）时，才视为合法压缩 Null MX（偏好 0 置
+                # 标记，非零偏好仅跳过）；指向包内任意零字节（如偏好值高字节等
+                # RDATA 内零字节）的“根”属畸形，判查询失败（fail-closed；
+                # selfaudit F5 覆盖此情形）。B-3-5：此前只认 _qname_term 一个
+                # 目标，指向较早 RR 属主终止符的合法压缩根被误判失败。
                 if (len(_rd) == 4 and _rd[2] & 0xC0 == 0xC0
-                        and (((_rd[2] & 0x3F) << 8) | _rd[3]) == _qname_term):
+                        and (((_rd[2] & 0x3F) << 8) | _rd[3]) in _name_terms):
                     if pref == 0:
                         _null_mx = True
                     continue
