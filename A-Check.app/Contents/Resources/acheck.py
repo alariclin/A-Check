@@ -7611,6 +7611,18 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if _st["n"] >= _STREAM_CAP:
                 _hit_cap = True
                 break
+        # B-09b-1：deflate 嗅探误判的重试触发点——错选的解码器在传输
+        # EOF 时不抛异常（静默产出错误正文、eof 仍 False），异常触发的
+        # _deflate_retry() 因此永不执行。干净 EOF 且解码器未达 eof 即
+        # 为第二触发点：换另一 wbits 从头重喂一次；重喂后仍未达 eof
+        # （如真实截断）则仍判不完整，不把截断洗成完整。
+        if (_gz["kind"] == "deflate" and _st["eof"] and not _st["trunc"]
+                and not _gz["retried"] and _gz["obj"] is not None
+                and not _gz["obj"].eof):
+            try:
+                _deflate_retry()
+            except Exception:
+                _st["trunc"] = True
         _raw = b"".join(_st["out"])
         if _st["trunc"]:
             _complete = False
