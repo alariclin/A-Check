@@ -9564,6 +9564,8 @@ def get_system_info():
                             pass
                 hv_dmi = any(k in dmi_text for k in (
                     "kvm", "qemu", "vmware", "virtualbox", "xen", "hyper-v",
+                    # B-12-2：补 "bochs"（与 Windows 分支一致，F29 同款）。
+                    "bochs",
                 ))
                 hv_cpu = False
                 cpu_read = False
