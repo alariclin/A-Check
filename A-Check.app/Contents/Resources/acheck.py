@@ -7012,42 +7012,70 @@ def _redirect_host_public(host):
     return bool(_ips)
 
 
-def _redirect_pinned_connect(conn, pin_ip):
+def _redirect_pinned_connect(conn, pin_ips, family=None):
     """连向校验时钉住的字面量 IP（B-09a-1）：主机名只在重定向校验时
     解析一次，连接不再二次解析；Host/SNI 仍用原域名（conn.host），故
     虚拟主机与证书校验不受影响。代理隧道（_tunnel_host）时由代理方
-    解析，本钉住不适用，退回默认连接。"""
+    解析，本钉住不适用，退回默认连接。pin_ips 为校验时解析出的全部
+    公网地址（单串亦可）；family 给出时只取该族（G2：定族 opener 的
+    重定向不得跨族），无符合地址即失败；多地址按序逐个试连、共用同
+    一截止预算（G2：首地址不可达不再直接失败）。"""
     if getattr(conn, "_tunnel_host", None):
         http.client.HTTPConnection.connect(conn)
         return
+    if isinstance(pin_ips, str):
+        pin_ips = [pin_ips]
+    _cands = []
+    for _pin in pin_ips or []:
+        try:
+            _ip = ipaddress.ip_address(_pin)
+        except ValueError:
+            continue
+        if family is not None and (
+                (family == socket.AF_INET6) != (_ip.version == 6)):
+            continue
+        _cands.append(str(_ip))
+    if not _cands:
+        raise OSError("redirect pin has no address for the requested family")
     _to = conn.timeout
     if _to is None or _to is getattr(socket, "_GLOBAL_DEFAULT_TIMEOUT", None):
         _to = 5
-    _ip = ipaddress.ip_address(pin_ip)
-    _fam = socket.AF_INET6 if _ip.version == 6 else socket.AF_INET
-    _s = socket.socket(_fam, socket.SOCK_STREAM)
-    try:
-        _s.settimeout(_to)
-        _s.connect((pin_ip, conn.port))
-    except Exception:
+    _dl = time.monotonic() + _to
+    _last = None
+    for _pin in _cands:
+        _rem = _dl - time.monotonic()
+        if _rem <= 0:
+            break
+        _ip = ipaddress.ip_address(_pin)
+        _fam = socket.AF_INET6 if _ip.version == 6 else socket.AF_INET
+        _s = socket.socket(_fam, socket.SOCK_STREAM)
         try:
-            _s.close()
-        except Exception:
-            pass
-        raise
-    conn.sock = _s
+            _s.settimeout(_rem)
+            _s.connect((_pin, conn.port))
+            conn.sock = _s
+            return
+        except Exception as _e:
+            _last = _e
+            try:
+                _s.close()
+            except Exception:
+                pass
+    raise _last if _last is not None else OSError("redirect pin connect failed")
 
 
 class _RedirectPinHTTPConnection(http.client.HTTPConnection):
     """B-09a-1：带重定向钉住 IP 的 HTTP 连接（无钉住时沿用默认行为）。"""
 
-    def __init__(self, *a, pin_ip=None, **k):
+    def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
         super().__init__(*a, **k)
         self._redirect_pin_ip = pin_ip
+        self._redirect_pin_ips = pin_ips
 
     def connect(self):
-        if getattr(self, "_redirect_pin_ip", None):
-            _redirect_pinned_connect(self, self._redirect_pin_ip)
+        _pins = getattr(self, "_redirect_pin_ips", None) \
+            or getattr(self, "_redirect_pin_ip", None)
+        if _pins:
+            _redirect_pinned_connect(self, _pins)
         else:
             super().connect()
 
@@ -7055,14 +7083,17 @@ class _RedirectPinHTTPConnection(http.client.HTTPConnection):
 class _RedirectPinHTTPSConnection(http.client.HTTPSConnection):
     """B-09a-1：带重定向钉住 IP 的 HTTPS 连接（SNI/证书仍用原域名）。"""
 
-    def __init__(self, *a, pin_ip=None, **k):
+    def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
         super().__init__(*a, **k)
         self._redirect_pin_ip = pin_ip
+        self._redirect_pin_ips = pin_ips
 
     def connect(self):
-        if getattr(self, "_redirect_pin_ip", None) \
+        _pins = getattr(self, "_redirect_pin_ips", None) \
+            or getattr(self, "_redirect_pin_ip", None)
+        if _pins \
                 and not getattr(self, "_tunnel_host", None):
-            _redirect_pinned_connect(self, self._redirect_pin_ip)
+            _redirect_pinned_connect(self, _pins)
             try:
                 self.sock = self._context.wrap_socket(
                     self.sock, server_hostname=self._tunnel_host or self.host)
@@ -7081,16 +7112,30 @@ class _RedirectPinHTTPHandler(urllib.request.HTTPHandler):
     """B-09a-1：把请求上的 _redirect_pin_ip 传给连接。"""
 
     def http_open(self, req):
+        _pin = getattr(req, "_redirect_pin_ip", None)
+        _pins = getattr(req, "_redirect_pin_ips", None)
+        if _pin is not None and req.has_proxy():
+            # G3：代理请求不钉住——经代理时连接目标是代理（conn.host/
+            # port 为代理），钉住目的 IP 会错连代理端口；代理方自行解析。
+            _pin = None
+            _pins = None
         return self.do_open(_RedirectPinHTTPConnection, req,
-                            pin_ip=getattr(req, "_redirect_pin_ip", None))
+                            pin_ip=_pin, pin_ips=_pins)
 
 
 class _RedirectPinHTTPSHandler(urllib.request.HTTPSHandler):
     """B-09a-1：把请求上的 _redirect_pin_ip 传给连接。"""
 
     def https_open(self, req):
+        _pin = getattr(req, "_redirect_pin_ip", None)
+        _pins = getattr(req, "_redirect_pin_ips", None)
+        if _pin is not None and req.has_proxy():
+            # G3：同 HTTP；隧道情形 _redirect_pinned_connect 内亦有
+            # _tunnel_host 早退，此处为双重保障。
+            _pin = None
+            _pins = None
         return self.do_open(_RedirectPinHTTPSConnection, req,
-                            pin_ip=getattr(req, "_redirect_pin_ip", None))
+                            pin_ip=_pin, pin_ips=_pins)
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -7127,6 +7172,9 @@ class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         _new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
         if _new_req is not None:
             if _ips:
+                # G2：钉住全量校验地址（不只首个），连接层按需按族筛选+
+                # 逐个试连；_redirect_pin_ip 留作单地址兼容。
+                _new_req._redirect_pin_ips = list(_ips)
                 _new_req._redirect_pin_ip = _ips[0]
             # B-09a-2：跨源重定向剥离 Authorization/Cookie（urllib 的
             # redirect_request 只剥离 content-length/type，普通头原样
@@ -7339,24 +7387,30 @@ def _pinned_opener(family, follow_redirects=True):
     fam = socket.AF_INET6 if family == 6 else socket.AF_INET
 
     class _HC(http.client.HTTPConnection):
-        def __init__(self, *a, pin_ip=None, **k):
+        def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
             super().__init__(*a, **k)
             self._redirect_pin_ip = pin_ip
+            self._redirect_pin_ips = pin_ips
 
         def connect(self):
-            if getattr(self, "_redirect_pin_ip", None):
-                _redirect_pinned_connect(self, self._redirect_pin_ip)
+            _pins = getattr(self, "_redirect_pin_ips", None) \
+                or getattr(self, "_redirect_pin_ip", None)
+            if _pins:
+                _redirect_pinned_connect(self, _pins, family=fam)
             else:
                 _pinned_connect(self, fam)
 
     class _HSC(http.client.HTTPSConnection):
-        def __init__(self, *a, pin_ip=None, **k):
+        def __init__(self, *a, pin_ip=None, pin_ips=None, **k):
             super().__init__(*a, **k)
             self._redirect_pin_ip = pin_ip
+            self._redirect_pin_ips = pin_ips
 
         def connect(self):
-            if getattr(self, "_redirect_pin_ip", None):
-                _redirect_pinned_connect(self, self._redirect_pin_ip)
+            _pins = getattr(self, "_redirect_pin_ips", None) \
+                or getattr(self, "_redirect_pin_ip", None)
+            if _pins:
+                _redirect_pinned_connect(self, _pins, family=fam)
             else:
                 _pinned_connect(self, fam)
             try:
@@ -7374,12 +7428,14 @@ def _pinned_opener(family, follow_redirects=True):
     class _HH(urllib.request.HTTPHandler):
         def http_open(self, req):
             return self.do_open(_HC, req,
-                                pin_ip=getattr(req, "_redirect_pin_ip", None))
+                                pin_ip=getattr(req, "_redirect_pin_ip", None),
+                                pin_ips=getattr(req, "_redirect_pin_ips", None))
 
     class _HSH(urllib.request.HTTPSHandler):
         def https_open(self, req):
             return self.do_open(_HSC, req, context=self._context,
-                                pin_ip=getattr(req, "_redirect_pin_ip", None))
+                                pin_ip=getattr(req, "_redirect_pin_ip", None),
+                                pin_ips=getattr(req, "_redirect_pin_ips", None))
 
     handlers = [urllib.request.ProxyHandler({}), _HH(), _HSH()]
     if not follow_redirects:
