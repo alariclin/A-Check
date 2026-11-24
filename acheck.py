@@ -3056,7 +3056,7 @@ def _wd_label(name, kind, context):
     不可作类型依据 ("state" 会命中 "city in the united states of america",
     同名城市可被当作行政区选中)。类型无法确认的候选一律跳过, 无一确认
     时返 None。S6-N2: 裸名回退的候选另须验证国家/行政区与 context 一致
-    (P17 国家、P131 行政归属上溯一级), 无法确认时返 None——回退不
+    (P17 国家、P131 行政归属沿链多级上溯，上限 8 跳), 无法确认时返 None——回退不
     得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
     (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
@@ -3126,24 +3126,39 @@ def _wd_label(name, kind, context):
         want = _WD_ADMIN_QIDS if kind == "region" else _WD_PLACE_QIDS
 
         def _context_ok(eid):
-            """裸名回退校验：实体 P17 国家 / P131 行政归属（上溯一级）
-            须与 context 某一成分的 QID 相符；非回退路径恒真；实体无
-            P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            """裸名回退校验：实体 P17 国家 / P131 行政归属（沿链多级
+            上溯，上限 8 跳防循环）须与 context 某一成分的 QID 相符；
+            非回退路径恒真；实体无 P17/P131 或 context 成分全解不出
+            时返 False（无法确认）。"""
             if not _fallback:
                 return True
             ent = entities.get(eid, {})
             countries = set(_wd_claim_ids(ent, "P17"))
             placed = _wd_claim_ids(ent, "P131")
             if placed:
-                ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                                     f"&ids={'|'.join(placed)}&props=claims&format=json",
-                                     timeout=5, retries=1, use_cache=False)
-                if ok2:
+                # C-03：单级上溯会误拒深层行政链（如村→市镇→区→州）；
+                # 沿 P131 链逐级上溯，上限 8 跳，seen 去重防循环。
+                seen = set(placed)
+                frontier = list(placed)
+                for _hop in range(8):
+                    if not frontier:
+                        break
+                    ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                         f"&ids={'|'.join(frontier)}&props=claims&format=json",
+                                         timeout=5, retries=1, use_cache=False)
+                    if not ok2:
+                        break
                     try:
+                        nxt = []
                         for tent in json.loads(raw2).get("entities", {}).values():
-                            placed.extend(_wd_claim_ids(tent, "P131"))
+                            for q in _wd_claim_ids(tent, "P131"):
+                                if q not in seen:
+                                    seen.add(q)
+                                    nxt.append(q)
+                        placed.extend(nxt)
+                        frontier = nxt
                     except Exception:
-                        pass
+                        break
             placed = set(placed)
             if not countries and not placed:
                 return False
