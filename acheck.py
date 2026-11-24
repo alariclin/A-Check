@@ -14809,6 +14809,17 @@ def shortcut_change(old_name, new_name=None, scope="user",
     try:
         _shortcut_save_state(paths, final)
     except OSError as e:
+        # C-04 残留：最终保存失败时磁盘状态仍为过渡态——旧名条目 stale
+        # 残留（文件已删）且报错无恢复指引。先尽力重存一次最终状态
+        # （entries 已不含旧名）；重存成功即旧名已清理；重存仍失败
+        # 则报错须指明残局与恢复办法。核心断言已证伪：新启动器已在
+        # 过渡态中登记，未成孤儿，此处不做回滚删除。
+        _repaired = False
+        try:
+            _shortcut_save_state(paths, final)
+            _repaired = True
+        except OSError:
+            _repaired = False
         result["errors"].append(_L("无法保存最终状态：%s" % e,
                                   "Cannot save final state: %s" % e,
                                   "最終状態を保存できません：%s" % e,
@@ -14816,6 +14827,82 @@ def shortcut_change(old_name, new_name=None, scope="user",
                                   % e,
                                   "نمی‌توان وضعیت نهایی را ذخیره کرد: %s" % e,
                                   "無法儲存最終狀態：%s" % e))
+        if _repaired:
+            result["errors"].append(
+                _L("最终状态首次保存失败，已重试保存并清理旧入口 %s 的"
+                   "状态条目（已恢复一致）；新入口 %s 已登记。"
+                   "请运行状态检查确认。" % (old_name, new_name),
+                   "The first save of the final state failed; the save "
+                   "was retried and the stale entry for old name %s was "
+                   "removed (state is consistent again); the new entry "
+                   "%s is registered. Run the status check to confirm."
+                   % (old_name, new_name),
+                   "最終状態の最初の保存に失敗しました。再保存して古い"
+                   "入口 %s の状態エントリを削除しました（状態は再び"
+                   "一致しています）。新しい入口 %s は登録済みです。状態"
+                   "を確認してください。" % (old_name, new_name),
+                   "Первая запись итогового состояния не удалась; запись "
+                   "повторена, устаревшая запись старого имени %s удалена "
+                   "(состояние снова согласовано); новая запись %s "
+                   "зарегистрирована. Проверьте состояние."
+                   % (old_name, new_name),
+                   "نخستین ذخیرهٔ وضعیت نهایی ناموفق بود؛ ذخیره دوباره "
+                   "انجام شد و ورودی کهنهٔ نام قدیمی %s حذف شد (وضعیت "
+                   "دوباره سازگار است)؛ ورودی جدید %s ثبت شده است. برای "
+                   "تأیید، بررسی وضعیت را اجرا کنید."
+                   % (old_name, new_name),
+                   "最終狀態首次儲存失敗，已重試儲存並清理舊入口 %s 的"
+                   "狀態條目（已恢復一致）；新入口 %s 已登記。"
+                   "請執行狀態檢查確認。" % (old_name, new_name)))
+        else:
+            result["errors"].append(
+                _L("恢复：状态文件 %s 仍登记旧入口 %s（其启动器已删除），"
+                   "新入口 %s 已登记在过渡状态中、启动器在盘。请重跑"
+                   "安装重新登记（或手动删除状态文件中 %s 的旧条目后"
+                   "重跑安装）；不要直接删除新启动器 %s。"
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "Recovery: the state file %s still lists the old entry "
+                   "%s (its launcher was deleted), while the new entry %s "
+                   "is already registered in the transitional state and "
+                   "its launcher is on disk. Re-run install to re-register "
+                   "(or manually remove the old entry %s from the state "
+                   "file first, then re-run install); do not delete the "
+                   "new launcher %s directly."
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "回復方法：状態ファイル %s には古い入口 %s が残って"
+                   "います（ランチャーは削除済み）。新しい入口 %s は遷移"
+                   "中の状態に登録済みで、ランチャーは存在します。再登録"
+                   "のためインストールを再実行してください（または状態"
+                   "ファイルから古い入口 %s を手動で削除してから再実行）。"
+                   "新しいランチャー %s を直接削除しないでください。"
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "Восстановление: файл состояния %s по-прежнему содержит "
+                   "старую запись %s (её лаунчер удалён), а новая запись %s "
+                   "уже зарегистрирована в переходном состоянии, и её "
+                   "лаунчер на диске. Повторите установку для повторной "
+                   "регистрации (или сначала вручную удалите старую запись "
+                   "%s из файла состояния, затем повторите установку); не "
+                   "удаляйте новый лаунчер %s напрямую."
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "بازیابی: پروندهٔ وضعیت %s هنوز ورودی قدیمی %s را دارد "
+                   "(راه‌انداز آن حذف شده است)، در حالی که ورودی جدید %s "
+                   "در وضعیت گذار ثبت شده و راه‌انداز آن روی دیسک است. "
+                   "برای ثبت دوباره نصب را دوباره اجرا کنید (یا ابتدا "
+                   "ورودی قدیمی %s را دستی از پروندهٔ وضعیت حذف کنید، سپس "
+                   "نصب را دوباره اجرا کنید)؛ راه‌انداز جدید %s را مستقیم "
+                   "حذف نکنید."
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path),
+                   "恢復：狀態檔案 %s 仍登記舊入口 %s（其啟動器已刪除），"
+                   "新入口 %s 已登記在過渡狀態中、啟動器在盤。請重跑"
+                   "安裝重新登記（或手動刪除狀態檔案中 %s 的舊條目後"
+                   "重跑安裝）；不要直接刪除新啟動器 %s。"
+                   % (paths["state_path"], old_name, new_name, old_name,
+                      new_path)))
         result["installed"] = [new_name]
         result["removed"] = [old_name]
         result["rc"] = 1
