@@ -13954,6 +13954,8 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                        "marker": instance_id}
         result["installed"].append(nm)
     # ---- 第四阶段: 保存状态 (只记录实际装好的入口) ----
+    # B-16-5: 保存失败时本轮已写启动器不得成孤儿——见下方 except 分支
+    # (回滚已写启动器 + 恢复指引；重试不再因目标已存在被拒)。
     # R4-M-01(1): 写盘前清理本次冲突交互剔除的旧名——仅当旧启动器仍属
     # 自有（在启动器目录内且 intact）时才安全删除文件并移出 entries；
     # 系统文件或他人文件一律不动。
@@ -14001,12 +14003,68 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
     try:
         _shortcut_save_state(paths, new_state)
     except OSError as e:
+        # B-16-5: 保存失败不得留下无登记的孤儿启动器——回滚本轮已写
+        # 的全部启动器 (终验 _shortcut_unlink_if_intact，仅重验通过
+        # 才删；更新入口的旧内容已被替换，留盘只会留一个 sha 失配、
+        # 阻塞重试的启动器，删后旧状态条目仍在，下次安装可重新发布)。
+        # 回滚不完整的孤儿须在报错里点名路径与恢复办法。
+        _rolled_back = []
+        _kept_orphans = []
+        for _nm in result["installed"]:
+            _ent = entries.get(_nm)
+            _p = _ent.get("path", "") if isinstance(_ent, dict) else ""
+            if not _p:
+                continue
+            _ok_rb, _why_rb = _shortcut_unlink_if_intact(
+                _p, _ent, instance_id)
+            if _ok_rb:
+                _rolled_back.append(_nm)
+            else:
+                _kept_orphans.append((_nm, _p, _why_rb))
         result["errors"].append(_L("无法保存状态：%s" % e,
                                   "Cannot save state: %s" % e,
                                   "状態を保存できません：%s" % e,
                                   "Не удаётся сохранить состояние: %s" % e,
                                   "نمی‌توان وضعیت را ذخیره کرد: %s" % e,
                                   "無法儲存狀態：%s" % e))
+        result["errors"].append(
+            _L("已回滚本次写入的启动器 %s；请重跑安装重试。"
+               "回滚不完整的孤儿启动器 %s，请先手动删除后再重跑安装。"
+               % (_rolled_back or "无",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "无"),
+               "Rolled back the launchers written in this run: %s; "
+               "re-run install to retry. Orphaned launchers that could "
+               "not be rolled back %s must be removed manually before "
+               "re-running install."
+               % (_rolled_back or "none",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "none"),
+               "今回書き込んだランチャー %s をロールバックしました。"
+               "インストールを再実行して再試行してください。ロールバック"
+               "できなかった孤立したランチャー %s は、再実行する前に手動"
+               "で削除してください。"
+               % (_rolled_back or "なし",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "なし"),
+               "Выполнен откат записанных в этом запуске лаунчеров: %s; "
+               "повторите установку. Лаунчеры-сироты, откат которых не "
+               "удался %s, удалите вручную перед повторной установкой."
+               % (_rolled_back or "нет",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "нет"),
+               "راه‌اندازهای نوشته‌شده در این اجرا %s بازگردانده شدند؛ "
+               "برای تلاش دوباره نصب را دوباره اجرا کنید. راه‌اندازهای "
+               "یتیم که بازگردانده نشدند %s را پیش از اجرای دوبارهٔ نصب "
+               "دستی حذف کنید."
+               % (_rolled_back or "هیچ",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "هیچ"),
+               "已回滾本次寫入的啟動器 %s；請重跑安裝重試。"
+               "回滾不完整的孤兒啟動器 %s，請先手動刪除後再重跑安裝。"
+               % (_rolled_back or "無",
+                  ["%s (%s, %s)" % (_n, _p, _w)
+                   for _n, _p, _w in _kept_orphans] or "無")))
         return result
     result["ok"] = bool(result["installed"]) and not result["failed"]
     result["rc"] = 0 if result["ok"] else 1
