@@ -3740,7 +3740,19 @@ class FeodoTracker(Provider):
                 return None
             # R4-M-06：空集即解析失败（弃权而非假阴性），与其余 5 个威胁源
             # 保持一致（_get_threat_list 遇 None 驱逐并返失败）。
-            out = {e.get("ip_address") for e in arr if isinstance(e, dict) and e.get("ip_address")}
+            # B-6-1：ip_address 须为合法 IP——任意 truthy 字符串即接受会
+            # 把垃圾条目当有效名单，致假阴性；非法项丢弃，全非法返 None。
+            out = set()
+            for e in arr:
+                if not isinstance(e, dict):
+                    continue
+                _v = e.get("ip_address")
+                if not isinstance(_v, str) or not _v:
+                    continue
+                try:
+                    out.add(str(ipaddress.ip_address(_v)))
+                except ValueError:
+                    continue
             return out or None
 
         lst = _get_threat_list(
