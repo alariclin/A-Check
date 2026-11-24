@@ -8416,19 +8416,37 @@ def test_appletv(local_ip=None):
     return T("blocked"), "", None
 
 
+def _mail_port25_one(host, port, family):
+    """check_mail_port25 单目标尝试：连通即 True（套接字随即关闭），
+    失败即 False；永不抛错（调用方以返回值判定）。"""
+    try:
+        _connect_host(host, port, 4, family).close()
+        return True
+    except Exception:
+        return False
+
+
 def check_mail_port25(family=socket.AF_UNSPEC):
-    """连接真实监听 25 端口的权威 MX 服务器，而非 Web A 记录。"""
+    """连接真实监听 25 端口的权威 MX 服务器，而非 Web A 记录。
+    OPT-2：2 目标并行尝试（各仍为 4s 超时）、先到先得——任一连通即返
+    True，不等另一路；两路皆失败才返 False。返回值语义与串行版一致。
+    check_mx_port25 的多 MX 主机尝试保持串行（并行 MX 会与“先到先得”
+    及 B-11a-1 全量遍历防误判语义冲突），不在此改动。"""
     targets = [
         ("gmail-smtp-in.l.google.com", 25),
         ("mx1.qq.com", 25),
     ]
-    for host, port in targets:
-        try:
-            _connect_host(host, port, 4, family).close()
-            return True
-        except Exception:
-            continue
-    return False
+    _ex = ThreadPoolExecutor(max_workers=2)
+    try:
+        _futs = [_ex.submit(_mail_port25_one, host, port, family)
+                 for host, port in targets]
+        for _f in as_completed(_futs):
+            if _f.result():
+                return True
+        return False
+    finally:
+        # 早返时不等另一路（其 4s 超时仍在后台跑完，不阻塞调用方）。
+        _ex.shutdown(wait=False)
 
 
 # G4：check_mx_port25 全量遍历的单调总截止（秒）。见函数内注释。
