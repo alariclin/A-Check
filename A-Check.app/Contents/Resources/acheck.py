@@ -7766,8 +7766,9 @@ def _unlock_label(v):
     return T("unknown")
 
 
-def _tiktok_denied(body):
-    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：
+def _denied_error_page(body):
+    """\"Access Denied\" 错误页结构（B-10-3；原 _tiktok_denied 的逻辑，
+    现为 TikTok/Grok 共用）：
     (1) <title>Access Denied</title>——错误页标题结构，长度不限；
     (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
     JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
@@ -7783,6 +7784,11 @@ def _tiktok_denied(body):
                 or "<h1" in _low):
             return True
     return False
+
+
+def _tiktok_denied(body):
+    """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：见 _denied_error_page。"""
+    return _denied_error_page(body)
 
 
 def test_tiktok(local_ip=None):
@@ -7852,10 +7858,39 @@ def test_disney(local_ip=None):
     return T("blocked"), "", None
 
 
+def _error_title_or_h1(body, phrase):
+    """错误页结构信号（B-10-3）：短语须出现在 <title> 或 <h1> 里才算
+    锁区/拒绝信号；正文散文、JS 代码、JSON 值里的裸短语不算。
+    phrase 为正则片段（调用方自定，如 r"not\\s+available"），匹配
+    大小写不敏感。"""
+    b = body or ""
+    return bool(
+        re.search(r"<title[^>]*>[^<]*" + phrase + r"[^<]*</title>",
+                  b, re.IGNORECASE)
+        or re.search(r"<h1[^>]*>[^<]*" + phrase + r"[^<]*</h1>",
+                     b, re.IGNORECASE))
+
+
+def _reddit_blocked(body):
+    """Reddit 锁区信号（B-10-3）："Blocked" 须在 <title>/<h1> 里；
+    JS 代码（如 isBlocked=false）与散文提及不算。"""
+    return _error_title_or_h1(body, r"blocked")
+
+
+def _claude_unavailable(body):
+    """Claude 锁区信号（B-10-3）："unavailable" 须在 <title>/<h1> 里；
+    JS 字典键等裸提及不算。URL 侧 app-unavailable 信号另由调用方处理。"""
+    return _error_title_or_h1(body, r"unavailable")
+
+
 def _netflix_unavailable(final_url, body):
-    """Netflix 不可用信号（两探针共用，F23）：正文含 "Not Available"
-    或最终 URL 含 nsfw；URL 信号不受正文截断影响。"""
-    return "Not Available" in (body or "") or "nsfw" in (final_url or "")
+    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 含 nsfw，
+    或 "Not Available" 出现在错误页结构（<title>/<h1>）里；正文散文
+    或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾因此误判
+    blocked）。URL 信号不受正文截断影响。"""
+    if "nsfw" in (final_url or ""):
+        return True
+    return _error_title_or_h1(body, r"not\s+available")
 
 
 def test_netflix(local_ip=None):
@@ -7965,9 +8000,9 @@ def test_reddit(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not _complete and "Blocked" not in body[:4096]:
+    if code == 200 and not _complete and not _reddit_blocked(body):
         return T("unknown"), "", None
-    if code == 200 and "Blocked" not in body[:4096]:
+    if code == 200 and not _reddit_blocked(body):
         return T("unlocked"), "", get_unlock_type("www.reddit.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -8053,9 +8088,9 @@ def test_claude(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
+    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
         return T("unknown"), "", None
-    if code == 200 and "app-unavailable" not in final_url.lower() and "unavailable" not in body[:4096].lower():
+    if code == 200 and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
     # M-07：3xx 先验命中锁区 URL（app-unavailable）仍判 blocked，须排在 fallthrough 之前。
     if 300 <= code <= 399 and "app-unavailable" in final_url.lower():
@@ -8074,9 +8109,13 @@ def test_grok(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not complete and "Access Denied" not in body:
+    # B-10-3：Grok 的 "Access Denied" 只认 <title>/<h1> 结构——短 HTML
+    # 分支（<html/<body 结构 + 裸短语）会把仅提及该短语的完整 200 页
+    # 也判 blocked，故此处不用 _denied_error_page（TikTok 自身保留
+    # 其既有短页规则，仅由 B-10-4 修大小写）。
+    if code == 200 and not complete and not _error_title_or_h1(body, r"access\s+denied"):
         return T("unknown"), "", None
-    if code == 200 and "Access Denied" not in body:
+    if code == 200 and not _error_title_or_h1(body, r"access\s+denied"):
         return T("unlocked"), "", get_unlock_type("grok.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
