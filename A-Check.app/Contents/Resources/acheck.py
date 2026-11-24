@@ -1803,9 +1803,11 @@ def _read_limited(resp, cap=1048576, timeout=10):
             raise TimeoutError("response read deadline exceeded")
         if not chunk:
             if _expected is not None and total < _expected:
+                # B-2-4：expected 语义与 stdlib _safe_read 一致，取仍缺
+                # 的剩余量（_expected - total），而非已宣告的总量。
                 raise http.client.IncompleteRead(
                     b"".join(buf),
-                    _expected)
+                    _expected - total)
             break
         total += len(chunk)
         if total > cap:
