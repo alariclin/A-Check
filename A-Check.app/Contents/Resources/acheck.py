@@ -10473,15 +10473,22 @@ def _run_active6(json_mode, egress6):
         _section(T("sec_dns") + " (IPv6)")
         print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
-    streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
-    speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
+    # OPT-1（v6 段）：与 run_active 同理——邮件相只依赖出口 IP，在流媒体
+    # 相开始时提交，DNSBL 相后回收；超时/判定语义与打印顺序均不变
+    # （邮件相文本输出仍在下方原位置）。
     mx_domains6 = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25_6 = ex.submit(check_mail_port25, family=socket.AF_INET6)
-        f_mxs_6 = [ex.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
+    _mail_ex6 = ThreadPoolExecutor(max_workers=4)
+    try:
+        f_p25_6 = _mail_ex6.submit(check_mail_port25, family=socket.AF_INET6)
+        f_mxs_6 = [_mail_ex6.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
+        streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
+        speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
+        dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
         p25_6 = f_p25_6.result()
         mx6_results = [f.result() for f in f_mxs_6]
-    dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
+    finally:
+        # 正常路径 .result() 已等齐；异常路径不等未完成任务（后台跑完即弃）。
+        _mail_ex6.shutdown(wait=False)
     if not json_mode:
         _section(T("sec_mail"))
         if p25_6:
@@ -10634,20 +10641,29 @@ def run_active(json_mode=False, stack=None):
         _SEC["on"] = True
         _section(T("sec_stream"))
 
-    streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
-    if not json_mode:
-        dns_res = print_dns_test(None)
-    else:
-        dns_res = test_dns_servers()
+    # OPT-1：邮件相只依赖出口 IP，与流媒体表、DNS 测试、DNSBL 均无数据
+    # 依赖；在流媒体相开始时提交，DNSBL 相后回收，墙钟与三相重叠。
+    # 超时/判定语义不变（_MX_PORT25_BUDGET 与各任务超时均不动）。
+    # 打印顺序不变：邮件相的文本输出仍在速度段之后（见下方原位置），
+    # 结果只在原回收点之后使用。
     mx_domains = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
     _mail_family = socket.AF_INET if stack == "4" else socket.AF_UNSPEC
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25 = ex.submit(check_mail_port25, family=_mail_family)
-        f_mxs = [ex.submit(check_mx_port25, dom, family=_mail_family) for _, dom in mx_domains]
+    _mail_ex = ThreadPoolExecutor(max_workers=4)
+    try:
+        f_p25 = _mail_ex.submit(check_mail_port25, family=_mail_family)
+        f_mxs = [_mail_ex.submit(check_mx_port25, dom, family=_mail_family) for _, dom in mx_domains]
+        streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
+        if not json_mode:
+            dns_res = print_dns_test(None)
+        else:
+            dns_res = test_dns_servers()
+        total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
         p25 = f_p25.result()
         mx_results = [f.result() for f in f_mxs]
-
-    total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
+    finally:
+        # 正常路径 .result() 已等齐；异常路径不等未完成任务（后台跑完即弃），
+        # 避免一次流媒体/DNS/DNSBL 异常被邮件相 12s 预算拖住才抛错。
+        _mail_ex.shutdown(wait=False)
 
     st_res = print_speed_section(json_mode=json_mode, family=4, gated=True)
 
