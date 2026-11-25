@@ -484,7 +484,7 @@ STR = {
         "success_query": "Succeeded",
         "failed_sources": "Failed",
         "fail_note": "※ Failed sources treated as [Unverifiable], excluded from scoring — does not mean clean",
-        "rate_limit_hint": "※ Several sources rate-limited at once — usually the current egress IP (airport relay / shared egress) quota is exhausted; retry once via a direct connection or a residential egress",
+        "rate_limit_hint": "※ Several sources rate-limited at once — usually the current egress IP (proxy relay / shared egress) quota is exhausted; retry once via a direct connection or a residential egress",
         "confidence": "Confidence",
         "disclaimer": "Note: passive queries reflect OSINT only; no evidence ≠ no risk.\nDC IP platform policy risk needs separate assessment.",
         "unlocked": "OK",
@@ -910,7 +910,7 @@ STR = {
         "success_query": "成功クエリ",
         "failed_sources": "失敗ソース",
         "fail_note": "※ 失敗ソースは[確認不可]として処理、リスク点に計上しない——クリーンを意味しない",
-        "rate_limit_hint": "※ 複数のソースが同時にレート制限 — 現在の出口IP（空港中継/共有出口）の割当を使い切った可能性が高い。直結または住宅回線の出口で再試行してください",
+        "rate_limit_hint": "※ 複数のソースが同時にレート制限 — 現在の出口IP（プロキシ中継/共有出口）の割当を使い切った可能性が高い。直結または住宅回線の出口で再試行してください",
         "confidence": "信頼度",
         "disclaimer": "注: パッシブクエリは公開情報のみを反映、証拠なし≠リスクなし。\nDC IPのプラットフォームポリシーリスクは別途評価が必要。",
         "unlocked": "利用可能",
@@ -1123,7 +1123,7 @@ STR = {
         "success_query": "Успешных запросов",
         "failed_sources": "Источники с ошибками",
         "fail_note": "※ Источникам с ошибками присваивается статус [Невозможно проверить]; они не учитываются при расчёте риска — это не означает, что IP чистый.",
-        "rate_limit_hint": "※ Сразу несколько источников вернули ограничение частоты — обычно это означает, что квота текущего выходного IP (аэропорт-реле / общий выход) исчерпана; повторите проверку напрямую или через residential-выход",
+        "rate_limit_hint": "※ Сразу несколько источников вернули ограничение частоты — обычно это означает, что квота текущего выходного IP (прокси-реле / общий выход) исчерпана; повторите проверку напрямую или через residential-выход",
         "confidence": "Достоверность",
         "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски, связанные с правилами платформ для IP-адресов дата-центров, необходимо оценивать отдельно.",
         "unlocked": "Доступно",
@@ -1336,7 +1336,7 @@ STR = {
         "success_query": "پرس‌وجوی موفق",
         "failed_sources": "منابع ناموفق",
         "fail_note": "※ منابع ناموفق [غیرقابل تأیید] محسوب می‌شوند و در نمره ریسک لحاظ نمی‌شوند — به معنای پاک بودن نیست",
-        "rate_limit_hint": "※ چند منبع هم‌زمان با محدودیت نرخ مواجه شدند — معمولاً یعنی سهمیه IP خروجی فعلی (ریلی فرودگاهی / خروجی مشترک) تمام شده است؛ یک بار با اتصال مستقیم یا خروجی مسکونی دوباره امتحان کنید",
+        "rate_limit_hint": "※ چند منبع هم‌زمان با محدودیت نرخ مواجه شدند — معمولاً یعنی سهمیه IP خروجی فعلی (ریلی پروکسی / خروجی مشترک) تمام شده است؛ یک بار با اتصال مستقیم یا خروجی مسکونی دوباره امتحان کنید",
         "confidence": "اطمینان",
         "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک ناشی از سیاست‌های پلتفرم‌ها برای IPهای دیتاسنتر باید جداگانه ارزیابی شود.",
         "unlocked": "باز",
@@ -3443,13 +3443,49 @@ def _city_static_ctx_ok(en, ctx):
     return True
 
 
+def _geo_ctx_countries(stored_ctx):
+    """上下文串中可解析的国家码集合（G1）：逗号分段逐段解析
+    （_CC_EN + 口语别名 + 2 字母代码）；城市/州名等无法解析的段忽略。"""
+    codes = set()
+    for tok in str(stored_ctx or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
+        if code is None and len(t) == 2 and t.isalpha():
+            code = t.upper()
+        if code:
+            codes.add(code)
+    return codes
+
+
+def _geo_cache_country_ok(stored_ctx, code):
+    """缓存候选国家检查（G1）：条目上下文无国家信息、或含多国
+    （如 Georgia, United States——州名撞国家名，无法判定）时沿用
+    旧行为（返 True）；仅含一国且与给定码不符时返 False。"""
+    codes = _geo_ctx_countries(stored_ctx)
+    if len(codes) != 1:
+        return True
+    return next(iter(codes)) == code
+
+
+def _city_ctx_kwargs(region, country):
+    """城市名上下文参数（B-06a-3b/G2）：有州/省时给 ctx（州+国家），
+    无州/省时只给 country——country-only ctx 会把州级缓存条目误否
+    （_geo_ctx_ok 要求缓存上下文词集为当前 ctx 词集的子集）。"""
+    if region and str(region).strip():
+        return {"ctx": _join_nonempty(region, country, sep=", ")}
+    return {"country": country}
+
+
 def _loc_city(text, ctx=None, country=None):
     """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。
     ctx：调用方上下文（州/省、国家，逗号分隔串）；给出时单候选亦须过
     上下文检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。
     country：仅国家上下文（B-06a-3b）：供只有国家信息、无州/省信息的
-    调用方（横幅）使用——静态表守卫走 country，_GEO_EXTRA 分支不受其
-    影响（ctx 为 None 时不过滤，沿用旧行为）。"""
+    调用方（横幅）使用——静态表守卫走 country；缓存分支亦按国家过滤
+    （GPT-G1：无国家信息/多国歧义时沿用旧行为）。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
@@ -3475,6 +3511,18 @@ def _loc_city(text, ctx=None, country=None):
                 if not _pairs:
                     _ctx_rejected = True
                     continue
+            if country is not None and _pairs:
+                # GPT-G1：country= 路径亦须约束缓存候选——否则暖缓存里
+                # 他国译名会绕过静态表守卫直接返回（ctx 为 None 时原
+                # 分支不过滤）。无国家信息/多国歧义/无法解析时沿用旧行为。
+                _codes = _geo_ctx_countries(country)
+                if len(_codes) == 1:
+                    _code = next(iter(_codes))
+                    _pairs = [(c, v) for (c, v) in _pairs
+                              if _geo_cache_country_ok(c, _code)]
+                    if not _pairs:
+                        _ctx_rejected = True
+                        continue
             _matches = [v for _, v in _pairs]
             if len(set(_matches)) == 1:
                 return _matches[0]
@@ -3515,8 +3563,9 @@ def _localize_profile_copy(prof):
         out["region"] = _loc_region(prof["region"], ctx=prof.get("country"))
     if prof.get("city"):
         # B-06a-2: city 单候选须过州/省 + 国家上下文检查
+        # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
         out["city"] = _loc_city(prof["city"],
-                                ctx=_join_nonempty(prof.get("region"), prof.get("country"), sep=", "))
+                                **_city_ctx_kwargs(prof.get("region"), prof.get("country")))
     return out
 
 
@@ -6151,7 +6200,8 @@ def _print_basic_block(s, prof):
     if prof.get("ok"):
         # B-06a-3：画像主行补 ctx（州 + 国家），歧义城市静态译文须过
         # 国家上下文检查（如 Alexandria, VA 不得取埃及译文）。
-        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''), ctx=_join_nonempty(prof.get('region'), prof.get('country'), sep=', '))}".strip()
+        # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
+        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''), **_city_ctx_kwargs(prof.get('region'), prof.get('country')))}".strip()
     _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
                     or prof.get("latitude") is not None)
     if _has_geo:
@@ -6180,7 +6230,8 @@ def _print_basic_block(s, prof):
                 _f_co_t = _loc_country_name(_f_co)
                 _f_mid_t = _loc_region(_f_mid)
                 # B-06a-3：分字段城市名补 ctx（行政区 + 国家），同上。
-                _f_ci_t = _loc_city(_f_ci, ctx=_join_nonempty(_f_mid, _f_co, sep=", "))
+                # GPT-G2：行政区为空时走 country=（见 _city_ctx_kwargs）。
+                _f_ci_t = _loc_city(_f_ci, **_city_ctx_kwargs(_f_mid, _f_co))
                 _disp = _join_nonempty(_f_co_t, _f_mid_t, _f_ci_t)
                 _disp = _join_nonempty(_f_co_t,
                                        _extra_sub(_f_mid_t, 'region', _disp),
@@ -12582,7 +12633,7 @@ def _banner_geo_text(net):
         _og = _og if isinstance(_og, str) else ""
         # B-06a-3b：横幅城市名补 country（国家）而非 ctx——横幅无州/省
         # 信息，ctx 会把州级缓存条目误否（f_city WARM 回归）；静态表
-        # 守卫走 country，_GEO_EXTRA 分支 ctx 为 None 时沿用旧行为。
+        # 守卫与缓存分支均走 country（GPT-G1：缓存亦按国家过滤）。
         parts = [_loc_country_name(_cc), _loc_city(_ct, country=_cc)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
