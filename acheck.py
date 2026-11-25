@@ -3040,6 +3040,13 @@ _CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma Cit
 _CITY_L10N["ru"].update({"New York City": "Нью-Йорк", "Oklahoma City": "Оклахома-Сити", "Mountain View": "Маунтин-Вью", "Palo Alto": "Пало-Альто"})
 _CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهماسیتی", "Mountain View": "ماونتین ویو", "Palo Alto": "پالو آلتو"})
 
+# B-06a-3：静态城市表译文的归属国家（仅收录译文随国家而异的歧义名）。
+# Alexandria 的静态译文（zh 亚历山大 / zh-TW 亞歷山大 / ja アレクサンドリア
+# / ru Александрия / fa اسکندریه）取自埃及亚历山大；美国弗吉尼亚的
+# Alexandria 不是同一座城，上下文指明他国时不得取该译文，退回原文
+# （与 B-06a-2 单候选上下文不符时留原文的口径一致）。
+_CITY_L10N_HOME = {"Alexandria": "EG"}
+
 
 _ANY_REGION2EN = _any2en(_REGION_L10N)
 _ANY_CITY2EN = _any2en(_CITY_L10N)
@@ -3404,6 +3411,32 @@ def _loc_region(text, ctx=None):
     return text
 
 
+_CITY_CTX_COUNTRY_ALIASES = {"usa": "US", "us": "US", "u.s.": "US",
+                             "america": "US", "uk": "GB",
+                             "great britain": "GB"}
+
+
+def _city_static_ctx_ok(en, ctx):
+    """静态城市表上下文检查（B-06a-3）：歧义城市的静态译文只属于其归属国；
+    ctx 指明他国时返 False（调用方跳过静态表、留原文）；ctx 未指明国家、
+    或城市无归属记录时返 True（沿用旧行为）。国家名走 _CC_EN（与
+    _loc_country_name 同款），另补 'USA'/'US' 类口语别名。"""
+    home = _CITY_L10N_HOME.get(en)
+    if not home or ctx is None:
+        return True
+    for tok in str(ctx).split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
+        if code is None and len(t) == 2 and t.isalpha():
+            code = t.upper()
+        if code:
+            return code == home
+    return True
+
+
 def _loc_city(text, ctx=None):
     """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。
     ctx：调用方上下文（州/省、国家，逗号分隔串）；给出时单候选亦须过
@@ -3441,6 +3474,11 @@ def _loc_city(text, ctx=None):
             continue
         en = _ANY_CITY2EN.get(cand)
         if en:
+            # B-06a-3：歧义城市的静态译文有归属国；ctx 指明他国时跳过
+            # 静态表、留原文（_ctx_rejected 路径之上游已拒时亦到此，
+            # 同款处理）。无 ctx 或 ctx 未指明国家时沿用旧行为。
+            if not _city_static_ctx_ok(en, ctx):
+                continue
             return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
 
@@ -6078,7 +6116,9 @@ def _print_basic_block(s, prof):
 
     _loc_str = ""
     if prof.get("ok"):
-        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''))}".strip()
+        # B-06a-3：画像主行补 ctx（州 + 国家），歧义城市静态译文须过
+        # 国家上下文检查（如 Alexandria, VA 不得取埃及译文）。
+        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''), ctx=_join_nonempty(prof.get('region'), prof.get('country'), sep=', '))}".strip()
     _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
                     or prof.get("latitude") is not None)
     if _has_geo:
@@ -6106,7 +6146,8 @@ def _print_basic_block(s, prof):
                 # 上下文保留），Victoria 类城市名不再被 region 表误译。
                 _f_co_t = _loc_country_name(_f_co)
                 _f_mid_t = _loc_region(_f_mid)
-                _f_ci_t = _loc_city(_f_ci)
+                # B-06a-3：分字段城市名补 ctx（行政区 + 国家），同上。
+                _f_ci_t = _loc_city(_f_ci, ctx=_join_nonempty(_f_mid, _f_co, sep=", "))
                 _disp = _join_nonempty(_f_co_t, _f_mid_t, _f_ci_t)
                 _disp = _join_nonempty(_f_co_t,
                                        _extra_sub(_f_mid_t, 'region', _disp),
@@ -12498,7 +12539,8 @@ def _banner_geo_text(net):
         _ct = _ct if isinstance(_ct, str) else ""
         _og = net.get("geo_org")
         _og = _og if isinstance(_og, str) else ""
-        parts = [_loc_country_name(_cc), _loc_city(_ct)]
+        # B-06a-3：横幅城市名补 ctx（国家），同上。
+        parts = [_loc_country_name(_cc), _loc_city(_ct, ctx=_cc)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
