@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.36 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.37 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -64,7 +64,7 @@ import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.36"
+VERSION = "4.14.37"
 
 
 def _init_console():
@@ -271,6 +271,7 @@ STR = {
         "success_query": "成功查询",
         "failed_sources": "失败源",
         "fail_note": "※ 失败源按[无法核实]处理，不计入风险分——不代表干净",
+        "rate_limit_hint": "※ 多个源同时限流，通常是当前出口 IP（机场前置/共享出口）配额耗尽，换直连或住宅出口复测一次",
         "confidence": "置信度",
         "disclaimer": "说明: 被动查询仅反映公开情报，无证据≠无风险。\n机房 IP 的平台策略风险需单独评估。",
         "unlocked": "解锁",
@@ -483,6 +484,7 @@ STR = {
         "success_query": "Succeeded",
         "failed_sources": "Failed",
         "fail_note": "※ Failed sources treated as [Unverifiable], excluded from scoring — does not mean clean",
+        "rate_limit_hint": "※ Several sources rate-limited at once — usually the current egress IP (proxy relay / shared egress) quota is exhausted; retry once via a direct connection or a residential egress",
         "confidence": "Confidence",
         "disclaimer": "Note: passive queries reflect OSINT only; no evidence ≠ no risk.\nDC IP platform policy risk needs separate assessment.",
         "unlocked": "OK",
@@ -695,6 +697,7 @@ STR = {
         "success_query": "成功查詢",
         "failed_sources": "失敗源",
         "fail_note": "※ 失敗源按[無法核實]處理，不計入風險分——不代表乾淨",
+        "rate_limit_hint": "※ 多個源同時限流，通常是當前出口 IP（機場前置/共享出口）配額耗盡，換直連或住宅出口複測一次",
         "confidence": "置信度",
         "disclaimer": "說明: 被動查詢僅反映公開情報，無證據≠無風險。\n機房 IP 的平台策略風險需單獨評估。",
         "unlocked": "解鎖",
@@ -907,6 +910,7 @@ STR = {
         "success_query": "成功クエリ",
         "failed_sources": "失敗ソース",
         "fail_note": "※ 失敗ソースは[確認不可]として処理、リスク点に計上しない——クリーンを意味しない",
+        "rate_limit_hint": "※ 複数のソースが同時にレート制限 — 現在の出口IP（プロキシ中継/共有出口）の割当を使い切った可能性が高い。直結または住宅回線の出口で再試行してください",
         "confidence": "信頼度",
         "disclaimer": "注: パッシブクエリは公開情報のみを反映、証拠なし≠リスクなし。\nDC IPのプラットフォームポリシーリスクは別途評価が必要。",
         "unlocked": "利用可能",
@@ -1119,6 +1123,7 @@ STR = {
         "success_query": "Успешных запросов",
         "failed_sources": "Источники с ошибками",
         "fail_note": "※ Источникам с ошибками присваивается статус [Невозможно проверить]; они не учитываются при расчёте риска — это не означает, что IP чистый.",
+        "rate_limit_hint": "※ Сразу несколько источников вернули ограничение частоты — обычно это означает, что квота текущего выходного IP (прокси-реле / общий выход) исчерпана; повторите проверку напрямую или через residential-выход",
         "confidence": "Достоверность",
         "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски, связанные с правилами платформ для IP-адресов дата-центров, необходимо оценивать отдельно.",
         "unlocked": "Доступно",
@@ -1331,6 +1336,7 @@ STR = {
         "success_query": "پرس‌وجوی موفق",
         "failed_sources": "منابع ناموفق",
         "fail_note": "※ منابع ناموفق [غیرقابل تأیید] محسوب می‌شوند و در نمره ریسک لحاظ نمی‌شوند — به معنای پاک بودن نیست",
+        "rate_limit_hint": "※ چند منبع هم‌زمان با محدودیت نرخ مواجه شدند — معمولاً یعنی سهمیه IP خروجی فعلی (ریلی پروکسی / خروجی مشترک) تمام شده است؛ یک بار با اتصال مستقیم یا خروجی مسکونی دوباره امتحان کنید",
         "confidence": "اطمینان",
         "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک ناشی از سیاست‌های پلتفرم‌ها برای IPهای دیتاسنتر باید جداگانه ارزیابی شود.",
         "unlocked": "باز",
@@ -3040,6 +3046,13 @@ _CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma Cit
 _CITY_L10N["ru"].update({"New York City": "Нью-Йорк", "Oklahoma City": "Оклахома-Сити", "Mountain View": "Маунтин-Вью", "Palo Alto": "Пало-Альто"})
 _CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهماسیتی", "Mountain View": "ماونتین ویو", "Palo Alto": "پالو آلتو"})
 
+# B-06a-3：静态城市表译文的归属国家（仅收录译文随国家而异的歧义名）。
+# Alexandria 的静态译文（zh 亚历山大 / zh-TW 亞歷山大 / ja アレクサンドリア
+# / ru Александрия / fa اسکندریه）取自埃及亚历山大；美国弗吉尼亚的
+# Alexandria 不是同一座城，上下文指明他国时不得取该译文，退回原文
+# （与 B-06a-2 单候选上下文不符时留原文的口径一致）。
+_CITY_L10N_HOME = {"Alexandria": "EG"}
+
 
 _ANY_REGION2EN = _any2en(_REGION_L10N)
 _ANY_CITY2EN = _any2en(_CITY_L10N)
@@ -3404,10 +3417,78 @@ def _loc_region(text, ctx=None):
     return text
 
 
-def _loc_city(text, ctx=None):
+_CITY_CTX_COUNTRY_ALIASES = {"usa": "US", "us": "US", "u.s.": "US",
+                             "america": "US", "uk": "GB",
+                             "great britain": "GB"}
+
+
+def _city_static_ctx_ok(en, ctx):
+    """静态城市表上下文检查（B-06a-3）：歧义城市的静态译文只属于其归属国；
+    ctx 指明他国时返 False（调用方跳过静态表、留原文）；ctx 未指明国家、
+    或城市无归属记录时返 True（沿用旧行为）。国家名走 _CC_EN（与
+    _loc_country_name 同款），另补 'USA'/'US' 类口语别名。"""
+    home = _CITY_L10N_HOME.get(en)
+    if not home or ctx is None:
+        return True
+    for tok in str(ctx).split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
+        if code is None and len(t) == 2 and t.isalpha():
+            code = t.upper()
+        if code:
+            return code == home
+    return True
+
+
+def _geo_ctx_countries(stored_ctx, bare_code=False):
+    """上下文串中可解析的国家码集合（G1）：逗号分段逐段解析
+    （_CC_EN + 口语别名 + 2 字母代码）；城市/州名等无法解析的段忽略。
+    bare_code：仅调用方 country= 这种明确国家字段可用（True）——裸码
+    本身就是国家码；缓存上下文的自由文本段禁用（False，默认），否则
+    州缩写 VA 会被误读为梵蒂冈、误拒正确候选（GPT 补丁复审 GP1）。"""
+    codes = set()
+    for tok in str(stored_ctx or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
+        if code is None and bare_code and len(t) == 2 and t.isalpha():
+            code = t.upper()
+        if code:
+            codes.add(code)
+    return codes
+
+
+def _geo_cache_country_ok(stored_ctx, code):
+    """缓存候选国家检查（G1）：条目上下文无国家信息、或含多国
+    （如 Georgia, United States——州名撞国家名，无法判定）时沿用
+    旧行为（返 True）；仅含一国且与给定码不符时返 False。"""
+    codes = _geo_ctx_countries(stored_ctx)
+    if len(codes) != 1:
+        return True
+    return next(iter(codes)) == code
+
+
+def _city_ctx_kwargs(region, country):
+    """城市名上下文参数（B-06a-3b/G2）：有州/省时给 ctx（州+国家），
+    无州/省时只给 country——country-only ctx 会把州级缓存条目误否
+    （_geo_ctx_ok 要求缓存上下文词集为当前 ctx 词集的子集）。"""
+    if region and str(region).strip():
+        return {"ctx": _join_nonempty(region, country, sep=", ")}
+    return {"country": country}
+
+
+def _loc_city(text, ctx=None, country=None):
     """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。
     ctx：调用方上下文（州/省、国家，逗号分隔串）；给出时单候选亦须过
-    上下文检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。"""
+    上下文检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。
+    country：仅国家上下文（B-06a-3b）：供只有国家信息、无州/省信息的
+    调用方（横幅）使用——静态表守卫走 country；缓存分支亦按国家过滤
+    （GPT-G1：无国家信息/多国歧义时沿用旧行为）。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
@@ -3433,6 +3514,21 @@ def _loc_city(text, ctx=None):
                 if not _pairs:
                     _ctx_rejected = True
                     continue
+            if country is not None and _pairs:
+                # GPT-G1：country= 路径亦须约束缓存候选——否则暖缓存里
+                # 他国译名会绕过静态表守卫直接返回（ctx 为 None 时原
+                # 分支不过滤）。无国家信息/多国歧义/无法解析时沿用旧行为。
+                _codes = _geo_ctx_countries(country, bare_code=True)
+                # GPT-GP1：country= 是调用方明确国家字段，裸码可信；
+                # 缓存候选上下文 c 走 _geo_cache_country_ok（其内解析
+                # 不开 bare_code），州缩写 VA 不会被误读为梵蒂冈。
+                if len(_codes) == 1:
+                    _code = next(iter(_codes))
+                    _pairs = [(c, v) for (c, v) in _pairs
+                              if _geo_cache_country_ok(c, _code)]
+                    if not _pairs:
+                        _ctx_rejected = True
+                        continue
             _matches = [v for _, v in _pairs]
             if len(set(_matches)) == 1:
                 return _matches[0]
@@ -3441,6 +3537,11 @@ def _loc_city(text, ctx=None):
             continue
         en = _ANY_CITY2EN.get(cand)
         if en:
+            # B-06a-3：歧义城市的静态译文有归属国；ctx 指明他国时跳过
+            # 静态表、留原文（_ctx_rejected 路径之上游已拒时亦到此，
+            # 同款处理）。无 ctx 或 ctx 未指明国家时沿用旧行为。
+            if not _city_static_ctx_ok(en, country if country is not None else ctx):
+                continue
             return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
 
@@ -3468,8 +3569,9 @@ def _localize_profile_copy(prof):
         out["region"] = _loc_region(prof["region"], ctx=prof.get("country"))
     if prof.get("city"):
         # B-06a-2: city 单候选须过州/省 + 国家上下文检查
+        # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
         out["city"] = _loc_city(prof["city"],
-                                ctx=_join_nonempty(prof.get("region"), prof.get("country"), sep=", "))
+                                **_city_ctx_kwargs(prof.get("region"), prof.get("country")))
     return out
 
 
@@ -4717,7 +4819,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.36 免 Key 公开版):
+评分规则 (v4.14.37 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4749,7 +4851,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.36 免 Key 公開版):
+評分規則 (v4.14.37 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4781,7 +4883,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.36 Keyless Public Edition):
+Scoring rules (v4.14.37 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4814,7 +4916,7 @@ Scoring rules (v4.14.36 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.36 キー不要公開版):
+スコアリングルール (v4.14.37 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4846,7 +4948,7 @@ Scoring rules (v4.14.36 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.36 Публичная версия без ключей):
+Правила оценки (v4.14.37 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4878,7 +4980,7 @@ Scoring rules (v4.14.36 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.36):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.37):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -5278,6 +5380,20 @@ def _fetch_coordgeo(latitude, longitude, deadline=None):
     return None
 
 
+def _is_rate_limited_err(err):
+    """04-01：源失败是否为 HTTP 429 限流。http_get 的 HTTP 错误格式固定为
+    \"HTTP {code}: ...\"（见 http_get），429 即 Too Many Requests；其余
+    错误（连接失败/解析失败/他状态码）一律不算限流。"""
+    return isinstance(err, str) and err.startswith("HTTP 429")
+
+
+def _failed_display_names(c):
+    """04-01：失败列表展示名——限流的源加语言无关的 \" (429)\" 后缀，与
+    连接/解析失败区分；c 无 rate_limited 键（旧 JSON）时原样返回。"""
+    _rl = set(c.get("rate_limited") or [])
+    return [f"{n} (429)" if n in _rl else n for n in (c.get("failed") or [])]
+
+
 def run_passive(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
@@ -5351,6 +5467,11 @@ def run_passive(ip, json_mode=False):
     total = len(_denom)
     ok_count = sum(1 for p in _denom if sources.get(p.key, {}).get("ok"))
     failed = [p.name for p in avail_providers if not sources.get(p.key, {}).get("ok")]
+    # 04-01：限流失败名单（err 为 HTTP 429 的源），供展示层标注与 JSON 消费；
+    # 不动分母/评分，只区分失败原因。
+    rate_limited = [p.name for p in avail_providers
+                    if not sources.get(p.key, {}).get("ok")
+                    and _is_rate_limited_err(sources.get(p.key, {}).get("err"))]
     completeness = int(ok_count / total * 100) if total else 0
 
     # 核心情报源权重: (ipwhois 或 ipinfo), scamalytics, proxycheck, ripestat
@@ -5400,6 +5521,7 @@ def run_passive(ip, json_mode=False):
             "ok": ok_count,
             "total": total,
             "failed": failed,
+            "rate_limited": rate_limited,
             "confidence": confidence,
         },
         "verdict": verdict,
@@ -5854,8 +5976,12 @@ def _print_completeness(res):
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
-        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+        # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
+        # 加共享出口配额耗尽提示（不改变评分）。
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
     print(f"  {_c(C.dim, T('fail_note'))}")
+    if len(c.get("rate_limited") or []) >= 2:
+        print(f"  {_c(C.dim, T('rate_limit_hint'))}")
     print(f"  {T('confidence')}: {c['confidence']}/100")
 
     print()
@@ -6078,7 +6204,10 @@ def _print_basic_block(s, prof):
 
     _loc_str = ""
     if prof.get("ok"):
-        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''))}".strip()
+        # B-06a-3：画像主行补 ctx（州 + 国家），歧义城市静态译文须过
+        # 国家上下文检查（如 Alexandria, VA 不得取埃及译文）。
+        # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
+        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''), **_city_ctx_kwargs(prof.get('region'), prof.get('country')))}".strip()
     _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
                     or prof.get("latitude") is not None)
     if _has_geo:
@@ -6106,7 +6235,9 @@ def _print_basic_block(s, prof):
                 # 上下文保留），Victoria 类城市名不再被 region 表误译。
                 _f_co_t = _loc_country_name(_f_co)
                 _f_mid_t = _loc_region(_f_mid)
-                _f_ci_t = _loc_city(_f_ci)
+                # B-06a-3：分字段城市名补 ctx（行政区 + 国家），同上。
+                # GPT-G2：行政区为空时走 country=（见 _city_ctx_kwargs）。
+                _f_ci_t = _loc_city(_f_ci, **_city_ctx_kwargs(_f_mid, _f_co))
                 _disp = _join_nonempty(_f_co_t, _f_mid_t, _f_ci_t)
                 _disp = _join_nonempty(_f_co_t,
                                        _extra_sub(_f_mid_t, 'region', _disp),
@@ -6455,6 +6586,10 @@ def run_passive6(ip, json_mode=False):
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
     failed = [p.name for p in avail if not sources.get(p.key, {}).get("ok")]
+    # 04-01（v6）：同 run_passive，限流失败名单供展示层标注与 JSON 消费。
+    rate_limited = [p.name for p in avail
+                    if not sources.get(p.key, {}).get("ok")
+                    and _is_rate_limited_err(sources.get(p.key, {}).get("err"))]
     completeness = int(ok_count / total * 100) if total else 0
 
     _prof = _build_unified_profile(sources)
@@ -6518,6 +6653,7 @@ def run_passive6(ip, json_mode=False):
             "ok": ok_count,
             "total": total,
             "failed": failed,
+            "rate_limited": rate_limited,
             "confidence": _confidence6,
         },
         "verdict": _verdict6,
@@ -6531,11 +6667,14 @@ def _print_report6_tail(res):
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
-        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+        # 04-01 / 04-08（v6）：同 _print_completeness。
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
     # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
     print(f"  {_c(C.dim, T('fail_note'))}")
+    if len(c.get("rate_limited") or []) >= 2:
+        print(f"  {_c(C.dim, T('rate_limit_hint'))}")
     print(f"  {_c(C.dim, T('v6_stream_note'))}")
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -12498,7 +12637,10 @@ def _banner_geo_text(net):
         _ct = _ct if isinstance(_ct, str) else ""
         _og = net.get("geo_org")
         _og = _og if isinstance(_og, str) else ""
-        parts = [_loc_country_name(_cc), _loc_city(_ct)]
+        # B-06a-3b：横幅城市名补 country（国家）而非 ctx——横幅无州/省
+        # 信息，ctx 会把州级缓存条目误否（f_city WARM 回归）；静态表
+        # 守卫与缓存分支均走 country（GPT-G1：缓存亦按国家过滤）。
+        parts = [_loc_country_name(_cc), _loc_city(_ct, country=_cc)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
