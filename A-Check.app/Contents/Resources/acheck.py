@@ -3443,9 +3443,12 @@ def _city_static_ctx_ok(en, ctx):
     return True
 
 
-def _geo_ctx_countries(stored_ctx):
+def _geo_ctx_countries(stored_ctx, bare_code=False):
     """上下文串中可解析的国家码集合（G1）：逗号分段逐段解析
-    （_CC_EN + 口语别名 + 2 字母代码）；城市/州名等无法解析的段忽略。"""
+    （_CC_EN + 口语别名 + 2 字母代码）；城市/州名等无法解析的段忽略。
+    bare_code：仅调用方 country= 这种明确国家字段可用（True）——裸码
+    本身就是国家码；缓存上下文的自由文本段禁用（False，默认），否则
+    州缩写 VA 会被误读为梵蒂冈、误拒正确候选（GPT 补丁复审 GP1）。"""
     codes = set()
     for tok in str(stored_ctx or "").split(","):
         t = tok.strip()
@@ -3453,7 +3456,7 @@ def _geo_ctx_countries(stored_ctx):
             continue
         low = t.lower()
         code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
-        if code is None and len(t) == 2 and t.isalpha():
+        if code is None and bare_code and len(t) == 2 and t.isalpha():
             code = t.upper()
         if code:
             codes.add(code)
@@ -3515,7 +3518,10 @@ def _loc_city(text, ctx=None, country=None):
                 # GPT-G1：country= 路径亦须约束缓存候选——否则暖缓存里
                 # 他国译名会绕过静态表守卫直接返回（ctx 为 None 时原
                 # 分支不过滤）。无国家信息/多国歧义/无法解析时沿用旧行为。
-                _codes = _geo_ctx_countries(country)
+                _codes = _geo_ctx_countries(country, bare_code=True)
+                # GPT-GP1：country= 是调用方明确国家字段，裸码可信；
+                # 缓存候选上下文 c 走 _geo_cache_country_ok（其内解析
+                # 不开 bare_code），州缩写 VA 不会被误读为梵蒂冈。
                 if len(_codes) == 1:
                     _code = next(iter(_codes))
                     _pairs = [(c, v) for (c, v) in _pairs
