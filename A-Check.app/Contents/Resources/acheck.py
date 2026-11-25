@@ -3443,10 +3443,13 @@ def _city_static_ctx_ok(en, ctx):
     return True
 
 
-def _loc_city(text, ctx=None):
+def _loc_city(text, ctx=None, country=None):
     """城市名 -> 界面语言 (同上)；重音名先按原形、再按 NFKD 折叠形查表。
     ctx：调用方上下文（州/省、国家，逗号分隔串）；给出时单候选亦须过
-    上下文检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。"""
+    上下文检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。
+    country：仅国家上下文（B-06a-3b）：供只有国家信息、无州/省信息的
+    调用方（横幅）使用——静态表守卫走 country，_GEO_EXTRA 分支不受其
+    影响（ctx 为 None 时不过滤，沿用旧行为）。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
@@ -3483,7 +3486,7 @@ def _loc_city(text, ctx=None):
             # B-06a-3：歧义城市的静态译文有归属国；ctx 指明他国时跳过
             # 静态表、留原文（_ctx_rejected 路径之上游已拒时亦到此，
             # 同款处理）。无 ctx 或 ctx 未指明国家时沿用旧行为。
-            if not _city_static_ctx_ok(en, ctx):
+            if not _city_static_ctx_ok(en, country if country is not None else ctx):
                 continue
             return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
@@ -12577,8 +12580,10 @@ def _banner_geo_text(net):
         _ct = _ct if isinstance(_ct, str) else ""
         _og = net.get("geo_org")
         _og = _og if isinstance(_og, str) else ""
-        # B-06a-3：横幅城市名补 ctx（国家），同上。
-        parts = [_loc_country_name(_cc), _loc_city(_ct, ctx=_cc)]
+        # B-06a-3b：横幅城市名补 country（国家）而非 ctx——横幅无州/省
+        # 信息，ctx 会把州级缓存条目误否（f_city WARM 回归）；静态表
+        # 守卫走 country，_GEO_EXTRA 分支 ctx 为 None 时沿用旧行为。
+        parts = [_loc_country_name(_cc), _loc_city(_ct, country=_cc)]
         if net.get("geo_net") == "dc":
             parts.append(T("dc"))
         elif net.get("geo_net") == "residential":
