@@ -271,6 +271,7 @@ STR = {
         "success_query": "成功查询",
         "failed_sources": "失败源",
         "fail_note": "※ 失败源按[无法核实]处理，不计入风险分——不代表干净",
+        "rate_limit_hint": "※ 多个源同时限流，通常是当前出口 IP（机场前置/共享出口）配额耗尽，换直连或住宅出口复测一次",
         "confidence": "置信度",
         "disclaimer": "说明: 被动查询仅反映公开情报，无证据≠无风险。\n机房 IP 的平台策略风险需单独评估。",
         "unlocked": "解锁",
@@ -483,6 +484,7 @@ STR = {
         "success_query": "Succeeded",
         "failed_sources": "Failed",
         "fail_note": "※ Failed sources treated as [Unverifiable], excluded from scoring — does not mean clean",
+        "rate_limit_hint": "※ Several sources rate-limited at once — usually the current egress IP (airport relay / shared egress) quota is exhausted; retry once via a direct connection or a residential egress",
         "confidence": "Confidence",
         "disclaimer": "Note: passive queries reflect OSINT only; no evidence ≠ no risk.\nDC IP platform policy risk needs separate assessment.",
         "unlocked": "OK",
@@ -695,6 +697,7 @@ STR = {
         "success_query": "成功查詢",
         "failed_sources": "失敗源",
         "fail_note": "※ 失敗源按[無法核實]處理，不計入風險分——不代表乾淨",
+        "rate_limit_hint": "※ 多個源同時限流，通常是當前出口 IP（機場前置/共享出口）配額耗盡，換直連或住宅出口複測一次",
         "confidence": "置信度",
         "disclaimer": "說明: 被動查詢僅反映公開情報，無證據≠無風險。\n機房 IP 的平台策略風險需單獨評估。",
         "unlocked": "解鎖",
@@ -907,6 +910,7 @@ STR = {
         "success_query": "成功クエリ",
         "failed_sources": "失敗ソース",
         "fail_note": "※ 失敗ソースは[確認不可]として処理、リスク点に計上しない——クリーンを意味しない",
+        "rate_limit_hint": "※ 複数のソースが同時にレート制限 — 現在の出口IP（空港中継/共有出口）の割当を使い切った可能性が高い。直結または住宅回線の出口で再試行してください",
         "confidence": "信頼度",
         "disclaimer": "注: パッシブクエリは公開情報のみを反映、証拠なし≠リスクなし。\nDC IPのプラットフォームポリシーリスクは別途評価が必要。",
         "unlocked": "利用可能",
@@ -1119,6 +1123,7 @@ STR = {
         "success_query": "Успешных запросов",
         "failed_sources": "Источники с ошибками",
         "fail_note": "※ Источникам с ошибками присваивается статус [Невозможно проверить]; они не учитываются при расчёте риска — это не означает, что IP чистый.",
+        "rate_limit_hint": "※ Сразу несколько источников вернули ограничение частоты — обычно это означает, что квота текущего выходного IP (аэропорт-реле / общий выход) исчерпана; повторите проверку напрямую или через residential-выход",
         "confidence": "Достоверность",
         "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски, связанные с правилами платформ для IP-адресов дата-центров, необходимо оценивать отдельно.",
         "unlocked": "Доступно",
@@ -1331,6 +1336,7 @@ STR = {
         "success_query": "پرس‌وجوی موفق",
         "failed_sources": "منابع ناموفق",
         "fail_note": "※ منابع ناموفق [غیرقابل تأیید] محسوب می‌شوند و در نمره ریسک لحاظ نمی‌شوند — به معنای پاک بودن نیست",
+        "rate_limit_hint": "※ چند منبع هم‌زمان با محدودیت نرخ مواجه شدند — معمولاً یعنی سهمیه IP خروجی فعلی (ریلی فرودگاهی / خروجی مشترک) تمام شده است؛ یک بار با اتصال مستقیم یا خروجی مسکونی دوباره امتحان کنید",
         "confidence": "اطمینان",
         "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک ناشی از سیاست‌های پلتفرم‌ها برای IPهای دیتاسنتر باید جداگانه ارزیابی شود.",
         "unlocked": "باز",
@@ -5316,6 +5322,20 @@ def _fetch_coordgeo(latitude, longitude, deadline=None):
     return None
 
 
+def _is_rate_limited_err(err):
+    """04-01：源失败是否为 HTTP 429 限流。http_get 的 HTTP 错误格式固定为
+    \"HTTP {code}: ...\"（见 http_get），429 即 Too Many Requests；其余
+    错误（连接失败/解析失败/他状态码）一律不算限流。"""
+    return isinstance(err, str) and err.startswith("HTTP 429")
+
+
+def _failed_display_names(c):
+    """04-01：失败列表展示名——限流的源加语言无关的 \" (429)\" 后缀，与
+    连接/解析失败区分；c 无 rate_limited 键（旧 JSON）时原样返回。"""
+    _rl = set(c.get("rate_limited") or [])
+    return [f"{n} (429)" if n in _rl else n for n in (c.get("failed") or [])]
+
+
 def run_passive(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
@@ -5389,6 +5409,11 @@ def run_passive(ip, json_mode=False):
     total = len(_denom)
     ok_count = sum(1 for p in _denom if sources.get(p.key, {}).get("ok"))
     failed = [p.name for p in avail_providers if not sources.get(p.key, {}).get("ok")]
+    # 04-01：限流失败名单（err 为 HTTP 429 的源），供展示层标注与 JSON 消费；
+    # 不动分母/评分，只区分失败原因。
+    rate_limited = [p.name for p in avail_providers
+                    if not sources.get(p.key, {}).get("ok")
+                    and _is_rate_limited_err(sources.get(p.key, {}).get("err"))]
     completeness = int(ok_count / total * 100) if total else 0
 
     # 核心情报源权重: (ipwhois 或 ipinfo), scamalytics, proxycheck, ripestat
@@ -5438,6 +5463,7 @@ def run_passive(ip, json_mode=False):
             "ok": ok_count,
             "total": total,
             "failed": failed,
+            "rate_limited": rate_limited,
             "confidence": confidence,
         },
         "verdict": verdict,
@@ -5892,8 +5918,12 @@ def _print_completeness(res):
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
-        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+        # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
+        # 加共享出口配额耗尽提示（不改变评分）。
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
     print(f"  {_c(C.dim, T('fail_note'))}")
+    if len(c.get("rate_limited") or []) >= 2:
+        print(f"  {_c(C.dim, T('rate_limit_hint'))}")
     print(f"  {T('confidence')}: {c['confidence']}/100")
 
     print()
@@ -6496,6 +6526,10 @@ def run_passive6(ip, json_mode=False):
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
     failed = [p.name for p in avail if not sources.get(p.key, {}).get("ok")]
+    # 04-01（v6）：同 run_passive，限流失败名单供展示层标注与 JSON 消费。
+    rate_limited = [p.name for p in avail
+                    if not sources.get(p.key, {}).get("ok")
+                    and _is_rate_limited_err(sources.get(p.key, {}).get("err"))]
     completeness = int(ok_count / total * 100) if total else 0
 
     _prof = _build_unified_profile(sources)
@@ -6559,6 +6593,7 @@ def run_passive6(ip, json_mode=False):
             "ok": ok_count,
             "total": total,
             "failed": failed,
+            "rate_limited": rate_limited,
             "confidence": _confidence6,
         },
         "verdict": _verdict6,
@@ -6572,11 +6607,14 @@ def _print_report6_tail(res):
     c = res["completeness"]
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
-        print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
+        # 04-01 / 04-08（v6）：同 _print_completeness。
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
     # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
     print(f"  {_c(C.dim, T('fail_note'))}")
+    if len(c.get("rate_limited") or []) >= 2:
+        print(f"  {_c(C.dim, T('rate_limit_hint'))}")
     print(f"  {_c(C.dim, T('v6_stream_note'))}")
     print()
     for _dl in T('disclaimer').split("\n"):
