@@ -5227,22 +5227,29 @@ _V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不
 _V6_POOL = None  # run_passive6 同上
 
 
-def _fetch_coordgeo(latitude, longitude):
+def _fetch_coordgeo(latitude, longitude, deadline=None):
     """Nominatim 逆地理单次查询（OPT-4：供 run_passive/run_passive6 提前
     提交到共享池、与评分并行，评分后回收）。失败返 None，永不抛错——
     与原地 try/except 同语义：coordgeo 失败不影响主流程。
     请求体与超时口径与原串行块逐字一致（_urlopen_deadline 4s 绝对
     截止；_addr 预置 {}，仅消除原块 _rp 为 None 时的 NameError 路径，
-    结果一致：无 country 即不写 coordgeo）。"""
+    结果一致：无 country 即不写 coordgeo）。
+    deadline（G-G1）：提交点起算的绝对截止（monotonic）；给出时打开与
+    读体共用该截止、过期未启动即直接返 None，排队等待不再拖超 4 秒；
+    不给则沿用执行起点 +4 秒（与原串行块一致）。"""
     try:
         _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
               "&format=json&zoom=3&accept-language=%s" % (latitude, longitude, _nominatim_lang()))
         _rq = urllib.request.Request(
             _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
         # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
-        # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
-        _dl = time.monotonic() + 4
-        _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
+        # 打开走 _urlopen_deadline 共享绝对截止, 读体取剩余预算。
+        # G-G1：deadline 由提交点传入（提交起 4 秒）；过期未启动即返 None。
+        _dl = deadline if deadline is not None else time.monotonic() + 4
+        if _dl - time.monotonic() <= 0:
+            return None
+        _rp, _err, _timed_out = _urlopen_deadline(
+            _rq, max(0.1, _dl - time.monotonic()))
         _addr = {}
         if _rp is not None:
             try:
@@ -5320,8 +5327,11 @@ def run_passive(ip, json_mode=False):
     # 并行，return 前回收。coordgeo 失败不影响主流程（见 _fetch_coordgeo）。
     _prof = _build_unified_profile(sources)
     _cg_fut = None
+    _cg_deadline = None
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
-        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"])
+        # G-G1：提交点起算 4 秒绝对截止，传入 helper 并用于回收超时。
+        _cg_deadline = time.monotonic() + 4
+        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"], _cg_deadline)
 
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
@@ -5355,8 +5365,15 @@ def run_passive(ip, json_mode=False):
     # 见上；score_* 不读 coordgeo，回收点不影响评分与 verdict）。
     if _cg_fut is not None:
         try:
-            _cg = _cg_fut.result()
+            # G-G1：回收共用提交点起算的 4 秒绝对截止；超时取消并跳过。
+            _cg_remain = _cg_deadline - time.monotonic()
+            if _cg_remain <= 0:
+                _cg_fut.cancel()
+                _cg = None
+            else:
+                _cg = _cg_fut.result(timeout=_cg_remain)
         except Exception:
+            _cg_fut.cancel()
             _cg = None
         if _cg:
             sources["coordgeo"] = _cg
@@ -6438,8 +6455,11 @@ def run_passive6(ip, json_mode=False):
     # OPT-4（v6）：与 run_passive 同理——逆地理提交到共享池，与评分并行，
     # _verdict6 后回收；score_* 不读 coordgeo。
     _cg_fut = None
+    _cg_deadline = None
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
-        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"])
+        # G-G1：提交点起算 4 秒绝对截止，传入 helper 并用于回收超时。
+        _cg_deadline = time.monotonic() + 4
+        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"], _cg_deadline)
 
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
@@ -6463,8 +6483,15 @@ def run_passive6(ip, json_mode=False):
     # OPT-4 回收（v6）：见 run_passive 同款注释。
     if _cg_fut is not None:
         try:
-            _cg = _cg_fut.result()
+            # G-G1：回收共用提交点起算的 4 秒绝对截止；超时取消并跳过。
+            _cg_remain = _cg_deadline - time.monotonic()
+            if _cg_remain <= 0:
+                _cg_fut.cancel()
+                _cg = None
+            else:
+                _cg = _cg_fut.result(timeout=_cg_remain)
         except Exception:
+            _cg_fut.cancel()
             _cg = None
         if _cg:
             sources["coordgeo"] = _cg
@@ -7221,25 +7248,31 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 # 时再建；--help 等不走网络的路径不再触发 ssl.create_default_context
 #（冷启动约 −0.027s）。构建参数与原模块级赋值逐字一致；各 getter
 # 只建一次、重复调用返回同一对象（构建本身无副作用，仅 build_opener）。
+# G-G2：首次并发调用须经 _OPENER_LOCK 二次检查，否则多线程各建一次。
 _opener_follow = None
 _opener_noredir = None
 _opener_safe = None
+_OPENER_LOCK = threading.Lock()
 
 
 def _get_opener_follow():
     global _opener_follow
     if _opener_follow is None:
-        _opener_follow = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
-            _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+        with _OPENER_LOCK:
+            if _opener_follow is None:
+                _opener_follow = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
+                    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
     return _opener_follow
 
 
 def _get_opener_noredir():
     global _opener_noredir
     if _opener_noredir is None:
-        _opener_noredir = urllib.request.build_opener(
-            _NoRedirect, urllib.request.ProxyHandler({}))
+        with _OPENER_LOCK:
+            if _opener_noredir is None:
+                _opener_noredir = urllib.request.build_opener(
+                    _NoRedirect, urllib.request.ProxyHandler({}))
     return _opener_noredir
 
 
@@ -7248,9 +7281,11 @@ def _get_opener_noredir():
 def _get_opener_safe():
     global _opener_safe
     if _opener_safe is None:
-        _opener_safe = urllib.request.build_opener(
-            urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
-            _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+        with _OPENER_LOCK:
+            if _opener_safe is None:
+                _opener_safe = urllib.request.build_opener(
+                    urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
+                    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
     return _opener_safe
 
 
