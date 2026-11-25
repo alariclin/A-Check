@@ -5227,6 +5227,11 @@ _V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不
 _V6_POOL = None  # run_passive6 同上
 
 
+_CG_COLLECT_GRACE = 0.5  # G-G1/G-G4：回收时在途任务完成清理的宽限（秒）；
+# 任务内工作截止于提交点 +4 秒，宽限只覆盖 finally 清理与 Future 回执，
+# 调用方等待上界为 4.5 秒。
+
+
 def _fetch_coordgeo(latitude, longitude, deadline=None):
     """Nominatim 逆地理单次查询（OPT-4：供 run_passive/run_passive6 提前
     提交到共享池、与评分并行，评分后回收）。失败返 None，永不抛错——
@@ -5248,8 +5253,10 @@ def _fetch_coordgeo(latitude, longitude, deadline=None):
         _dl = deadline if deadline is not None else time.monotonic() + 4
         if _dl - time.monotonic() <= 0:
             return None
+        # G-G3：打开超时用实际剩余预算，不设 0.1 下限（下限会把不足
+        # 100ms 的剩余放大，拖超绝对截止；_urlopen_deadline 可接受 0 超时）。
         _rp, _err, _timed_out = _urlopen_deadline(
-            _rq, max(0.1, _dl - time.monotonic()))
+            _rq, max(0.0, _dl - time.monotonic()))
         _addr = {}
         if _rp is not None:
             try:
@@ -5365,13 +5372,12 @@ def run_passive(ip, json_mode=False):
     # 见上；score_* 不读 coordgeo，回收点不影响评分与 verdict）。
     if _cg_fut is not None:
         try:
-            # G-G1：回收共用提交点起算的 4 秒绝对截止；超时取消并跳过。
-            _cg_remain = _cg_deadline - time.monotonic()
-            if _cg_remain <= 0:
-                _cg_fut.cancel()
-                _cg = None
-            else:
-                _cg = _cg_fut.result(timeout=_cg_remain)
+            # G-G1/G-G4：回收共用提交点起算的 4 秒绝对截止；已完成的
+            # Future 立即取回（评分慢也不丢弃）；未完成的最多再等宽限
+            # _CG_COLLECT_GRACE，让在途任务完成清理（_resp_shutdown），
+            # 超时取消并跳过。调用方等待上界为 4.5 秒。
+            _cg = _cg_fut.result(timeout=max(
+                0.0, _cg_deadline - time.monotonic()) + _CG_COLLECT_GRACE)
         except Exception:
             _cg_fut.cancel()
             _cg = None
@@ -6483,13 +6489,12 @@ def run_passive6(ip, json_mode=False):
     # OPT-4 回收（v6）：见 run_passive 同款注释。
     if _cg_fut is not None:
         try:
-            # G-G1：回收共用提交点起算的 4 秒绝对截止；超时取消并跳过。
-            _cg_remain = _cg_deadline - time.monotonic()
-            if _cg_remain <= 0:
-                _cg_fut.cancel()
-                _cg = None
-            else:
-                _cg = _cg_fut.result(timeout=_cg_remain)
+            # G-G1/G-G4：回收共用提交点起算的 4 秒绝对截止；已完成的
+            # Future 立即取回（评分慢也不丢弃）；未完成的最多再等宽限
+            # _CG_COLLECT_GRACE，让在途任务完成清理（_resp_shutdown），
+            # 超时取消并跳过。调用方等待上界为 4.5 秒。
+            _cg = _cg_fut.result(timeout=max(
+                0.0, _cg_deadline - time.monotonic()) + _CG_COLLECT_GRACE)
         except Exception:
             _cg_fut.cancel()
             _cg = None
