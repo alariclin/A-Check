@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.35 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.36 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -64,7 +64,7 @@ import argparse
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.35"
+VERSION = "4.14.36"
 
 
 def _init_console():
@@ -314,7 +314,7 @@ STR = {
         "invalid_ip": "Invalid IP address, try again",
         "upd_ahead": "Local version is newer than the latest release (v%s)",
         "invalid_input": "Invalid input, try again",
-        "invalid_proxy_format": "Invalid proxy format, want HOST:PORT",
+        "invalid_proxy_format": "Invalid proxy format; expected HOST:PORT",
         "ipv4_ipv6_conflict": "--ipv4-only and --ipv6-only cannot be used together",
         "no_speed_with_speed_conflict": "--no-speed and --with-speed cannot be used together",
         "proxy_auth_one_sided": "Proxy auth needs both --proxy-user and --proxy-pass",
@@ -336,7 +336,7 @@ STR = {
         "coord_country": "Country by Coords",
         "current_egress6": "Current IPv6 Egress",
         "sec_ipv6": "IPv6 Dual-Stack",
-        "v6_leak_warn": "⚠ IPv6 leak risk: IPv4 egress is AS{a4} but IPv6 egress is AS{a6} — different networks; IPv6 traffic likely bypasses your proxy/VPN",
+        "v6_leak_warn": "⚠ IPv6 leak risk: IPv4 egress is AS{a4} but IPv6 egress is AS{a6} — different networks; IPv6 traffic likely bypasses your proxy/VPN; your IPv6 address is directly exposed",
         "v6_same_exit": "IPv6 and IPv4 share the same egress network (AS{a})",
         "stack_title": "Self-check scope",
         "stack_auto": "Auto (test both IPv4 + IPv6; IPv4 only when no IPv6)",
@@ -385,7 +385,7 @@ STR = {
         "vpn": "VPN",
         "unknown": "Unknown",
         "done": "Check complete",
-        "m_batch": "Batch node speed test & pick",
+        "m_batch": "Batch node speed testing & selection",
         "m_speed": "Speed test (regions)",
         "m_update": "Check for Updates",
         "m_shortcut": "Manage command shortcuts (acheck/ac)",
@@ -478,8 +478,8 @@ STR = {
         "purity_fair": "Average",
         "purity_poor": "Poor",
         "purity_bad": "Very poor",
-        "purity_note": "※ Own conversion (100 - combined), not a third-party score",
-        "platform_note": "※ High platform score = DC/proxy traits; some platforms may step up verification, not malice",
+        "purity_note": "※ Calculated by this tool (100 - combined score), not a third-party score",
+        "platform_note": "※ A high platform compatibility score indicates data center/proxy traits; some platforms may require additional verification, but this does not indicate malicious activity",
         "success_query": "Succeeded",
         "failed_sources": "Failed",
         "fail_note": "※ Failed sources treated as [Unverifiable], excluded from scoring — does not mean clean",
@@ -493,8 +493,8 @@ STR = {
         "dns_unlock": "DNS",
         "port25": "Local port 25 outbound",
         "normal": "OK",
-        "abnormal": "Fail",
-        "mx_port25": "Mailbox MX port 25",
+        "abnormal": "Abnormal",
+        "mx_port25": "Mail providers' MX servers (port 25)",
         "f_proxy": "Proxy",
         "f_tor": "Tor",
         "f_vpn": "VPN",
@@ -516,14 +516,14 @@ STR = {
         "virt_vm": "VM",
         "virt_container": "Container",
         "infer_avail": "Likely OK",
-        "infer_limit": "May limit",
-        "infer_block": "May block",
+        "infer_limit": "May be restricted",
+        "infer_block": "May be blocked",
     },
     "zh-TW": {
-        "active_ip_ignored": "※ --active 模式偵測本機出口 IP，忽略指定的 IP 參數",
+        "active_ip_ignored": "※ --active 模式檢測本機出口 IP，忽略指定的 IP 參數",
         "title": "IP 信譽檢測",
         "prompt_ip": "請輸入公網 IP (b 返回，q 退出): ",
-        "invalid_ip": "無效的 IP 地址，請重新輸入",
+        "invalid_ip": "無效的 IP 位址，請重新輸入",
         "upd_ahead": "本地版本高於最新發布 (v%s)",
         "invalid_input": "輸入無效，請重新輸入",
         "invalid_proxy_format": "代理格式無效，應為 HOST:PORT",
@@ -533,7 +533,7 @@ STR = {
         "no_tty": "無可用終端；互動式選單需要 TTY。使用 --active 進行非互動式自檢。",
         "no_valid_nodes": "無有效節點",
         "heuristic": "啟發式",
-        "private_ip": "不支援私網/保留地址",
+        "private_ip": "不支援私網/保留位址",
         "detecting_egress": "正在檢測當前出口 IP...",
         "egress_fail": "[錯誤] 無法獲取當前出口 IP",
         "egress_note": "※ 以下主動測試僅反映當前這條線路",
@@ -544,7 +544,7 @@ STR = {
         "sec_basic": "基礎資訊與 ASN/BGP",
         "sec_type": "IP類型屬性",
         "sec_loc": "多源位置對比",
-        "current_egress6": "目前出口 IPv6",
+        "current_egress6": "當前出口 IPv6",
         "sec_ipv6": "IPv6 雙棧檢測",
         "v6_leak_warn": "⚠ IPv6 洩漏風險：IPv4 出口為 AS{a4}，IPv6 出口為 AS{a6}，不在同一網路——IPv6 流量很可能未經過代理/VPN，正直連暴露",
         "v6_same_exit": "IPv6 與 IPv4 為同一出口網路 (AS{a})",
@@ -553,12 +553,12 @@ STR = {
         "stack_v4": "僅 IPv4",
         "stack_v6": "僅 IPv6",
         "stack_prompt": "請選擇 [1-3] (Enter=自動, b=返回): ",
-        "egress6_fail": "未偵測到 IPv6 出口 (本機可能只有 IPv4)",
+        "egress6_fail": "未檢測到 IPv6 出口 (本機可能只有 IPv4)",
         "geo_group": "地理位置",
         "sec_signals6": "信譽信號 (逐源)",
         "v6_score_note": "※ IPv6 評分與 IPv4 同公式, 僅計入支援 IPv6 的資料源 (威脅/聲譽資料較少), 為前綴/營運商級估計",
         "speed_max_note": "※ 本段 {n} 個節點, 每節點下載上限 200 MB, 整段最多約 {max} MB 流量",
-        "v6_prefix_note": "IPv6 為前綴/營運商粒度資料，無單位址的信譽紀錄",
+        "v6_prefix_note": "IPv6 為前綴/營運商粒度資料，無單一位址的信譽紀錄",
         "v6_op_est": "營運商級估計",
         "v6_listed": "已命中名單",
         "v6_not_listed": "未命中名單",
@@ -567,7 +567,7 @@ STR = {
         "sec_fraud": "欺詐與維度評分",
         "sec_complete6": "資料完整度",
         "sec_matrix": "風險因子矩陣",
-        "sec_complete": "數據完整度與置信度",
+        "sec_complete": "資料完整度與置信度",
         "sec_stream": "串流媒體及AI服務解鎖檢測 (主動)",
         "sec_stream_passive": "串流媒體可用性推測 (被動)",
         "sec_mail": "25端口發信及黑名單檢測",
@@ -584,25 +584,25 @@ STR = {
         "bgp_first": "首見",
         "years": "年",
         "ptr_none": "無 PTR 記錄",
-        "database": "數據庫:",
+        "database": "資料庫:",
         "usage_type": "使用類型:",
-        "no_type_data": "[無法核實] 暫無類型數據",
-        "no_loc_data": "[無法核實] 暫無位置數據",
+        "no_type_data": "[無法核實] 暫無類型資料",
+        "no_loc_data": "[無法核實] 暫無位置資料",
         "ip_range": "IP段",
-        "dc": "數據中心",
+        "dc": "資料中心",
         "hosting": "虛擬主機",
         "residential": "住宅",
-        "mobile": "移動",
+        "mobile": "行動網路",
         "proxy": "代理",
         "vpn": "VPN",
         "unknown": "未知",
         "done": "檢測完成",
-        "m_batch": "批量節點測速優選",
+        "m_batch": "批次測速並選出最佳節點",
         "m_speed": "網路測速（多地區）",
         "m_update": "檢查更新",
         "m_shortcut": "管理命令入口 (acheck/ac)",
         "upd_latest": "已是最新版本 (v%s)",
-        "upd_available": "有新版本: v%s (目前 v%s), 請到 GitHub 下載",
+        "upd_available": "有新版本: v%s (當前 v%s), 請到 GitHub 下載",
         "upd_failed": "檢查更新失敗 [無法核實]",
         "speed_col_region": "地區",
         "speed_col_latency": "延遲",
@@ -617,7 +617,7 @@ STR = {
         "diag_speed_fail": "吞吐測速失敗",
         "batch_tp_testing": "測最優節點吞吐中…",
         "batch_tp_ok": "★ 最優節點實測下載: %.1f Mbps (經代理 · %s)",
-        "batch_hint": "逐行粘貼節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
+        "batch_hint": "逐行貼上節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
         "batch_best": "最優",
         "batch_dead": "不可用",
         "batch_col_node": "節點",
@@ -640,7 +640,7 @@ STR = {
         "grp_tools": "[ 工具 ]",
         "m_self": "本機自檢 (出口 IP 全檢)",
         "m_query": "查詢任意 IP",
-        "m_stream": "流媒體解鎖檢測",
+        "m_stream": "串流媒體解鎖檢測",
         "m_sysinfo": "系統資訊與 IO 測試",
         "m_lang": "切換語言 / Language",
         "m_proxy": "代理診斷 (SOCKS5)",
@@ -666,8 +666,8 @@ STR = {
         "diag_tcp_testing": "正在測試 TCP 延遲 %s:%s...",
         "diag_tcp_ok": "平均 %.1f ms, 抖動 %.1f ms, 丟包 %.1f%%",
         "diag_tcp_fail": "✗ TCP 連接失敗",
-        "prompt_proxy": "請輸入代理地址 (host:port，b 返回，q 退出): ",
-        "prompt_proxy_user": "用戶名 (回車跳過): ",
+        "prompt_proxy": "請輸入代理位址 (host:port，b 返回，q 退出): ",
+        "prompt_proxy_user": "使用者名稱 (按 Enter 跳過): ",
         "prompt_proxy_pass": "密碼: ",
         "unverifiable": "[無法核實]",
         "usage": "用途類型",
@@ -703,10 +703,10 @@ STR = {
         "failed": "失敗",
         "native": "原生",
         "dns_unlock": "DNS",
-        "port25": "本地25端口出站",
+        "port25": "本地連接埠 25 出站",
         "normal": "正常",
         "abnormal": "異常",
-        "mx_port25": "各郵局 MX 25端口",
+        "mx_port25": "各郵件服務商的 MX 連接埠 25",
         "f_proxy": "代理",
         "f_tor": "Tor",
         "f_vpn": "VPN",
@@ -756,7 +756,7 @@ STR = {
         "sec_basic": "基本情報と ASN/BGP",
         "current_egress6": "現在の出口 IPv6",
         "sec_ipv6": "IPv6 デュアルスタック",
-        "v6_leak_warn": "⚠ IPv6リークの恐れ：IPv4出口はAS{a4}、IPv6出口はAS{a6}と異なるネットワークです。IPv6通信がプロキシ/VPNを経由していない可能性があります",
+        "v6_leak_warn": "⚠ IPv6リークの恐れ：IPv4出口はAS{a4}、IPv6出口はAS{a6}と異なるネットワークです。IPv6通信がプロキシ/VPNを経由していない可能性があります。直接接続で露出するおそれがあります",
         "v6_same_exit": "IPv6とIPv4は同一の出口ネットワークです (AS{a})",
         "stack_title": "セルフチェック範囲",
         "stack_auto": "自動 (IPv4 + IPv6 の両方を測定；IPv6 が無い場合は IPv4 のみ)",
@@ -775,9 +775,9 @@ STR = {
         "v6_not_listed": "リスト掲載なし",
         "v6_stream_note": "ストリーミング推測はIPv4のみ；IPv6はアクティブモードでスタック別に実測できます",
         "geo_group": "地理情報",
-        "coord_country": "座標による国",
+        "coord_country": "座標から判定した国",
         "sec_complete6": "データ完全性",
-        "sec_fraud": "不正・次元スコア",
+        "sec_fraud": "不正スコア（項目別）",
         "sec_matrix": "リスク因子マトリックス",
         "sec_complete": "データ完全性と信頼度",
         "sec_stream": "ストリーミング/AIサービス検出 (アクティブ)",
@@ -809,7 +809,7 @@ STR = {
         "vpn": "VPN",
         "unknown": "不明",
         "done": "チェック完了",
-        "m_batch": "ノード一括速度テスト",
+        "m_batch": "ノード一括速度テスト・最適選択",
         "m_speed": "速度テスト（地域別）",
         "m_update": "アップデート確認",
         "m_shortcut": "コマンド入口の管理 (acheck/ac)",
@@ -831,7 +831,7 @@ STR = {
         "batch_tp_ok": "★ 最速ノード実測ダウンロード: %.1f Mbps (プロキシ経由 · %s)",
         "batch_hint": "ノードを1行ずつ貼り付け (host:port または socks5://[user:pass@]host:port)、空行で開始、b 戻る",
         "batch_best": "最速",
-        "batch_dead": "使用不可",
+        "batch_dead": "利用不可",
         "batch_col_node": "ノード",
         "batch_col_avg": "平均",
         "batch_col_jitter": "ジッター",
@@ -842,15 +842,15 @@ STR = {
         "bn_network": "ネットワーク",
         "bn_status": "状態",
         "bn_none": "なし",
-        "bn_ok": "利用可",
+        "bn_ok": "利用可能",
         "bn_untested": "未測定",
         "bn_fault": "異常",
         "bn_cores": "コア",
-        "grp_ip": "[ IPレピュテーション ]",
-        "grp_net": "[ プロキシとネットワーク ]",
+        "grp_ip": "[ IPレピュテーションチェック ]",
+        "grp_net": "[ プロキシとネットワーク診断 ]",
         "grp_sys": "[ システムと設定 ]",
         "grp_tools": "[ ツール ]",
-        "m_self": "セルフチェック (出口IP全検)",
+        "m_self": "セルフチェック (出口IPをすべてチェック)",
         "m_query": "任意IP照会",
         "m_stream": "ストリーミング解除テスト",
         "m_sysinfo": "システム情報とIOテスト",
@@ -924,7 +924,7 @@ STR = {
         "f_vpn": "VPN",
         "f_server": "サーバー",
         "f_blacklist": "ブラックリスト",
-        "f_malicious": "悪意記録",
+        "f_malicious": "悪意のある記録",
         "none": "なし",
         "cat_video": "動画",
         "cat_ai": "AI",
@@ -961,7 +961,7 @@ STR = {
         "detecting_egress": "Определение текущего исходящего IP...",
         "egress_fail": "[Ошибка] Не удалось получить исходящий IP",
         "egress_note": "※ Активные тесты отражают только текущее соединение",
-        "current_egress": "Текущий исходящий",
+        "current_egress": "Текущий исходящий IP",
         "active_mode": "[Активный режим]",
         "back": "Назад",
         "current_egress6": "Текущий выход IPv6",
@@ -984,12 +984,12 @@ STR = {
         "v6_op_est": "оценка на уровне оператора",
         "v6_listed": "В списке",
         "v6_not_listed": "Не в списке",
-        "v6_stream_note": "Вывод по стримингу — только для IPv4; IPv6 проверяйте активным режимом по стекам",
+        "v6_stream_note": "Предварительная оценка доступности стриминга поддерживается только для IPv4; для проверки IPv6 используйте активный режим с раздельным тестированием стеков.",
         "sec_loc": "Сравнение местоположения",
         "geo_group": "Геолокация",
         "sec_complete6": "Полнота данных",
         "coord_country": "Страна по координатам",
-        "sec_fraud": "Мошенничество и измерения",
+        "sec_fraud": "Оценка риска мошенничества и баллы по отдельным критериям",
         "sec_matrix": "Матрица факторов риска",
         "sec_complete": "Полнота данных и достоверность",
         "sec_stream": "Проверка стриминга/AI (активная)",
@@ -1015,7 +1015,7 @@ STR = {
         "ip_range": "Диапазон IP",
         "dc": "ДЦ",
         "hosting": "Хостинг",
-        "residential": "Жилой",
+        "residential": "Резидентский",
         "mobile": "Мобильный",
         "proxy": "Прокси",
         "vpn": "VPN",
@@ -1024,7 +1024,7 @@ STR = {
         "m_batch": "Пакетный тест узлов",
         "m_speed": "Тест скорости (регионы)",
         "m_update": "Проверить обновления",
-        "m_shortcut": "Управление ярлыками команд (acheck/ac)",
+        "m_shortcut": "Управление командами запуска (acheck/ac)",
         "upd_latest": "Установлена последняя версия (v%s)",
         "upd_available": "Доступна новая версия: v%s (текущая v%s), скачайте с GitHub",
         "upd_failed": "Не удалось проверить обновления [Не проверено]",
@@ -1093,7 +1093,7 @@ STR = {
         "prompt_proxy": "Введите адрес прокси (host:port, b назад, q выход): ",
         "prompt_proxy_user": "Имя пользователя (Enter пропустить): ",
         "prompt_proxy_pass": "Пароль: ",
-        "unverifiable": "[Не проверено]",
+        "unverifiable": "[Невозможно проверить]",
         "usage": "Тип использования",
         "dim_threat": "Угрозы",
         "dim_fraud": "Мошенничество",
@@ -1115,12 +1115,12 @@ STR = {
         "purity_poor": "Низкая",
         "purity_bad": "Очень низкая",
         "purity_note": "※ Собственный расчёт (100 - итог), не сторонняя оценка",
-        "platform_note": "※ Высокая совместимость = атрибуты ДЦ/прокси, возможна усиленная проверка, не означает вредоносность",
+        "platform_note": "※ Высокий балл по совместимости с платформами указывает на признаки ДЦ/прокси; некоторые платформы могут требовать усиленной проверки. Это не означает вредоносность.",
         "success_query": "Успешных запросов",
-        "failed_sources": "Неудачные источники",
-        "fail_note": "※ Неудачные источники = [не проверено], не влияют на оценку — не означает чистоту",
+        "failed_sources": "Источники с ошибками",
+        "fail_note": "※ Источникам с ошибками присваивается статус [Невозможно проверить]; они не учитываются при расчёте риска — это не означает, что IP чистый.",
         "confidence": "Достоверность",
-        "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски ДЦ IP оцениваются отдельно.",
+        "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски, связанные с правилами платформ для IP-адресов дата-центров, необходимо оценивать отдельно.",
         "unlocked": "Доступно",
         "reachable": "Достижимо",
         "blocked": "Блок",
@@ -1130,12 +1130,12 @@ STR = {
         "port25": "Исходящий порт 25",
         "normal": "Норма",
         "abnormal": "Аномалия",
-        "mx_port25": "MX-порты 25",
+        "mx_port25": "Порт 25 MX-серверов почтовых провайдеров",
         "f_proxy": "Прокси",
         "f_tor": "Tor",
         "f_vpn": "VPN",
         "f_server": "Сервер",
-        "f_blacklist": "Блоклист",
+        "f_blacklist": "Чёрный список",
         "f_malicious": "Угрозы",
         "none": "Нет",
         "cat_video": "Видео",
@@ -1145,7 +1145,7 @@ STR = {
         "sys_disk": "Диск",
         "sys_os": "ОС",
         "sys_virt": "Вирт.",
-        "sys_io": "Диск I/O",
+        "sys_io": "Дисковый ввод-вывод (I/O)",
         "sys_write": "Запись",
         "sys_read": "Чтение",
         "virt_phys": "Физ. сервер",
@@ -1177,7 +1177,7 @@ STR = {
         "active_mode": "[حالت فعال]",
         "current_egress6": "خروجی فعلی IPv6",
         "sec_ipv6": "IPv6 دوپشته",
-        "v6_leak_warn": "⚠ خطر نشت IPv6: خروجی IPv4 ‏AS{a4} و خروجی IPv6 ‏AS{a6} است؛ شبکه‌ها متفاوت‌اند و ترافیک IPv6 احتمالاً از پروکسی/VPN عبور نمی‌کند",
+        "v6_leak_warn": "⚠ خطر نشت IPv6: خروجی IPv4 برابر با AS{a4} و خروجی IPv6 برابر با AS{a6} است؛ این دو در یک شبکه نیستند — ترافیک IPv6 به‌احتمال زیاد از پروکسی/VPN عبور نمی‌کند و با اتصال مستقیم، آدرس IPv6 را افشا می‌کند",
         "v6_same_exit": "IPv6 و IPv4 در یک شبکه خروجی هستند (AS{a})",
         "stack_title": "دامنهٔ خودآزمایی",
         "stack_auto": "خودکار (آزمایش هر دو IPv4 + IPv6؛ بدون IPv6 فقط IPv4)",
@@ -1195,7 +1195,7 @@ STR = {
         "v6_op_est": "برآورد سطح اپراتور",
         "v6_listed": "در فهرست هست",
         "v6_not_listed": "در فهرست نیست",
-        "v6_stream_note": "استنتاج استریمینگ فقط برای IPv4 است؛ IPv6 را در حالت فعال به تفکیک پشته آزمایش کنید",
+        "v6_stream_note": "پیش‌بینی دسترسی به سرویس‌های استریم فقط برای IPv4 امکان‌پذیر است؛ برای IPv6 می‌توان در حالت فعال، هر پشته را جداگانه آزمایش کرد",
         "sec_type": "ویژگی‌های نوع IP",
         "sec_loc": "مقایسه موقعیت چندمنبعی",
         "sec_complete6": "کامل بودن داده‌ها",
@@ -1204,9 +1204,9 @@ STR = {
         "sec_fraud": "امتیاز تقلب و ابعاد",
         "sec_matrix": "ماتریس عوامل خطر",
         "sec_complete": "کامل بودن داده و اطمینان",
-        "sec_stream": "بررسی استریم/هوش مصنوعی (فعال)",
+        "sec_stream": "بررسی دسترسی به سرویس‌های استریم و هوش مصنوعی (فعال)",
         "sec_stream_passive": "تخمین دسترسی استریم (غیرفعال)",
-        "sec_mail": "ارسال پورت 25 و لیست سیاه",
+        "sec_mail": "بررسی ارسال ایمیل از طریق پورت 25 و حضور در فهرست‌های سیاه",
         "sec_sys": "اطلاعات سیستم",
         "sec_dns": "تست و پیشنهاد DNS",
         "sec_dns_rec": "DNS پیشنهادی",
@@ -1216,7 +1216,7 @@ STR = {
         "coords": "مختصات",
         "map": "نقشه",
         "timezone": "منطقه زمانی",
-        "bgp_visibility": "دید مسیر",
+        "bgp_visibility": "قابلیت مشاهدهٔ مسیر",
         "bgp_first": "اولین مشاهده",
         "years": "سال",
         "ptr_none": "رکورد PTR وجود ندارد",
@@ -1233,8 +1233,8 @@ STR = {
         "vpn": "VPN",
         "unknown": "نامشخص",
         "done": "بررسی کامل شد",
-        "m_batch": "تست دسته‌ای گره‌ها",
-        "m_speed": "تست سرعت (مناطق)",
+        "m_batch": "تست دسته‌ای سرعت گره‌ها و انتخاب بهترین گره",
+        "m_speed": "تست سرعت شبکه (چند منطقه)",
         "m_update": "بررسی به‌روزرسانی",
         "m_shortcut": "مدیریت میانبرهای فرمان (acheck/ac)",
         "upd_latest": "آخرین نسخه نصب است (v%s)",
@@ -1243,15 +1243,15 @@ STR = {
         "speed_col_region": "منطقه",
         "speed_col_latency": "تأخیر",
         "speed_col_down": "دانلود",
-        "speed_note": "※ حداکثر توان با چند اتصال همزمان؛ با دانلود تک‌اتصالی متفاوت است، صرفاً برای مرجع",
+        "speed_note": "※ معیار اندازه‌گیری، سرعت اوج با چند اتصال هم‌زمان است؛ با سرعت واقعی دانلود با یک اتصال تفاوت دارد و فقط برای اطلاع ارائه می‌شود",
         "speed_ask": "تست سرعت داده دانلود می‌کند (سقف ۲۰۰ مگابایت برای هر گره؛ همه {n4} گره IPv4 حداکثر حدود {max4} مگابایت، در حالت دوپشته {n6} گره IPv6 نیز حداکثر حدود {max6} مگابایت اضافه می‌شود). اجرا شود؟ [y/n] (Enter = رد کردن): ",
         "speed_skipped": "تست سرعت رد شد",
         "speed_traffic": "مجموع دانلود این بخش: حدود {mb} مگابایت",
-        "speed6_note": "※ تست سرعت IPv6 از نقاط دوپشته استفاده می‌کند، نه ۲۸ منطقهٔ IPv4",
-        "diag_speed_testing": "در حال اندازه‌گیری توان پروکسی (گره‌های منطقه‌ای)…",
+        "speed6_note": "※ تست سرعت IPv6 از نقاط پایانی دوپشته استفاده می‌کند که با گره‌های IPv4 در ۲۸ منطقه متفاوت‌اند",
+        "diag_speed_testing": "در حال اندازه‌گیری توان عملیاتی پروکسی (گره‌ها در چند منطقه)…",
         "diag_speed_ok": "سریع‌ترین: %s · دانلود %.1f Mbps",
-        "diag_speed_fail": "تست توان ناموفق بود",
-        "batch_tp_testing": "در حال اندازه‌گیری توان بهترین گره…",
+        "diag_speed_fail": "تست توان عملیاتی ناموفق بود",
+        "batch_tp_testing": "در حال اندازه‌گیری توان عملیاتی بهترین گره…",
         "batch_tp_ok": "★ دانلود اندازه‌گیری‌شده بهترین گره: %.1f Mbps (از طریق پروکسی · %s)",
         "batch_hint": "گره‌ها را خط به خط وارد کنید (host:port یا socks5://[user:pass@]host:port)، خط خالی شروع، b بازگشت",
         "batch_best": "بهترین",
@@ -1259,7 +1259,7 @@ STR = {
         "batch_col_node": "گره",
         "batch_col_avg": "میانگین",
         "batch_col_jitter": "جیتر",
-        "batch_col_loss": "اتلاف",
+        "batch_col_loss": "اتلاف بسته",
         "batch_col_proto": "HS",
         "bn_system": "سیستم",
         "bn_hardware": "سخت‌افزار",
@@ -1268,7 +1268,7 @@ STR = {
         "bn_none": "ندارد",
         "bn_ok": "در دسترس",
         "bn_untested": "تست نشده",
-        "bn_fault": "خطا",
+        "bn_fault": "غیرعادی",
         "bn_cores": " هسته",
         "grp_ip": "[ اعتبار IP ]",
         "grp_net": "[ پروکسی و شبکه ]",
@@ -1276,7 +1276,7 @@ STR = {
         "grp_tools": "[ ابزارها ]",
         "m_self": "خودآزمایی (بررسی کامل خروجی)",
         "m_query": "استعلام هر IP",
-        "m_stream": "تست بازکردن استریمینگ",
+        "m_stream": "بررسی دسترسی به سرویس‌های پخش آنلاین",
         "m_sysinfo": "اطلاعات سیستم و تست IO",
         "m_lang": "تغییر زبان / Language",
         "m_proxy": "عیب‌یابی پروکسی (SOCKS5)",
@@ -1287,9 +1287,9 @@ STR = {
         "cancelled": "لغو شد",
         "prompt_tcp": "هدف را وارد کنید (host:port، b بازگشت): ",
         "prompt_choice2": "کد دستور را وارد کنید [0-13]: ",
-        "diag_socks5_testing": "در حال تست SOCKS5 %s:%s...",
-        "diag_socks5_ok": "✓ اتصال SOCKS5 موفق، تأخیر %.1f میلی‌ثانیه",
-        "diag_socks5_fail": "✗ خطای SOCKS5: %s",
+        "diag_socks5_testing": "در حال تست دست‌دهی SOCKS5 %s:%s...",
+        "diag_socks5_ok": "✓ دست‌دهی SOCKS5 موفق بود، تأخیر %.1f میلی‌ثانیه",
+        "diag_socks5_fail": "✗ دست‌دهی SOCKS5 ناموفق بود: %s",
         "diag_egress_testing": "در حال دریافت IP خروجی پروکسی...",
         "diag_egress_ok": "IP خروجی: %s",
         "diag_egress_fail": "✗ دریافت IP ناموفق: %s",
@@ -1300,14 +1300,14 @@ STR = {
         "diag_dns_clean": "✓ خروجی DNS سازگار است: ASN حل‌کننده با ASN خروجی مطابقت دارد",
         "diag_dns_unknown": "[غیرقابل تأیید] خطا در بررسی سازگاری خروجی DNS",
         "diag_tcp_testing": "در حال تست تأخیر TCP %s:%s...",
-        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f میلی‌ثانیه، افت %.1f%%",
+        "diag_tcp_ok": "میانگین %.1f میلی‌ثانیه، جیتر %.1f میلی‌ثانیه، اتلاف بسته %.1f%%",
         "diag_tcp_fail": "✗ خطای اتصال TCP",
         "prompt_proxy": "آدرس پروکسی را وارد کنید (host:port، b بازگشت، q خروج): ",
         "prompt_proxy_user": "نام کاربری (Enter برای رد شدن): ",
         "prompt_proxy_pass": "رمز عبور: ",
         "unverifiable": "[غیرقابل تأیید]",
         "usage": "نوع کاربرد",
-        "dim_threat": "رفتار تهدید",
+        "dim_threat": "رفتار تهدیدآمیز",
         "dim_fraud": "امتیاز تقلب",
         "dim_reputation": "اعتبار تاریخی",
         "dim_platform": "سازگاری پلتفرم",
@@ -1327,12 +1327,12 @@ STR = {
         "purity_poor": "ضعیف",
         "purity_bad": "خیلی ضعیف",
         "purity_note": "※ محاسبه داخلی ابزار (100 - نمره ترکیبی)، امتیاز شخص ثالث نیست",
-        "platform_note": "※ سازگاری بالای پلتفرم = ویژگی دیتاسنتر/پروکسی، ممکن است تأیید سخت‌گیرانه‌تر شود، به معنای مخرب بودن نیست",
+        "platform_note": "※ امتیاز بالای سازگاری با پلتفرم‌ها = ویژگی دیتاسنتر/پروکسی؛ ممکن است برخی پلتفرم‌ها بررسی‌های سخت‌گیرانه‌تری اعمال کنند؛ این به معنای مخرب بودن نیست",
         "success_query": "پرس‌وجوی موفق",
         "failed_sources": "منابع ناموفق",
         "fail_note": "※ منابع ناموفق [غیرقابل تأیید] محسوب می‌شوند و در نمره ریسک لحاظ نمی‌شوند — به معنای پاک بودن نیست",
         "confidence": "اطمینان",
-        "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک سیاستی IP دیتاسنتر جداگانه ارزیابی شود.",
+        "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک ناشی از سیاست‌های پلتفرم‌ها برای IPهای دیتاسنتر باید جداگانه ارزیابی شود.",
         "unlocked": "باز",
         "reachable": "قابل دسترسی",
         "blocked": "مسدود",
@@ -1357,13 +1357,13 @@ STR = {
         "sys_disk": "دیسک",
         "sys_os": "سیستم‌عامل",
         "sys_virt": "مجازی‌سازی",
-        "sys_io": "دیسک I/O",
+        "sys_io": "I/O دیسک",
         "sys_write": "نوشتن",
         "sys_read": "خواندن",
         "virt_phys": "فیزیکی",
         "virt_vm": "ماشین مجازی",
         "virt_container": "کانتینر",
-        "infer_avail": "احتمالاً باز",
+        "infer_avail": "احتمالاً در دسترس",
         "infer_limit": "احتمال محدودیت",
         "infer_block": "احتمال مسدودی",
     },
@@ -1830,7 +1830,7 @@ def _urlopen_deadline(req, timeout):
 
     def _run():
         try:
-            _box["resp"] = _opener_safe.open(
+            _box["resp"] = _get_opener_safe().open(
                 req, timeout=max(0.1, _dl - time.monotonic()))
         except Exception as _e:
             _box["err"] = _e
@@ -4717,7 +4717,7 @@ def _build_unified_profile(s):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.35 免 Key 公开版):
+评分规则 (v4.14.36 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4749,7 +4749,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.35 免 Key 公開版):
+評分規則 (v4.14.36 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4781,7 +4781,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.35 Keyless Public Edition):
+Scoring rules (v4.14.36 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4814,7 +4814,7 @@ Scoring rules (v4.14.35 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.35 キー不要公開版):
+スコアリングルール (v4.14.36 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4846,7 +4846,7 @@ Scoring rules (v4.14.35 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.35 Публичная версия без ключей):
+Правила оценки (v4.14.36 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4878,7 +4878,7 @@ Scoring rules (v4.14.35 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.35):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.36):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -5227,6 +5227,57 @@ _V4_POOL = None  # run_passive 跨调用复用：每调用新建池 + cancel 不
 _V6_POOL = None  # run_passive6 同上
 
 
+_CG_COLLECT_GRACE = 0.5  # G-G1/G-G4：回收时在途任务完成清理的宽限（秒）；
+# 任务内工作截止于提交点 +4 秒，宽限只覆盖 finally 清理与 Future 回执，
+# 调用方等待上界为 4.5 秒。
+
+
+def _fetch_coordgeo(latitude, longitude, deadline=None):
+    """Nominatim 逆地理单次查询（OPT-4：供 run_passive/run_passive6 提前
+    提交到共享池、与评分并行，评分后回收）。失败返 None，永不抛错——
+    与原地 try/except 同语义：coordgeo 失败不影响主流程。
+    请求体与超时口径与原串行块逐字一致（_urlopen_deadline 4s 绝对
+    截止；_addr 预置 {}，仅消除原块 _rp 为 None 时的 NameError 路径，
+    结果一致：无 country 即不写 coordgeo）。
+    deadline（G-G1）：提交点起算的绝对截止（monotonic）；给出时打开与
+    读体共用该截止、过期未启动即直接返 None，排队等待不再拖超 4 秒；
+    不给则沿用执行起点 +4 秒（与原串行块一致）。"""
+    try:
+        _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
+              "&format=json&zoom=3&accept-language=%s" % (latitude, longitude, _nominatim_lang()))
+        _rq = urllib.request.Request(
+            _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
+        # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
+        # 打开走 _urlopen_deadline 共享绝对截止, 读体取剩余预算。
+        # G-G1：deadline 由提交点传入（提交起 4 秒）；过期未启动即返 None。
+        _dl = deadline if deadline is not None else time.monotonic() + 4
+        if _dl - time.monotonic() <= 0:
+            return None
+        # G-G3：打开超时用实际剩余预算，不设 0.1 下限（下限会把不足
+        # 100ms 的剩余放大，拖超绝对截止；_urlopen_deadline 可接受 0 超时）。
+        _rp, _err, _timed_out = _urlopen_deadline(
+            _rq, max(0.0, _dl - time.monotonic()))
+        _addr = {}
+        if _rp is not None:
+            try:
+                _addr = (json.loads(_read_limited(
+                    _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
+                    "utf-8", "replace")).get("address") or {})
+            finally:
+                _resp_shutdown(_rp)
+                try:
+                    _rp.close()
+                except Exception:
+                    pass
+        if _addr.get("country"):
+            return {
+                "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
+                "cc": (_addr.get("country_code") or "").upper()}
+    except Exception:
+        pass
+    return None
+
+
 def run_passive(ip, json_mode=False):
     ip_s = str(ip)
     sources = {}
@@ -5278,6 +5329,17 @@ def run_passive(ip, json_mode=False):
         with _progress_lock:
             print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
+    # OPT-4：画像只读 sources（score_* 亦只读、不写 sources），故 _prof
+    # 可前移到评分之前；逆地理随即提交到共享池，与评分/完整度/verdict
+    # 并行，return 前回收。coordgeo 失败不影响主流程（见 _fetch_coordgeo）。
+    _prof = _build_unified_profile(sources)
+    _cg_fut = None
+    _cg_deadline = None
+    if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
+        # G-G1：提交点起算 4 秒绝对截止，传入 helper 并用于回收超时。
+        _cg_deadline = time.monotonic() + 4
+        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"], _cg_deadline)
+
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
     r_pts, r_ev = score_reputation(sources)
@@ -5306,34 +5368,21 @@ def run_passive(ip, json_mode=False):
         for k in ("feodo", "et_compromised", "spamhaus"))
     verdict = _verdict_label(combined, core_ok, completeness, _malicious_listed)
 
-    _prof = _build_unified_profile(sources)
-    if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
+    # OPT-4 回收：逆地理与评分并行跑完后取回（_prof 已在评分前建成，
+    # 见上；score_* 不读 coordgeo，回收点不影响评分与 verdict）。
+    if _cg_fut is not None:
         try:
-            _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
-                  "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
-            _rq = urllib.request.Request(
-                _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
-            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
-            _dl = time.monotonic() + 4
-            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
-            if _rp is not None:
-                try:
-                    _addr = (json.loads(_read_limited(
-                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
-                        "utf-8", "replace")).get("address") or {})
-                finally:
-                    _resp_shutdown(_rp)
-                    try:
-                        _rp.close()
-                    except Exception:
-                        pass
-            if _addr.get("country"):
-                sources["coordgeo"] = {
-                    "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
-                    "cc": (_addr.get("country_code") or "").upper()}
+            # G-G1/G-G4：回收共用提交点起算的 4 秒绝对截止；已完成的
+            # Future 立即取回（评分慢也不丢弃）；未完成的最多再等宽限
+            # _CG_COLLECT_GRACE，让在途任务完成清理（_resp_shutdown），
+            # 超时取消并跳过。调用方等待上界为 4.5 秒。
+            _cg = _cg_fut.result(timeout=max(
+                0.0, _cg_deadline - time.monotonic()) + _CG_COLLECT_GRACE)
         except Exception:
-            pass
+            _cg_fut.cancel()
+            _cg = None
+        if _cg:
+            sources["coordgeo"] = _cg
 
     return {
         "ip": ip_s,
@@ -6409,33 +6458,14 @@ def run_passive6(ip, json_mode=False):
     completeness = int(ok_count / total * 100) if total else 0
 
     _prof = _build_unified_profile(sources)
+    # OPT-4（v6）：与 run_passive 同理——逆地理提交到共享池，与评分并行，
+    # _verdict6 后回收；score_* 不读 coordgeo。
+    _cg_fut = None
+    _cg_deadline = None
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
-        try:
-            _u = ("https://nominatim.openstreetmap.org/reverse?lat=%s&lon=%s"
-                  "&format=json&zoom=3&accept-language=%s" % (_prof["latitude"], _prof["longitude"], _nominatim_lang()))
-            _rq = urllib.request.Request(
-                _u, headers={"User-Agent": "A-Check (IP lookup tool)"})
-            # E-430 F18: urlopen(timeout=4) 的 getaddrinfo 本身无超时;
-            # 打开走 _urlopen_deadline 共享 4s 绝对截止, 读体取剩余预算。
-            _dl = time.monotonic() + 4
-            _rp, _err, _timed_out = _urlopen_deadline(_rq, 4)
-            if _rp is not None:
-                try:
-                    _addr = (json.loads(_read_limited(
-                        _rp, timeout=max(0.1, _dl - time.monotonic())).decode(
-                        "utf-8", "replace")).get("address") or {})
-                finally:
-                    _resp_shutdown(_rp)
-                    try:
-                        _rp.close()
-                    except Exception:
-                        pass
-            if _addr.get("country"):
-                sources["coordgeo"] = {
-                    "ok": True, "country": (_addr.get("country") or "").replace(";", "；").split("；")[0].strip(),
-                    "cc": (_addr.get("country_code") or "").upper()}
-        except Exception:
-            pass
+        # G-G1：提交点起算 4 秒绝对截止，传入 helper 并用于回收超时。
+        _cg_deadline = time.monotonic() + 4
+        _cg_fut = _ex.submit(_fetch_coordgeo, _prof["latitude"], _prof["longitude"], _cg_deadline)
 
     t_pts, t_ev = score_threat(sources)
     f_pts, f_ev = score_fraud(sources)
@@ -6455,6 +6485,21 @@ def run_passive6(ip, json_mode=False):
     _confidence6 = min(100, int(round(completeness * 0.7 + (_core_ok6 / len(_core_checks6)) * 30)))
     _malicious6 = bool(sources.get("spamhaus", {}).get("ok") and sources.get("spamhaus", {}).get("listed"))
     _verdict6 = _verdict_label(combined6, _core_ok6, completeness, _malicious6)
+
+    # OPT-4 回收（v6）：见 run_passive 同款注释。
+    if _cg_fut is not None:
+        try:
+            # G-G1/G-G4：回收共用提交点起算的 4 秒绝对截止；已完成的
+            # Future 立即取回（评分慢也不丢弃）；未完成的最多再等宽限
+            # _CG_COLLECT_GRACE，让在途任务完成清理（_resp_shutdown），
+            # 超时取消并跳过。调用方等待上界为 4.5 秒。
+            _cg = _cg_fut.result(timeout=max(
+                0.0, _cg_deadline - time.monotonic()) + _CG_COLLECT_GRACE)
+        except Exception:
+            _cg_fut.cancel()
+            _cg = None
+        if _cg:
+            sources["coordgeo"] = _cg
 
     return {
         "ip": ip_s,
@@ -6487,7 +6532,7 @@ def _print_report6_tail(res):
     print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
     if c["failed"]:
         print(f"  {T('failed_sources')}: {', '.join(c['failed'][:8])}")
-    # 4.14.35 O1：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
+    # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
     print(f"  {_c(C.dim, T('fail_note'))}")
@@ -7204,18 +7249,49 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-_opener_follow = urllib.request.build_opener(
-    urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
-    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
-_opener_noredir = urllib.request.build_opener(
-    _NoRedirect, urllib.request.ProxyHandler({}))
+# OPT-3：三个 opener 改为懒加载——模块导入时只留 None 哨兵，首次使用
+# 时再建；--help 等不走网络的路径不再触发 ssl.create_default_context
+#（冷启动约 −0.027s）。构建参数与原模块级赋值逐字一致；各 getter
+# 只建一次、重复调用返回同一对象（构建本身无副作用，仅 build_opener）。
+# G-G2：首次并发调用须经 _OPENER_LOCK 二次检查，否则多线程各建一次。
+_opener_follow = None
+_opener_noredir = None
+_opener_safe = None
+_OPENER_LOCK = threading.Lock()
+
+
+def _get_opener_follow():
+    global _opener_follow
+    if _opener_follow is None:
+        with _OPENER_LOCK:
+            if _opener_follow is None:
+                _opener_follow = urllib.request.build_opener(
+                    urllib.request.ProxyHandler({}), _RedirectPinHTTPHandler(),
+                    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+    return _opener_follow
+
+
+def _get_opener_noredir():
+    global _opener_noredir
+    if _opener_noredir is None:
+        with _OPENER_LOCK:
+            if _opener_noredir is None:
+                _opener_noredir = urllib.request.build_opener(
+                    _NoRedirect, urllib.request.ProxyHandler({}))
+    return _opener_noredir
 
 
 # http_get 路径专用 opener：环境代理语义不变（ProxyHandler() 读环境），
 # 重定向走 _SafeRedirectHandler（不用 urllib.request.urlopen 的默认 opener）。
-_opener_safe = urllib.request.build_opener(
-    urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
-    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+def _get_opener_safe():
+    global _opener_safe
+    if _opener_safe is None:
+        with _OPENER_LOCK:
+            if _opener_safe is None:
+                _opener_safe = urllib.request.build_opener(
+                    urllib.request.ProxyHandler(), _RedirectPinHTTPHandler(),
+                    _RedirectPinHTTPSHandler(), _SafeRedirectHandler())
+    return _opener_safe
 
 
 CHALLENGE_MARKERS = ("just a moment", "cf-chl", "cf_chl", "challenge-platform", "turnstile", "captcha", "enable javascript and cookies to continue")
@@ -7516,7 +7592,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     if _FORCE_FAMILY:
         opener = _pinned_opener(_FORCE_FAMILY, follow_redirects)
     else:
-        opener = _opener_follow if follow_redirects else _opener_noredir
+        opener = _get_opener_follow() if follow_redirects else _get_opener_noredir()
     req = urllib.request.Request(url, headers=h)
     _dl = time.monotonic() + timeout
 
@@ -8416,19 +8492,37 @@ def test_appletv(local_ip=None):
     return T("blocked"), "", None
 
 
+def _mail_port25_one(host, port, family):
+    """check_mail_port25 单目标尝试：连通即 True（套接字随即关闭），
+    失败即 False；永不抛错（调用方以返回值判定）。"""
+    try:
+        _connect_host(host, port, 4, family).close()
+        return True
+    except Exception:
+        return False
+
+
 def check_mail_port25(family=socket.AF_UNSPEC):
-    """连接真实监听 25 端口的权威 MX 服务器，而非 Web A 记录。"""
+    """连接真实监听 25 端口的权威 MX 服务器，而非 Web A 记录。
+    OPT-2：2 目标并行尝试（各仍为 4s 超时）、先到先得——任一连通即返
+    True，不等另一路；两路皆失败才返 False。返回值语义与串行版一致。
+    check_mx_port25 的多 MX 主机尝试保持串行（并行 MX 会与“先到先得”
+    及 B-11a-1 全量遍历防误判语义冲突），不在此改动。"""
     targets = [
         ("gmail-smtp-in.l.google.com", 25),
         ("mx1.qq.com", 25),
     ]
-    for host, port in targets:
-        try:
-            _connect_host(host, port, 4, family).close()
-            return True
-        except Exception:
-            continue
-    return False
+    _ex = ThreadPoolExecutor(max_workers=2)
+    try:
+        _futs = [_ex.submit(_mail_port25_one, host, port, family)
+                 for host, port in targets]
+        for _f in as_completed(_futs):
+            if _f.result():
+                return True
+        return False
+    finally:
+        # 早返时不等另一路（其 4s 超时仍在后台跑完，不阻塞调用方）。
+        _ex.shutdown(wait=False)
 
 
 # G4：check_mx_port25 全量遍历的单调总截止（秒）。见函数内注释。
@@ -10473,15 +10567,22 @@ def _run_active6(json_mode, egress6):
         _section(T("sec_dns") + " (IPv6)")
         print_dns6_test(dns6_res)
         _section(T("sec_stream") + " (IPv6)")
-    streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
-    speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
+    # OPT-1（v6 段）：与 run_active 同理——邮件相只依赖出口 IP，在流媒体
+    # 相开始时提交，DNSBL 相后回收；超时/判定语义与打印顺序均不变
+    # （邮件相文本输出仍在下方原位置）。
     mx_domains6 = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25_6 = ex.submit(check_mail_port25, family=socket.AF_INET6)
-        f_mxs_6 = [ex.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
+    _mail_ex6 = ThreadPoolExecutor(max_workers=4)
+    try:
+        f_p25_6 = _mail_ex6.submit(check_mail_port25, family=socket.AF_INET6)
+        f_mxs_6 = [_mail_ex6.submit(check_mx_port25, dom, family=socket.AF_INET6) for _, dom in mx_domains6]
+        streaming6 = _run_streaming_table(egress6, json_mode=json_mode, family=6)
+        speed6 = print_speed_section(json_mode=json_mode, family=6, gated=True)
+        dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
         p25_6 = f_p25_6.result()
         mx6_results = [f.result() for f in f_mxs_6]
-    dnsbl6_total, dnsbl6_clean, dnsbl6_marked, dnsbl6_bl, dnsbl6_pbl = check_dnsbl(egress6, json_mode=json_mode)
+    finally:
+        # 正常路径 .result() 已等齐；异常路径不等未完成任务（后台跑完即弃）。
+        _mail_ex6.shutdown(wait=False)
     if not json_mode:
         _section(T("sec_mail"))
         if p25_6:
@@ -10505,10 +10606,10 @@ def _run_active6(json_mode, egress6):
                 print(f"    {_c(C.dim, _L('不收邮件（Null MX）', 'Does not accept mail (Null MX)', 'メールを受け付けません（Null MX）', 'Не принимает почту (Null MX)', 'نامه دریافت نمی‌کند (Null MX)', zhtw='不收郵件（Null MX）'))} {_c(C.dim, '(' + _mx_name6 + ')')}")
         _dnsbl_lbl6 = _L("IP地址黑名单数据库", "DNSBL", "DNSBL（IPブラックリスト）", "DNSBL (чёрные списки IP)", "DNSBL (فهرست سیاه IP)", zhtw="IP 位址黑名單資料庫")
         print(
-            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_c(C.cyan, str(dnsbl6_total))}  "
-            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_c(C.green, str(dnsbl6_clean))}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
-            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
+            f"  {_dnsbl_lbl6} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных:', 'معتبر'))} {_c(C.cyan, str(dnsbl6_total))}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых:', 'پاک'))} {_c(C.green, str(dnsbl6_clean))}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке:', 'در فهرست', zhtw='黑名單命中'))} {_c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL:', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
         )
         for b in dnsbl6_bl[:10]:
             print(f"    {_c(C.red, '- ' + b)}")
@@ -10588,30 +10689,41 @@ def run_active(json_mode=False, stack=None):
         print(f"{_c(C.bold, '=' * 60)}")
         print(f"  {T('detecting_egress')}")
 
+    # OPT-5：v4/v6 出口查询并行（两者独立无依赖，各自内部仍按源轮询）。
+    # auto 栈同时查两路；定向栈（4/6）只查对应一路，与改前一致。
+    # 回退语义不变：auto 下无 v4 出口但有 v6 时仍降级走 IPv6 全流程。
     egress = None
-    if stack != "6":
-        egress = get_egress_ip()
-        if not egress and stack == "auto":
-            # 纯 IPv6 主机：无 IPv4 出口时不直接失败，降级走 IPv6 全流程
-            egress6_try = get_egress_ip6()
-            if egress6_try:
-                return _run_active6(json_mode, egress6_try)
-        if not egress:
-            if json_mode:
-                print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
-            else:
-                print(f"  {_c(C.red, T('egress_fail'))}")
-            return None
-
     egress6 = None
-    if stack != "4":
+    if stack == "auto":
+        _eg_ex = ThreadPoolExecutor(max_workers=2)
+        try:
+            _f4 = _eg_ex.submit(get_egress_ip)
+            _f6 = _eg_ex.submit(get_egress_ip6)
+            egress = _f4.result()
+            egress6 = _f6.result()
+        finally:
+            # 正常路径 .result() 已等齐；异常路径不等另一路（后台跑完即弃）。
+            _eg_ex.shutdown(wait=False)
+        if not egress and egress6:
+            # 纯 IPv6 主机：无 IPv4 出口时不直接失败，降级走 IPv6 全流程
+            return _run_active6(json_mode, egress6)
+    elif stack != "6":
+        egress = get_egress_ip()
+    elif stack != "4":
         egress6 = get_egress_ip6()
-        if stack == "6" and not egress6:
-            if json_mode:
-                print(json.dumps({"error": T("egress6_fail")}, ensure_ascii=False))
-            else:
-                print(f"  {_c(C.red, T('egress6_fail'))}")
-            return None
+    if stack != "6" and not egress:
+        if json_mode:
+            print(json.dumps({"error": T("egress_fail")}, ensure_ascii=False))
+        else:
+            print(f"  {_c(C.red, T('egress_fail'))}")
+        return None
+
+    if stack == "6" and not egress6:
+        if json_mode:
+            print(json.dumps({"error": T("egress6_fail")}, ensure_ascii=False))
+        else:
+            print(f"  {_c(C.red, T('egress6_fail'))}")
+        return None
 
     if not json_mode:
         if egress:
@@ -10634,20 +10746,29 @@ def run_active(json_mode=False, stack=None):
         _SEC["on"] = True
         _section(T("sec_stream"))
 
-    streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
-    if not json_mode:
-        dns_res = print_dns_test(None)
-    else:
-        dns_res = test_dns_servers()
+    # OPT-1：邮件相只依赖出口 IP，与流媒体表、DNS 测试、DNSBL 均无数据
+    # 依赖；在流媒体相开始时提交，DNSBL 相后回收，墙钟与三相重叠。
+    # 超时/判定语义不变（_MX_PORT25_BUDGET 与各任务超时均不动）。
+    # 打印顺序不变：邮件相的文本输出仍在速度段之后（见下方原位置），
+    # 结果只在原回收点之后使用。
     mx_domains = [("Gmail", "gmail.com"), ("Outlook", "outlook.com"), ("QQ", "qq.com")]
     _mail_family = socket.AF_INET if stack == "4" else socket.AF_UNSPEC
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_p25 = ex.submit(check_mail_port25, family=_mail_family)
-        f_mxs = [ex.submit(check_mx_port25, dom, family=_mail_family) for _, dom in mx_domains]
+    _mail_ex = ThreadPoolExecutor(max_workers=4)
+    try:
+        f_p25 = _mail_ex.submit(check_mail_port25, family=_mail_family)
+        f_mxs = [_mail_ex.submit(check_mx_port25, dom, family=_mail_family) for _, dom in mx_domains]
+        streaming_json = _run_streaming_table(egress, json_mode=json_mode, family=4)
+        if not json_mode:
+            dns_res = print_dns_test(None)
+        else:
+            dns_res = test_dns_servers()
+        total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
         p25 = f_p25.result()
         mx_results = [f.result() for f in f_mxs]
-
-    total, clean, marked, bl, pbl = check_dnsbl(egress, json_mode=json_mode)
+    finally:
+        # 正常路径 .result() 已等齐；异常路径不等未完成任务（后台跑完即弃），
+        # 避免一次流媒体/DNS/DNSBL 异常被邮件相 12s 预算拖住才抛错。
+        _mail_ex.shutdown(wait=False)
 
     st_res = print_speed_section(json_mode=json_mode, family=4, gated=True)
 
@@ -10659,7 +10780,7 @@ def run_active(json_mode=False, stack=None):
         else:
             print(f"  {p25_lbl}: {_c(C.red, T('abnormal'))}")
             print(
-                f"  {_c(C.dim, _L('※ AWS/GCP 等云厂商默认封锁 25 端口出站，属正常限制', '※ Cloud providers block outbound port 25 by default', '※ AWS/GCP などのクラウド事業者は、既定でアウトバウンドのポート 25 をブロックしています（正常な制限です）', '※ Облачные провайдеры (AWS/GCP и др.) по умолчанию блокируют исходящий порт 25 — это нормальное ограничение', '※ ارائه‌دهندگان ابری مانند AWS/GCP به‌طور پیش‌فرض پورت ۲۵ خروجی را مسدود می‌کنند؛ این یک محدودیت عادی است', zhtw='※ AWS/GCP 等雲廠商預設封鎖 25 端口出站，屬正常限制'))}"
+                f"  {_c(C.dim, _L('※ AWS/GCP 等云厂商默认封锁 25 端口出站，属正常限制', '※ Cloud providers block outbound port 25 by default (a normal restriction)', '※ AWS/GCP などのクラウド事業者は、既定でアウトバウンドのポート 25 をブロックしています（正常な制限です）', '※ Облачные провайдеры (AWS/GCP и др.) по умолчанию блокируют исходящий порт 25 — это нормальное ограничение', '※ ارائه‌دهندگان ابری مانند AWS/GCP به‌طور پیش‌فرض پورت ۲۵ خروجی را مسدود می‌کنند؛ این یک محدودیت عادی است', zhtw='※ AWS/GCP 等雲廠商預設封鎖 25 端口出站，屬正常限制'))}"
             )
 
         mx_ok = sum(1 for r in mx_results if r is True)
@@ -10684,10 +10805,10 @@ def run_active(json_mode=False, stack=None):
         _ok = _c(C.green, str(clean))
         _bl = _c(C.red if marked > 0 else C.green, str(marked))
         print(
-            f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_eff}  "
-            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_ok}  "
-            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_bl}  "
-            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(pbl)))}"
+            f"  {_dnsbl_lbl}: {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных:', 'معتبر'))} {_eff}  "
+            f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых:', 'پاک'))} {_ok}  "
+            f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке:', 'در فهرست', zhtw='黑名單命中'))} {_bl}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL:', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(pbl)))}"
         )
         if bl:
             for b in bl[:10]:
@@ -10729,10 +10850,10 @@ def run_active(json_mode=False, stack=None):
             _ok6 = _c(C.green, str(dnsbl6_clean))
             _bl6 = _c(C.red if dnsbl6_marked > 0 else C.green, str(dnsbl6_marked))
             print(
-                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных', 'معتبر'))} {_eff6}  "
-                f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых', 'پاک'))} {_ok6}  "
-                f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке', 'در فهرست', zhtw='黑名單命中'))} {_bl6}  "
-            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
+                f"  {_dnsbl_lbl} (IPv6): {_c(C.dim, _L('有效', 'Valid', '有効', 'Действительных:', 'معتبر'))} {_eff6}  "
+                f"{_c(C.dim, _L('正常', 'Clean', 'クリーン', 'Чистых:', 'پاک'))} {_ok6}  "
+                f"{_c(C.dim, _L('黑名单命中', 'Listed', '掲載', 'В списке:', 'در فهرست', zhtw='黑名單命中'))} {_bl6}  "
+            f"{_c(C.dim, _L('策略名单 (PBL)', 'Policy list (PBL)', 'ポリシーリスト (PBL)', 'Список PBL:', 'فهرست PBL', zhtw='策略名單 (PBL)'))} {_c(C.yellow, str(len(dnsbl6_pbl)))}"
             )
             for b in dnsbl6_bl[:10]:
                 print(f"    {_c(C.red, '- ' + b)}")
@@ -12911,7 +13032,7 @@ class _CLIArgumentParser(argparse.ArgumentParser):
 
 
 # ============================================================
-# 命令入口管理 (快捷键 v4.14.35): acheck / ac 薄启动器
+# 命令入口管理 (快捷键): acheck / ac 薄启动器
 #
 # 设计 (GPT 比选 (d) 单文件内统一后端, CLI + 菜单共用; 已仲裁):
 # - 默认用户级: 受管理副本 ~/.local/share/acheck/acheck.py
@@ -12994,7 +13115,7 @@ def _shortcut_win32_msg():
               "not Windows.",
               "コマンド入口の管理は Linux と macOS のみ対応し、Windows には"
               "対応していません。",
-              "Управление ярлыками команд поддерживается только в Linux и "
+              "Управление записями команд поддерживается только в Linux и "
               "macOS, но не в Windows.",
               "مدیریت میانبرهای فرمان فقط در Linux و macOS پشتیبانی می‌شود، "
               "نه در Windows.",
@@ -14019,9 +14140,9 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
         print(_L("检测到命令入口冲突：",
                  "Command shortcut conflicts detected:",
                  "コマンド入口の競合を検出しました：",
-                 "Обнаружены конфликты ярлыков команд:",
+                 "Обнаружены конфликты команд:",
                  "تداخل در میانبرهای فرمان شناسایی شد:",
-                 "偵測到命令入口衝突："))
+                 "檢測到命令入口衝突："))
         for nm, fl in blocked.items():
             print("  %s: %s" % (nm, _shortcut_fmt_findings(fl)))
         for nm in risk_unconfirmed:
@@ -14455,7 +14576,7 @@ def _shortcut_install_impl(names=None, scope="user", accept_ac_risk=False,
                            % (_p, _why),
                            "Не удаётся удалить исключённый старый лаунчер "
                            "%s: %s" % (_p, _why),
-                           "نمی‌توان راه‌انداز قدیمی حذف‌شده %s را حذف کرد: "
+                           "نمی‌توان راه‌انداز قدیمی کنار گذاشته‌شده %s را حذف کرد: "
                            "%s" % (_p, _why),
                            "無法刪除已剔除的舊啟動器 %s：%s" % (_p, _why)))
                     continue
@@ -14615,7 +14736,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
         # R3-M-17：--shortcut status --json 的结构化状态（与文本行同源数据）。
         # B-16-6：installed 按实际条目是否 OK 计算——更新失败写入 failed
         # 态时保留的 OK 条目仍算已安装；install_status 仅作补充状态透出。
-        # 4.14.35 E-1 仍成立：failed 态且无任何 OK 条目时 installed 为 False。
+        # E-1 仍成立：failed 态且无任何 OK 条目时 installed 为 False。
         doc = {"scope": scope,
                "managed_dir": paths["data_dir"],
                "launcher_dir": paths["bin_dir"],
@@ -14696,16 +14817,16 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                    "وضعیت میانبرهای فرمان (%s):" % scope,
                    "命令入口狀態 (%s):" % scope))
     lines.append("  %s: %s" % (_L("受管理目录", "Managed dir", "管理ディレクトリ",
-                                 "Каталог", "پوشهٔ مدیریت‌شده", "受管理目錄"),
+                                 "Управляемый каталог", "پوشهٔ مدیریت‌شده", "受管理目錄"),
                               paths["data_dir"]))
-    lines.append("  %s: %s" % (_L("启动器目录", "Launcher dir", "ランチャー",
+    lines.append("  %s: %s" % (_L("启动器目录", "Launcher dir", "ランチャーディレクトリ",
                                  "Каталог лаунчеров", "پوشهٔ راه‌اندازها",
                                  "啟動器目錄"), paths["bin_dir"]))
     if state is None:
         lines.append("  " + _L("未安装任何入口。",
                                "No shortcuts installed.",
                                "入口はインストールされていません。",
-                               "Ярлыки не установлены.",
+                               "Команды запуска не установлены.",
                                "هیچ میانبری نصب نشده است.",
                                "未安裝任何入口。"))
         if not _shortcut_bin_in_path(paths["bin_dir"]):
@@ -14737,7 +14858,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                 _e, state["instance_id"])
             for _e in (state.get("entries") or {}).values())
     if _failed_no_ok:
-        # 4.14.35 E-1：失败态且无任何 OK 条目时 as_json 也须返回合法
+        # E-1：失败态且无任何 OK 条目时 as_json 也须返回合法
         # JSON（复用 _status_doc，其 installed 已为 False），rc 保持 1；
         # 文本模式原样返回纯文本。状态文件不持久化 install 时的 errors，
         # error 即文本提示本身（失败原因见安装时的报错）。
@@ -14772,7 +14893,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                               state.get("installed_version", "?")))
     lines.append("  %s: %s" % (_L("当前运行版本", "Running version",
                                  "実行中の版", "Запущенная версия",
-                                 "نسخهٔ در حال اجرا", "目前執行版本"), VERSION))
+                                 "نسخهٔ در حال اجرا", "當前執行版本"), VERSION))
     if state.get("installed_version") != VERSION:
         lines.append("  " + _L("提示：已安装副本与当前运行版本不同，下载新版后"
                                "请重跑安装更新副本（入口名保留）。",
@@ -14791,7 +14912,7 @@ def shortcut_status(scope="user", home=None, sysroot=None, path_dirs=None,
                                "دارد؛ پس از دریافت نسخهٔ جدید، نصب را دوباره "
                                "اجرا کنید تا نسخه به‌روز شود (نام‌ها حفظ "
                                "می‌شوند).",
-                               "提示：已安裝副本與目前執行版本不同，下載新版後"
+                               "提示：已安裝副本與當前執行版本不同，下載新版後"
                                "請重跑安裝更新副本（入口名保留）。"))
     if state.get("managed_script"):
         # R4-M-01(4): 只核对固定路径 paths["managed_script"]，不用状态里
@@ -15665,7 +15786,7 @@ def _shortcut_menu_scope():
                            "ユーザー単位とシステム全体の両方に入口がインストール"
                            "されています。どちらを使いますか？[1] ユーザー単位  "
                            "[2] システム全体 (既定 1): ",
-                           "Ярлыки установлены и на уровне пользователя, и "
+                           "Команды запуска установлены и на уровне пользователя, и "
                            "системно. Какую область? [1] Пользователь  "
                            "[2] Системная (по умолчанию 1): ",
                            "میانبرها هم در سطح کاربر و هم سیستمی نصب شده‌اند. "
@@ -15826,7 +15947,7 @@ def _shortcut_report_install(res):
                  % ", ".join(res["installed"]),
                  "インストール済みコマンド入口：%s"
                  % ", ".join(res["installed"]),
-                 "Установлены ярлыки команд: %s"
+                 "Установлены команды запуска: %s"
                  % ", ".join(res["installed"]),
                  "میانبرهای فرمان نصب شد: %s"
                  % ", ".join(res["installed"]),
@@ -15878,16 +15999,16 @@ def _shortcut_report_install(res):
                      % res.get("bin_dir", ""),
                      "Note: %s is not in PATH, so the shortcuts cannot be "
                      "invoked directly yet; add it to PATH and reopen the "
-                     "shell." % res.get("bin_dir", ""),
+                     "shell (don't just look for \"installation complete\")." % res.get("bin_dir", ""),
                      "注意：%s は PATH にありません。入口はまだ直接呼べません。"
-                     "PATH に追加してシェルを開き直してください。"
+                     "PATH に追加してシェルを開き直してください。（「インストール完了」だけを見て安心しないでください）。"
                      % res.get("bin_dir", ""),
-                     "Примечание: %s нет в PATH, ярлыки пока нельзя вызывать "
-                     "напрямую; добавьте каталог в PATH и переоткройте shell."
+                     "Примечание: %s нет в PATH, команды запуска пока нельзя вызывать "
+                     "напрямую; добавьте каталог в PATH и переоткройте shell (не ориентируйтесь только на сообщение «установка завершена»)."
                      % res.get("bin_dir", ""),
                      "توجه: %s در PATH نیست و میانبرها هنوز مستقیم قابل "
                      "فراخوانی نیستند؛ آن را به PATH اضافه کنید و پوسته را "
-                     "دوباره باز کنید." % res.get("bin_dir", ""),
+                     "دوباره باز کنید. (فقط به پیام «نصب کامل شد» اکتفا نکنید.)" % res.get("bin_dir", ""),
                      "提示：%s 不在 PATH 中，入口現在還不能直接呼叫；"
                      "請把該目錄加入 PATH 後重開 shell。"
                      % res.get("bin_dir", "")))
@@ -15900,23 +16021,23 @@ def _shortcut_report_install(res):
                      "type -a that the entries point to this install "
                      "(aliases/functions/cache cannot be detected here). "
                      "To rename or remove later, use the manager in "
-                     "acheck.py.",
+                     "acheck.py or the acheck/ac commands.",
                      "ヒント：実際のシェルで command -v や type -a を使って、"
                      "入口が今回のインストールを指しているか確認してください"
                      "（エイリアス・関数・キャッシュはここでは検出できません）。"
-                     "改名・削除は acheck.py の管理入口から行えます。",
+                     "改名・削除は acheck.py の管理入口または acheck/ac コマンドから行えます。",
                      "Подсказка: проверьте в своём shell через command -v "
-                     "или type -a, что ярлыки указывают на эту установку "
+                     "или type -a, что команды запуска указывают на эту установку "
                      "(алиасы/функции/кэш здесь не видны). Для переименования "
-                     "или удаления используйте менеджер в acheck.py.",
+                     "или удаления используйте менеджер в acheck.py или команды acheck/ac.",
                      "نکته: در پوستهٔ واقعی خود با command -v یا type -a "
                      "بررسی کنید که میانبرها به همین نصب اشاره می‌کنند "
                      "(نام مستعار/تابع/حافظه در اینجا قابل شناسایی نیست). "
                      "برای تغییر نام یا حذف بعدی، از مدیریت در acheck.py "
-                     "استفاده کنید.",
+                     "یا دستورات acheck/ac استفاده کنید.",
                      "提示：在實際 shell 裡用 command -v 或 type -a 核驗 "
                      "入口指向的是本次安裝（別名/函數/快取程式發現不了）。"
-                     "裝好之後如需改名或移除，用 acheck.py 的管理入口操作。"))
+                     "裝好之後如需改名或移除，用 acheck.py 的管理入口或 acheck/ac 命令操作。"))
     for e in res.get("errors", []):
         print("  " + e)
     if res.get("failed"):
