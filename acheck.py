@@ -7315,12 +7315,6 @@ def _resolve_public_ips(host):
     return _ips if _ips else None
 
 
-def _redirect_host_public(host):
-    """重定向目标主机是否可公开访问（R3-M-05）：见 _resolve_public_ips。"""
-    _ips = _resolve_public_ips(host)
-    return bool(_ips)
-
-
 def _redirect_pinned_connect(conn, pin_ips, family=None):
     """连向校验时钉住的字面量 IP（B-09a-1）：主机名只在重定向校验时
     解析一次，连接不再二次解析；Host/SNI 仍用原域名（conn.host），故
