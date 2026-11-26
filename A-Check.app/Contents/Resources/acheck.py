@@ -3790,7 +3790,7 @@ class IPApi(Provider):
 @register
 class ProxyCheck(Provider):
     """proxycheck.io v3（04-07 迁移，v2 保留至 2035 但已切默认版本）。
-    v3 稳定版自 2026-06-24（默认版本），v2 官方承诺支持至 2035。
+    v3 稳定版自 2026-06-24（默认版本），v2（Legacy v2 API）官方承诺支持至 2035。
     v3 响应为嵌套结构（detections / network / location），不再按 IP 键分片。
     risk 映射（候选 b，2026-11-26 live 配对裁决）：仅有阳性检出时采信
     detections.risk，无检出置 0——v3 risk 重权近期攻击，干净 IP
