@@ -3789,27 +3789,74 @@ class IPApi(Provider):
 
 @register
 class ProxyCheck(Provider):
-    """proxycheck.io：当前仍调 v2 端点。官方 changelog（2026-11-24 复核）：
-    v3 已于 2026-09-13 结束 open beta 转正为当前稳定版，v2 标签同日由
-    "Stable v2 API" 改名 "Legacy v2 API"；全文检索 changelog 未见 v2
-    下线日期（下线日期官方未公布，不写日期）。迁移评估待排期，见 04-07。
+    """proxycheck.io v3（04-07 迁移，v2 保留至 2035 但已切默认版本）。
+    v3 稳定版自 2026-06-24（默认版本），v2 官方承诺支持至 2035。
+    v3 响应为嵌套结构（detections / network / location），不再按 IP 键分片。
+    risk 映射（候选 b，2026-11-26 live 配对裁决）：仅有阳性检出时采信
+    detections.risk，无检出置 0——v3 risk 重权近期攻击，干净 IP
+    （如 8.8.8.8）v3 risk 可达 100，1:1 移植会凭空 +50 欺诈分。
+    type 单标签派生，优先级 tor > vpn > proxy > hosting > scraper >
+    compromised；network.type 另存 usage_type，不混进 type。
     """
     key = "proxycheck"
     name = "proxycheck.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://proxycheck.io/v2/{_q_ip(ip)}?vpn=1&asn=1&risk=1", use_cache=False)
+        ok, raw = http_get(f"https://proxycheck.io/v3/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
             root = json.loads(raw)
-            if root.get("status") not in ("ok", "warning") or str(ip) not in root:
+            if root.get("status") not in ("ok", "warning"):
                 return {"ok": False, "err": root.get("message", f"status: {root.get('status')}")}
-            d = root[str(ip)]
+            # v3 仍按 IP 键分片（与 v2 同款）；分片内再嵌套解析。
+            d = root.get(str(ip))
             if not isinstance(d, dict) or not d:
                 return {"ok": False, "err": "empty ip object"}
+            det = d.get("detections")
+            if not isinstance(det, dict) or not det:
+                return {"ok": False, "err": "missing detections"}
+            net = d.get("network") if isinstance(d.get("network"), dict) else {}
+            loc = d.get("location") if isinstance(d.get("location"), dict) else {}
+
+            def _yn3(v):
+                # F09 三态解析（v3 布尔值版）: True->True、False->False,
+                # 缺失或不合法值->None (未知/弃权), 不得默认 False (fail-open)。
+                if v is True:
+                    return True
+                if v is False:
+                    return False
+                return None
+
+            _proxy = _yn3(det.get("proxy"))
+            _vpn = _yn3(det.get("vpn"))
+            _tor = _yn3(det.get("tor"))
+            _hosting = _yn3(det.get("hosting"))
+            _scraper = _yn3(det.get("scraper"))
+            _compromised = _yn3(det.get("compromised"))
+            _anonymous = _yn3(det.get("anonymous"))
+
+            # type 单标签派生（v2 单值语义；优先级 tor > vpn > proxy >
+            # hosting > scraper > compromised；tor+hosting 时取 TOR，
+            # 丢 hosting 因子格与 v2 同款）。
+            _type = ""
+            for _flag, _label in ((_tor, "TOR"), (_vpn, "VPN"),
+                                  (_proxy, "Proxy"), (_hosting, "Hosting"),
+                                  (_scraper, "Scraper"),
+                                  (_compromised, "Compromised")):
+                if _flag:
+                    _type = _label
+                    break
+
+            # risk 映射（候选 b）：无阳性检出时置 0；有检出时采信并钳制。
+            # 注意 anonymous 不计入阳性：live 实测 8.8.8.8 anonymous=true
+            #（公共解析器亦被标 anonymous），计入会把干净 IP 的 risk 100
+            # 全额带入欺诈分，违背“迁后欺诈分不得高于迁前”的硬约束。
+            _positive = any(f is True for f in
+                            (_proxy, _vpn, _tor, _hosting, _scraper,
+                             _compromised))
             try:
-                _risk = int(d["risk"]) if d.get("risk") is not None else None
+                _risk = int(det["risk"]) if det.get("risk") is not None else None
             except (TypeError, ValueError, OverflowError):
                 # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
                 # 其余字段继续返回，不丢整源（F05）。
@@ -3817,38 +3864,28 @@ class ProxyCheck(Provider):
             # R4-H-04：风险分钳制到 [0, 100]（150 只溢出进度条，不崩溃）。
             if _risk is not None:
                 _risk = max(0, min(100, _risk))
-
-            def _yn(v):
-                # F09 三态解析: "yes"->True、"no"->False, 缺失或
-                # 不合法值->None (未知/弃权), 不得默认 False (fail-open)。
-                if v == "yes":
-                    return True
-                if v == "no":
-                    return False
-                return None
-
-            # R4-H-04：type 只认字符串，非字符串（list/dict/数字）一律视为空，
-            # 防下游 score_fraud / _type_block / _factor_rows 误读。
-            _type = d.get("type") if isinstance(d.get("type"), str) else ""
-            _vpn = _yn(d.get("vpn"))
-            _tor = _yn(d.get("tor"))
-            # VPN/Tor 可继续接受明确的 type 正向证据 (与旧 OR 口径一致)。
-            if _type == "VPN":
-                _vpn = True
-            if _type.upper() == "TOR":
-                _tor = True
+                if not _positive:
+                    _risk = 0
             return {
                 "ok": True,
-                "proxy": _yn(d.get("proxy")),
+                "proxy": _proxy,
                 "vpn": _vpn,
                 "type": _type,
                 "tor": _tor,
+                "hosting": _hosting,
+                "scraper": _scraper,
+                "compromised": _compromised,
+                "anonymous": _anonymous,
                 "risk": _risk,
-                "asn": _parse_asn(d.get("asn")),
-                "provider": d.get("provider", ""),
-                "range": d.get("range", ""),
-                "city": d.get("city", ""),
-                "country": d.get("isocode", ""),
+                "confidence": det.get("confidence"),
+                "detection_history": d.get("detection_history"),
+                "attack_history": d.get("attack_history"),
+                "usage_type": net.get("type", ""),
+                "asn": _parse_asn(net.get("asn")),
+                "provider": net.get("provider", ""),
+                "range": net.get("range", ""),
+                "city": loc.get("city_name", ""),
+                "country": loc.get("country_code", ""),
                 "ts": now_iso(),
             }
         except Exception as e:
