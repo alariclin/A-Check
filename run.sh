@@ -51,4 +51,17 @@ if [ -z "$PY" ]; then
     echo "未找到 Python 3.8+，请先安装: https://www.python.org/downloads/"
     exit 1
 fi
-exec "$PY" "$(dirname "$0")/acheck.py" "$@"
+# L-01：$0 可能是指向本文件的符号链接（如 PATH 上的 acheck 入口）；
+# $(dirname "$0") 不解链接，会指向链接所在目录而非实文件目录。
+# 沿链接链逐级解开（readlink 循环，macOS BSD readlink 亦可用，不用
+# readlink -f），相对目标按链接所在目录补齐，再取实文件目录。
+_SRC="$0"
+while [ -L "$_SRC" ]; do
+    _DIR="$(dirname "$_SRC")"
+    _TGT="$(readlink "$_SRC")"
+    case "$_TGT" in
+        /*) _SRC="$_TGT" ;;
+        *)  _SRC="$_DIR/$_TGT" ;;
+    esac
+done
+exec "$PY" "$(dirname "$_SRC")/acheck.py" "$@"

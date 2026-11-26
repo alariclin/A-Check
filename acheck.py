@@ -2083,7 +2083,7 @@ def parse_any_ip(s):
         if _mapped is not None:
             ip = _mapped  # ::ffff:a.b.c.d 按内嵌 IPv4 处理, 走 v4 校验与数据源
         elif (ip.is_global and not ip.is_multicast
-              and not ip.is_reserved and not ip.is_site_local):
+              and not ip.is_reserved and not getattr(ip, "is_site_local", False)):
             return ip, 6
         else:
             return None, "private_ip"
@@ -11500,6 +11500,11 @@ class _SocksHTTPS(http.client.HTTPSConnection):
     def connect(self):
         # B-13-1：新一次握手开始，尚无 response 在途，清掉上轮的
         # response socket 标记，握手期 close 仍可关断全部 socket。
+        # L-02：同时复位 _hs_closed——close() 置起的标记只对当次握手
+        # 有意义；复用同一连接对象时不清它会把新握手好的 TLS socket
+        # 当场误关（下行复核）。握手期内新调 close() 置起的标记
+        # 不受复位影响（复位只发生在 connect() 开头）。
+        self._hs_closed = False
         self._hs_resp_sock = None
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
                                 username=self._user, password=self._pwd,
