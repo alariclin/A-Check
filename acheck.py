@@ -5321,6 +5321,9 @@ def _risk_bar(v, width=30):
 
 
 def _good_bar(v, width=30):
+    # C-05：与 _risk_bar 对齐——入口钳制到 [0, 100]，条长恒为 width；
+    # 非数值守 0。今日调用方恒传界内值（加固）。
+    v = _clamp_score(v) or 0
     filled = int(v / 100 * width)
     bar = "█" * filled + "░" * (width - filled)
     col = C.green if v >= 70 else (C.yellow if v >= 40 else C.red)
@@ -8331,7 +8334,10 @@ def test_youtube(local_ip=None):
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
-        if not complete and "YouTube Premium is not available in your country" not in body:
+        # C-04：与 Disney 对齐——采样不完整时裸短语不算锁区信号，一律
+        # unknown（短语可能来自页脚等非锁区文案）；完整正文上的短语仍
+        # 按旧口径判 blocked（夹具正向对照）。
+        if not complete:
             return T("unknown"), "", None
         if "YouTube Premium is not available in your country" in body:
             return T("blocked"), "", None
@@ -8442,7 +8448,9 @@ def test_gemini(local_ip=None):
         return T("unknown"), "", None
     # 最终 URL 信号不受正文截断影响：URL 已含 faq 信号时不因正文
     # 不完整判 unknown，落入正常分类（6-3）。
-    if code == 200 and not complete and "isn't currently supported" not in body.lower() and "faq" not in final_url.lower():
+    # C-04：与 Disney 对齐——采样不完整时裸短语不算锁区信号，一律
+    # unknown；完整正文上的短语仍按旧口径判 blocked。
+    if code == 200 and not complete and "faq" not in final_url.lower():
         return T("unknown"), "", None
     if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
