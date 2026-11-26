@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>Проверка чистоты IP и качества сети</b> — агрегация многих источников · два режима · один файл без зависимостей</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.37-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.38-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -77,7 +77,7 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 | 5 | Язык / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | Проверить обновления | Сравнение с последним Release на GitHub |
 | 7 | Диагностика прокси (SOCKS5) | Шесть шагов: рукопожатие → исходящий IP прокси → его репутация → утечка DNS → задержка TCP → пропускная способность через прокси (самый быстрый из 5 региональных хабов) |
-| 8 | Проверка согласованности DNS-выхода | Сравнение системного резолвера и прямого разрешения для выявления утечки DNS |
+| 8 | Проверка согласованности DNS-выхода | Сравнение системного резолвера и прямого разрешения для выявления утечки DNS. Проверку утечек WebRTC/DNS следует перепроверять с помощью браузерного инструмента. |
 | 9 | Тест задержки TCP | Задержка / джиттер / потери пакетов до любого host:port (min / avg / max) |
 | 10 | Правила оценки | Полное объяснение измерений оценки, вычетов и уровней |
 | 11 | Пакетный тест узлов | Вставьте несколько host:port или SOCKS5-прокси; параллельная проверка задержки и доступности, рейтинг с лучшим узлом зелёным, плюс фактическая скорость загрузки лучшего прокси |
@@ -98,37 +98,37 @@ A-Check — однофайловый Python-скрипт (`acheck.py`, толь�
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 macOS (пакет скриптов):
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-mac.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-mac && bash run.command
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-mac.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-mac && bash run.command
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 Любая система (один файл, нужен Python 3.8+):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **Зеркало CDN — для регионов, где GitHub труднодоступен (например, материковый Китай). Один файл, полный функционал:**
 gh-proxy (прямой доступ из Китая):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 Или запустите скрипт напрямую (нужен Python 3.8+):
 
@@ -166,6 +166,7 @@ python3 acheck.py [IP] [опции]
 
 - **Геолокация и принадлежность**: ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, обратный PTR/FCrDNS
 - **Репутация и мошенничество**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
+- **Офлайн-георезерв**: IP Geolocation by DB-IP (https://db-ip.com) — используется только для дополнения отсутствующих в онлайн-результатах кода страны или ASN; уже полученные значения не перезаписываются.
 - **Угрозы и списки**: Spamhaus DROP, Feodo Tracker, Emerging Threats, список выходных узлов Tor, IPsum, X4BNet VPN ranges
 
 Каждый фактор и оценка — результат голосования нескольких источников; ложное срабатывание одного источника не решает исход в одиночку.

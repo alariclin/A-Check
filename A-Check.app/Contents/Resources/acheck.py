@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.37 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.38 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -15,6 +15,7 @@ IP 信誉检测 v4.14.37 — 全量修复与并发优化公开版 (零 API Key �
   注册与实体: RIPEstat, RDAP (RIR), PTR/FCrDNS, DB-IP
   归属与匿名化: ipwho.is, ipinfo.io, freeipapi, ip-api.com, iplocate.io, ipquery.io,
            ipapi.co, 2ip.io, ipapi.is, ip.guide, GeoJS, HackerTarget, country.is, X4BNet
+  离线兜底: DB-IP Lite (IP Geolocation by DB-IP, https://db-ip.com)
 
 用法:
     python3 acheck.py                        # 交互菜单 (默认中文，可切换 6 种语言)
@@ -27,13 +28,16 @@ IP 信誉检测 v4.14.37 — 全量修复与并发优化公开版 (零 API Key �
 """
 import base64
 import bisect
+import csv
 import errno
 try:
     import fcntl
 except ImportError:  # Windows 等无 fcntl 的平台: 快捷键管理本就不支持
     fcntl = None
+import gzip
 import hashlib
 import http.client
+import io
 import ipaddress
 import json
 import math
@@ -61,10 +65,11 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
+import atexit
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.37"
+VERSION = "4.14.38"
 
 
 def _init_console():
@@ -2083,7 +2088,7 @@ def parse_any_ip(s):
         if _mapped is not None:
             ip = _mapped  # ::ffff:a.b.c.d 按内嵌 IPv4 处理, 走 v4 校验与数据源
         elif (ip.is_global and not ip.is_multicast
-              and not ip.is_reserved and not ip.is_site_local):
+              and not ip.is_reserved and not getattr(ip, "is_site_local", False)):
             return ip, 6
         else:
             return None, "private_ip"
@@ -3053,6 +3058,13 @@ _CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "ا
 # （与 B-06a-2 单候选上下文不符时留原文的口径一致）。
 _CITY_L10N_HOME = {"Alexandria": "EG"}
 
+# C-01：静态州/省表译文的归属国家（同款，仅收录译文随国家而异的歧义名）。
+# Georgia 的静态译文（zh 佐治亚州 / zh-TW 喬治亞州 / ja ジョージア州
+# / ru Джорджия / fa جورجیا）取自美国佐治亚州；国家格鲁吉亚的 region
+# 字段若亦为 "Georgia"，上下文指明他国时不得取州译文，取国家译名
+# （_loc_country_name("Georgia") -> 格鲁吉亚）。
+_REGION_L10N_HOME = {"Georgia": "US"}
+
 
 _ANY_REGION2EN = _any2en(_REGION_L10N)
 _ANY_CITY2EN = _any2en(_CITY_L10N)
@@ -3388,7 +3400,10 @@ def _extra_sub(disp, kind, ctx_text=None):
 def _loc_region(text, ctx=None):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。
     ctx：调用方上下文（国家等，逗号分隔串）；给出时单候选亦须过上下文
-    检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。"""
+    检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。
+    C-01：静态表回落另受 _REGION_L10N_HOME 守卫——归属国与 ctx 指明
+    的唯一国家不符时，region 实为国家名，取国家译名（如 Georgia ->
+    格鲁吉亚），不得取美国州译文；ctx 未指明国家/多国歧义时沿用旧行为。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
@@ -3413,6 +3428,16 @@ def _loc_region(text, ctx=None):
         # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
     if en:
+        # C-01：归属表收录的歧义州名，ctx（调用方国家字段）指明唯一
+        # 他国时取国家译名，不取州译文。
+        _home = _REGION_L10N_HOME.get(en)
+        if _home is not None and ctx is not None:
+            _codes = _geo_ctx_countries(ctx, bare_code=True)
+            if len(_codes) == 1 and next(iter(_codes)) != _home:
+                # G62-L3：交给国家翻译器的是已归一化的 en（国家名
+                # "Georgia"），不是原州名 t（已本地化的州译文不是
+                # GE 的国家名别名，传 t 会纠正失败）。
+                return _loc_country_name(en)
         return _REGION_L10N.get(LANG, {}).get(en, text)
     return text
 
@@ -3422,25 +3447,27 @@ _CITY_CTX_COUNTRY_ALIASES = {"usa": "US", "us": "US", "u.s.": "US",
                              "great britain": "GB"}
 
 
-def _city_static_ctx_ok(en, ctx):
-    """静态城市表上下文检查（B-06a-3）：歧义城市的静态译文只属于其归属国；
+def _city_static_ctx_ok(en, ctx, bare_code=False):
+    """静态城市表上下文检查（B-06a-3；C-03 与 GP1 对齐）：歧义城市的静态译文只属于其归属国；
     ctx 指明他国时返 False（调用方跳过静态表、留原文）；ctx 未指明国家、
-    或城市无归属记录时返 True（沿用旧行为）。国家名走 _CC_EN（与
-    _loc_country_name 同款），另补 'USA'/'US' 类口语别名。"""
+    或城市无归属记录时返 True（沿用旧行为）。国家码集齐全部可解析分段
+    再判（顺序无关）：无国家信息返 True；唯一一国时与归属国比对；
+    多国时归属国在场返 True、不在场返 False。bare_code：仅调用方
+    country= 这种明确国家字段可用（True）——裸码本身就是国家码；
+    自由文本 ctx 禁用（False，默认），否则州缩写 VA 会被误读为梵蒂冈
+    （与 _geo_ctx_countries 的 GP1 规则一致）。"""
     home = _CITY_L10N_HOME.get(en)
     if not home or ctx is None:
         return True
-    for tok in str(ctx).split(","):
-        t = tok.strip()
-        if not t:
-            continue
-        low = t.lower()
-        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
-        if code is None and len(t) == 2 and t.isalpha():
-            code = t.upper()
-        if code:
-            return code == home
-    return True
+    codes = _geo_ctx_countries(ctx, bare_code=bare_code)
+    if not codes:
+        return True
+    if len(codes) == 1:
+        return next(iter(codes)) == home
+    # 多国：归属国在场时沿用旧行为（取译文）；归属国不在场时 ctx 指明的
+    # 全是他国，不取归属国译文（C-03 夹具 "Georgia, United States" 案：
+    # Georgia 系美国州名误读为国家 GE，但 US 在场即足以否决 EG 译文）。
+    return home in codes
 
 
 def _geo_ctx_countries(stored_ctx, bare_code=False):
@@ -3476,9 +3503,15 @@ def _geo_cache_country_ok(stored_ctx, code):
 def _city_ctx_kwargs(region, country):
     """城市名上下文参数（B-06a-3b/G2）：有州/省时给 ctx（州+国家），
     无州/省时只给 country——country-only ctx 会把州级缓存条目误否
-    （_geo_ctx_ok 要求缓存上下文词集为当前 ctx 词集的子集）。"""
+    （_geo_ctx_ok 要求缓存上下文词集为当前 ctx 词集的子集）。
+    G62-09：有州/省时亦同时给 country=（结构化国家字段）——静态表
+    守卫须走 country=（bare_code=True）才能认出 "Ontario, CA" 里的
+    CA；只给自由文本 ctx 时裸码不可信（GP1），守卫会丢国家信息。
+    缓存分支的 country= 过滤用 _geo_cache_country_ok，只剔除上下文
+    明确指名另一国的候选，不误伤州级条目。"""
     if region and str(region).strip():
-        return {"ctx": _join_nonempty(region, country, sep=", ")}
+        return {"ctx": _join_nonempty(region, country, sep=", "),
+                "country": country}
     return {"country": country}
 
 
@@ -3540,7 +3573,8 @@ def _loc_city(text, ctx=None, country=None):
             # B-06a-3：歧义城市的静态译文有归属国；ctx 指明他国时跳过
             # 静态表、留原文（_ctx_rejected 路径之上游已拒时亦到此，
             # 同款处理）。无 ctx 或 ctx 未指明国家时沿用旧行为。
-            if not _city_static_ctx_ok(en, country if country is not None else ctx):
+            if not _city_static_ctx_ok(en, country if country is not None else ctx,
+                                       bare_code=(country is not None)):
                 continue
             return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
@@ -3765,27 +3799,81 @@ class IPApi(Provider):
 
 @register
 class ProxyCheck(Provider):
-    """proxycheck.io：当前仍调 v2 端点。官方 changelog（2026-11-24 复核）：
-    v3 已于 2026-09-13 结束 open beta 转正为当前稳定版，v2 标签同日由
-    "Stable v2 API" 改名 "Legacy v2 API"；全文检索 changelog 未见 v2
-    下线日期（下线日期官方未公布，不写日期）。迁移评估待排期，见 04-07。
+    """proxycheck.io v3（04-07 迁移，v2 保留至 2035 但已切默认版本）。
+    v3 稳定版自 2026-06-24（默认版本），v2（Legacy v2 API）官方承诺支持至 2035。
+    v3 响应仍按 IP 键分片（与 v2 同款）；分片内改为嵌套结构（detections / network / location）。
+    risk 映射（候选 b，2026-11-26 live 配对裁决）：仅有阳性检出时采信
+    detections.risk，无检出置 0——v3 risk 重权近期攻击，干净 IP
+    （如 8.8.8.8）v3 risk 可达 100，1:1 移植会凭空 +50 欺诈分。
+    type 单标签派生，优先级 tor > vpn > proxy > hosting > scraper >
+    compromised；network.type 另存 usage_type，不混进 type。
     """
     key = "proxycheck"
     name = "proxycheck.io"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://proxycheck.io/v2/{_q_ip(ip)}?vpn=1&asn=1&risk=1", use_cache=False)
+        ok, raw = http_get(f"https://proxycheck.io/v3/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
         try:
             root = json.loads(raw)
-            if root.get("status") not in ("ok", "warning") or str(ip) not in root:
+            if root.get("status") not in ("ok", "warning"):
                 return {"ok": False, "err": root.get("message", f"status: {root.get('status')}")}
-            d = root[str(ip)]
+            # v3 仍按 IP 键分片（与 v2 同款）；分片内再嵌套解析。
+            d = root.get(str(ip))
             if not isinstance(d, dict) or not d:
-                return {"ok": False, "err": "empty ip object"}
+                # G62-L4：无 IP 分片的 warning 须保留服务端 message
+                # 作诊断（如限流原因），不得一律报 "empty ip object"。
+                return {"ok": False,
+                        "err": root.get("message") or "empty ip object"}
+            # G62-10：detections 缺失/为空时弃权，不丢 network/location
+            # 的有效独立字段（旧解析器保留这种部分结果）。
+            det = d.get("detections") \
+                if isinstance(d.get("detections"), dict) else {}
+            net = d.get("network") if isinstance(d.get("network"), dict) else {}
+            loc = d.get("location") if isinstance(d.get("location"), dict) else {}
+            if not det and not net and not loc:
+                # 三者皆空：无有效字段可保，沿用旧口径 ok=False（v3 test_missing_detections）。
+                return {"ok": False, "err": "missing detections"}
+
+            def _yn3(v):
+                # F09 三态解析（v3 布尔值版）: True->True、False->False,
+                # 缺失或不合法值->None (未知/弃权), 不得默认 False (fail-open)。
+                if v is True:
+                    return True
+                if v is False:
+                    return False
+                return None
+
+            _proxy = _yn3(det.get("proxy"))
+            _vpn = _yn3(det.get("vpn"))
+            _tor = _yn3(det.get("tor"))
+            _hosting = _yn3(det.get("hosting"))
+            _scraper = _yn3(det.get("scraper"))
+            _compromised = _yn3(det.get("compromised"))
+            _anonymous = _yn3(det.get("anonymous"))
+
+            # type 单标签派生（v2 单值语义；优先级 tor > vpn > proxy >
+            # hosting > scraper > compromised；tor+hosting 时取 TOR，
+            # 丢 hosting 因子格与 v2 同款）。
+            _type = ""
+            for _flag, _label in ((_tor, "TOR"), (_vpn, "VPN"),
+                                  (_proxy, "Proxy"), (_hosting, "Hosting"),
+                                  (_scraper, "Scraper"),
+                                  (_compromised, "Compromised")):
+                if _flag:
+                    _type = _label
+                    break
+
+            # risk 映射（候选 b）：无阳性检出时置 0；有检出时采信并钳制。
+            # 注意 anonymous 不计入阳性：live 实测 8.8.8.8 anonymous=true
+            #（公共解析器亦被标 anonymous），计入会把干净 IP 的 risk 100
+            # 全额带入欺诈分，违背“迁后欺诈分不得高于迁前”的硬约束。
+            _positive = any(f is True for f in
+                            (_proxy, _vpn, _tor, _hosting, _scraper,
+                             _compromised))
             try:
-                _risk = int(d["risk"]) if d.get("risk") is not None else None
+                _risk = int(det["risk"]) if det.get("risk") is not None else None
             except (TypeError, ValueError, OverflowError):
                 # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
                 # 其余字段继续返回，不丢整源（F05）。
@@ -3793,38 +3881,28 @@ class ProxyCheck(Provider):
             # R4-H-04：风险分钳制到 [0, 100]（150 只溢出进度条，不崩溃）。
             if _risk is not None:
                 _risk = max(0, min(100, _risk))
-
-            def _yn(v):
-                # F09 三态解析: "yes"->True、"no"->False, 缺失或
-                # 不合法值->None (未知/弃权), 不得默认 False (fail-open)。
-                if v == "yes":
-                    return True
-                if v == "no":
-                    return False
-                return None
-
-            # R4-H-04：type 只认字符串，非字符串（list/dict/数字）一律视为空，
-            # 防下游 score_fraud / _type_block / _factor_rows 误读。
-            _type = d.get("type") if isinstance(d.get("type"), str) else ""
-            _vpn = _yn(d.get("vpn"))
-            _tor = _yn(d.get("tor"))
-            # VPN/Tor 可继续接受明确的 type 正向证据 (与旧 OR 口径一致)。
-            if _type == "VPN":
-                _vpn = True
-            if _type.upper() == "TOR":
-                _tor = True
+                if not _positive:
+                    _risk = 0
             return {
                 "ok": True,
-                "proxy": _yn(d.get("proxy")),
+                "proxy": _proxy,
                 "vpn": _vpn,
                 "type": _type,
                 "tor": _tor,
+                "hosting": _hosting,
+                "scraper": _scraper,
+                "compromised": _compromised,
+                "anonymous": _anonymous,
                 "risk": _risk,
-                "asn": _parse_asn(d.get("asn")),
-                "provider": d.get("provider", ""),
-                "range": d.get("range", ""),
-                "city": d.get("city", ""),
-                "country": d.get("isocode", ""),
+                "confidence": det.get("confidence"),
+                "detection_history": d.get("detection_history"),
+                "attack_history": d.get("attack_history"),
+                "usage_type": net.get("type", ""),
+                "asn": _parse_asn(net.get("asn")),
+                "provider": net.get("provider", ""),
+                "range": net.get("range", ""),
+                "city": loc.get("city_name", ""),
+                "country": loc.get("country_code", ""),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4667,8 +4745,11 @@ class CountryIs(Provider):
             return {"ok": False, "err": str(e)[:80]}
 
 
-def _build_unified_profile(s):
-    """多源融合兜底：消除 ipwho.is 单点故障，自动从 ipinfo/proxycheck/dbip/freeipapi/ripestat 补齐。"""
+def _build_unified_profile(s, ip=None):
+    """多源融合兜底：消除 ipwho.is 单点故障，自动从 ipinfo/proxycheck/dbip/freeipapi/ripestat 补齐。
+    ip：目标 IP（str）；给出时在线源全部留空的 country / country_code /
+    asn 字段由离线 Geo 库兜底（04-04，只填空、永不覆盖在线值，来源记
+    geo_source="offline-geo"）；不给时不做离线兜底。"""
     wi = s.get("ipwhois", {}) if s.get("ipwhois", {}).get("ok") else {}
     ii = s.get("ipinfo", {}) if s.get("ipinfo", {}).get("ok") else {}
     pc = s.get("proxycheck", {}) if s.get("proxycheck", {}).get("ok") else {}
@@ -4802,7 +4883,44 @@ def _build_unified_profile(s):
         if _la is not None and _lo is not None and _same_country(_src):
             _lat, _lon = _la, _lo
             break
-    return {
+    # 04-04：离线 Geo/ASN 兜底——只填在线源留空的字段，永不覆盖在线值。
+    # 惰性加载：仅真正需要兜底时才建实例、读盘；城市级离线不做。
+    # 一次画像只取一个快照：country/asn 都查同一代 GeoDB（G62-05），
+    # 实际来源（缓存 meta["source"]）经 geo_source_detail 透传（G62-L2）。
+    _geo_source = None
+    _geo_source_detail = None
+    if ip is not None and (not country or not country_code or asn is None):
+        try:
+            _og = _get_offline_geo()
+            _snap = _og.snapshot()
+            if _snap is not None:
+                if not country:
+                    _occ = _snap.country(str(ip))
+                    if _occ:
+                        # 离线只给 ISO 码；画像 country 字段接受代码形态
+                        # （_loc_country_name 与 _cc 派生均认 2 字母码）。
+                        country = _occ
+                        # A62-A43：只填空——在线已给 country_code 时不覆盖。
+                        if not country_code:
+                            country_code = _occ
+                        _geo_source = "offline-geo"
+                elif not country_code:
+                    # 在线给了国家名、缺码：离线码须与在线名一致才补，
+                    # 不一致（anycast 等）时宁可留空，不拼出名码矛盾的画像。
+                    _occ = _snap.country(str(ip))
+                    if _occ and _CC_EN.get(country.strip().lower(), "") == _occ:
+                        country_code = _occ
+                        _geo_source = "offline-geo"
+                if asn is None:
+                    _oasn = _snap.asn(str(ip))
+                    if _oasn is not None:
+                        asn = _oasn
+                        _geo_source = "offline-geo"
+                if _geo_source:
+                    _geo_source_detail = (_snap.meta or {}).get("source")
+        except Exception:
+            pass  # 离线兜底永不拖垮画像
+    _out = {
         "ok": bool(isp or org or country or asn or country_code),
         "isp": isp,
         "org": org,
@@ -4815,11 +4933,16 @@ def _build_unified_profile(s):
         "longitude": _lon,
         "timezone": _first_consistent([(wi, _clean_str(wi.get("timezone"))), (wa, _clean_str(wa.get("timezone"))), (ai, _clean_str(ai.get("timezone"))), (gu, _clean_str(gu.get("timezone"))), (gj, _clean_str(gj.get("timezone"))), (il, _clean_str(il.get("timezone"))), (iq, _clean_str(iq.get("timezone"))), (co, _clean_str(co.get("timezone"))), (ti, _clean_str(ti.get("timezone")))]),
     }
+    if _geo_source:
+        _out["geo_source"] = _geo_source
+    if _geo_source_detail:
+        _out["geo_source_detail"] = _geo_source_detail
+    return _out
 
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.37 免 Key 公开版):
+评分规则 (v4.14.38 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4851,7 +4974,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.37 免 Key 公開版):
+評分規則 (v4.14.38 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4883,7 +5006,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.37 Keyless Public Edition):
+Scoring rules (v4.14.38 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -4916,7 +5039,7 @@ Scoring rules (v4.14.37 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.37 キー不要公開版):
+スコアリングルール (v4.14.38 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -4948,7 +5071,7 @@ Scoring rules (v4.14.37 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.37 Публичная версия без ключей):
+Правила оценки (v4.14.38 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -4980,7 +5103,7 @@ Scoring rules (v4.14.37 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.37):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.38):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -5301,6 +5424,9 @@ def _risk_bar(v, width=30):
 
 
 def _good_bar(v, width=30):
+    # C-05：与 _risk_bar 对齐——入口钳制到 [0, 100]，条长恒为 width；
+    # 非数值守 0。今日调用方恒传界内值（加固）。
+    v = _clamp_score(v) or 0
     filled = int(v / 100 * width)
     bar = "█" * filled + "░" * (width - filled)
     col = C.green if v >= 70 else (C.yellow if v >= 40 else C.red)
@@ -5448,7 +5574,7 @@ def run_passive(ip, json_mode=False):
     # OPT-4：画像只读 sources（score_* 亦只读、不写 sources），故 _prof
     # 可前移到评分之前；逆地理随即提交到共享池，与评分/完整度/verdict
     # 并行，return 前回收。coordgeo 失败不影响主流程（见 _fetch_coordgeo）。
-    _prof = _build_unified_profile(sources)
+    _prof = _build_unified_profile(sources, ip=ip_s)
     _cg_fut = None
     _cg_deadline = None
     if _prof.get("latitude") is not None and _prof.get("longitude") is not None:
@@ -5584,7 +5710,7 @@ def _type_block(t):
 
 def _print_streaming_inference(res):
     s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s)
+    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
     _section(T("sec_stream_passive"))
     country = prof.get("country", "") or ""
     isp = prof.get("isp", "") or ""
@@ -6207,7 +6333,9 @@ def _print_basic_block(s, prof):
         # B-06a-3：画像主行补 ctx（州 + 国家），歧义城市静态译文须过
         # 国家上下文检查（如 Alexandria, VA 不得取埃及译文）。
         # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
-        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''), **_city_ctx_kwargs(prof.get('region'), prof.get('country')))}".strip()
+        # C-01：region 行亦补 ctx（国家），国家格鲁吉亚的 region 不得
+        # 取美国佐治亚州译文。
+        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''), ctx=prof.get('country', ''))} {_loc_city(prof.get('city', ''), **_city_ctx_kwargs(prof.get('region'), prof.get('country')))}".strip()
     _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
                     or prof.get("latitude") is not None)
     if _has_geo:
@@ -6234,7 +6362,8 @@ def _print_basic_block(s, prof):
                 # 于本字段，但消歧上下文仍取整串词集（CONF-FIXES-2.1 跨字段
                 # 上下文保留），Victoria 类城市名不再被 region 表误译。
                 _f_co_t = _loc_country_name(_f_co)
-                _f_mid_t = _loc_region(_f_mid)
+                # C-01：分字段 region 行补 ctx（国家），同主行。
+                _f_mid_t = _loc_region(_f_mid, ctx=_f_co)
                 # B-06a-3：分字段城市名补 ctx（行政区 + 国家），同上。
                 # GPT-G2：行政区为空时走 country=（见 _city_ctx_kwargs）。
                 _f_ci_t = _loc_city(_f_ci, **_city_ctx_kwargs(_f_mid, _f_co))
@@ -6357,7 +6486,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                  tail_completeness=True, dns_rec=False, footnote="passive"):
     _sec_begin()
     s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s)
+    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
     scs = res["scores"]
     ip = res["ip"]
 
@@ -6505,6 +6634,11 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         else:
             print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
             print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+    _geo_attr = _geo_attribution(prof)
+    if _geo_attr:
+        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+        print(f"  {_c(C.dim, _geo_attr)}")
     # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
     # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
     # 显式恢复 _SEC["on"]=True（计数保留）。
@@ -6592,7 +6726,7 @@ def run_passive6(ip, json_mode=False):
                     and _is_rate_limited_err(sources.get(p.key, {}).get("err"))]
     completeness = int(ok_count / total * 100) if total else 0
 
-    _prof = _build_unified_profile(sources)
+    _prof = _build_unified_profile(sources, ip=ip_s)
     # OPT-4（v6）：与 run_passive 同理——逆地理提交到共享池，与评分并行，
     # _verdict6 后回收；score_* 不读 coordgeo。
     _cg_fut = None
@@ -6685,7 +6819,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     if not embedded:
         _sec_begin()
     s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s)
+    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
     ip = res["ip"]
 
     if not embedded:
@@ -6848,6 +6982,11 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     # [5] 完整度
     if tail_completeness:
         _print_report6_tail(res)
+    _geo_attr = _geo_attribution(prof)
+    if _geo_attr:
+        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+        print(f"  {_c(C.dim, _geo_attr)}")
     # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
     _SEC["on"] = False
 
@@ -8308,7 +8447,10 @@ def test_youtube(local_ip=None):
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     if code == 200:
-        if not complete and "YouTube Premium is not available in your country" not in body:
+        # C-04：与 Disney 对齐——采样不完整时裸短语不算锁区信号，一律
+        # unknown（短语可能来自页脚等非锁区文案）；完整正文上的短语仍
+        # 按旧口径判 blocked（夹具正向对照）。
+        if not complete:
             return T("unknown"), "", None
         if "YouTube Premium is not available in your country" in body:
             return T("blocked"), "", None
@@ -8409,6 +8551,15 @@ def test_chatgpt(local_ip=None):
     return T("blocked"), "", None
 
 
+def _url_path_has_faq(url):
+    """最终 URL 是否落在 FAQ 页（A62-A15）：只看路径，不看查询串/片段。
+    `?utm_campaign=faq` 这类追踪参数不是 FAQ 页，不得触发锁区/FAQ 分支。"""
+    try:
+        return "faq" in urllib.parse.urlparse(url or "").path.lower()
+    except Exception:
+        return False
+
+
 def test_gemini(local_ip=None):
     code, body, final_url, complete, hdrs = _active_get("https://gemini.google.com/app")
     if code is None:
@@ -8418,18 +8569,30 @@ def test_gemini(local_ip=None):
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     # 最终 URL 信号不受正文截断影响：URL 已含 faq 信号时不因正文
-    # 不完整判 unknown，落入正常分类（6-3）。
-    if code == 200 and not complete and "isn't currently supported" not in body.lower() and "faq" not in final_url.lower():
+    # 不完整判 unknown，落入正常分类（6-3）。FAQ 信号只看路径段
+    # （A62-A15：查询串里的 faq 不算）。
+    # C-04：与 Disney 对齐——采样不完整时裸短语不算锁区信号，一律
+    # unknown；完整正文上的短语仍按旧口径判 blocked。
+    if code == 200 and not complete and not _url_path_has_faq(final_url):
         return T("unknown"), "", None
-    if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
+    if code == 200 and not _url_path_has_faq(final_url) and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
     # M-07：3xx 先验命中锁区 URL（faq）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "faq" in final_url.lower():
+    if 300 <= code <= 399 and _url_path_has_faq(final_url):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
         return _ft, "", None
     return T("blocked"), "", None
+
+
+def _url_path_has_app_unavailable(url):
+    """最终 URL 是否落在 Claude 锁区页（A62-A15 同型）：只看路径，不看查询串/片段。
+    `?ref=app-unavailable` 这类追踪参数不是锁区页，不得触发 blocked 分支。"""
+    try:
+        return "app-unavailable" in urllib.parse.urlparse(url or "").path.lower()
+    except Exception:
+        return False
 
 
 def test_claude(local_ip=None):
@@ -8440,12 +8603,13 @@ def test_claude(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
+    if code == 200 and not _complete and not _url_path_has_app_unavailable(final_url) and not _claude_unavailable(body):
         return T("unknown"), "", None
-    if code == 200 and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
+    if code == 200 and not _url_path_has_app_unavailable(final_url) and not _claude_unavailable(body):
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
     # M-07：3xx 先验命中锁区 URL（app-unavailable）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "app-unavailable" in final_url.lower():
+    # 锁区信号只看路径段（A62-A15 同型：查询串/片段里的 app-unavailable 不算）。
+    if 300 <= code <= 399 and _url_path_has_app_unavailable(final_url):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -11469,6 +11633,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._user, self._pwd = username, password
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
         self._hs_closed = False  # 8-2：握手期内被 close 的标记
+        self._hs_epoch = 0  # G62-14：握手代次；close() 递增，connect() 入口捕获
         self._hs_resp_sock = None  # B-13-1：已交 response 的活 socket，
         # getresponse() 在 will_close 时调 self.close() 把连接交给
         # response（stdlib 设计：只关 socket 对象、fd 由 response 的
@@ -11477,6 +11642,15 @@ class _SocksHTTPS(http.client.HTTPSConnection):
     def connect(self):
         # B-13-1：新一次握手开始，尚无 response 在途，清掉上轮的
         # response socket 标记，握手期 close 仍可关断全部 socket。
+        # L-02：同时复位 _hs_closed——close() 置起的标记只对当次握手
+        # 有意义；复用同一连接对象时不清它会把新握手好的 TLS socket
+        # 当场误关（下行复核）。握手期内新调 close() 置起的标记
+        # 不受复位影响（复位只发生在 connect() 开头）。
+        # G62-14：先捕获入口代次，再复位。close() 到达时 flag 与 epoch
+        # 同步变化；复位只清 flag、不动 epoch，握手后复核以 epoch 变化
+        # 仍能认出复位行之后到达的取消（见下行复核）。
+        _epoch = self._hs_epoch
+        self._hs_closed = False
         self._hs_resp_sock = None
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
                                 username=self._user, password=self._pwd,
@@ -11518,12 +11692,15 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
             raise
-        if self._hs_closed and self.sock is _tls:
+        if (self._hs_closed or self._hs_epoch != _epoch) \
+                and self.sock is _tls:
             # F40/8-2：握手期间已被 close：关掉新得的 TLS socket，
             # 不把活 socket 写回已关闭的连接对象。worker 侧的窗口
             # 复查兜底（GET 前复查）保持在位，不动。R6-1 写回后复核
             # 亦在此：若 close 已清掉 sock，则 self.sock is not _tls，
             # 自然不再动作。
+            # G62-14：epoch 变化亦触发——复位行之后到达的 close() 虽
+            # 然 flag 可能已被复位清掉，但 epoch 已递增，取消不丢失。
             try:
                 _tls.close()
             except Exception:
@@ -11545,6 +11722,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 其余 box 内 socket（已脱离的 raw、废弃握手 socket）照旧关断。
         # socket.close() 本身按 makefile 引用计数，不会提前关 fd。
         self._hs_closed = True
+        self._hs_epoch += 1  # G62-14：与 flag 同步递增，供 connect() 后复核比对
         for _s in self._hs_box:
             if _s is self._hs_resp_sock:
                 try:
@@ -11747,6 +11925,13 @@ def _loc_hub_name(name):
     if not sep:
         return name
     loc = _CITY_L10N.get(LANG, {}).get(city)
+    if loc:
+        # C-02（加固，今日真实枢纽键无歧义城市、不可达）：归属表收录的
+        # 歧义城市（如 Alexandria/EG）须过键首国家码检查；他国枢纽不
+        # 得取归属国译文，留原文。无归属记录的城市沿用旧行为。
+        _en = _ANY_CITY2EN.get(city)
+        if _en and not _city_static_ctx_ok(_en, code, bare_code=True):
+            return name
     return f"{code} {loc}" if loc else name
 
 
@@ -16354,6 +16539,8 @@ def _print_cli_help():
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
   --no-speed      自检时跳过网速测试
   --with-speed    自检时强制进行网速测试
+  --no-geo-update  禁用离线 Geo 数据自动更新
+  --geo-update     强制同步刷新一次离线 Geo 数据
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
   --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用；--shortcut 仅 status 支持 --json)
   --explain       输出评分维度与扣分规则说明
@@ -16401,6 +16588,8 @@ Options:
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
   --no-speed      Skip the speed test during self-check
   --with-speed    Force the speed test during self-check
+  --no-geo-update  Disable automatic offline geo data updates
+  --geo-update     Force a synchronous offline geo data refresh
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
   --json          Output results in JSON format (works with passive IP, --active or --proxy; for --shortcut, only status supports --json)
   --explain       Show transparent scoring rules and weights
@@ -16449,6 +16638,8 @@ Examples:
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
   --no-speed      自檢時跳過網速測試
   --with-speed    自檢時強制進行網速測試
+  --no-geo-update  停用離線 Geo 資料自動更新
+  --geo-update     強制同步重新整理一次離線 Geo 資料
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
   --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用；--shortcut 僅 status 支援 --json)
   --explain       輸出評分維度與扣分規則說明
@@ -16496,6 +16687,8 @@ Examples:
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
   --no-speed      セルフチェック時に速度テストをスキップ
   --with-speed    セルフチェック時に速度テストを強制実行
+  --no-geo-update  オフライン Geo データの自動更新を無効化
+  --geo-update     オフライン Geo データを強制的に同期更新
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
   --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可；--shortcut では status のみ --json に対応)
   --explain       スコアリングのルールと重みを表示
@@ -16543,6 +16736,8 @@ Examples:
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковая многопоточная скорость)
   --no-speed      Пропустить тест скорости при самопроверке
   --with-speed    Принудительно выполнять тест скорости при самопроверке
+  --no-geo-update  Отключить автообновление офлайн-геоданных
+  --geo-update     Принудительно синхронно обновить офлайн-геоданные
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
   --json          Вывод в JSON (с IP, --active или --proxy; для --shortcut --json поддерживает только status)
   --explain       Правила и веса скоринга
@@ -16590,6 +16785,8 @@ Examples:
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج سرعت با اتصالات همزمان)
   --no-speed      رد کردن تست سرعت هنگام خودبررسی
   --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
+  --no-geo-update  غیرفعال‌کردن به‌روزرسانی خودکار داده‌های جغرافیایی آفلاین
+  --geo-update     به‌روزرسانی همگام اجباری داده‌های جغرافیایی آفلاین
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
   --json          خروجی JSON (با IP، --active یا --proxy؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
@@ -16621,6 +16818,648 @@ Examples:
     _helps = {"zh": help_zh, "zh-TW": help_zhtw, "en": help_en,
               "ja": help_ja, "ru": help_ru, "fa": help_fa}
     print(_helps.get(LANG, help_en))
+
+
+# ============================================================
+# 04-04 离线 Geo/ASN 兜底（DB-IP Lite 主源 + RIR delegated 备用源）
+#
+# 全在线源失效时，用本地离线库填画像留空的 country / country_code /
+# asn 字段（只填空，永不覆盖在线值；城市级离线不做）。数据文件
+# ~/.cache/acheck/geo/geo-v1.bin.gz（XDG 优先），紧凑二进制 .geo v1，
+# 不捆绑种子；缓存缺失/过期（>7 天）时后台守护线程更新，主流程绝不等
+# 它；更新失败静默回退旧数据。零 key、纯标准库。DB-IP Lite 为 CC BY 4.0，
+# 署名见 README 数据来源节与报告尾（IP Geolocation by DB-IP）。
+# 原型与夹具：legs/geo_offline_proto.py、test_geo_offline_438.py。
+# ============================================================
+
+_GEO_MAGIC = b"ACHKGEO1"
+_GEO_FORMAT_VERSION = 1
+# 更新策略（夹具/原型证实后定稿，见报告 §6）
+STALE_AFTER_SECONDS = 7 * 24 * 3600   # 缓存超过 7 天视为过期，尝试更新
+CONNECT_TIMEOUT = 5                   # 每次连接超时（秒）
+READ_TIMEOUT = 60                     # 每次读取总超时（秒）
+UPDATE_TOTAL_BUDGET = 120             # 整轮更新最长耗时（秒），超了即放弃
+_GEO_EXIT_JOIN_MAX = 5.0            # A62-A1：后台更新在进程退出时至多再等 5 秒
+_GEO_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024  # A62-A23：gzip 解压上限
+_FETCH_MAX_BYTES = 64 * 1024 * 1024             # A62-A23：单次下载总字节上限
+_GEO_UA = "A-Check/%s (offline geo update; +https://github.com/)" % VERSION
+ENV_NO_UPDATE = "ACHECK_NO_GEO_UPDATE"
+
+# 主源：DB-IP Lite（月更；月份须猜——当月 404 时回退上月）
+DBIP_COUNTRY_URL = "https://download.db-ip.com/free/dbip-country-lite-{ym}.csv.gz"
+DBIP_ASN_URL = "https://download.db-ip.com/free/dbip-asn-lite-{ym}.csv.gz"
+# 备用源：RIR delegated 统计（日更；URL 固定，无需猜月份）
+RIR_URLS = {
+    "apnic": "https://ftp.apnic.net/pub/stats/apnic/delegated-apnic-extended-latest",
+    "ripencc": "https://ftp.ripe.net/ripe/stats/delegated-ripencc-extended-latest",
+    "arin": "https://ftp.arin.net/pub/stats/arin/delegated-arin-extended-latest",
+    "afrinic": "https://ftp.afrinic.net/pub/stats/afrinic/delegated-afrinic-extended-latest",
+    "lacnic": "https://ftp.lacnic.net/pub/stats/lacnic/delegated-lacnic-extended-latest",
+}
+
+
+# ---------------------------------------------------------------- 基础工具
+def _ipv4int(s):
+    a, b, c, d = s.split(".")
+    return (int(a) << 24) | (int(b) << 16) | (int(c) << 8) | int(d)
+
+
+def _ipv6int(s):
+    return int.from_bytes(socket.inet_pton(socket.AF_INET6, s), "big")
+
+
+def _ipint(s):
+    if ":" in s:
+        return 2, _ipv6int(s)
+    return 1, _ipv4int(s)
+
+
+def _ym(offset_months=0, _base=None):
+    """当前 UTC 日历月回退 offset_months 个月，形如 '2026-11'。
+    _base：可选基准时间（time.gmtime() 结构）；同一轮重试共用同一基准，
+    避免跨午夜两次取时算出同一个月（G62-Lx）。"""
+    t = _base if _base is not None else time.gmtime()
+    y, m = t.tm_year, t.tm_mon - offset_months
+    while m <= 0:
+        m += 12
+        y -= 1
+    return "%04d-%02d" % (y, m)
+
+
+def _merge(ranges):
+    """ranges: [(start, end, payload)] 已排序；合并相邻同 payload 区间。
+    重叠段 first-wins：后区间起点裁到前区间终点+1，裁空则丢弃；排序顺序
+    （start 升序，start 相同则 end 升序）定优先级（G62-04）。输出段互不
+    重叠且按 start 有序，故只与最后一段比较即足够。"""
+    out = []
+    for s, e, p in ranges:
+        if out and s <= out[-1][1]:
+            s = out[-1][1] + 1
+            if s > e:
+                continue
+        if out and s <= out[-1][1] + 1 and out[-1][2] == p:
+            if e > out[-1][1]:
+                out[-1] = (out[-1][0], e, p)
+        else:
+            out.append((s, e, p))
+    return out
+
+
+# ---------------------------------------------------------------- 数据源解析
+def _gunzip_limited(raw_gz_bytes, limit=_GEO_MAX_DECOMPRESSED_BYTES):
+    """gzip 解压带上限（A62-A23）：超限即 ValueError，不分配超限内存。"""
+    with gzip.GzipFile(fileobj=io.BytesIO(raw_gz_bytes)) as f:
+        buf = f.read(limit + 1)
+    if len(buf) > limit:
+        raise ValueError("decompressed data too large (>%d bytes)" % limit)
+    return buf
+
+
+def parse_dbip_country(raw_gz_bytes):
+    """DB-IP Lite country CSV.gz -> (v4, v6)，元素 (start, end, 'CC')。"""
+    text = _gunzip_limited(raw_gz_bytes).decode("utf-8", "replace")
+    v4, v6 = [], []
+    for line in text.splitlines():
+        if not line:
+            continue
+        a, b, cc = line.split(",")
+        if len(cc) != 2 or cc == "ZZ":
+            continue  # A62-A34：未知码与畸形码当未命中（与 parse_rir 同款）
+        if "." in a:
+            v4.append((_ipv4int(a), _ipv4int(b), cc))
+        else:
+            v6.append((_ipv6int(a), _ipv6int(b), cc))
+    v4.sort()
+    v6.sort()
+    return _merge(v4), _merge(v6)
+
+
+def parse_dbip_asn(raw_gz_bytes):
+    """DB-IP Lite ASN CSV.gz -> (v4, v6)，元素 (start, end, asn:int)。"""
+    text = _gunzip_limited(raw_gz_bytes).decode("utf-8", "replace")
+    v4, v6 = [], []
+    for row in csv.reader(io.StringIO(text)):
+        if len(row) < 3:
+            continue
+        a, b = row[0], row[1]
+        try:
+            n = int(row[2])
+        except ValueError:
+            continue
+        if "." in a:
+            v4.append((_ipv4int(a), _ipv4int(b), n))
+        else:
+            v6.append((_ipv6int(a), _ipv6int(b), n))
+    v4.sort()
+    v6.sort()
+    return _merge(v4), _merge(v6)
+
+
+def parse_rir(text):
+    """RIR delegated-extended-latest 文本 -> (v4, v6, asn_reg)。
+    v4/v6: (start, end, 'CC')；asn_reg: (asn_start, asn_end, 'CC')（ASN 注册国，
+    注意：RIR 文件不含 IP->ASN 映射，备用源下 IP->ASN 段为空）。"""
+    v4, v6, asn = [], [], []
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        p = line.split("|")
+        if len(p) < 7 or p[1] == "*":
+            continue
+        cc = p[1]
+        if len(cc) != 2 or cc == "ZZ":
+            continue
+        try:
+            if p[2] == "ipv4":
+                s = _ipv4int(p[3])
+                v4.append((s, s + int(p[4]) - 1, cc))
+            elif p[2] == "ipv6":
+                s = _ipv6int(p[3])
+                v6.append((s, s + (1 << (128 - int(p[4]))) - 1, cc))
+            elif p[2] == "asn":
+                s = int(p[3])
+                asn.append((s, s + int(p[4]) - 1, cc))
+        except (ValueError, socket.error):
+            continue
+    v4.sort()
+    v6.sort()
+    asn.sort()
+    return _merge(v4), _merge(v6), _merge(asn)
+
+
+# ---------------------------------------------------------------- 二进制格式
+def _pack_section(ranges, v6, payload_fmt):
+    """一段：count + starts + ends + payloads。payload_fmt: '2s' 或 'I'。"""
+    buf = [struct.pack(">I", len(ranges))]
+    if v6:
+        buf.append(b"".join(s.to_bytes(16, "big") for s, _, _ in ranges))
+        buf.append(b"".join(e.to_bytes(16, "big") for _, e, _ in ranges))
+    else:
+        buf.append(b"".join(struct.pack(">I", s) for s, _, _ in ranges))
+        buf.append(b"".join(struct.pack(">I", e) for _, e, _ in ranges))
+    if payload_fmt == "2s":
+        buf.append(b"".join(p.encode("ascii") for _, _, p in ranges))
+    else:
+        buf.append(b"".join(struct.pack(">I", p) for _, _, p in ranges))
+    return b"".join(buf)
+
+
+def build_geo_bytes(v4c, v6c, v4a, v6a, source, built_ts=None):
+    body = b"".join([
+        _pack_section(v4c, False, "2s"),
+        _pack_section(v6c, True, "2s"),
+        _pack_section(v4a, False, "I"),
+        _pack_section(v6a, True, "I"),
+    ])
+    meta = json.dumps({"source": source,
+                       "built": int(built_ts or time.time())},
+                      separators=(",", ":")).encode()
+    header = _GEO_MAGIC + struct.pack(">HI", _GEO_FORMAT_VERSION, len(meta)) + meta
+    return header + body
+
+
+def _unpack_section(buf, off, v6, payload_fmt):
+    # G62-03：按 count 分配前先校验整段所需字节数，不足即 ValueError；
+    # 畸形小文件不得先构造百万级 payloads 列表再失败。
+    if off < 0 or off + 4 > len(buf):
+        raise ValueError("section header truncated")
+    (n,) = struct.unpack_from(">I", buf, off)
+    off += 4
+    width = 16 if v6 else 4
+    pwidth = 2 if payload_fmt == "2s" else 4
+    need = n * width * 2 + n * pwidth
+    if need > len(buf) - off:
+        raise ValueError("section truncated: need %d bytes, have %d"
+                         % (need, len(buf) - off))
+    starts_raw = buf[off:off + n * width]
+    off += n * width
+    ends_raw = buf[off:off + n * width]
+    off += n * width
+    if payload_fmt == "2s":
+        payload_raw = buf[off:off + n * 2]
+        off += n * 2
+        payloads = [payload_raw[i * 2:(i + 1) * 2].decode("ascii")
+                    for i in range(n)]
+    else:
+        payload_raw = buf[off:off + n * 4]
+        off += n * 4
+        payloads = list(struct.unpack(">%dI" % n, payload_raw)) if n else []
+    if v6:
+        starts = [int.from_bytes(starts_raw[i * 16:(i + 1) * 16], "big")
+                  for i in range(n)]
+        ends = [int.from_bytes(ends_raw[i * 16:(i + 1) * 16], "big")
+                for i in range(n)]
+    else:
+        starts = list(struct.unpack(">%dI" % n, starts_raw)) if n else []
+        ends = list(struct.unpack(">%dI" % n, ends_raw)) if n else []
+    return (starts, ends, payloads), off
+
+
+class GeoDB(object):
+    """只读离线库：country(ip) -> 'CC' | None；asn(ip) -> int | None。"""
+
+    def __init__(self, path):
+        # A62-A23：限量读盘——炸弹式缓存不得在验 magic 前占满内存。
+        with gzip.open(path, "rb") as f:
+            buf = f.read(_GEO_MAX_DECOMPRESSED_BYTES + 1)
+        if len(buf) > _GEO_MAX_DECOMPRESSED_BYTES:
+            raise ValueError("decompressed geo file too large (>%d bytes)"
+                             % _GEO_MAX_DECOMPRESSED_BYTES)
+        if buf[:8] != _GEO_MAGIC:
+            raise ValueError("bad magic")
+        (ver, meta_len) = struct.unpack_from(">HI", buf, 8)
+        if ver != _GEO_FORMAT_VERSION:
+            raise ValueError("unsupported version %d" % ver)
+        self.meta = json.loads(buf[14:14 + meta_len].decode())
+        off = 14 + meta_len
+        self.v4c, off = _unpack_section(buf, off, False, "2s")
+        self.v6c, off = _unpack_section(buf, off, True, "2s")
+        self.v4a, off = _unpack_section(buf, off, False, "I")
+        self.v6a, off = _unpack_section(buf, off, True, "I")
+
+    @staticmethod
+    def _lookup(section, ip):
+        starts, ends, payloads = section
+        i = bisect.bisect_right(starts, ip) - 1
+        if i < 0:
+            return None
+        if starts[i] <= ip <= ends[i]:
+            return payloads[i]
+        return None
+
+    def country(self, ip_str):
+        try:
+            ver, ip = _ipint(ip_str.strip())
+        except (ValueError, socket.error):
+            return None
+        _v = self._lookup(self.v6c if ver == 2 else self.v4c, ip)
+        # A62-A34：已写入旧缓存的 ZZ 也当未命中，不报出。
+        return None if _v == "ZZ" else _v
+
+    def asn(self, ip_str):
+        try:
+            ver, ip = _ipint(ip_str.strip())
+        except (ValueError, socket.error):
+            return None
+        return self._lookup(self.v6a if ver == 2 else self.v4a, ip)
+
+
+# ---------------------------------------------------------------- 下载与更新
+def _fetch(url, timeout_total=READ_TIMEOUT):
+    """带总时限的下载；任何失败都以异常形式交给调用方（更新器会吞掉）。
+    期限按块检查：read1 每次至多返回一次底层读到的数据，慢滴响应也能
+    在期限内中断（G62-02）；无 read1 的旧版则每次读前把 socket 超时
+    设为剩余期限再读。另有总字节上限 _FETCH_MAX_BYTES（A62-A23）。"""
+    req = urllib.request.Request(url, headers={"User-Agent": _GEO_UA})
+    with urllib.request.urlopen(req, timeout=CONNECT_TIMEOUT) as r:
+        if r.status != 200:
+            raise urllib.error.HTTPError(url, r.status, "HTTP %d" % r.status,
+                                         r.headers, None)
+        deadline = time.time() + timeout_total
+        chunks = []
+        total = 0
+        read1 = getattr(r, "read1", None)
+        if not callable(read1):
+            read1 = getattr(getattr(r, "fp", None), "read1", None)
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise TimeoutError("read timeout for %s" % url)
+            if callable(read1):
+                chunk = read1(1 << 20)
+            else:
+                try:
+                    _raw = getattr(getattr(r, "fp", None), "raw", None)
+                    _raw._sock.settimeout(remaining)
+                except Exception:
+                    pass
+                chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > _FETCH_MAX_BYTES:
+                raise ValueError("download too large (>%d bytes) for %s"
+                                 % (_FETCH_MAX_BYTES, url))
+    return b"".join(chunks)
+
+
+def _try_dbip(fetcher=_fetch):
+    """主源：DB-IP Lite 当月 -> 上月。返回 (v4c, v6c, v4a, v6a, source)。
+    两次尝试共用同一 gmtime 基准，跨午夜不重复请求同一个月（G62-Lx）。
+    月回退只用于 404（本月未发布）；503/超时等暂时性错误立即抛，不以
+    更旧月份覆盖已有较新缓存（A62-A11）。ASN 双栈皆空视为本月数据损
+    坏，同样立即抛，不回退、不发布无 ASN 新库（A62-A3）。"""
+    last_err = None
+    _base = time.gmtime()
+    for off in (0, 1):
+        ym = _ym(off, _base)
+        try:
+            raw_c = fetcher(DBIP_COUNTRY_URL.format(ym=ym))
+            raw_a = fetcher(DBIP_ASN_URL.format(ym=ym))
+            v4c, v6c = parse_dbip_country(raw_c)
+            v4a, v6a = parse_dbip_asn(raw_a)
+            if not v4c or not v6c:
+                raise ValueError("empty DB-IP country table for %s" % ym)
+            if not v4a and not v6a:
+                raise ValueError("empty DB-IP ASN table for %s" % ym)
+            return v4c, v6c, v4a, v6a, "dbip-lite-%s" % ym
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                last_err = e
+                continue
+            raise
+        except Exception:
+            raise
+    raise RuntimeError("DB-IP Lite failed: %r" % (last_err,))
+
+
+def _try_rir(fetcher=_fetch):
+    """备用源：五份 RIR delegated 文件（并发拉取，任一文件失败则整轮
+    备用源失败，与原型 fail-fast 语义一致）。返回 (v4c, v6c, [], [], source)。
+    daemon 线程 + 失败事件：首个失败即抛错、不等其余任务，CLI 退出时亦
+    不被未完成拉取拖住（G62-01）。"""
+    # 04-04：5 文件并发拉取（顺序拉取约 44 秒，并发约 15 秒；同款超时）。
+    _results = {}
+    _err = []
+    _fail = threading.Event()
+    _lock = threading.Lock()
+
+    def _one(name, url):
+        try:
+            data = fetcher(url).decode("latin-1")
+        except Exception as e:  # noqa: BLE001 -- 记下首个失败即 fail-fast
+            with _lock:
+                if not _err:
+                    _err.append(e)
+            _fail.set()
+            return
+        with _lock:
+            _results[name] = data
+
+    _threads = [threading.Thread(target=_one, args=(name, url), daemon=True,
+                                 name="acheck-rir-%s" % name)
+                for name, url in RIR_URLS.items()]
+    for _t in _threads:
+        _t.start()
+    while True:
+        if _fail.is_set():
+            raise RuntimeError("RIR fetch failed: %r" % (_err[0],))
+        with _lock:
+            if len(_results) == len(RIR_URLS):
+                break
+        _fail.wait(0.05)
+    v4, v6, asn = [], [], []
+    for name in RIR_URLS:
+        a, b, c = parse_rir(_results[name])
+        if not (a or b or c):
+            # A62-A4：每份 RIR 文件单独校验——空正文/错误页不得靠其余
+            # 四份合计蒙混过关。
+            raise ValueError("empty RIR table: %s" % name)
+        v4 += a
+        v6 += b
+        asn += c
+    if not v4 or not v6:
+        raise ValueError("empty RIR tables")
+    v4 = _merge(sorted(v4))
+    v6 = _merge(sorted(v6))
+    # RIR 不产 IP->ASN 段；asn 段留空（IP->ASN 离线查找在备用源下不可用）。
+    return v4, v6, [], [], "rir-delegated-%s" % time.strftime("%Y-%m-%d",
+                                                            time.gmtime())
+
+
+def data_dir():
+    """数据文件目录：XDG_CACHE_HOME > ~/.cache/acheck/geo；均不可写时用
+    脚本同目录（若可写）否则 tempfile。绝不抛错（返 None 表示无处可放，
+    此时离线功能静默关闭）。
+    两遍扫描（G62-08）：第一遍只看可读缓存——有效缓存所在只读目录可
+    用于查询；第二遍写探测，选更新写入目录。"""
+    cands = []
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        cands.append(os.path.join(xdg, "acheck", "geo"))
+    cands.append(os.path.join(os.path.expanduser("~"), ".cache", "acheck",
+                              "geo"))
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        cands.append(os.path.join(here, ".acheck-geo"))
+    except Exception:
+        pass
+    import tempfile
+    try:
+        cands.append(os.path.join(tempfile.gettempdir(), ".acheck-geo"))
+    except Exception:
+        pass  # 无可用临时目录：跳过该候选，绝不抛错（G62-13）
+    for d in cands:
+        try:
+            p = os.path.join(d, "geo-v1.bin.gz")
+            if os.path.isfile(p) and os.access(p, os.R_OK):
+                return d
+        except Exception:
+            continue
+    for d in cands:
+        try:
+            os.makedirs(d, exist_ok=True)
+            # A62-A9：独占创建唯一临时文件作写探针——不截断目录里已有
+            # 的 .write-test，也不与并发进程互删误判。
+            _fd, probe = tempfile.mkstemp(prefix=".write-test-", dir=d)
+            try:
+                os.write(_fd, b"ok")
+            finally:
+                os.close(_fd)
+            os.unlink(probe)
+            return d
+        except Exception:
+            continue
+    return None
+
+
+def _atomic_write_gz(path, data_bytes):
+    # G62-06：同进程并发写同一目标也不共用临时文件——临时名含 pid +
+    # 线程 ident + 随机串；写失败时尽力清掉临时文件。
+    tmp = "%s.tmp.%d.%d.%s" % (path, os.getpid(), threading.get_ident(),
+                               uuid.uuid4().hex[:12])
+    try:
+        with gzip.open(tmp, "wb", compresslevel=6) as f:
+            f.write(data_bytes)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def update_geo_file(data_path, fetcher=_fetch):
+    """拉取并重建数据文件。成功返 (True, source)；任何失败返 (False, 原因)，
+    绝不抛错、绝不 touches 旧文件。
+    新库 ASN 段为空且旧文件可解析且有 ASN 时，把旧 ASN 段并入新库再写盘
+    （G62-07：一次 DB-IP 暂故障不让已有 ASN 兜底消失七天）。"""
+    try:
+        try:
+            v4c, v6c, v4a, v6a, source = _try_dbip(fetcher)
+        except Exception as e_dbip:
+            try:
+                v4c, v6c, v4a, v6a, source = _try_rir(fetcher)
+            except Exception as e_rir:
+                return False, "dbip: %r; rir: %r" % (e_dbip, e_rir)
+        if not v4a and not v6a:
+            try:
+                _old = GeoDB(data_path)
+                if _old.v4a[0] or _old.v6a[0]:
+                    v4a = list(zip(_old.v4a[0], _old.v4a[1], _old.v4a[2]))
+                    v6a = list(zip(_old.v6a[0], _old.v6a[1], _old.v6a[2]))
+            except Exception:
+                pass  # 旧文件缺失/损坏/无 ASN：按新库原样写盘
+        blob = build_geo_bytes(v4c, v6c, v4a, v6a, source)
+        _atomic_write_gz(data_path, blob)
+        return True, source
+    except Exception as e:  # noqa: BLE001 -- 更新路径上任何异常都只记失败
+        return False, repr(e)
+
+
+def _env_no_update():
+    """ACHECK_NO_GEO_UPDATE 仅 1/true/yes（去空格、不区分大小写）视为
+    禁用（G62-L1）；'0' 等其它值不断更新。"""
+    return os.environ.get(ENV_NO_UPDATE, "").strip().lower() in (
+        "1", "true", "yes")
+
+
+class OfflineGeo(object):
+    """给 acheck.py 集成的门面（建议集成点见报告 §6）。
+
+    - 惰性加载：首次 lookup 时才读盘；读盘失败 -> self.db=None，之后查
+      询直接返 None。
+    - 更新：maybe_update(background=True) 只在缓存缺失或过期时启动守护
+      线程；主流程绝不等它。background=False 时同步更新（供 --geo-update
+      之类显式命令用），仍有总时限 UPDATE_TOTAL_BUDGET。
+    - 环境变量 ACHECK_NO_GEO_UPDATE=1 或 no_update=True 时不更新。
+    """
+
+    def __init__(self, data_path=None, no_update=False):
+        self.no_update = no_update or _env_no_update()
+        self.dir = os.path.dirname(data_path) if data_path else data_dir()
+        self.path = data_path or (
+            os.path.join(self.dir, "geo-v1.bin.gz") if self.dir else None)
+        self.db = None
+        self._load_tried = False
+        self._update_started = False
+        self._lock = threading.Lock()
+        self.last_update_error = None
+
+    def _load(self):
+        self.snapshot()
+
+    def snapshot(self):
+        """锁内加载并返回当前 GeoDB（同一快照供一次画像的两次查询共用，
+        G62-05/12）。加载完成后再置 _load_tried；加载中并发查询阻塞在
+        锁上，不把“正在加载”误当“无缓存”。GeoDB 构造后只读，持有引用
+        即便后台换库也不受影响。"""
+        with self._lock:
+            if not self._load_tried and self.path:
+                try:
+                    if os.path.exists(self.path):
+                        self.db = GeoDB(self.path)
+                except Exception:
+                    self.db = None  # 损坏文件 -> 当无数据，不抛错
+                self._load_tried = True
+            return self.db
+
+    def _stale(self):
+        if not self.path or not os.path.exists(self.path):
+            return True
+        try:
+            return (time.time() - os.path.getmtime(self.path)
+                    > STALE_AFTER_SECONDS)
+        except OSError:
+            return True
+
+    def maybe_update(self, background=True, force=False):
+        """缺失/过期且允许更新时触发一次更新。background=True 时起守护线
+        程立即返回；False 时同步执行（仍受内部分步超时保护）。
+        force=True 时跳过新鲜检查（--geo-update 强制同步刷新）。
+        启动检查与置位在锁内（G62-06）；缓存缺失时启动的后台更新在
+        atexit 注册有界 join，短命令退出后缓存仍能落地（G62-11）。"""
+        with self._lock:
+            if self.no_update or not self.path or self._update_started:
+                return
+            if not force and not self._stale():
+                return
+            self._update_started = True
+            _missing = not os.path.exists(self.path)
+
+        def _run():
+            ok, info = update_geo_file(self.path)
+            if not ok:
+                self.last_update_error = info
+            else:
+                with self._lock:
+                    self._load_tried = False
+                    self.db = None
+
+        if background:
+            t = threading.Thread(target=_run, daemon=True,
+                                 name="acheck-geo-update")
+            t.start()
+            if _missing:
+                _t0 = time.time()
+
+                def _join_at_exit(_t=t, _t0=_t0):
+                    # A62-A1：退出等待有界——冷缓存仍有短暂落地窗口
+                    # （G62-11），但慢下载至多拖住退出 _GEO_EXIT_JOIN_MAX 秒。
+                    _remain = UPDATE_TOTAL_BUDGET - (time.time() - _t0)
+                    _remain = min(_remain, _GEO_EXIT_JOIN_MAX)
+                    if _remain > 0:
+                        _t.join(timeout=_remain)
+
+                atexit.register(_join_at_exit)
+        else:
+            _run()
+
+    def country(self, ip_str):
+        db = self.snapshot()
+        if db is None:
+            return None
+        try:
+            return db.country(ip_str)
+        except Exception:
+            return None
+
+    def asn(self, ip_str):
+        db = self.snapshot()
+        if db is None:
+            return None
+        try:
+            return db.asn(ip_str)
+        except Exception:
+            return None
+
+_OFFLINE_GEO = None  # 惰性单例：import 本文件不产生副作用，首次需要时才建
+_OFFLINE_GEO_LOCK = threading.Lock()
+
+
+def _get_offline_geo(no_update=False):
+    """取离线 Geo 单例（首次调用时才建实例、才碰文件系统）。
+    单例创建加模块级锁，并发首次调用只构造一个实例（G62-12）。"""
+    global _OFFLINE_GEO
+    with _OFFLINE_GEO_LOCK:
+        if _OFFLINE_GEO is None:
+            _OFFLINE_GEO = OfflineGeo(no_update=no_update)
+        return _OFFLINE_GEO
+
+
+def _geo_attribution(prof):
+    """离线 Geo 署名行：RIR 来源印 RIR 委托数据署名，DB-IP 来源印现有
+    DB-IP 署名；无 offline 来源返 None；缺 detail 时默认 DB-IP（G62-L2）。"""
+    if prof.get("geo_source") != "offline-geo":
+        return None
+    detail = prof.get("geo_source_detail") or ""
+    if detail.startswith("rir-"):
+        return ("IP Geolocation data: RIR delegated statistics "
+                "(APNIC, RIPE NCC, ARIN, AFRINIC, LACNIC)")
+    return "IP Geolocation by DB-IP (https://db-ip.com)"
+
 
 
 def main():
@@ -16657,6 +17496,10 @@ def main():
                         help="skip the speed test during self-check")
     parser.add_argument("--with-speed", action="store_true", dest="with_speed",
                         help="force the speed test during self-check")
+    parser.add_argument("--no-geo-update", action="store_true", dest="no_geo_update",
+                        help="disable automatic offline geo data updates")
+    parser.add_argument("--geo-update", action="store_true", dest="geo_update",
+                        help="force a synchronous offline geo data refresh")
     parser.add_argument("--batch", metavar="NODES", default=None,
                         help="batch node test, comma-separated host:port or socks5:// URLs")
     parser.add_argument("--zh", action="store_const", const="zh", dest="lang")
@@ -16732,6 +17575,14 @@ def main():
         if _rc:
             sys.exit(_rc)
         return
+
+    # 04-04：离线 Geo 数据更新——默认允许，后台守护线程执行，绝不 join、
+    # 不阻塞检测；--geo-update 强制同步刷新一次再检测；--no-geo-update
+    # 或环境变量 ACHECK_NO_GEO_UPDATE=1 禁用更新（已有缓存仍可用）。
+    if ns.geo_update:
+        _get_offline_geo().maybe_update(background=False, force=True)
+    elif not ns.no_geo_update:
+        _get_offline_geo().maybe_update(background=True)
 
     # 模式冲突告警：按既有优先级链（active > speed > proxy > batch），
     # 后者被静默丢弃时告警（--help/--explain 为元选项，不参与）。

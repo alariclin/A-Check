@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>ابزار بررسی پاکی IP و کیفیت شبکه</b> — تجمیع چندمنبعی · دو حالت · تک‌فایل بدون وابستگی</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.37-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.38-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -77,7 +77,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 | 5 | تغییر زبان / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | بررسی به‌روزرسانی | مقایسه با تازه‌ترین Release در GitHub |
 | 7 | عیب‌یابی پروکسی (SOCKS5) | شش گام: دست‌دهی ← IP خروجی پروکسی ← اعتبار خروجی ← نشت DNS ← تأخیر TCP ← توان عملیاتی از راه پروکسی (سریع‌ترینِ ۵ هاب منطقه‌ای) |
-| 8 | بررسی سازگاری خروجی DNS | مقایسه حل‌کننده سیستمی با حل مستقیم برای تشخیص نشت DNS |
+| 8 | بررسی سازگاری خروجی DNS | مقایسه حل‌کننده سیستمی با حل مستقیم برای تشخیص نشت DNS. برای بررسی نشت WebRTC/DNS، لطفاً با ابزار مرورگر بازبینی کنید. |
 | 9 | تست تأخیر TCP | تأخیر / لرزش / از دست رفتن بسته تا هر host:port ‏(min / avg / max) |
 | 10 | توضیح قواعد امتیازدهی | شرح کامل ابعاد امتیاز، کسرها و سطوح |
 | 11 | تست سرعت دسته‌ای گره‌ها | چند host:port یا پروکسی SOCKS5 بچسبانید؛ سنجش هم‌زمان تأخیر و دسترس‌پذیری، خروجی رتبه‌بندی‌شده با بهترین گره به رنگ سبز، به‌همراه سرعت دانلود واقعی بهترین پروکسی |
@@ -98,37 +98,37 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 
 macOS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 macOS (بستهٔ اسکریپت):
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-mac.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-mac && bash run.command
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-mac.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-mac && bash run.command
 ```
 
 Linux / VPS:
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows (PowerShell 5.1+):
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 هر سیستم (تک‌فایل، Python 3.8+ لازم است):
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **آینهٔ CDN — برای مناطقی که دسترسی مستقیم به GitHub دشوار است (مانند چین). نسخهٔ تک‌فایل، با امکانات کامل:**
 gh-proxy (دسترسی مستقیم از چین):
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr:
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 یا اسکریپت را مستقیم اجرا کنید (Python 3.8+ لازم است):
 
@@ -166,6 +166,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 - **جغرافیا و مالکیت**: ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، iplocate.io، ipquery.io، ipapi.co، 2ip.io، HackerTarget، country.is، RDAP، جستجوی معکوس PTR/FCrDNS
 - **اعتبار و کلاهبرداری**: Scamalytics، proxycheck.io، Shodan InternetDB، GreyNoise، SANS ISC، StopForumSpam، urlscan.io، AlienVault OTX، blocklist.de
+- **پشتیبان جغرافیایی آفلاین**: IP Geolocation by DB-IP (https://db-ip.com) — فقط برای تکمیل کد کشور یا ASN که در نتایج آنلاین نیست استفاده می‌شود؛ مقادیر موجود بازنویسی نمی‌شوند.
 - **تهدیدها و فهرست‌ها**: Spamhaus DROP، Feodo Tracker، Emerging Threats، فهرست گره‌های خروجی Tor، IPsum، X4BNet VPN ranges
 
 هر عامل و امتیاز حاصل رأی چند منبع است؛ مثبت کاذب یک منبع به‌تنهایی نتیجه را تعیین نمی‌کند.

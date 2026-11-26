@@ -3,7 +3,7 @@
   <h1>A-Check</h1>
   <p><b>IP のクリーン度とネットワーク品質を測るチェックツール</b> — マルチソース集約 · デュアルモード · 依存ゼロの単一ファイル</p>
   <p>
-    <img src="https://img.shields.io/badge/version-v4.14.37-blue" alt="version">
+    <img src="https://img.shields.io/badge/version-v4.14.38-blue" alt="version">
     <img src="https://img.shields.io/badge/python-3.8+-green" alt="python">
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
     <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-orange" alt="platform">
@@ -77,7 +77,7 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 | 5 | 言語切替 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | アップデート確認 | GitHub の最新 Release と比較して新バージョンを通知 |
 | 7 | プロキシ診断 (SOCKS5) | 6 ステップ：ハンドシェイク → プロキシ出口 IP → 出口レピュテーション → DNS リーク → TCP レイテンシ → プロキシ経由スループット（5 地域ハブの最速） |
-| 8 | DNS 出口一致性確認 | システムリゾルバと直接解決の結果を比較し、DNS の漏れを判定 |
+| 8 | DNS 出口一致性確認 | システムリゾルバと直接解決の結果を比較し、DNS の漏れを判定。WebRTC/DNS リークの検出はブラウザツールで再確認してください。 |
 | 9 | TCP レイテンシテスト | 任意の host:port への遅延 / ジッタ / パケットロス（min / avg / max） |
 | 10 | スコアリングルール | スコア次元、減点項目、レベル区分の完全な説明 |
 | 11 | ノード一括スピード優選 | 複数の host:port や SOCKS5 プロキシを貼り付け、遅延と可用性を並行測定。ランキング表示、最良ノードを緑色表示し、そのプロキシの実測ダウンロード速度も表示 |
@@ -98,37 +98,37 @@ A-Check は単一ファイルの Python スクリプト（`acheck.py`、標準�
 
 macOS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-mac-app.zip -o acheck-app.zip && ditto -x -k acheck-app.zip . && chmod +x A-Check.app/Contents/MacOS/* && open A-Check.app
 ```
 
 macOS（スクリプトパッケージ）：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-mac.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-mac && bash run.command
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-mac.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-mac && bash run.command
 ```
 
 Linux / VPS：
 ```
-curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
+curl -sL https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-linux.zip -o acheck.zip && python3 -c "import zipfile; zipfile.ZipFile('acheck.zip').extractall()" && cd acheck-linux && bash run.sh
 ```
 
 Windows（PowerShell 5.1+）：
 ```
-Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.37/A-Check-v4.14.37-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
+Invoke-WebRequest https://github.com/alariclin/A-Check/releases/download/v4.14.38/A-Check-v4.14.38-windows.zip -OutFile acheck.zip; Expand-Archive acheck.zip -Force; cd acheck-win; .\run.bat
 ```
 
 任意のシステム（単一ファイル、Python 3.8+）：
 ```
-curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://raw.githubusercontent.com/alariclin/A-Check/v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 
 **CDN ミラー：GitHub へ直接つながりにくい地域（中国本土など）向け。単一ファイル版、機能は同一です：**
 gh-proxy（中国本土から直接）：
 ```
-curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://gh-proxy.com/https://raw.githubusercontent.com/alariclin/A-Check/v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 jsDelivr：
 ```
-curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.37/acheck.py -o acheck.py && python3 acheck.py
+curl -sL https://cdn.jsdelivr.net/gh/alariclin/A-Check@v4.14.38/acheck.py -o acheck.py && python3 acheck.py
 ```
 スクリプトを直接実行することもできます（Python 3.8+）：
 
@@ -166,6 +166,7 @@ python3 acheck.py [IP] [オプション]
 
 - **地理と帰属**：ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 逆引き
 - **レピュテーションと詐欺**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
+- **オフライン地理フォールバック**：IP Geolocation by DB-IP (https://db-ip.com) — オンライン結果に欠けている国コードまたは ASN の補完にのみ使用し、既存の値を上書きしません。
 - **脅威とリスト**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口ノードリスト、IPsum、X4BNet VPN ranges
 
 すべての因子とスコアは複数ソースの投票で決まります。単一ソースの誤検知だけで結論は決まりません。

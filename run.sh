@@ -51,4 +51,30 @@ if [ -z "$PY" ]; then
     echo "未找到 Python 3.8+，请先安装: https://www.python.org/downloads/"
     exit 1
 fi
-exec "$PY" "$(dirname "$0")/acheck.py" "$@"
+# L-01：$0 可能是指向本文件的符号链接（如 PATH 上的 acheck 入口）；
+# $(dirname "$0") 不解链接，会指向链接所在目录而非实文件目录。
+# 沿链接链逐级解开（readlink 循环，macOS BSD readlink 亦可用，不用
+# readlink -f），相对目标按链接所在目录补齐，再取实文件目录。
+# G62-L7：命令替换 $(...) 会删掉输出末尾的全部换行，链接目标名或
+# 目录名以换行结尾时会被截断；三处取值均用“哨兵＋剥一层”保住末尾
+# 换行：先 append 'x' 使 $() 无尾换行可删（值末尾的换行全保留），
+# 再剥掉 'x'，最后剥掉恰好一个换行——那是命令自身输出的终止符，
+# 不是名字的一部分（名字末尾若本有换行，剥一层后仍在）。
+_SRC="$0"
+while [ -L "$_SRC" ]; do
+    _DIR="$(dirname "$_SRC"; printf 'x')"; _DIR="${_DIR%x}"; _DIR="${_DIR%$'\n'}"
+    _TGT="$(readlink "$_SRC"; printf 'x')"; _TGT="${_TGT%x}"; _TGT="${_TGT%$'\n'}"
+    # A62-A18：readlink 失败（缺失/损坏/环路过深）时命令替换得空串；
+    # 空目标不是合法链接目标，必是解析失败——立即报错退出，不得
+    # 静默按目录路径继续（会跑错上一级目录的 acheck.py）。
+    if [ -z "$_TGT" ]; then
+        echo "run.sh: 无法解析符号链接：$_SRC（readlink 失败或不可用）" >&2
+        exit 1
+    fi
+    case "$_TGT" in
+        /*) _SRC="$_TGT" ;;
+        *)  _SRC="$_DIR/$_TGT" ;;
+    esac
+done
+_FINAL_DIR="$(dirname "$_SRC"; printf 'x')"; _FINAL_DIR="${_FINAL_DIR%x}"; _FINAL_DIR="${_FINAL_DIR%$'\n'}"
+exec "$PY" "$_FINAL_DIR/acheck.py" "$@"
