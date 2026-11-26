@@ -4869,30 +4869,37 @@ def _build_unified_profile(s, ip=None):
             break
     # 04-04：离线 Geo/ASN 兜底——只填在线源留空的字段，永不覆盖在线值。
     # 惰性加载：仅真正需要兜底时才建实例、读盘；城市级离线不做。
+    # 一次画像只取一个快照：country/asn 都查同一代 GeoDB（G62-05），
+    # 实际来源（缓存 meta["source"]）经 geo_source_detail 透传（G62-L2）。
     _geo_source = None
+    _geo_source_detail = None
     if ip is not None and (not country or not country_code or asn is None):
         try:
             _og = _get_offline_geo()
-            if not country:
-                _occ = _og.country(str(ip))
-                if _occ:
-                    # 离线只给 ISO 码；画像 country 字段接受代码形态
-                    # （_loc_country_name 与 _cc 派生均认 2 字母码）。
-                    country = _occ
-                    country_code = _occ
-                    _geo_source = "offline-geo"
-            elif not country_code:
-                # 在线给了国家名、缺码：离线码须与在线名一致才补，
-                # 不一致（anycast 等）时宁可留空，不拼出名码矛盾的画像。
-                _occ = _og.country(str(ip))
-                if _occ and _CC_EN.get(country.strip().lower(), "") == _occ:
-                    country_code = _occ
-                    _geo_source = "offline-geo"
-            if asn is None:
-                _oasn = _og.asn(str(ip))
-                if _oasn is not None:
-                    asn = _oasn
-                    _geo_source = "offline-geo"
+            _snap = _og.snapshot()
+            if _snap is not None:
+                if not country:
+                    _occ = _snap.country(str(ip))
+                    if _occ:
+                        # 离线只给 ISO 码；画像 country 字段接受代码形态
+                        # （_loc_country_name 与 _cc 派生均认 2 字母码）。
+                        country = _occ
+                        country_code = _occ
+                        _geo_source = "offline-geo"
+                elif not country_code:
+                    # 在线给了国家名、缺码：离线码须与在线名一致才补，
+                    # 不一致（anycast 等）时宁可留空，不拼出名码矛盾的画像。
+                    _occ = _snap.country(str(ip))
+                    if _occ and _CC_EN.get(country.strip().lower(), "") == _occ:
+                        country_code = _occ
+                        _geo_source = "offline-geo"
+                if asn is None:
+                    _oasn = _snap.asn(str(ip))
+                    if _oasn is not None:
+                        asn = _oasn
+                        _geo_source = "offline-geo"
+                if _geo_source:
+                    _geo_source_detail = (_snap.meta or {}).get("source")
         except Exception:
             pass  # 离线兜底永不拖垮画像
     _out = {
@@ -4910,6 +4917,8 @@ def _build_unified_profile(s, ip=None):
     }
     if _geo_source:
         _out["geo_source"] = _geo_source
+    if _geo_source_detail:
+        _out["geo_source_detail"] = _geo_source_detail
     return _out
 
 
@@ -6607,9 +6616,11 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         else:
             print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
             print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
-    if prof.get("geo_source") == "offline-geo":
-        # 04-04：离线 Geo 数据（DB-IP Lite，CC BY 4.0）实际被用到了才署名。
-        print(f"  {_c(C.dim, 'IP Geolocation by DB-IP (https://db-ip.com)')}")
+    _geo_attr = _geo_attribution(prof)
+    if _geo_attr:
+        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+        print(f"  {_c(C.dim, _geo_attr)}")
     # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
     # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
     # 显式恢复 _SEC["on"]=True（计数保留）。
@@ -6953,9 +6964,11 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     # [5] 完整度
     if tail_completeness:
         _print_report6_tail(res)
-    if prof.get("geo_source") == "offline-geo":
-        # 04-04：离线 Geo 数据（DB-IP Lite，CC BY 4.0）实际被用到了才署名。
-        print(f"  {_c(C.dim, 'IP Geolocation by DB-IP (https://db-ip.com)')}")
+    _geo_attr = _geo_attribution(prof)
+    if _geo_attr:
+        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+        print(f"  {_c(C.dim, _geo_attr)}")
     # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
     _SEC["on"] = False
 
@@ -17216,6 +17229,13 @@ def update_geo_file(data_path, fetcher=_fetch):
         return False, repr(e)
 
 
+def _env_no_update():
+    """ACHECK_NO_GEO_UPDATE 仅 1/true/yes（去空格、不区分大小写）视为
+    禁用（G62-L1）；'0' 等其它值不断更新。"""
+    return os.environ.get(ENV_NO_UPDATE, "").strip().lower() in (
+        "1", "true", "yes")
+
+
 class OfflineGeo(object):
     """给 acheck.py 集成的门面（建议集成点见报告 §6）。
 
@@ -17228,8 +17248,7 @@ class OfflineGeo(object):
     """
 
     def __init__(self, data_path=None, no_update=False):
-        self.no_update = no_update or bool(
-            os.environ.get(ENV_NO_UPDATE))
+        self.no_update = no_update or _env_no_update()
         self.dir = os.path.dirname(data_path) if data_path else data_dir()
         self.path = data_path or (
             os.path.join(self.dir, "geo-v1.bin.gz") if self.dir else None)
@@ -17240,14 +17259,22 @@ class OfflineGeo(object):
         self.last_update_error = None
 
     def _load(self):
-        if self._load_tried or not self.path:
-            return
-        self._load_tried = True
-        try:
-            if os.path.exists(self.path):
-                self.db = GeoDB(self.path)
-        except Exception:
-            self.db = None  # 损坏文件 -> 当无数据，不抛错
+        self.snapshot()
+
+    def snapshot(self):
+        """锁内加载并返回当前 GeoDB（同一快照供一次画像的两次查询共用，
+        G62-05/12）。加载完成后再置 _load_tried；加载中并发查询阻塞在
+        锁上，不把“正在加载”误当“无缓存”。GeoDB 构造后只读，持有引用
+        即便后台换库也不受影响。"""
+        with self._lock:
+            if not self._load_tried and self.path:
+                try:
+                    if os.path.exists(self.path):
+                        self.db = GeoDB(self.path)
+                except Exception:
+                    self.db = None  # 损坏文件 -> 当无数据，不抛错
+                self._load_tried = True
+            return self.db
 
     def _stale(self):
         if not self.path or not os.path.exists(self.path):
@@ -17261,12 +17288,16 @@ class OfflineGeo(object):
     def maybe_update(self, background=True, force=False):
         """缺失/过期且允许更新时触发一次更新。background=True 时起守护线
         程立即返回；False 时同步执行（仍受内部分步超时保护）。
-        force=True 时跳过新鲜检查（--geo-update 强制同步刷新）。"""
-        if self.no_update or not self.path or self._update_started:
-            return
-        if not force and not self._stale():
-            return
-        self._update_started = True
+        force=True 时跳过新鲜检查（--geo-update 强制同步刷新）。
+        启动检查与置位在锁内（G62-06）；缓存缺失时启动的后台更新在
+        atexit 注册有界 join，短命令退出后缓存仍能落地（G62-11）。"""
+        with self._lock:
+            if self.no_update or not self.path or self._update_started:
+                return
+            if not force and not self._stale():
+                return
+            self._update_started = True
+            _missing = not os.path.exists(self.path)
 
         def _run():
             ok, info = update_geo_file(self.path)
@@ -17281,36 +17312,60 @@ class OfflineGeo(object):
             t = threading.Thread(target=_run, daemon=True,
                                  name="acheck-geo-update")
             t.start()
+            if _missing:
+                _t0 = time.time()
+
+                def _join_at_exit(_t=t, _t0=_t0):
+                    _remain = UPDATE_TOTAL_BUDGET - (time.time() - _t0)
+                    if _remain > 0:
+                        _t.join(timeout=_remain)
+
+                atexit.register(_join_at_exit)
         else:
             _run()
 
     def country(self, ip_str):
-        self._load()
-        if self.db is None:
+        db = self.snapshot()
+        if db is None:
             return None
         try:
-            return self.db.country(ip_str)
+            return db.country(ip_str)
         except Exception:
             return None
 
     def asn(self, ip_str):
-        self._load()
-        if self.db is None:
+        db = self.snapshot()
+        if db is None:
             return None
         try:
-            return self.db.asn(ip_str)
+            return db.asn(ip_str)
         except Exception:
             return None
 
 _OFFLINE_GEO = None  # 惰性单例：import 本文件不产生副作用，首次需要时才建
+_OFFLINE_GEO_LOCK = threading.Lock()
 
 
 def _get_offline_geo(no_update=False):
-    """取离线 Geo 单例（首次调用时才建实例、才碰文件系统）。"""
+    """取离线 Geo 单例（首次调用时才建实例、才碰文件系统）。
+    单例创建加模块级锁，并发首次调用只构造一个实例（G62-12）。"""
     global _OFFLINE_GEO
-    if _OFFLINE_GEO is None:
-        _OFFLINE_GEO = OfflineGeo(no_update=no_update)
-    return _OFFLINE_GEO
+    with _OFFLINE_GEO_LOCK:
+        if _OFFLINE_GEO is None:
+            _OFFLINE_GEO = OfflineGeo(no_update=no_update)
+        return _OFFLINE_GEO
+
+
+def _geo_attribution(prof):
+    """离线 Geo 署名行：RIR 来源印 RIR 委托数据署名，DB-IP 来源印现有
+    DB-IP 署名；无 offline 来源返 None；缺 detail 时默认 DB-IP（G62-L2）。"""
+    if prof.get("geo_source") != "offline-geo":
+        return None
+    detail = prof.get("geo_source_detail") or ""
+    if detail.startswith("rir-"):
+        return ("IP Geolocation data: RIR delegated statistics "
+                "(APNIC, RIPE NCC, ARIN, AFRINIC, LACNIC)")
+    return "IP Geolocation by DB-IP (https://db-ip.com)"
 
 
 
