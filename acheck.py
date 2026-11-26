@@ -4900,7 +4900,9 @@ def _build_unified_profile(s, ip=None):
                         # 离线只给 ISO 码；画像 country 字段接受代码形态
                         # （_loc_country_name 与 _cc 派生均认 2 字母码）。
                         country = _occ
-                        country_code = _occ
+                        # A62-A43：只填空——在线已给 country_code 时不覆盖。
+                        if not country_code:
+                            country_code = _occ
                         _geo_source = "offline-geo"
                 elif not country_code:
                     # 在线给了国家名、缺码：离线码须与在线名一致才补，
@@ -16817,6 +16819,9 @@ STALE_AFTER_SECONDS = 7 * 24 * 3600   # 缓存超过 7 天视为过期，尝试�
 CONNECT_TIMEOUT = 5                   # 每次连接超时（秒）
 READ_TIMEOUT = 60                     # 每次读取总超时（秒）
 UPDATE_TOTAL_BUDGET = 120             # 整轮更新最长耗时（秒），超了即放弃
+_GEO_EXIT_JOIN_MAX = 5.0            # A62-A1：后台更新在进程退出时至多再等 5 秒
+_GEO_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024  # A62-A23：gzip 解压上限
+_FETCH_MAX_BYTES = 64 * 1024 * 1024             # A62-A23：单次下载总字节上限
 _GEO_UA = "A-Check/%s (offline geo update; +https://github.com/)" % VERSION
 ENV_NO_UPDATE = "ACHECK_NO_GEO_UPDATE"
 
@@ -16881,14 +16886,25 @@ def _merge(ranges):
 
 
 # ---------------------------------------------------------------- 数据源解析
+def _gunzip_limited(raw_gz_bytes, limit=_GEO_MAX_DECOMPRESSED_BYTES):
+    """gzip 解压带上限（A62-A23）：超限即 ValueError，不分配超限内存。"""
+    with gzip.GzipFile(fileobj=io.BytesIO(raw_gz_bytes)) as f:
+        buf = f.read(limit + 1)
+    if len(buf) > limit:
+        raise ValueError("decompressed data too large (>%d bytes)" % limit)
+    return buf
+
+
 def parse_dbip_country(raw_gz_bytes):
     """DB-IP Lite country CSV.gz -> (v4, v6)，元素 (start, end, 'CC')。"""
-    text = gzip.decompress(raw_gz_bytes).decode("utf-8", "replace")
+    text = _gunzip_limited(raw_gz_bytes).decode("utf-8", "replace")
     v4, v6 = [], []
     for line in text.splitlines():
         if not line:
             continue
         a, b, cc = line.split(",")
+        if len(cc) != 2 or cc == "ZZ":
+            continue  # A62-A34：未知码与畸形码当未命中（与 parse_rir 同款）
         if "." in a:
             v4.append((_ipv4int(a), _ipv4int(b), cc))
         else:
@@ -16900,7 +16916,7 @@ def parse_dbip_country(raw_gz_bytes):
 
 def parse_dbip_asn(raw_gz_bytes):
     """DB-IP Lite ASN CSV.gz -> (v4, v6)，元素 (start, end, asn:int)。"""
-    text = gzip.decompress(raw_gz_bytes).decode("utf-8", "replace")
+    text = _gunzip_limited(raw_gz_bytes).decode("utf-8", "replace")
     v4, v6 = [], []
     for row in csv.reader(io.StringIO(text)):
         if len(row) < 3:
@@ -17023,8 +17039,12 @@ class GeoDB(object):
     """只读离线库：country(ip) -> 'CC' | None；asn(ip) -> int | None。"""
 
     def __init__(self, path):
+        # A62-A23：限量读盘——炸弹式缓存不得在验 magic 前占满内存。
         with gzip.open(path, "rb") as f:
-            buf = f.read()
+            buf = f.read(_GEO_MAX_DECOMPRESSED_BYTES + 1)
+        if len(buf) > _GEO_MAX_DECOMPRESSED_BYTES:
+            raise ValueError("decompressed geo file too large (>%d bytes)"
+                             % _GEO_MAX_DECOMPRESSED_BYTES)
         if buf[:8] != _GEO_MAGIC:
             raise ValueError("bad magic")
         (ver, meta_len) = struct.unpack_from(">HI", buf, 8)
@@ -17052,7 +17072,9 @@ class GeoDB(object):
             ver, ip = _ipint(ip_str.strip())
         except (ValueError, socket.error):
             return None
-        return self._lookup(self.v6c if ver == 2 else self.v4c, ip)
+        _v = self._lookup(self.v6c if ver == 2 else self.v4c, ip)
+        # A62-A34：已写入旧缓存的 ZZ 也当未命中，不报出。
+        return None if _v == "ZZ" else _v
 
     def asn(self, ip_str):
         try:
@@ -17067,7 +17089,7 @@ def _fetch(url, timeout_total=READ_TIMEOUT):
     """带总时限的下载；任何失败都以异常形式交给调用方（更新器会吞掉）。
     期限按块检查：read1 每次至多返回一次底层读到的数据，慢滴响应也能
     在期限内中断（G62-02）；无 read1 的旧版则每次读前把 socket 超时
-    设为剩余期限再读。"""
+    设为剩余期限再读。另有总字节上限 _FETCH_MAX_BYTES（A62-A23）。"""
     req = urllib.request.Request(url, headers={"User-Agent": _GEO_UA})
     with urllib.request.urlopen(req, timeout=CONNECT_TIMEOUT) as r:
         if r.status != 200:
@@ -17075,6 +17097,7 @@ def _fetch(url, timeout_total=READ_TIMEOUT):
                                          r.headers, None)
         deadline = time.time() + timeout_total
         chunks = []
+        total = 0
         read1 = getattr(r, "read1", None)
         if not callable(read1):
             read1 = getattr(getattr(r, "fp", None), "read1", None)
@@ -17094,12 +17117,19 @@ def _fetch(url, timeout_total=READ_TIMEOUT):
             if not chunk:
                 break
             chunks.append(chunk)
+            total += len(chunk)
+            if total > _FETCH_MAX_BYTES:
+                raise ValueError("download too large (>%d bytes) for %s"
+                                 % (_FETCH_MAX_BYTES, url))
     return b"".join(chunks)
 
 
 def _try_dbip(fetcher=_fetch):
     """主源：DB-IP Lite 当月 -> 上月。返回 (v4c, v6c, v4a, v6a, source)。
-    两次尝试共用同一 gmtime 基准，跨午夜不重复请求同一个月（G62-Lx）。"""
+    两次尝试共用同一 gmtime 基准，跨午夜不重复请求同一个月（G62-Lx）。
+    月回退只用于 404（本月未发布）；503/超时等暂时性错误立即抛，不以
+    更旧月份覆盖已有较新缓存（A62-A11）。ASN 双栈皆空视为本月数据损
+    坏，同样立即抛，不回退、不发布无 ASN 新库（A62-A3）。"""
     last_err = None
     _base = time.gmtime()
     for off in (0, 1):
@@ -17111,9 +17141,16 @@ def _try_dbip(fetcher=_fetch):
             v4a, v6a = parse_dbip_asn(raw_a)
             if not v4c or not v6c:
                 raise ValueError("empty DB-IP country table for %s" % ym)
+            if not v4a and not v6a:
+                raise ValueError("empty DB-IP ASN table for %s" % ym)
             return v4c, v6c, v4a, v6a, "dbip-lite-%s" % ym
-        except Exception as e:  # noqa: BLE001 -- 更新失败一律记下并换路
-            last_err = e
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                last_err = e
+                continue
+            raise
+        except Exception:
+            raise
     raise RuntimeError("DB-IP Lite failed: %r" % (last_err,))
 
 
@@ -17155,6 +17192,10 @@ def _try_rir(fetcher=_fetch):
     v4, v6, asn = [], [], []
     for name in RIR_URLS:
         a, b, c = parse_rir(_results[name])
+        if not (a or b or c):
+            # A62-A4：每份 RIR 文件单独校验——空正文/错误页不得靠其余
+            # 四份合计蒙混过关。
+            raise ValueError("empty RIR table: %s" % name)
         v4 += a
         v6 += b
         asn += c
@@ -17199,9 +17240,13 @@ def data_dir():
     for d in cands:
         try:
             os.makedirs(d, exist_ok=True)
-            probe = os.path.join(d, ".write-test")
-            with open(probe, "w") as f:
-                f.write("ok")
+            # A62-A9：独占创建唯一临时文件作写探针——不截断目录里已有
+            # 的 .write-test，也不与并发进程互删误判。
+            _fd, probe = tempfile.mkstemp(prefix=".write-test-", dir=d)
+            try:
+                os.write(_fd, b"ok")
+            finally:
+                os.close(_fd)
             os.unlink(probe)
             return d
         except Exception:
@@ -17341,7 +17386,10 @@ class OfflineGeo(object):
                 _t0 = time.time()
 
                 def _join_at_exit(_t=t, _t0=_t0):
+                    # A62-A1：退出等待有界——冷缓存仍有短暂落地窗口
+                    # （G62-11），但慢下载至多拖住退出 _GEO_EXIT_JOIN_MAX 秒。
                     _remain = UPDATE_TOTAL_BUDGET - (time.time() - _t0)
+                    _remain = min(_remain, _GEO_EXIT_JOIN_MAX)
                     if _remain > 0:
                         _t.join(timeout=_remain)
 
