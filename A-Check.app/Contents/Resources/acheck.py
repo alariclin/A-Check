@@ -8549,6 +8549,15 @@ def test_chatgpt(local_ip=None):
     return T("blocked"), "", None
 
 
+def _url_path_has_faq(url):
+    """最终 URL 是否落在 FAQ 页（A62-A15）：只看路径，不看查询串/片段。
+    `?utm_campaign=faq` 这类追踪参数不是 FAQ 页，不得触发锁区/FAQ 分支。"""
+    try:
+        return "faq" in urllib.parse.urlparse(url or "").path.lower()
+    except Exception:
+        return False
+
+
 def test_gemini(local_ip=None):
     code, body, final_url, complete, hdrs = _active_get("https://gemini.google.com/app")
     if code is None:
@@ -8558,15 +8567,16 @@ def test_gemini(local_ip=None):
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
     # 最终 URL 信号不受正文截断影响：URL 已含 faq 信号时不因正文
-    # 不完整判 unknown，落入正常分类（6-3）。
+    # 不完整判 unknown，落入正常分类（6-3）。FAQ 信号只看路径段
+    # （A62-A15：查询串里的 faq 不算）。
     # C-04：与 Disney 对齐——采样不完整时裸短语不算锁区信号，一律
     # unknown；完整正文上的短语仍按旧口径判 blocked。
-    if code == 200 and not complete and "faq" not in final_url.lower():
+    if code == 200 and not complete and not _url_path_has_faq(final_url):
         return T("unknown"), "", None
-    if code == 200 and "faq" not in final_url.lower() and "isn't currently supported" not in body.lower():
+    if code == 200 and not _url_path_has_faq(final_url) and "isn't currently supported" not in body.lower():
         return T("unlocked"), "", get_unlock_type("gemini.google.com", local_ip)
     # M-07：3xx 先验命中锁区 URL（faq）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "faq" in final_url.lower():
+    if 300 <= code <= 399 and _url_path_has_faq(final_url):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:

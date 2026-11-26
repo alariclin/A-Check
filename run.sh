@@ -64,6 +64,13 @@ _SRC="$0"
 while [ -L "$_SRC" ]; do
     _DIR="$(dirname "$_SRC"; printf 'x')"; _DIR="${_DIR%x}"; _DIR="${_DIR%$'\n'}"
     _TGT="$(readlink "$_SRC"; printf 'x')"; _TGT="${_TGT%x}"; _TGT="${_TGT%$'\n'}"
+    # A62-A18：readlink 失败（缺失/损坏/环路过深）时命令替换得空串；
+    # 空目标不是合法链接目标，必是解析失败——立即报错退出，不得
+    # 静默按目录路径继续（会跑错上一级目录的 acheck.py）。
+    if [ -z "$_TGT" ]; then
+        echo "run.sh: 无法解析符号链接：$_SRC（readlink 失败或不可用）" >&2
+        exit 1
+    fi
     case "$_TGT" in
         /*) _SRC="$_TGT" ;;
         *)  _SRC="$_DIR/$_TGT" ;;
