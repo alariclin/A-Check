@@ -65,6 +65,7 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _CFTimeoutError
 from datetime import datetime, timezone
 import argparse
+import atexit
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
@@ -16810,9 +16811,11 @@ def _ipint(s):
     return 1, _ipv4int(s)
 
 
-def _ym(offset_months=0):
-    """当前 UTC 日历月回退 offset_months 个月，形如 '2026-11'。"""
-    t = time.gmtime()
+def _ym(offset_months=0, _base=None):
+    """当前 UTC 日历月回退 offset_months 个月，形如 '2026-11'。
+    _base：可选基准时间（time.gmtime() 结构）；同一轮重试共用同一基准，
+    避免跨午夜两次取时算出同一个月（G62-Lx）。"""
+    t = _base if _base is not None else time.gmtime()
     y, m = t.tm_year, t.tm_mon - offset_months
     while m <= 0:
         m += 12
@@ -16821,9 +16824,16 @@ def _ym(offset_months=0):
 
 
 def _merge(ranges):
-    """ranges: [(start, end, payload)] 已排序；合并相邻同 payload 区间。"""
+    """ranges: [(start, end, payload)] 已排序；合并相邻同 payload 区间。
+    重叠段 first-wins：后区间起点裁到前区间终点+1，裁空则丢弃；排序顺序
+    （start 升序，start 相同则 end 升序）定优先级（G62-04）。输出段互不
+    重叠且按 start 有序，故只与最后一段比较即足够。"""
     out = []
     for s, e, p in ranges:
+        if out and s <= out[-1][1]:
+            s = out[-1][1] + 1
+            if s > e:
+                continue
         if out and s <= out[-1][1] + 1 and out[-1][2] == p:
             if e > out[-1][1]:
                 out[-1] = (out[-1][0], e, p)
@@ -16935,9 +16945,18 @@ def build_geo_bytes(v4c, v6c, v4a, v6a, source, built_ts=None):
 
 
 def _unpack_section(buf, off, v6, payload_fmt):
+    # G62-03：按 count 分配前先校验整段所需字节数，不足即 ValueError；
+    # 畸形小文件不得先构造百万级 payloads 列表再失败。
+    if off < 0 or off + 4 > len(buf):
+        raise ValueError("section header truncated")
     (n,) = struct.unpack_from(">I", buf, off)
     off += 4
     width = 16 if v6 else 4
+    pwidth = 2 if payload_fmt == "2s" else 4
+    need = n * width * 2 + n * pwidth
+    if need > len(buf) - off:
+        raise ValueError("section truncated: need %d bytes, have %d"
+                         % (need, len(buf) - off))
     starts_raw = buf[off:off + n * width]
     off += n * width
     ends_raw = buf[off:off + n * width]
@@ -17007,7 +17026,10 @@ class GeoDB(object):
 
 # ---------------------------------------------------------------- 下载与更新
 def _fetch(url, timeout_total=READ_TIMEOUT):
-    """带总时限的下载；任何失败都以异常形式交给调用方（更新器会吞掉）。"""
+    """带总时限的下载；任何失败都以异常形式交给调用方（更新器会吞掉）。
+    期限按块检查：read1 每次至多返回一次底层读到的数据，慢滴响应也能
+    在期限内中断（G62-02）；无 read1 的旧版则每次读前把 socket 超时
+    设为剩余期限再读。"""
     req = urllib.request.Request(url, headers={"User-Agent": _GEO_UA})
     with urllib.request.urlopen(req, timeout=CONNECT_TIMEOUT) as r:
         if r.status != 200:
@@ -17015,10 +17037,22 @@ def _fetch(url, timeout_total=READ_TIMEOUT):
                                          r.headers, None)
         deadline = time.time() + timeout_total
         chunks = []
+        read1 = getattr(r, "read1", None)
+        if not callable(read1):
+            read1 = getattr(getattr(r, "fp", None), "read1", None)
         while True:
-            if time.time() > deadline:
+            remaining = deadline - time.time()
+            if remaining <= 0:
                 raise TimeoutError("read timeout for %s" % url)
-            chunk = r.read(1 << 20)
+            if callable(read1):
+                chunk = read1(1 << 20)
+            else:
+                try:
+                    _raw = getattr(getattr(r, "fp", None), "raw", None)
+                    _raw._sock.settimeout(remaining)
+                except Exception:
+                    pass
+                chunk = r.read(1 << 20)
             if not chunk:
                 break
             chunks.append(chunk)
@@ -17026,10 +17060,12 @@ def _fetch(url, timeout_total=READ_TIMEOUT):
 
 
 def _try_dbip(fetcher=_fetch):
-    """主源：DB-IP Lite 当月 -> 上月。返回 (v4c, v6c, v4a, v6a, source)。"""
+    """主源：DB-IP Lite 当月 -> 上月。返回 (v4c, v6c, v4a, v6a, source)。
+    两次尝试共用同一 gmtime 基准，跨午夜不重复请求同一个月（G62-Lx）。"""
     last_err = None
+    _base = time.gmtime()
     for off in (0, 1):
-        ym = _ym(off)
+        ym = _ym(off, _base)
         try:
             raw_c = fetcher(DBIP_COUNTRY_URL.format(ym=ym))
             raw_a = fetcher(DBIP_ASN_URL.format(ym=ym))
@@ -17045,14 +17081,39 @@ def _try_dbip(fetcher=_fetch):
 
 def _try_rir(fetcher=_fetch):
     """备用源：五份 RIR delegated 文件（并发拉取，任一文件失败则整轮
-    备用源失败，与原型 fail-fast 语义一致）。返回 (v4c, v6c, [], [], source)。"""
+    备用源失败，与原型 fail-fast 语义一致）。返回 (v4c, v6c, [], [], source)。
+    daemon 线程 + 失败事件：首个失败即抛错、不等其余任务，CLI 退出时亦
+    不被未完成拉取拖住（G62-01）。"""
     # 04-04：5 文件并发拉取（顺序拉取约 44 秒，并发约 15 秒；同款超时）。
     _results = {}
-    with ThreadPoolExecutor(max_workers=5) as _ex:
-        _futs = {_ex.submit(fetcher, url): name
-                 for name, url in RIR_URLS.items()}
-        for _fut in as_completed(_futs):
-            _results[_futs[_fut]] = _fut.result().decode("latin-1")
+    _err = []
+    _fail = threading.Event()
+    _lock = threading.Lock()
+
+    def _one(name, url):
+        try:
+            data = fetcher(url).decode("latin-1")
+        except Exception as e:  # noqa: BLE001 -- 记下首个失败即 fail-fast
+            with _lock:
+                if not _err:
+                    _err.append(e)
+            _fail.set()
+            return
+        with _lock:
+            _results[name] = data
+
+    _threads = [threading.Thread(target=_one, args=(name, url), daemon=True,
+                                 name="acheck-rir-%s" % name)
+                for name, url in RIR_URLS.items()]
+    for _t in _threads:
+        _t.start()
+    while True:
+        if _fail.is_set():
+            raise RuntimeError("RIR fetch failed: %r" % (_err[0],))
+        with _lock:
+            if len(_results) == len(RIR_URLS):
+                break
+        _fail.wait(0.05)
     v4, v6, asn = [], [], []
     for name in RIR_URLS:
         a, b, c = parse_rir(_results[name])
