@@ -3832,6 +3832,9 @@ class ProxyCheck(Provider):
                 if isinstance(d.get("detections"), dict) else {}
             net = d.get("network") if isinstance(d.get("network"), dict) else {}
             loc = d.get("location") if isinstance(d.get("location"), dict) else {}
+            if not det and not net and not loc:
+                # 三者皆空：无有效字段可保，沿用旧口径 ok=False（v3 test_missing_detections）。
+                return {"ok": False, "err": "missing detections"}
 
             def _yn3(v):
                 # F09 三态解析（v3 布尔值版）: True->True、False->False,
