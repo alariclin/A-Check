@@ -17132,7 +17132,9 @@ def _try_rir(fetcher=_fetch):
 def data_dir():
     """数据文件目录：XDG_CACHE_HOME > ~/.cache/acheck/geo；均不可写时用
     脚本同目录（若可写）否则 tempfile。绝不抛错（返 None 表示无处可放，
-    此时离线功能静默关闭）。"""
+    此时离线功能静默关闭）。
+    两遍扫描（G62-08）：第一遍只看可读缓存——有效缓存所在只读目录可
+    用于查询；第二遍写探测，选更新写入目录。"""
     cands = []
     xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
@@ -17145,7 +17147,17 @@ def data_dir():
     except Exception:
         pass
     import tempfile
-    cands.append(os.path.join(tempfile.gettempdir(), ".acheck-geo"))
+    try:
+        cands.append(os.path.join(tempfile.gettempdir(), ".acheck-geo"))
+    except Exception:
+        pass  # 无可用临时目录：跳过该候选，绝不抛错（G62-13）
+    for d in cands:
+        try:
+            p = os.path.join(d, "geo-v1.bin.gz")
+            if os.path.isfile(p) and os.access(p, os.R_OK):
+                return d
+        except Exception:
+            continue
     for d in cands:
         try:
             os.makedirs(d, exist_ok=True)
@@ -17160,15 +17172,27 @@ def data_dir():
 
 
 def _atomic_write_gz(path, data_bytes):
-    tmp = path + ".tmp.%d" % os.getpid()
-    with gzip.open(tmp, "wb", compresslevel=6) as f:
-        f.write(data_bytes)
-    os.replace(tmp, path)
+    # G62-06：同进程并发写同一目标也不共用临时文件——临时名含 pid +
+    # 线程 ident + 随机串；写失败时尽力清掉临时文件。
+    tmp = "%s.tmp.%d.%d.%s" % (path, os.getpid(), threading.get_ident(),
+                               uuid.uuid4().hex[:12])
+    try:
+        with gzip.open(tmp, "wb", compresslevel=6) as f:
+            f.write(data_bytes)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def update_geo_file(data_path, fetcher=_fetch):
     """拉取并重建数据文件。成功返 (True, source)；任何失败返 (False, 原因)，
-    绝不抛错、绝不 touches 旧文件。"""
+    绝不抛错、绝不 touches 旧文件。
+    新库 ASN 段为空且旧文件可解析且有 ASN 时，把旧 ASN 段并入新库再写盘
+    （G62-07：一次 DB-IP 暂故障不让已有 ASN 兜底消失七天）。"""
     try:
         try:
             v4c, v6c, v4a, v6a, source = _try_dbip(fetcher)
@@ -17177,6 +17201,14 @@ def update_geo_file(data_path, fetcher=_fetch):
                 v4c, v6c, v4a, v6a, source = _try_rir(fetcher)
             except Exception as e_rir:
                 return False, "dbip: %r; rir: %r" % (e_dbip, e_rir)
+        if not v4a and not v6a:
+            try:
+                _old = GeoDB(data_path)
+                if _old.v4a[0] or _old.v6a[0]:
+                    v4a = list(zip(_old.v4a[0], _old.v4a[1], _old.v4a[2]))
+                    v6a = list(zip(_old.v6a[0], _old.v6a[1], _old.v6a[2]))
+            except Exception:
+                pass  # 旧文件缺失/损坏/无 ASN：按新库原样写盘
         blob = build_geo_bytes(v4c, v6c, v4a, v6a, source)
         _atomic_write_gz(data_path, blob)
         return True, source
