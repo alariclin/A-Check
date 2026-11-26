@@ -3433,7 +3433,10 @@ def _loc_region(text, ctx=None):
         if _home is not None and ctx is not None:
             _codes = _geo_ctx_countries(ctx, bare_code=True)
             if len(_codes) == 1 and next(iter(_codes)) != _home:
-                return _loc_country_name(t)
+                # G62-L3：交给国家翻译器的是已归一化的 en（国家名
+                # "Georgia"），不是原州名 t（已本地化的州译文不是
+                # GE 的国家名别名，传 t 会纠正失败）。
+                return _loc_country_name(en)
         return _REGION_L10N.get(LANG, {}).get(en, text)
     return text
 
@@ -3499,9 +3502,15 @@ def _geo_cache_country_ok(stored_ctx, code):
 def _city_ctx_kwargs(region, country):
     """城市名上下文参数（B-06a-3b/G2）：有州/省时给 ctx（州+国家），
     无州/省时只给 country——country-only ctx 会把州级缓存条目误否
-    （_geo_ctx_ok 要求缓存上下文词集为当前 ctx 词集的子集）。"""
+    （_geo_ctx_ok 要求缓存上下文词集为当前 ctx 词集的子集）。
+    G62-09：有州/省时亦同时给 country=（结构化国家字段）——静态表
+    守卫须走 country=（bare_code=True）才能认出 "Ontario, CA" 里的
+    CA；只给自由文本 ctx 时裸码不可信（GP1），守卫会丢国家信息。
+    缓存分支的 country= 过滤用 _geo_cache_country_ok，只剔除上下文
+    明确指名另一国的候选，不误伤州级条目。"""
     if region and str(region).strip():
-        return {"ctx": _join_nonempty(region, country, sep=", ")}
+        return {"ctx": _join_nonempty(region, country, sep=", "),
+                "country": country}
     return {"country": country}
 
 
@@ -3791,7 +3800,7 @@ class IPApi(Provider):
 class ProxyCheck(Provider):
     """proxycheck.io v3（04-07 迁移，v2 保留至 2035 但已切默认版本）。
     v3 稳定版自 2026-06-24（默认版本），v2（Legacy v2 API）官方承诺支持至 2035。
-    v3 响应为嵌套结构（detections / network / location），不再按 IP 键分片。
+    v3 响应仍按 IP 键分片（与 v2 同款）；分片内改为嵌套结构（detections / network / location）。
     risk 映射（候选 b，2026-11-26 live 配对裁决）：仅有阳性检出时采信
     detections.risk，无检出置 0——v3 risk 重权近期攻击，干净 IP
     （如 8.8.8.8）v3 risk 可达 100，1:1 移植会凭空 +50 欺诈分。
@@ -3812,10 +3821,14 @@ class ProxyCheck(Provider):
             # v3 仍按 IP 键分片（与 v2 同款）；分片内再嵌套解析。
             d = root.get(str(ip))
             if not isinstance(d, dict) or not d:
-                return {"ok": False, "err": "empty ip object"}
-            det = d.get("detections")
-            if not isinstance(det, dict) or not det:
-                return {"ok": False, "err": "missing detections"}
+                # G62-L4：无 IP 分片的 warning 须保留服务端 message
+                # 作诊断（如限流原因），不得一律报 "empty ip object"。
+                return {"ok": False,
+                        "err": root.get("message") or "empty ip object"}
+            # G62-10：detections 缺失/为空时弃权，不丢 network/location
+            # 的有效独立字段（旧解析器保留这种部分结果）。
+            det = d.get("detections") \
+                if isinstance(d.get("detections"), dict) else {}
             net = d.get("network") if isinstance(d.get("network"), dict) else {}
             loc = d.get("location") if isinstance(d.get("location"), dict) else {}
 
@@ -11581,6 +11594,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         self._user, self._pwd = username, password
         self._hs_box = []  # 握手中的 socket 登记：窗口清理可关断它
         self._hs_closed = False  # 8-2：握手期内被 close 的标记
+        self._hs_epoch = 0  # G62-14：握手代次；close() 递增，connect() 入口捕获
         self._hs_resp_sock = None  # B-13-1：已交 response 的活 socket，
         # getresponse() 在 will_close 时调 self.close() 把连接交给
         # response（stdlib 设计：只关 socket 对象、fd 由 response 的
@@ -11593,6 +11607,10 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 有意义；复用同一连接对象时不清它会把新握手好的 TLS socket
         # 当场误关（下行复核）。握手期内新调 close() 置起的标记
         # 不受复位影响（复位只发生在 connect() 开头）。
+        # G62-14：先捕获入口代次，再复位。close() 到达时 flag 与 epoch
+        # 同步变化；复位只清 flag、不动 epoch，握手后复核以 epoch 变化
+        # 仍能认出复位行之后到达的取消（见下行复核）。
+        _epoch = self._hs_epoch
         self._hs_closed = False
         self._hs_resp_sock = None
         raw, _ = socks5_connect(self._ph, self._pp, self.host, self.port,
@@ -11635,12 +11653,15 @@ class _SocksHTTPS(http.client.HTTPSConnection):
                 pass
             self.sock = None
             raise
-        if self._hs_closed and self.sock is _tls:
+        if (self._hs_closed or self._hs_epoch != _epoch) \
+                and self.sock is _tls:
             # F40/8-2：握手期间已被 close：关掉新得的 TLS socket，
             # 不把活 socket 写回已关闭的连接对象。worker 侧的窗口
             # 复查兜底（GET 前复查）保持在位，不动。R6-1 写回后复核
             # 亦在此：若 close 已清掉 sock，则 self.sock is not _tls，
             # 自然不再动作。
+            # G62-14：epoch 变化亦触发——复位行之后到达的 close() 虽
+            # 然 flag 可能已被复位清掉，但 epoch 已递增，取消不丢失。
             try:
                 _tls.close()
             except Exception:
@@ -11662,6 +11683,7 @@ class _SocksHTTPS(http.client.HTTPSConnection):
         # 其余 box 内 socket（已脱离的 raw、废弃握手 socket）照旧关断。
         # socket.close() 本身按 makefile 引用计数，不会提前关 fd。
         self._hs_closed = True
+        self._hs_epoch += 1  # G62-14：与 flag 同步递增，供 connect() 后复核比对
         for _s in self._hs_box:
             if _s is self._hs_resp_sock:
                 try:

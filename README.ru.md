@@ -166,7 +166,7 @@ python3 acheck.py [IP] [опции]
 
 - **Геолокация и принадлежность**: ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, обратный PTR/FCrDNS
 - **Репутация и мошенничество**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
-- **Офлайн-георезерв**: IP Geolocation by DB-IP (https://db-ip.com) — используется только при отказе всех онлайн-источников геолокации.
+- **Офлайн-георезерв**: IP Geolocation by DB-IP (https://db-ip.com) — используется только для дополнения отсутствующих в онлайн-результатах кода страны или ASN; уже полученные значения не перезаписываются.
 - **Угрозы и списки**: Spamhaus DROP, Feodo Tracker, Emerging Threats, список выходных узлов Tor, IPsum, X4BNet VPN ranges
 
 Каждый фактор и оценка — результат голосования нескольких источников; ложное срабатывание одного источника не решает исход в одиночку.

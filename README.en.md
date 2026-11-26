@@ -166,7 +166,7 @@ Multi-source aggregation with per-source attribution, mainly:
 
 - **Geolocation & ownership**: ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, PTR/FCrDNS reverse lookup
 - **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
-- **Offline geo fallback**: IP Geolocation by DB-IP (https://db-ip.com) — used only when all online geo sources fail.
+- **Offline geo fallback**: IP Geolocation by DB-IP (https://db-ip.com) — used only to fill in the country code or ASN missing from online results; never overwrites values already provided.
 - **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list, IPsum, X4BNet VPN ranges
 
 Every factor and score is a multi-source vote; a single source's false positive never decides the verdict alone.

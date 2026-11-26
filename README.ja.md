@@ -166,7 +166,7 @@ python3 acheck.py [IP] [オプション]
 
 - **地理と帰属**：ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 逆引き
 - **レピュテーションと詐欺**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
-- **オフライン地理フォールバック**：IP Geolocation by DB-IP (https://db-ip.com) — オンライン地理ソースがすべて失敗した場合にのみ使用。
+- **オフライン地理フォールバック**：IP Geolocation by DB-IP (https://db-ip.com) — オンライン結果に欠けている国コードまたは ASN の補完にのみ使用し、既存の値を上書きしません。
 - **脅威とリスト**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口ノードリスト、IPsum、X4BNet VPN ranges
 
 すべての因子とスコアは複数ソースの投票で決まります。単一ソースの誤検知だけで結論は決まりません。

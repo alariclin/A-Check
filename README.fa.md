@@ -166,7 +166,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 - **جغرافیا و مالکیت**: ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، iplocate.io، ipquery.io، ipapi.co، 2ip.io، HackerTarget، country.is، RDAP، جستجوی معکوس PTR/FCrDNS
 - **اعتبار و کلاهبرداری**: Scamalytics، proxycheck.io، Shodan InternetDB، GreyNoise، SANS ISC، StopForumSpam، urlscan.io، AlienVault OTX، blocklist.de
-- **پشتیبان جغرافیایی آفلاین**: IP Geolocation by DB-IP (https://db-ip.com) — فقط زمانی استفاده می‌شود که همه منابع آنلاین جغرافیا از کار بیفتند.
+- **پشتیبان جغرافیایی آفلاین**: IP Geolocation by DB-IP (https://db-ip.com) — فقط برای تکمیل کد کشور یا ASN که در نتایج آنلاین نیست استفاده می‌شود؛ مقادیر موجود بازنویسی نمی‌شوند.
 - **تهدیدها و فهرست‌ها**: Spamhaus DROP، Feodo Tracker، Emerging Threats، فهرست گره‌های خروجی Tor، IPsum، X4BNet VPN ranges
 
 هر عامل و امتیاز حاصل رأی چند منبع است؛ مثبت کاذب یک منبع به‌تنهایی نتیجه را تعیین نمی‌کند.

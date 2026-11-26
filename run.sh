@@ -55,13 +55,19 @@ fi
 # $(dirname "$0") 不解链接，会指向链接所在目录而非实文件目录。
 # 沿链接链逐级解开（readlink 循环，macOS BSD readlink 亦可用，不用
 # readlink -f），相对目标按链接所在目录补齐，再取实文件目录。
+# G62-L7：命令替换 $(...) 会删掉输出末尾的全部换行，链接目标名或
+# 目录名以换行结尾时会被截断；三处取值均用“哨兵＋剥一层”保住末尾
+# 换行：先 append 'x' 使 $() 无尾换行可删（值末尾的换行全保留），
+# 再剥掉 'x'，最后剥掉恰好一个换行——那是命令自身输出的终止符，
+# 不是名字的一部分（名字末尾若本有换行，剥一层后仍在）。
 _SRC="$0"
 while [ -L "$_SRC" ]; do
-    _DIR="$(dirname "$_SRC")"
-    _TGT="$(readlink "$_SRC")"
+    _DIR="$(dirname "$_SRC"; printf 'x')"; _DIR="${_DIR%x}"; _DIR="${_DIR%$'\n'}"
+    _TGT="$(readlink "$_SRC"; printf 'x')"; _TGT="${_TGT%x}"; _TGT="${_TGT%$'\n'}"
     case "$_TGT" in
         /*) _SRC="$_TGT" ;;
         *)  _SRC="$_DIR/$_TGT" ;;
     esac
 done
-exec "$PY" "$(dirname "$_SRC")/acheck.py" "$@"
+_FINAL_DIR="$(dirname "$_SRC"; printf 'x')"; _FINAL_DIR="${_FINAL_DIR%x}"; _FINAL_DIR="${_FINAL_DIR%$'\n'}"
+exec "$PY" "$_FINAL_DIR/acheck.py" "$@"

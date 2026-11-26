@@ -166,7 +166,7 @@ python3 acheck.py [IP] [選項]
 
 - **地理與歸屬**：ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 反查
 - **信譽與欺詐**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
-- **離線地理兜底**：IP Geolocation by DB-IP (https://db-ip.com)，僅線上地理來源全部失效時使用。
+- **離線地理兜底**：IP Geolocation by DB-IP (https://db-ip.com)，僅用於補全線上結果缺失的國家代碼或 ASN，不覆蓋已有值。
 - **威脅與名單**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口節點名單、IPsum、X4BNet VPN ranges
 
 每個因子與分數都由多源投票得出；單一來源的誤報不會直接決定結論。
