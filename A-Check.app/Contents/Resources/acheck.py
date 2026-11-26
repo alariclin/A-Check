@@ -2253,20 +2253,6 @@ def _has_ipv4_egress():
         return False
 
 
-def _has_ipv6_egress():
-    """有无 IPv6 出口：与 _has_ipv4_egress 同款本地路由查询，不发包；
-    无 IPv6 路由时抛 OSError（纯 IPv4 主机）。"""
-    try:
-        _s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        try:
-            _s.connect(("2606:4700:4700::1111", 53))
-        finally:
-            _s.close()
-        return True
-    except OSError:
-        return False
-
-
 def _has_route_to(addr, family):
     """到目标地址本身有无本地路由：UDP connect 只做路由查询，不发包。
     S2-N1：单目标 egress 检查（如只测 Cloudflare）不得否决其他全局
