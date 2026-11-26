@@ -3053,6 +3053,13 @@ _CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "ا
 # （与 B-06a-2 单候选上下文不符时留原文的口径一致）。
 _CITY_L10N_HOME = {"Alexandria": "EG"}
 
+# C-01：静态州/省表译文的归属国家（同款，仅收录译文随国家而异的歧义名）。
+# Georgia 的静态译文（zh 佐治亚州 / zh-TW 喬治亞州 / ja ジョージア州
+# / ru Джорджия / fa جورجیا）取自美国佐治亚州；国家格鲁吉亚的 region
+# 字段若亦为 "Georgia"，上下文指明他国时不得取州译文，取国家译名
+# （_loc_country_name("Georgia") -> 格鲁吉亚）。
+_REGION_L10N_HOME = {"Georgia": "US"}
+
 
 _ANY_REGION2EN = _any2en(_REGION_L10N)
 _ANY_CITY2EN = _any2en(_CITY_L10N)
@@ -3388,7 +3395,10 @@ def _extra_sub(disp, kind, ctx_text=None):
 def _loc_region(text, ctx=None):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。
     ctx：调用方上下文（国家等，逗号分隔串）；给出时单候选亦须过上下文
-    检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。"""
+    检查（B-06a-2），不通过则退静态表/原文；不给时沿用旧行为。
+    C-01：静态表回落另受 _REGION_L10N_HOME 守卫——归属国与 ctx 指明
+    的唯一国家不符时，region 实为国家名，取国家译名（如 Georgia ->
+    格鲁吉亚），不得取美国州译文；ctx 未指明国家/多国歧义时沿用旧行为。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
     if LANG == "en" or not text:
@@ -3413,6 +3423,13 @@ def _loc_region(text, ctx=None):
         # 多候选：不盲取首项（插入序受线程完成序影响），退静态表/原文
     en = _ANY_REGION2EN.get(t)
     if en:
+        # C-01：归属表收录的歧义州名，ctx（调用方国家字段）指明唯一
+        # 他国时取国家译名，不取州译文。
+        _home = _REGION_L10N_HOME.get(en)
+        if _home is not None and ctx is not None:
+            _codes = _geo_ctx_countries(ctx, bare_code=True)
+            if len(_codes) == 1 and next(iter(_codes)) != _home:
+                return _loc_country_name(t)
         return _REGION_L10N.get(LANG, {}).get(en, text)
     return text
 
@@ -3422,25 +3439,27 @@ _CITY_CTX_COUNTRY_ALIASES = {"usa": "US", "us": "US", "u.s.": "US",
                              "great britain": "GB"}
 
 
-def _city_static_ctx_ok(en, ctx):
-    """静态城市表上下文检查（B-06a-3）：歧义城市的静态译文只属于其归属国；
+def _city_static_ctx_ok(en, ctx, bare_code=False):
+    """静态城市表上下文检查（B-06a-3；C-03 与 GP1 对齐）：歧义城市的静态译文只属于其归属国；
     ctx 指明他国时返 False（调用方跳过静态表、留原文）；ctx 未指明国家、
-    或城市无归属记录时返 True（沿用旧行为）。国家名走 _CC_EN（与
-    _loc_country_name 同款），另补 'USA'/'US' 类口语别名。"""
+    或城市无归属记录时返 True（沿用旧行为）。国家码集齐全部可解析分段
+    再判（顺序无关）：无国家信息返 True；唯一一国时与归属国比对；
+    多国时归属国在场返 True、不在场返 False。bare_code：仅调用方
+    country= 这种明确国家字段可用（True）——裸码本身就是国家码；
+    自由文本 ctx 禁用（False，默认），否则州缩写 VA 会被误读为梵蒂冈
+    （与 _geo_ctx_countries 的 GP1 规则一致）。"""
     home = _CITY_L10N_HOME.get(en)
     if not home or ctx is None:
         return True
-    for tok in str(ctx).split(","):
-        t = tok.strip()
-        if not t:
-            continue
-        low = t.lower()
-        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
-        if code is None and len(t) == 2 and t.isalpha():
-            code = t.upper()
-        if code:
-            return code == home
-    return True
+    codes = _geo_ctx_countries(ctx, bare_code=bare_code)
+    if not codes:
+        return True
+    if len(codes) == 1:
+        return next(iter(codes)) == home
+    # 多国：归属国在场时沿用旧行为（取译文）；归属国不在场时 ctx 指明的
+    # 全是他国，不取归属国译文（C-03 夹具 "Georgia, United States" 案：
+    # Georgia 系美国州名误读为国家 GE，但 US 在场即足以否决 EG 译文）。
+    return home in codes
 
 
 def _geo_ctx_countries(stored_ctx, bare_code=False):
@@ -3540,7 +3559,8 @@ def _loc_city(text, ctx=None, country=None):
             # B-06a-3：歧义城市的静态译文有归属国；ctx 指明他国时跳过
             # 静态表、留原文（_ctx_rejected 路径之上游已拒时亦到此，
             # 同款处理）。无 ctx 或 ctx 未指明国家时沿用旧行为。
-            if not _city_static_ctx_ok(en, country if country is not None else ctx):
+            if not _city_static_ctx_ok(en, country if country is not None else ctx,
+                                       bare_code=(country is not None)):
                 continue
             return _CITY_L10N.get(LANG, {}).get(en, text)
     return text
@@ -6207,7 +6227,9 @@ def _print_basic_block(s, prof):
         # B-06a-3：画像主行补 ctx（州 + 国家），歧义城市静态译文须过
         # 国家上下文检查（如 Alexandria, VA 不得取埃及译文）。
         # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
-        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''))} {_loc_city(prof.get('city', ''), **_city_ctx_kwargs(prof.get('region'), prof.get('country')))}".strip()
+        # C-01：region 行亦补 ctx（国家），国家格鲁吉亚的 region 不得
+        # 取美国佐治亚州译文。
+        _loc_str = f"{_loc_country_name(prof.get('country', ''))} {_loc_region(prof.get('region', ''), ctx=prof.get('country', ''))} {_loc_city(prof.get('city', ''), **_city_ctx_kwargs(prof.get('region'), prof.get('country')))}".strip()
     _has_geo = bool(_loc_str or locs or _cg.get("ok") or prof.get("timezone")
                     or prof.get("latitude") is not None)
     if _has_geo:
@@ -6234,7 +6256,8 @@ def _print_basic_block(s, prof):
                 # 于本字段，但消歧上下文仍取整串词集（CONF-FIXES-2.1 跨字段
                 # 上下文保留），Victoria 类城市名不再被 region 表误译。
                 _f_co_t = _loc_country_name(_f_co)
-                _f_mid_t = _loc_region(_f_mid)
+                # C-01：分字段 region 行补 ctx（国家），同主行。
+                _f_mid_t = _loc_region(_f_mid, ctx=_f_co)
                 # B-06a-3：分字段城市名补 ctx（行政区 + 国家），同上。
                 # GPT-G2：行政区为空时走 country=（见 _city_ctx_kwargs）。
                 _f_ci_t = _loc_city(_f_ci, **_city_ctx_kwargs(_f_mid, _f_co))
@@ -11747,6 +11770,13 @@ def _loc_hub_name(name):
     if not sep:
         return name
     loc = _CITY_L10N.get(LANG, {}).get(city)
+    if loc:
+        # C-02（加固，今日真实枢纽键无歧义城市、不可达）：归属表收录的
+        # 歧义城市（如 Alexandria/EG）须过键首国家码检查；他国枢纽不
+        # 得取归属国译文，留原文。无归属记录的城市沿用旧行为。
+        _en = _ANY_CITY2EN.get(city)
+        if _en and not _city_static_ctx_ok(_en, code, bare_code=True):
+            return name
     return f"{code} {loc}" if loc else name
 
 
