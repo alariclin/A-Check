@@ -77,7 +77,7 @@ A-Check 是一个单文件 Python 脚本（`acheck.py`，仅标准库、零外�
 | 5 | 切换语言 / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | 检查更新 | 对比 GitHub 最新 Release 提示新版本 |
 | 7 | 代理诊断 (SOCKS5) | 六步：握手 → 代理出口 IP → 出口信誉 → DNS 泄漏 → TCP 延迟 → 经代理吞吐（5 个地区枢纽取最快） |
-| 8 | DNS 出口一致性检测 | 对比系统解析器与直连解析结果，判断 DNS 是否走漏 |
+| 8 | DNS 出口一致性检测 | 对比系统解析器与直连解析结果，判断 DNS 是否走漏。WebRTC/DNS 泄漏检测请用浏览器工具复核。 |
 | 9 | TCP 延迟测试 | 对任意 host:port 测延迟 / 抖动 / 丢包（min / avg / max） |
 | 10 | 评分规则说明 | 评分维度、扣分项与等级划分的完整说明 |
 | 11 | 批量节点测速优选 | 粘贴多个 host:port 或 SOCKS5 代理，并发测延迟与可用性，排名输出、最优标绿，并对最优代理实测下载吞吐 |
@@ -166,6 +166,7 @@ python3 acheck.py [IP] [选项]
 
 - **地理与归属**：ipwho.is、ipwhois.app、ipinfo.io、FreeIPAPI、ipapi.is、ip.guide、GeoJS、DB-IP、RIPEstat、iplocate.io、ipquery.io、ipapi.co、2ip.io、HackerTarget、country.is、RDAP、PTR/FCrDNS 反查
 - **信誉与欺诈**：Scamalytics、proxycheck.io、Shodan InternetDB、GreyNoise、SANS ISC、StopForumSpam、urlscan.io、AlienVault OTX、blocklist.de
+- **离线地理兜底**：IP Geolocation by DB-IP (https://db-ip.com)，仅在线地理源全部失效时使用。
 - **威胁与名单**：Spamhaus DROP、Feodo Tracker、Emerging Threats、Tor 出口节点名单、IPsum、X4BNet VPN ranges
 
 每个因子与分数都由多源投票得出；单一来源的误报不会直接决定结论。

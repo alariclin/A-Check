@@ -77,7 +77,7 @@ Self-check mode numbers its sections too. IPv4 runs **[1]–[7]**: measured stre
 | 5 | Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | Check for updates | Compares against the latest GitHub Release |
 | 7 | Proxy diagnostics (SOCKS5) | Six steps: handshake → proxy egress IP → egress reputation → DNS leak → TCP latency → throughput via the proxy (fastest of 5 regional hubs) |
-| 8 | DNS egress consistency check | Compares system-resolver vs direct resolution to detect DNS leaking |
+| 8 | DNS egress consistency check | Compares system-resolver vs direct resolution to detect DNS leaking. For WebRTC/DNS leak checks, please verify with a browser tool. |
 | 9 | TCP latency test | Latency / jitter / packet loss to any host:port (min / avg / max) |
 | 10 | Scoring rules | Full explanation of score dimensions, deductions and levels |
 | 11 | Batch node speed ranking | Paste multiple host:port entries or SOCKS5 proxies; concurrent latency & availability checks, ranked output with the best node in green, plus a measured download throughput for the best proxy |
@@ -166,6 +166,7 @@ Multi-source aggregation with per-source attribution, mainly:
 
 - **Geolocation & ownership**: ipwho.is, ipwhois.app, ipinfo.io, FreeIPAPI, ipapi.is, ip.guide, GeoJS, DB-IP, RIPEstat, iplocate.io, ipquery.io, ipapi.co, 2ip.io, HackerTarget, country.is, RDAP, PTR/FCrDNS reverse lookup
 - **Reputation & fraud**: Scamalytics, proxycheck.io, Shodan InternetDB, GreyNoise, SANS ISC, StopForumSpam, urlscan.io, AlienVault OTX, blocklist.de
+- **Offline geo fallback**: IP Geolocation by DB-IP (https://db-ip.com) — used only when all online geo sources fail.
 - **Threats & lists**: Spamhaus DROP, Feodo Tracker, Emerging Threats, Tor exit node list, IPsum, X4BNet VPN ranges
 
 Every factor and score is a multi-source vote; a single source's false positive never decides the verdict alone.

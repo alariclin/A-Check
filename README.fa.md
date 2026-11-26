@@ -77,7 +77,7 @@ A-Check یک اسکریپت تک‌فایل پایتون است (`acheck.py`، �
 | 5 | تغییر زبان / Language | 简体中文 / 繁體中文 / English / 日本語 / Русский / فارسی |
 | 6 | بررسی به‌روزرسانی | مقایسه با تازه‌ترین Release در GitHub |
 | 7 | عیب‌یابی پروکسی (SOCKS5) | شش گام: دست‌دهی ← IP خروجی پروکسی ← اعتبار خروجی ← نشت DNS ← تأخیر TCP ← توان عملیاتی از راه پروکسی (سریع‌ترینِ ۵ هاب منطقه‌ای) |
-| 8 | بررسی سازگاری خروجی DNS | مقایسه حل‌کننده سیستمی با حل مستقیم برای تشخیص نشت DNS |
+| 8 | بررسی سازگاری خروجی DNS | مقایسه حل‌کننده سیستمی با حل مستقیم برای تشخیص نشت DNS. برای بررسی نشت WebRTC/DNS، لطفاً با ابزار مرورگر بازبینی کنید. |
 | 9 | تست تأخیر TCP | تأخیر / لرزش / از دست رفتن بسته تا هر host:port ‏(min / avg / max) |
 | 10 | توضیح قواعد امتیازدهی | شرح کامل ابعاد امتیاز، کسرها و سطوح |
 | 11 | تست سرعت دسته‌ای گره‌ها | چند host:port یا پروکسی SOCKS5 بچسبانید؛ سنجش هم‌زمان تأخیر و دسترس‌پذیری، خروجی رتبه‌بندی‌شده با بهترین گره به رنگ سبز، به‌همراه سرعت دانلود واقعی بهترین پروکسی |
@@ -166,6 +166,7 @@ python3 acheck.py [IP] [گزینه‌ها]
 
 - **جغرافیا و مالکیت**: ipwho.is، ipwhois.app، ipinfo.io، FreeIPAPI، ipapi.is، ip.guide، GeoJS، DB-IP، RIPEstat، iplocate.io، ipquery.io، ipapi.co، 2ip.io، HackerTarget، country.is، RDAP، جستجوی معکوس PTR/FCrDNS
 - **اعتبار و کلاهبرداری**: Scamalytics، proxycheck.io، Shodan InternetDB، GreyNoise، SANS ISC، StopForumSpam، urlscan.io، AlienVault OTX، blocklist.de
+- **پشتیبان جغرافیایی آفلاین**: IP Geolocation by DB-IP (https://db-ip.com) — فقط زمانی استفاده می‌شود که همه منابع آنلاین جغرافیا از کار بیفتند.
 - **تهدیدها و فهرست‌ها**: Spamhaus DROP، Feodo Tracker، Emerging Threats، فهرست گره‌های خروجی Tor، IPsum، X4BNet VPN ranges
 
 هر عامل و امتیاز حاصل رأی چند منبع است؛ مثبت کاذب یک منبع به‌تنهایی نتیجه را تعیین نمی‌کند.
