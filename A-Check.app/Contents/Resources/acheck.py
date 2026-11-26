@@ -8586,6 +8586,15 @@ def test_gemini(local_ip=None):
     return T("blocked"), "", None
 
 
+def _url_path_has_app_unavailable(url):
+    """最终 URL 是否落在 Claude 锁区页（A62-A15 同型）：只看路径，不看查询串/片段。
+    `?ref=app-unavailable` 这类追踪参数不是锁区页，不得触发 blocked 分支。"""
+    try:
+        return "app-unavailable" in urllib.parse.urlparse(url or "").path.lower()
+    except Exception:
+        return False
+
+
 def test_claude(local_ip=None):
     code, body, final_url, _complete, hdrs = _active_get("https://claude.ai/login")
     if code is None:
@@ -8594,12 +8603,13 @@ def test_claude(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    if code == 200 and not _complete and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
+    if code == 200 and not _complete and not _url_path_has_app_unavailable(final_url) and not _claude_unavailable(body):
         return T("unknown"), "", None
-    if code == 200 and "app-unavailable" not in final_url.lower() and not _claude_unavailable(body):
+    if code == 200 and not _url_path_has_app_unavailable(final_url) and not _claude_unavailable(body):
         return T("unlocked"), "", get_unlock_type("claude.ai", local_ip)
     # M-07：3xx 先验命中锁区 URL（app-unavailable）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "app-unavailable" in final_url.lower():
+    # 锁区信号只看路径段（A62-A15 同型：查询串/片段里的 app-unavailable 不算）。
+    if 300 <= code <= 399 and _url_path_has_app_unavailable(final_url):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
