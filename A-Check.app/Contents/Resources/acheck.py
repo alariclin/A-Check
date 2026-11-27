@@ -13447,8 +13447,14 @@ def check_update():
         else:
             with r:
                 try:
-                    tag = json.loads(_read_limited(r, timeout=8).decode(
-                        "utf-8")).get("tag_name", "")
+                    _d = json.loads(_read_limited(r, timeout=8).decode(
+                        "utf-8"))
+                    # r5b-11：顶层非 dict（如 "[]"）时 .get 会抛
+                    # AttributeError、被误归为 unknown；显式校验并抛
+                    # ValueError，走 cause 'response'（响应侧错误）。
+                    if not isinstance(_d, dict):
+                        raise ValueError("update response is not a JSON object")
+                    tag = _d.get("tag_name", "")
                 finally:
                     _resp_shutdown(r)
     except (TimeoutError, socket.timeout):
@@ -13458,14 +13464,20 @@ def check_update():
         cause = "timeout"
     except urllib.error.URLError as e:
         tag = ""
-        reason = getattr(e, "reason", None)
-        if isinstance(reason, (TimeoutError, socket.timeout)):
-            cause = "timeout"
-        elif isinstance(reason, socket.gaierror):
-            cause = "dns"
-        elif isinstance(reason, (ConnectionError, OSError)):
-            cause = "connection"
+        # r5b-11：HTTPError 是 URLError 子类、携状态码——已知响应侧错误，
+        # 不得落入 reason 分支归为 unknown；先判 HTTPError。
+        if isinstance(e, urllib.error.HTTPError):
+            cause = "http_%s" % e.code
+            reason = None
         else:
+            reason = getattr(e, "reason", None)
+        if cause is None and isinstance(reason, (TimeoutError, socket.timeout)):
+            cause = "timeout"
+        elif cause is None and isinstance(reason, socket.gaierror):
+            cause = "dns"
+        elif cause is None and isinstance(reason, (ConnectionError, OSError)):
+            cause = "connection"
+        elif cause is None:
             cause = "unknown"
     except ValueError:
         # 响应体不可解析/超限：属响应侧问题，非请求异常。
@@ -13476,7 +13488,10 @@ def check_update():
         cause = "unknown"
     if not isinstance(tag, str):
         tag = ""
-    latest = tag.lstrip("v")
+    # r5b-12：只剥一个前导 "v"——lstrip("v") 会把 "vv4.14.39" 剥成
+    # "4.14.39" 当作新版本；留一个 "v" 后 _parse_version 失败，走
+    # cause 'response'（响应侧错误）。
+    latest = tag[1:] if tag.startswith("v") else tag
     if latest and _parse_version(latest) is None:
         latest = ""
     if not latest and cause is None:
