@@ -1387,7 +1387,12 @@ def T(key, **kwargs):
         try:
             s = s.format(**kwargs)
         except Exception:
-            pass
+            # fix440a T()：格式失败不再静默吞掉——向 stderr 告警（含键名
+            # 与 format 字样）并返回未格式化模板（有文档的回退，不崩溃、
+            # 不中止整轮检测；抛异常会中止整轮，故不抛）。
+            print(f"[i18n] T({key!r}) format failed, returning template",
+                  file=sys.stderr)
+            return s
     return s
 
 
