@@ -1028,26 +1028,39 @@ jobs:
                                stderr=subprocess.STDOUT, text=True,
                                encoding="utf-8", errors="replace")
           try:
-              out, _ = p.communicate(timeout=20)
-              print(f"PROBE-RESULT: exited rc={p.returncode}")
-              print(out[-2000:])
+              out, _ = p.communicate(timeout=30)
           except subprocess.TimeoutExpired:
               p.kill()
               p.communicate()
-              print("PROBE-RESULT: TIMEOUT (menu blocked, likely waiting on CONIN$)")
-          print("OK: probe complete (informational only)")
+              raise SystemExit("ERROR: menu blocked on CONIN$ instead of EOF-cancel "
+                               "(expected rc 130 + 已取消); console behavior changed")
+          # Runner console input is at EOF: the menu renders (banner + full
+          # menu with live Windows values) and the first input() raises
+          # EOFError -> "已取消" + exit 130 (designed cancel path, see
+          # acheck.py menu loop). Assert that whole chain.
+          assert p.returncode == 130, f"menu rc={p.returncode} want 130; tail={out[-500:]!r}"
+          for want in ("IP 信誉检测", "请求下发执行代号 [0-13]", "已取消",
+                       "0. 退出脚本", "13. 管理命令入口", "系统:",
+                       "Windows", "Python 3.13"):
+              assert want in out, f"menu output lacks {want!r}; tail={out[-800:]!r}"
+          print("OK: menu renders on Windows runner; EOF at first prompt -> 已取消 rc=130")
           PY
 
       - name: run.bat deepening (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          cmd /c run.bat --explain --json > "$RUNNER_TEMP/rb-explain.json" 2>&1
+          # NOTE: do NOT call `cmd /c run.bat ...` from Git Bash -- MSYS2
+          # converts the `/c` itself (same trap as ipconfig R5), cmd starts
+          # interactively and the output file is just its banner, which is
+          # not JSON. Invoke run.bat directly: Git Bash runs .bat files via
+          # cmd itself, and the `--...` args are untouched by conversion.
+          ./run.bat --explain --json > "$RUNNER_TEMP/rb-explain.json" 2>&1
           rc=$?
           test "$rc" -eq 0 || { echo "ERROR: run.bat --explain --json rc=$rc"; cat "$RUNNER_TEMP/rb-explain.json"; exit 1; }
           python -m json.tool "$RUNNER_TEMP/rb-explain.json" > /dev/null || { echo "ERROR: run.bat --explain --json output is not valid JSON"; exit 1; }
           echo "OK: run.bat --explain --json forwards and is valid JSON"
-          cmd /c run.bat --shortcut status > "$RUNNER_TEMP/rb-sc.txt" 2>&1
+          ./run.bat --shortcut status > "$RUNNER_TEMP/rb-sc.txt" 2>&1
           rc=$?
           test "$rc" -eq 2 || { echo "ERROR: run.bat --shortcut status rc=$rc want 2"; cat "$RUNNER_TEMP/rb-sc.txt"; exit 1; }
           grep -q "Windows 不支持" "$RUNNER_TEMP/rb-sc.txt" || { echo "ERROR: run.bat --shortcut status lacks win32 message:"; cat "$RUNNER_TEMP/rb-sc.txt"; exit 1; }
