@@ -6134,6 +6134,8 @@ def _print_basic_block(s, prof):
         org_str = prof.get("org") or ""
         _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
         _isp_disp = isp_str + (f" / {org_str}" if org_str and org_str != isp_str else "")
+        # L9：ISP/org 全量拼接会超 80 列，按显示宽截断（AS 后缀保留）。
+        _isp_disp = _truncate_disp(_isp_disp, max(0, 80 - 2 - _disp_width(T("isp") + ":") - 1 - _disp_width(_as_sfx)))
         print(f"  {_c(C.dim, T('isp') + ':')} {_c(C.bold, _isp_disp)}" + (_c(C.cyan, _as_sfx) if _as_sfx else ""))
     rs = (s.get("ripestat") or {})
     if rs.get("ok"):
@@ -6149,8 +6151,15 @@ def _print_basic_block(s, prof):
     pt = (s.get("ptr") or {})
     if pt.get("ok"):
         if pt.get("ptr"):
-            fcr = "✓" if pt.get("fcrdns") else "✗"
-            _fc = C.green if pt.get("fcrdns") else C.red
+            # r5a-1：fcrdns 未验证（None/缺失）是“未知”，不得画成红色 ✗
+            # （与已验证不匹配完全相同）；仅严格 False 才画红 ✗。
+            _fcr = _strict_bool(pt.get("fcrdns"))
+            if _fcr is True:
+                fcr, _fc = "✓", C.green
+            elif _fcr is False:
+                fcr, _fc = "✗", C.red
+            else:
+                fcr, _fc = "?", C.yellow
             print(f"  {_c(C.dim, 'PTR')} [{_c(_fc, fcr)}]: {_c(C.bold, pt['ptr'])}")
         else:
             print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('ptr_none'))}")
@@ -6296,7 +6305,10 @@ def _print_basic_block(s, prof):
                 return _CC[txt]
             if txt in _CC_EN:
                 return _CC_EN[txt].lower()
-            txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
+            # r5a-9：不得删独立单词 City——"Union City" 与 "Union"
+            # 是两个城市，删后会错误合并为同一位置组；sheng/province/
+            # shi 仍 strip（"Beijing Shi" 与 "Beijing" 是同一城市）。
+            txt = re.sub(r"\b(?:sheng|province|shi)\b", " ", txt)
             return " ".join(txt.split())
 
         # 求同存异: 相同 (国家, 行政区, 城市) 合并为一行, 不同位置逐行对齐列出
@@ -6349,7 +6361,9 @@ def _print_basic_block(s, prof):
     if _has_geo:
         print(f"  {_c(C.bold, _c(C.cyan, T('geo_group')))}")
         if _loc_str:
-            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_str}")
+            # L9：长城市名会撑破 80 列，按显示宽截断。
+            _loc_disp = _truncate_disp(_loc_str, max(0, 80 - 2 - 5 - _disp_width(T("location") + ":") - 1))
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_disp}")
         if prof.get("timezone"):
             print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {_loc_tz(prof['timezone'])}")
         if prof.get("latitude") is not None and prof.get("longitude") is not None:
@@ -6379,7 +6393,10 @@ def _print_basic_block(s, prof):
                 _disp = _join_nonempty(_f_co_t,
                                        _extra_sub(_f_mid_t, 'region', _disp),
                                        _extra_sub(_f_ci_t, 'city', _disp))
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                _names_sfx = (' (' + ', '.join(_names) + ')') if _names else ''
+                # L9：长城市/行政区会撑破 80 列，按显示宽截断（源名单后缀保留）。
+                _disp_t = _truncate_disp(_disp, max(0, 80 - 2 - _disp_width(_gf) - _disp_width(_lbl + ':') - 1 - _disp_width(_names_sfx)))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp_t}{_c(C.dim, _names_sfx)}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -6528,170 +6545,173 @@ def _factor_rows(s, wi_server, v6=False):
 
 def print_report(res, include_streaming_inference=True, sysinfo=None,
                  tail_completeness=True, dns_rec=False, footnote="passive"):
-    _sec_begin()
-    s = res.get("sources") or {}
-    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    scs = res.get("scores") or {}
-    ip = res.get("ip", "?")
+    try:
+        _sec_begin()
+        s = res.get("sources") or {}
+        prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
+        scs = res.get("scores") or {}
+        ip = res.get("ip", "?")
 
-    print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
+        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
-    # [1] 基础信息 (支持多源融合兜底)
-    _print_basic_block(s, prof)
-    wi = (s.get("ipwhois") or {})
+        # [1] 基础信息 (支持多源融合兜底)
+        _print_basic_block(s, prof)
+        wi = (s.get("ipwhois") or {})
 
-    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
+        # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
+        if sysinfo:
+            print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
-    _section(T("sec_type"), sub=True)
-    type_sources = []
-    pc = (s.get("proxycheck") or {})
-    if pc.get("ok") and pc.get("type"):
-        type_sources.append(("proxycheck", pc["type"]))
-    if wi.get("ok"):
-        if wi.get("hosting"):
-            type_sources.append(("ipwho.is", T("dc")))
-        else:
-            dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-            if dc:
-                type_sources.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
+        # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
+        _section(T("sec_type"), sub=True)
+        type_sources = []
+        pc = (s.get("proxycheck") or {})
+        if pc.get("ok") and pc.get("type"):
+            type_sources.append(("proxycheck", pc["type"]))
+        if wi.get("ok"):
+            if wi.get("hosting"):
+                type_sources.append(("ipwho.is", T("dc")))
+            else:
+                dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                if dc:
+                    type_sources.append((T("heuristic"), T("dc")))
+                elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
+                    type_sources.append((T("heuristic"), T("residential")))
+                else:
+                    type_sources.append((T("heuristic"), T("unknown")))
+        il = (s.get("iplocate") or {})
+        if il.get("ok"):
+            if il.get("hosting") or il.get("asn_type") == "hosting":
+                type_sources.append(("iplocate.io", T("dc")))
+            elif il.get("asn_type") == "isp":
                 type_sources.append((T("heuristic"), T("residential")))
             else:
-                type_sources.append((T("heuristic"), T("unknown")))
-    il = (s.get("iplocate") or {})
-    if il.get("ok"):
-        if il.get("hosting") or il.get("asn_type") == "hosting":
-            type_sources.append(("iplocate.io", T("dc")))
-        elif il.get("asn_type") == "isp":
-            type_sources.append((T("heuristic"), T("residential")))
+                type_sources.append(("iplocate.io", T("unknown")))
+        iq = (s.get("ipquery") or {})
+        if iq.get("ok"):
+            if iq.get("datacenter"):
+                type_sources.append(("ipquery.io", T("dc")))
+            elif iq.get("mobile"):
+                type_sources.append(("ipquery.io", T("mobile")))
+            else:
+                type_sources.append((T("heuristic"), T("residential")
+                                     if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
+                                     else T("unknown")))
+        if not wi.get("ok") and prof.get("ok"):
+            dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if dc:
+                type_sources.append((T("heuristic"), T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                type_sources.append((T("heuristic"), T("residential")))
+        if type_sources:
+            print("  " + _pad(_truncate_disp(T("database"), 12), 12) + "".join(_pad(_truncate_disp(n, 16), 16) for n, _ in type_sources))
+            cells = []
+            for _, t in type_sources:
+                colored, _ = _type_block(t)
+                # L9：未知长类型名原样进表会超 80 列，按显示宽截断。
+                cells.append(_pad(_truncate_disp(colored, 16), 16))
+            print("  " + _pad(_truncate_disp(T("usage_type"), 12), 12) + "".join(cells))
         else:
-            type_sources.append(("iplocate.io", T("unknown")))
-    iq = (s.get("ipquery") or {})
-    if iq.get("ok"):
-        if iq.get("datacenter"):
-            type_sources.append(("ipquery.io", T("dc")))
-        elif iq.get("mobile"):
-            type_sources.append(("ipquery.io", T("mobile")))
+            print(f"  {T('no_type_data')}")
+
+        # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
+        _section(T("sec_matrix"))
+
+        _NA = None
+        _Q = "?"
+
+        il = (s.get("iplocate") or {})
+        iq = (s.get("ipquery") or {})
+
+        dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                      if wi.get("ok") else (None, ""))
+        if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+            # r5a-2：源明确给出 hosting  verdict 时以源为准，本地 ISP 启发式
+            # 不得反转它（hosting=False + Amazon 启发式此前误判服务器因子 100%）。
+            dc_w = _strict_bool(wi.get("hosting"))
+        wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
+
+        _rows = _factor_rows(s, wi_server)
+        # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
+        _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                    T("f_blacklist"), T("f_malicious")]
+        _lw = _bar_label_width()
+        for _ci, _fname in enumerate(_factors):
+            _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+            if _decided:
+                _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            else:
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+        # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
+        _section(T("sec_fraud"))
+        sc = (s.get("scamalytics") or {})
+        _srows = [("Scamalytics",
+                   _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
+                         (T("dim_fraud"), scs.get("fraud") or (0, [])),
+                         (T("dim_reputation"), scs.get("reputation") or (0, [])),
+                         (T("dim_platform"), scs.get("platform") or (0, []))):
+            _srows.append((_dn, _dv[0], ""))
+        _combined = scs.get("combined") or 0
+        _purity = 100 - _combined
+        if _purity >= 85:
+            _pl, _pc = T("purity_best"), C.green
+        elif _purity >= 70:
+            _pl, _pc = T("purity_good"), C.green
+        elif _purity >= 50:
+            _pl, _pc = T("purity_fair"), C.yellow
+        elif _purity >= 30:
+            _pl, _pc = T("purity_poor"), C.yellow
         else:
-            type_sources.append((T("heuristic"), T("residential")
-                                 if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
-                                 else T("unknown")))
-    if not wi.get("ok") and prof.get("ok"):
-        dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if dc:
-            type_sources.append((T("heuristic"), T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            type_sources.append((T("heuristic"), T("residential")))
-    if type_sources:
-        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in type_sources))
-        cells = []
-        for _, t in type_sources:
-            colored, _ = _type_block(t)
-            cells.append(_pad(colored, 16))
-        print("  " + _pad(T("usage_type"), 12) + "".join(cells))
-    else:
-        print(f"  {T('no_type_data')}")
+            _pl, _pc = T("purity_bad"), C.red
+        _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
+        _srows.append((T("purity"), _purity, _pl))
+        _lw3 = _bar_label_width()
+        for _n, _v, _extra in _srows:
+            if _v is None:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            elif _n == T("purity"):
+                print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
+            elif _extra:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
+            else:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
+        _verdict = res.get("verdict")
+        if _verdict:
+            print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
+        print(f"  {_c(C.dim, T('purity_note'))}")
+        if (scs.get("platform") or (0,))[0] >= 30:
+            print(f"  {_c(C.dim, T('platform_note'))}")
 
-    # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
-    _section(T("sec_matrix"))
-
-    _NA = None
-    _Q = "?"
-
-    il = (s.get("iplocate") or {})
-    iq = (s.get("ipquery") or {})
-
-    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-                  if wi.get("ok") else (None, ""))
-    if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
-        # r5a-2：源明确给出 hosting  verdict 时以源为准，本地 ISP 启发式
-        # 不得反转它（hosting=False + Amazon 启发式此前误判服务器因子 100%）。
-        dc_w = _strict_bool(wi.get("hosting"))
-    wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
-
-    _rows = _factor_rows(s, wi_server)
-    # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
-    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
-                T("f_blacklist"), T("f_malicious")]
-    _lw = _bar_label_width()
-    for _ci, _fname in enumerate(_factors):
-        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
-        if _decided:
-            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
-        else:
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-
-    # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
-    _section(T("sec_fraud"))
-    sc = (s.get("scamalytics") or {})
-    _srows = [("Scamalytics",
-               _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
-    for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
-                     (T("dim_fraud"), scs.get("fraud") or (0, [])),
-                     (T("dim_reputation"), scs.get("reputation") or (0, [])),
-                     (T("dim_platform"), scs.get("platform") or (0, []))):
-        _srows.append((_dn, _dv[0], ""))
-    _combined = scs.get("combined") or 0
-    _purity = 100 - _combined
-    if _purity >= 85:
-        _pl, _pc = T("purity_best"), C.green
-    elif _purity >= 70:
-        _pl, _pc = T("purity_good"), C.green
-    elif _purity >= 50:
-        _pl, _pc = T("purity_fair"), C.yellow
-    elif _purity >= 30:
-        _pl, _pc = T("purity_poor"), C.yellow
-    else:
-        _pl, _pc = T("purity_bad"), C.red
-    _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
-    _srows.append((T("purity"), _purity, _pl))
-    _lw3 = _bar_label_width()
-    for _n, _v, _extra in _srows:
-        if _v is None:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-        elif _n == T("purity"):
-            print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
-        elif _extra:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
-        else:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
-    _verdict = res.get("verdict")
-    if _verdict:
-        print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
-    print(f"  {_c(C.dim, T('purity_note'))}")
-    if (scs.get("platform") or (0,))[0] >= 30:
-        print(f"  {_c(C.dim, T('platform_note'))}")
-
-    if include_streaming_inference:
-        _print_streaming_inference(res)
-    if dns_rec:
-        recommend_dns_for_ip(prof.get("country", ""))
-    if tail_completeness:
-        _print_completeness(res)
-    if include_streaming_inference:
-        _done_txt = "✓ " + T("done")
-        print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        if footnote == "proxy_diag":
-            # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
-            # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
-            print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
-        else:
-            print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
-            print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
-    _geo_attr = _geo_attribution(prof)
-    if _geo_attr:
-        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
-        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
-        print(f"  {_c(C.dim, _geo_attr)}")
-    # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
-    # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
-    # 显式恢复 _SEC["on"]=True（计数保留）。
-    _SEC["on"] = False
+        if include_streaming_inference:
+            _print_streaming_inference(res)
+        if dns_rec:
+            recommend_dns_for_ip(prof.get("country", ""))
+        if tail_completeness:
+            _print_completeness(res)
+        if include_streaming_inference:
+            _done_txt = "✓ " + T("done")
+            print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
+            if footnote == "proxy_diag":
+                # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
+                # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
+                print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
+            else:
+                print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
+                print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+        _geo_attr = _geo_attribution(prof)
+        if _geo_attr:
+            # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+            # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+            print(f"  {_c(C.dim, _geo_attr)}")
+        # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
+        # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
+        # 显式恢复 _SEC["on"]=True（计数保留）。
+    finally:
+        _SEC["on"] = False
 
 
 # ============================================================
@@ -6867,184 +6887,187 @@ def _print_report6_tail(res):
 def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     if not embedded:
         _sec_begin()
-    s = res.get("sources") or {}
-    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    ip = res.get("ip", "?")
+    try:
+        s = res.get("sources") or {}
+        prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
+        ip = res.get("ip", "?")
 
-    if not embedded:
-        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
+        if not embedded:
+            print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+            print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
-    _print_basic_block(s, prof)
+        _print_basic_block(s, prof)
 
-    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
+        # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
+        if sysinfo:
+            print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
-    _section(T("sec_type"), sub=True)
-    _ts6 = []
-    _pc6 = (s.get("proxycheck") or {})
-    if _pc6.get("ok") and _pc6.get("type"):
-        _ts6.append(("proxycheck", _pc6["type"]))
-    _wi6 = (s.get("ipwhois") or {})
-    if _wi6.get("ok"):
-        if _wi6.get("hosting"):
-            _ts6.append(("ipwho.is", T("dc")))
-        else:
-            _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
-            if _dc6:
-                _ts6.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+        # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
+        _section(T("sec_type"), sub=True)
+        _ts6 = []
+        _pc6 = (s.get("proxycheck") or {})
+        if _pc6.get("ok") and _pc6.get("type"):
+            _ts6.append(("proxycheck", _pc6["type"]))
+        _wi6 = (s.get("ipwhois") or {})
+        if _wi6.get("ok"):
+            if _wi6.get("hosting"):
+                _ts6.append(("ipwho.is", T("dc")))
+            else:
+                _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
+                if _dc6:
+                    _ts6.append((T("heuristic"), T("dc")))
+                elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+                    _ts6.append((T("heuristic"), T("residential")))
+                else:
+                    _ts6.append((T("heuristic"), T("unknown")))
+        _il6 = (s.get("iplocate") or {})
+        if _il6.get("ok"):
+            if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
+                _ts6.append(("iplocate.io", T("dc")))
+            elif _il6.get("asn_type") == "isp":
                 _ts6.append((T("heuristic"), T("residential")))
             else:
-                _ts6.append((T("heuristic"), T("unknown")))
-    _il6 = (s.get("iplocate") or {})
-    if _il6.get("ok"):
-        if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
-            _ts6.append(("iplocate.io", T("dc")))
-        elif _il6.get("asn_type") == "isp":
-            _ts6.append((T("heuristic"), T("residential")))
+                _ts6.append(("iplocate.io", T("unknown")))
+        _iq6 = (s.get("ipquery") or {})
+        if _iq6.get("ok"):
+            if _iq6.get("datacenter"):
+                _ts6.append(("ipquery.io", T("dc")))
+            elif _iq6.get("mobile"):
+                _ts6.append(("ipquery.io", T("mobile")))
+            else:
+                _ts6.append((T("heuristic"), T("residential")
+                             if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
+                             else T("unknown")))
+        if not _wi6.get("ok") and prof.get("ok"):
+            _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if _dc6:
+                _ts6.append((T("heuristic"), T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                _ts6.append((T("heuristic"), T("residential")))
+        if _ts6:
+            print("  " + _pad(_truncate_disp(T("database"), 12), 12) + "".join(_pad(_truncate_disp(n, 16), 16) for n, _ in _ts6))
+            _cells6 = []
+            for _, _t in _ts6:
+                _colored6, _ = _type_block(_t)
+                # L9：同 v4，类型单元格按显示宽截断。
+                _cells6.append(_pad(_truncate_disp(_colored6, 16), 16))
+            print("  " + _pad(_truncate_disp(T("usage_type"), 12), 12) + "".join(_cells6))
         else:
-            _ts6.append(("iplocate.io", T("unknown")))
-    _iq6 = (s.get("ipquery") or {})
-    if _iq6.get("ok"):
-        if _iq6.get("datacenter"):
-            _ts6.append(("ipquery.io", T("dc")))
-        elif _iq6.get("mobile"):
-            _ts6.append(("ipquery.io", T("mobile")))
+            print(f"  {T('no_type_data')}")
+
+        # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
+        _section(T("sec_matrix"))
+        print(f"  {_c(C.dim, T('v6_prefix_note'))}")
+
+        _NA = None
+        pc = (s.get("proxycheck") or {})
+        wi = (s.get("ipwhois") or {})
+        sp = (s.get("spamhaus") or {})
+        sh = (s.get("shodan_idb") or {})
+        dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                      if wi.get("ok") else (None, ""))
+        if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+            # r5a-2：同 v4——源 hosting verdict 优先于启发式。
+            dc_w = _strict_bool(wi.get("hosting"))
+        wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
+        _rows = _factor_rows(s, wi_server, v6=True)
+        _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                    T("f_blacklist"), T("f_malicious")]
+        _lw = _bar_label_width()
+        for _ci, _fname in enumerate(_factors):
+            _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+            if _decided:
+                _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            else:
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+        # [3] 信誉信号 (逐源透传)
+        _section(T("sec_signals6"))
+        sc = (s.get("scamalytics") or {})
+        if sc.get("ok"):
+            _v = _coerce_score(sc.get("fraud_score"))
+            if _v is None:
+                print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            else:
+                print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
         else:
-            _ts6.append((T("heuristic"), T("residential")
-                         if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
-                         else T("unknown")))
-    if not _wi6.get("ok") and prof.get("ok"):
-        _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if _dc6:
-            _ts6.append((T("heuristic"), T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            _ts6.append((T("heuristic"), T("residential")))
-    if _ts6:
-        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in _ts6))
-        _cells6 = []
-        for _, _t in _ts6:
-            _colored6, _ = _type_block(_t)
-            _cells6.append(_pad(_colored6, 16))
-        print("  " + _pad(T("usage_type"), 12) + "".join(_cells6))
-    else:
-        print(f"  {T('no_type_data')}")
-
-    # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
-    _section(T("sec_matrix"))
-    print(f"  {_c(C.dim, T('v6_prefix_note'))}")
-
-    _NA = None
-    pc = (s.get("proxycheck") or {})
-    wi = (s.get("ipwhois") or {})
-    sp = (s.get("spamhaus") or {})
-    sh = (s.get("shodan_idb") or {})
-    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-                  if wi.get("ok") else (None, ""))
-    if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
-        # r5a-2：同 v4——源 hosting verdict 优先于启发式。
-        dc_w = _strict_bool(wi.get("hosting"))
-    wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
-    _rows = _factor_rows(s, wi_server, v6=True)
-    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
-                T("f_blacklist"), T("f_malicious")]
-    _lw = _bar_label_width()
-    for _ci, _fname in enumerate(_factors):
-        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
-        if _decided:
-            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
-        else:
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-
-    # [3] 信誉信号 (逐源透传)
-    _section(T("sec_signals6"))
-    sc = (s.get("scamalytics") or {})
-    if sc.get("ok"):
-        _v = _coerce_score(sc.get("fraud_score"))
-        if _v is None:
             print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        if pc.get("ok") and pc.get("risk") is not None:
+            _v = pc.get("risk")
+            print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
         else:
-            print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
-    else:
-        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    if pc.get("ok") and pc.get("risk") is not None:
-        _v = pc.get("risk")
-        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
-    else:
-        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    _iq6s = (s.get("ipquery") or {})
-    if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
-        _v = _iq6s["risk_score"]
-        print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
-    if sp.get("ok"):
-        _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
-                else _c(C.green, T("v6_not_listed")))
-        print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
-    if sh.get("ok"):
-        _ports = sh.get("ports") or []
-        # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
-        # 打印前逐个 _strip_cc，防终端转义注入。
-        _ptxt = ", ".join(_strip_cc(p) for p in _ports) if _ports else T("none")
-        print(f"  {_pad('Shodan', _lw)}{_ptxt}")
+            print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        _iq6s = (s.get("ipquery") or {})
+        if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
+            _v = _iq6s["risk_score"]
+            print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
+        if sp.get("ok"):
+            _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
+                    else _c(C.green, T("v6_not_listed")))
+            print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
+        if sh.get("ok"):
+            _ports = sh.get("ports") or []
+            # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+            # 打印前逐个 _strip_cc，防终端转义注入。
+            _ptxt = ", ".join(_strip_cc(p) for p in _ports) if _ports else T("none")
+            print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
-    # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
-    _section(T("sec_fraud"))
-    _scs6 = res.get("scores") or {}
-    _srows6 = [("Scamalytics",
-                _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
-    for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
-                       (T("dim_reputation"), "reputation"),
-                       (T("dim_platform"), "platform")):
-        _dv6 = _scs6.get(_dk6)
-        _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
-    _comb6 = _scs6.get("combined")
-    _pcol6 = C.green
-    if _comb6 is not None:
-        _pur6 = 100 - _comb6
-        if _pur6 >= 85:
-            _pl6, _pcol6 = T("purity_best"), C.green
-        elif _pur6 >= 70:
-            _pl6, _pcol6 = T("purity_good"), C.green
-        elif _pur6 >= 50:
-            _pl6, _pcol6 = T("purity_fair"), C.yellow
-        elif _pur6 >= 30:
-            _pl6, _pcol6 = T("purity_poor"), C.yellow
-        else:
-            _pl6, _pcol6 = T("purity_bad"), C.red
-        _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
-        _srows6.append((T("purity"), _pur6, _pl6))
-    _lw6 = _bar_label_width()
-    for _n6, _v6, _e6 in _srows6:
-        if _v6 is None:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-        elif _n6 == T("purity"):
-            print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
-        elif _e6:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
-        else:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
-    _verdict6 = res.get("verdict")
-    if _verdict6:
-        print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
-    print(f"  {_c(C.dim, T('v6_score_note'))}")
-    print(f"  {_c(C.dim, T('purity_note'))}")
-    if (_scs6.get("platform") or (0,))[0] >= 30:
-        print(f"  {_c(C.dim, T('platform_note'))}")
+        # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
+        _section(T("sec_fraud"))
+        _scs6 = res.get("scores") or {}
+        _srows6 = [("Scamalytics",
+                    _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
+                           (T("dim_reputation"), "reputation"),
+                           (T("dim_platform"), "platform")):
+            _dv6 = _scs6.get(_dk6)
+            _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
+        _comb6 = _scs6.get("combined")
+        _pcol6 = C.green
+        if _comb6 is not None:
+            _pur6 = 100 - _comb6
+            if _pur6 >= 85:
+                _pl6, _pcol6 = T("purity_best"), C.green
+            elif _pur6 >= 70:
+                _pl6, _pcol6 = T("purity_good"), C.green
+            elif _pur6 >= 50:
+                _pl6, _pcol6 = T("purity_fair"), C.yellow
+            elif _pur6 >= 30:
+                _pl6, _pcol6 = T("purity_poor"), C.yellow
+            else:
+                _pl6, _pcol6 = T("purity_bad"), C.red
+            _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
+            _srows6.append((T("purity"), _pur6, _pl6))
+        _lw6 = _bar_label_width()
+        for _n6, _v6, _e6 in _srows6:
+            if _v6 is None:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            elif _n6 == T("purity"):
+                print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
+            elif _e6:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
+            else:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
+        _verdict6 = res.get("verdict")
+        if _verdict6:
+            print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
+        print(f"  {_c(C.dim, T('v6_score_note'))}")
+        print(f"  {_c(C.dim, T('purity_note'))}")
+        if (_scs6.get("platform") or (0,))[0] >= 30:
+            print(f"  {_c(C.dim, T('platform_note'))}")
 
-    # [5] 完整度
-    if tail_completeness:
-        _print_report6_tail(res)
-    _geo_attr = _geo_attribution(prof)
-    if _geo_attr:
-        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
-        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
-        print(f"  {_c(C.dim, _geo_attr)}")
-    # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
-    _SEC["on"] = False
+        # [5] 完整度
+        if tail_completeness:
+            _print_report6_tail(res)
+        _geo_attr = _geo_attribution(prof)
+        if _geo_attr:
+            # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+            # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+            print(f"  {_c(C.dim, _geo_attr)}")
+        # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
+    finally:
+        _SEC["on"] = False
 
 
 def get_egress_ip(budget=None):
