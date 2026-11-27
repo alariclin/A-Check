@@ -351,10 +351,10 @@ jobs:
         run: |
           RC="$OBS1_EXTRACTED_MAC/acheck-mac/run.command"
           cd /
-          "$RC" --help </dev/null >"$RUNNER_TEMP/rc-help.txt" 2>&1
-          grep -q "A-Check" "$RUNNER_TEMP/rc-help.txt"
-          env -i PATH=/usr/bin:/bin "$RC" --help </dev/null >"$RUNNER_TEMP/rc-help-min.txt" 2>&1
-          grep -q "A-Check" "$RUNNER_TEMP/rc-help-min.txt"
+          "$RC" --help </dev/null >"$RUNNER_TEMP/rc-help.txt" 2>&1 || { echo "run.command failed:"; cat "$RUNNER_TEMP/rc-help.txt"; exit 1; }
+          grep -q "用法:" "$RUNNER_TEMP/rc-help.txt" || { echo "help text mismatch:"; cat "$RUNNER_TEMP/rc-help.txt"; exit 1; }
+          env -i PATH=/usr/bin:/bin "$RC" --help </dev/null >"$RUNNER_TEMP/rc-help-min.txt" 2>&1 || { echo "run.command (minimal PATH) failed:"; cat "$RUNNER_TEMP/rc-help-min.txt"; exit 1; }
+          grep -q "用法:" "$RUNNER_TEMP/rc-help-min.txt" || { echo "help text mismatch (minimal PATH):"; cat "$RUNNER_TEMP/rc-help-min.txt"; exit 1; }
           echo "OK: run.command --help (full PATH and minimal PATH)"
 
       - name: PTY menu system info + run.command menu (macOS)
@@ -499,15 +499,15 @@ jobs:
           python3 acheck.py --shortcut install --names acheck </dev/null
           test -x "$BIN/acheck"
           test "$(stat -f '%Lp' "$BIN/acheck")" = "755"
-          "$BIN/acheck" --help </dev/null | grep -q "A-Check"
-          PATH="$BIN:$PATH" acheck --help </dev/null | grep -q "A-Check"
+          "$BIN/acheck" --help </dev/null | grep -q "用法:"
+          PATH="$BIN:$PATH" acheck --help </dev/null | grep -q "用法:"
           python3 acheck.py --shortcut status --json </dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); names={e['name'] for e in d.get('entries', []) if e.get('status')=='OK'}; assert d.get('installed') is True and names=={'acheck'}, d; print('status json OK:', sorted(names))"
           if python3 acheck.py --shortcut install --names ac </dev/null >/tmp/ac-err.txt 2>&1; then echo "ERROR: installing ac without --accept-ac-risk must fail" >&2; exit 1; fi
           grep -q "accept-ac-risk" /tmp/ac-err.txt
           python3 acheck.py --shortcut change --old-name acheck --new-name acheck-tmp </dev/null
           test -x "$BIN/acheck-tmp"
           test ! -e "$BIN/acheck"
-          "$BIN/acheck-tmp" --help </dev/null | grep -q "A-Check"
+          "$BIN/acheck-tmp" --help </dev/null | grep -q "用法:"
           if python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac </dev/null >/tmp/ac-err2.txt 2>&1; then echo "ERROR: renaming to ac without --accept-ac-risk must fail" >&2; exit 1; fi
           python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac --accept-ac-risk </dev/null
           test -x "$BIN/ac"
