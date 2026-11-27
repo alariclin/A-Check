@@ -36,6 +36,7 @@ except ImportError:  # Windows 等无 fcntl 的平台: 快捷键管理本就不�
     fcntl = None
 import gzip
 import hashlib
+import html
 import http.client
 import io
 import ipaddress
@@ -2809,12 +2810,21 @@ class Scamalytics(Provider):
         # 500 字符内邻近 "fraud" 字样（本页即欺诈分页面，正常页恒满足）。
         m = None
         _fraud_pos = [mm.start() for mm in re.finditer(r"fraud", raw, re.I)]
-        for _sm in re.finditer(r'"score"\s*:\s*"?(\d{1,3})"?', raw):
-            if any(abs(_sm.start() - _fp) <= 500 for _fp in _fraud_pos):
-                m = _sm
-                break
+        # fix440g G-001：JSON 分数须闭引号（或词界）——"100th" 不得取 100。
+        # fix440g G-034：位置列表已有序，用二分查找邻近 fraud，不再对每个
+        # 分数从头扫描（O(n·m) -> O(n log m)）。
+        for _sm in re.finditer(r'"score"\s*:\s*"?(\d{1,3})(?:"|\b)', raw):
+            _sp = _sm.start()
+            _i = bisect.bisect_left(_fraud_pos, _sp)
+            if not ((_i < len(_fraud_pos) and _fraud_pos[_i] - _sp <= 500)
+                    or (_i > 0 and _sp - _fraud_pos[_i - 1] <= 500)):
+                continue
+            m = _sm
+            break
         if not m:
-            _text = re.sub(r"<[^>]*>", " ", raw)
+            # fix440g G-033：匹配前用 html.unescape 解码（"&nbsp;" 致
+            # \s* 无法消费、分数解析失败）。
+            _text = html.unescape(re.sub(r"<[^>]*>", " ", raw))
             m = re.search(r"fraud\s+score\s*(?:is\s*[:=]?|[:=])?\s*(\d{1,3})\b",
                           _text, re.I)
         if not m:
