@@ -936,7 +936,14 @@ jobs:
         env:
           ACHECK_NO_GEO_UPDATE: "1"
         run: |
-          ipconfig /all > "$RUNNER_TEMP/ipconfig.txt"
+          # NOTE: do NOT run `ipconfig /all` directly from Git Bash: MSYS2
+          # converts the `/all` argument to a Windows path, ipconfig fails
+          # with a usage error on stdout (which the redirect below swallows
+          # into the file), and `bash -e` aborts the step silently -- that
+          # was round 4's failure. `cmd /c "..."` bypasses the conversion.
+          if ! cmd /c "ipconfig /all" > "$RUNNER_TEMP/ipconfig.txt"; then echo "ERROR: ipconfig failed" >&2; exit 1; fi
+          test -s "$RUNNER_TEMP/ipconfig.txt" || { echo "ERROR: ipconfig output empty" >&2; exit 1; }
+          echo "ipconfig captured: $(wc -l < "$RUNNER_TEMP/ipconfig.txt") lines"
           python - <<'PY'
           import ipaddress, os, sys
           for _s in (sys.stdout, sys.stderr):
