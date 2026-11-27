@@ -859,6 +859,7 @@ jobs:
             caption = $os.Caption
             os_version = [string][System.Environment]::OSVersion.Version
             cpu = $cpu.Name
+            processor_id = $env:PROCESSOR_IDENTIFIER
             total_phys = $cs.TotalPhysicalMemory
             disk_size = $disk.Size
             model = $cs.Model
@@ -875,7 +876,7 @@ jobs:
           ACHECK_NO_GEO_UPDATE: "1"
         run: |
           python - <<'PY'
-          import json, os, sys
+          import json, os, re, sys
           # stdio is cp1252 under plain `python -` on Windows; the info
           # dict carries Chinese virt labels -- reconfigure first.
           for _s in (sys.stdout, sys.stderr):
@@ -892,14 +893,23 @@ jobs:
           assert info["os"].startswith("Windows"), info
           token = info["os"].split("Windows", 1)[1].strip()
           assert token, f"empty release token in {info['os']!r}"
-          if token not in live["caption"]:
-              # platform.release() on Server builds may report the client
-              # release ("10"/"11") instead of the year in the caption;
-              # accept it only when it matches the build-number mapping.
+          # platform.release() on Server 2025 reports "2025Server"
+          # (digits + Server suffix); on client builds it is "10"/"11".
+          # Accept the token when its digit run is in the caption and a
+          # "Server" marker agrees; otherwise fall back to the
+          # build-number mapping ("11" iff build >= 22000).
+          m = re.search(r"\d+", token)
+          assert m, f"no digits in release token {token!r}"
+          if m.group() not in live["caption"] or ("server" in token.lower() and "server" not in live["caption"].lower()):
               build = int(live["os_version"].split(".")[2])
               want = "11" if build >= 22000 else "10"
               assert token == want, f"os token {token!r} not in caption {live['caption']!r} and != build mapping {want!r} (build {build})"
-          assert info["cpu"].strip() == live["cpu"].strip(), (info["cpu"], live["cpu"])
+          # platform.processor() on Windows returns PROCESSOR_IDENTIFIER
+          # ("AMD64 Family 25 Model 1 Stepping 1, AuthenticAMD"), NOT the
+          # Win32_Processor marketing name ("AMD EPYC 7763 ..."); compare
+          # against the env var, which is the real source. The marketing
+          # name stays recorded in live["cpu"] for the record only.
+          assert info["cpu"].strip() == live["processor_id"].strip(), (info["cpu"], live["processor_id"])
           assert info["mem"] == f"{live['total_phys'] // 1024**3}GB", (info["mem"], live["total_phys"])
           assert info["disk"] == f"{live['disk_size'] // 1024**3}GB", (info["disk"], live["disk_size"])
           assert info["arch"] == live["arch"], (info["arch"], live["arch"])
