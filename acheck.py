@@ -8317,15 +8317,22 @@ def test_tiktok(local_ip=None):
 
 def _disney_url_blocked(final_url):
     """Disney+ 锁区 URL 信号（R4-H-01）：最终 URL 来自重定向链，不受正文
-    截断影响。"""
-    u = (final_url or "").lower()
-    return "/unavailable" in u or "preview.disneyplus.com/unavailable" in u
+    截断影响。fix440 D-08：只看路径段（/unavailable 或其子路径），
+    查询串（如 ?next=/unavailable）不算；旧第二条件
+    preview.disneyplus.com/unavailable 已被路径条件完全包含，删除。"""
+    try:
+        _p = urllib.parse.urlparse(final_url or "").path.lower()
+    except Exception:
+        return False
+    return _p == "/unavailable" or _p.startswith("/unavailable/")
 
 
 def _disney_head_blocked(body):
     """Disney+ 锁区正文信号（R4-H-01）：只认 <title> 或前 8 KiB 头部里的
     明确锁区短语。页脚法律文案（如 "Not available in U.S. territories."）
-    在 512 KiB 采样深处，不在此列，不得误判。"""
+    在 512 KiB 采样深处，不在此列，不得误判。fix440 D-10：除英文外
+    另认德/法/西/葡/意五语的“在你地区不可用”对应短语（探针发
+    Accept-Language: en-US，服务端应回英文，多语为纵深）。"""
     b = body or ""
     head = b[:8192]
     m = re.search(r"<title[^>]*>(.*?)</title>", b, re.IGNORECASE | re.DOTALL)
@@ -8333,7 +8340,20 @@ def _disney_head_blocked(body):
     hay = (head + "\n" + title).lower()
     return ("disney+ is not available" in hay
             or "not available in your region" in hay
-            or "not available in your country" in hay)
+            or "not available in your country" in hay
+            or "in deiner region nicht verfügbar" in hay
+            or "in ihrer region nicht verfügbar" in hay
+            or "in deinem land nicht verfügbar" in hay
+            or "pas disponible dans votre région" in hay
+            or "pas disponible dans votre pays" in hay
+            or "n'est pas disponible dans votre région" in hay
+            or "no está disponible en tu región" in hay
+            or "no disponible en tu región" in hay
+            or "no está disponible en tu país" in hay
+            or "não está disponível na sua região" in hay
+            or "não disponível na sua região" in hay
+            or "non è disponibile nella tua regione" in hay
+            or "non disponibile nella tua regione" in hay)
 
 
 def test_disney(local_ip=None):
@@ -8505,7 +8525,14 @@ def test_youtube(local_ip=None):
         # 按旧口径判 blocked（夹具正向对照）。
         if not complete:
             return T("unknown"), "", None
-        if "YouTube Premium is not available in your country" in body:
+        # fix440 D-11：此处测的是 YouTube 本身，不是 Premium——
+        # "YouTube Premium is not available in your country" 只说明
+        # Premium 未覆盖该地区，不得据此判 YouTube blocked；只有
+        # YouTube 本身不可用的信号（通用锁区句或标题结构）才判 blocked。
+        _low = body.lower()
+        if ("youtube is not available in your country" in _low
+                or "youtube is not available in your region" in _low
+                or _error_title_or_h1(body, r"not\s+available")):
             return T("blocked"), "", None
         m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', body) or re.search(r'"GL"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
@@ -8528,6 +8555,12 @@ def test_primevideo(local_ip=None):
     if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
+        # fix440 D-09：完整 200 正文明确写地区不可用时判 blocked，
+        # 不再无条件 reachable。
+        _low = body.lower()
+        if ("not available in your region" in _low
+                or "not available in your country" in _low):
+            return T("blocked"), "", None
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r'"territory"\s*:\s*"([A-Z]{2})"', body
         )
@@ -8598,6 +8631,11 @@ def test_chatgpt(local_ip=None):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
     if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
         return T("blocked"), f"[{loc}]" if loc else "", None
+    # fix440 D-07：403 正文既无 unsupported_country 也无 blocked
+    # （如限流、CF 1020 类正文）不是锁区证据，判 unknown——与首探针
+    # “403 不直接判 blocked”的口径一致。
+    if api_code == 403:
+        return T("unknown"), "", None
     _ft = _http_fallthrough(api_code)
     if _ft is not None:
         return _ft, "", None
@@ -8692,8 +8730,22 @@ def test_grok(local_ip=None):
     return T("blocked"), "", None
 
 
+def _final_url_host_ok(final_url, *allowed):
+    """最终 URL 归属校验（fix440 r4-10）：裸 200 即判 unlocked 的探针
+    须确认最终页面确实属于被测服务——代理/劫持返回的无关站 200 不得
+    冒充解锁。allowed 为可接受的域名（自身及子域均可）。归属不明
+    时调用方判 unknown，不判 blocked。"""
+    try:
+        _host = (urllib.parse.urlparse(final_url or "").hostname or "").lower()
+    except Exception:
+        return False
+    if not _host:
+        return False
+    return any(_host == _a or _host.endswith("." + _a) for _a in allowed)
+
+
 def test_instagram(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.instagram.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.instagram.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8702,6 +8754,8 @@ def test_instagram(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "instagram.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
@@ -8712,7 +8766,7 @@ def test_instagram(local_ip=None):
 
 
 def test_facebook(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.facebook.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.facebook.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8721,6 +8775,8 @@ def test_facebook(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "facebook.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
@@ -8731,7 +8787,7 @@ def test_facebook(local_ip=None):
 
 
 def test_x(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://x.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://x.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8744,6 +8800,8 @@ def test_x(local_ip=None):
     if code == 302:
         # F26：默认跟随重定向时暴露出来的 302 必是重定向未完成
         #（循环 / 缺可用 Location），不是成功，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "x.com", "twitter.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
@@ -8773,7 +8831,7 @@ def test_line(local_ip=None):
 
 
 def test_whatsapp(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.whatsapp.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.whatsapp.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8782,6 +8840,8 @@ def test_whatsapp(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "whatsapp.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
@@ -8792,7 +8852,7 @@ def test_whatsapp(local_ip=None):
 
 
 def test_github(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://github.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://github.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8801,6 +8861,8 @@ def test_github(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "github.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
@@ -8841,6 +8903,11 @@ def test_appletv(local_ip=None):
     if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
+        # fix440 D-09：同 test_primevideo，完整正文明确锁区时判 blocked。
+        _low = body.lower()
+        if ("not available in your region" in _low
+                or "not available in your country" in _low):
+            return T("blocked"), "", None
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
