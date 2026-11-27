@@ -1538,6 +1538,17 @@ def _coerce_score(v):
     return v
 
 
+def _opt_score(v):
+    """fix440g G-021：归一化的可选分数——行显示、算术与脚注判断共用此
+    一口径：有限数值返原值，缺失/None/字符串/bool/非有限返 None（未知），
+    超大整数（如 10**400，math.isfinite 会抛 OverflowError）亦返 None
+    而不抛错，保证手造/残缺 res 永远打得出完整报告。"""
+    try:
+        return _coerce_score(v)
+    except Exception:
+        return None
+
+
 def _clean_coord(v, lo, hi):
     """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
     1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
@@ -4598,14 +4609,11 @@ class IPWhoIs(Provider):
             # fix440b r2b-1：success 只认布尔 True——字符串 "false" 是真值，
             # 旧 `not d.get("success", True)` 会把它当成功；无 success 且无
             # 国家时亦为空响应，不得标 ok。
+            # fix440g G-064：只认布尔 True——1.0/1 虽 `== 1` 亦非 True，
+            # 不得判成功。
             _succ = d.get("success", True)
-            if _succ is not True and _succ != 1:
+            if _succ is not True:
                 return {"ok": False, "err": _clean_str(d.get("message")) or "query failed"}
-            if not _valid_country(d.get("country")):
-                return {"ok": False, "err": "empty country"}
-            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
-            if not _resp_ip_ok(d, ip):
-                return {"ok": False, "err": "ip mismatch"}
             # fix440b F1：connection 只认 dict（真值非 dict 不得进 .get()）。
             conn = _as_dict(d.get("connection"))
             sec = d.get("security") if isinstance(d.get("security"), dict) else {}
@@ -4617,6 +4625,18 @@ class IPWhoIs(Provider):
                 v = sec.get(k) if k in sec else conn.get(k)
                 return v if isinstance(v, bool) else None
 
+            # fix440g G-015：国家门槛不得丢掉有明确独立证据的响应——
+            # security 任一真旗标、或 ASN/组织可解析时，国家留空保留证据；
+            # 全无证据时仍按空国家失败（r2b-1 空 JSON 口径不变）。
+            _has_evidence = (
+                any(_b(k) is True for k in ("proxy", "hosting", "vpn", "tor"))
+                or _parse_asn(conn.get("asn")) is not None
+                or bool(_clean_str(conn.get("isp")) or _clean_str(conn.get("org"))))
+            if not _valid_country(d.get("country")) and not _has_evidence:
+                return {"ok": False, "err": "empty country"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
             return {
                 "ok": True,
                 "isp": _clean_str(conn.get("isp")),
@@ -4661,19 +4681,23 @@ class IPInfo(Provider):
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
             # fix440b r2b-1：空 JSON 不得标 ok（无国家即无可用画像）。
-            if not _valid_country(d.get("country")):
+            # fix440b F1：org 只认字符串——int/None 进 .split()/.startswith()
+            # 即抛错丢整源（含有效地理）。
+            org = d.get("org") if isinstance(d.get("org"), str) else ""
+            _asn = _parse_asn(org.split()[0]) if org.startswith("AS") else None
+            # fix440g G-015：国家门槛不得丢掉有明确独立证据的响应——
+            # ASN/组织可解析时国家留空保留证据；全无证据时仍失败。
+            if not _valid_country(d.get("country")) and not org.strip() \
+                    and _asn is None:
                 return {"ok": False, "err": "empty country"}
             # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
             if not _resp_ip_ok(d, ip):
                 return {"ok": False, "err": "ip mismatch"}
-            # fix440b F1：org 只认字符串——int/None 进 .split()/.startswith()
-            # 即抛错丢整源（含有效地理）。
-            org = d.get("org") if isinstance(d.get("org"), str) else ""
             return {
                 "ok": True,
                 "org": org,
-                "asn": _parse_asn(org.split()[0]) if org.startswith("AS") else None,
-                "country": d.get("country", ""),
+                "asn": _asn,
+                "country": d.get("country", "") if isinstance(d.get("country"), str) else "",
                 "region": d.get("region", ""),
                 "city": d.get("city", ""),
                 "ts": now_iso(),
@@ -4930,19 +4954,26 @@ class FreeIPAPI(Provider):
         # fix440b r3-8：主端点“请求失败”才回退不够——成功但正文不可用
         #（非 JSON / 空对象）时同样回退备用端点；两端皆不可用才失败。
         def _fetch(url):
+            # fix440g G-060：回退不得抹掉已知 HTTP 错因——请求失败返
+            # (None, 原文)，正文不可用返 (None, None)，由调用方定夺。
             ok, raw = http_get(url, use_cache=False)
             if not ok:
-                return None
+                return None, raw
             try:
                 d = json.loads(raw)
             except Exception:
-                return None
-            return d if isinstance(d, dict) and d else None
+                return None, None
+            return (d if isinstance(d, dict) and d else None), None
 
-        d = _fetch(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}")
+        d, _err1 = _fetch(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}")
         if d is None:
-            d = _fetch(f"https://freeipapi.com/api/json/{_q_ip(ip)}")
+            d, _err2 = _fetch(f"https://freeipapi.com/api/json/{_q_ip(ip)}")
         if d is None:
+            # 两端皆不可用：优先保留备用端点的已知 HTTP 错因（如 429），
+            # 其次主端点的；皆无已知错因时才报正文不可用。
+            for _e in (_err2, _err1):
+                if isinstance(_e, str) and _e.startswith("HTTP "):
+                    return {"ok": False, "err": _e[:80]}
             return {"ok": False, "err": "unusable response"}
         try:
             raw_asn = d.get("asn")
@@ -5137,7 +5168,9 @@ class IPWhoisApp(Provider):
             d = json.loads(raw)
             if not isinstance(d, dict):
                 return {"ok": False, "err": "unexpected response"}
-            if not d.get("success"):
+            # fix440g G-064：success 只认布尔 True——"false" 等非空
+            # 字符串为真值，不得判成功；缺失亦失败（旧口径不变）。
+            if d.get("success") is not True:
                 return {"ok": False, "err": "query unsuccessful"}
             # fix440b F3：国家只认非空字符串。
             if not _valid_country(d.get("country")):
@@ -5183,11 +5216,34 @@ class IPApiIs(Provider):
                 return {"ok": False, "err": "unexpected response"}
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
+            # fix440g G-016：国家与网络身份须能读嵌套记录——
+            # location.country/country_code、asn.asn/asn.org、company.name；
+            # 扁平字段仍作回退（老格式不变）。
+            loc = _as_dict(d.get("location"))
+            _country = loc.get("country") or d.get("country")
+            _country_code = loc.get("country_code") or d.get("country_code") or ""
             # fix440b F3：国家只认非空字符串。
-            if not _valid_country(d.get("country")):
+            if not _valid_country(_country):
                 return {"ok": False, "err": "empty country"}
-            asn_raw = str(d.get("asn") or "").strip()
-            company = d.get("company") if isinstance(d.get("company"), str) else ""
+            _asn_field = d.get("asn")
+            if isinstance(_asn_field, dict):
+                _asn_num = _asn_field.get("asn")
+                _asn_org = _asn_field.get("org")
+                asn_raw = ((str(_asn_num) + " " + str(_asn_org)).strip()
+                           if _asn_num is not None
+                           else str(_asn_org or "").strip())
+            elif _asn_field is not None:
+                asn_raw = str(_asn_field).strip()
+            else:
+                asn_raw = ""
+            _company_field = d.get("company")
+            if isinstance(_company_field, dict):
+                company = _company_field.get("name") \
+                    if isinstance(_company_field.get("name"), str) else ""
+            elif isinstance(_company_field, str):
+                company = _company_field
+            else:
+                company = ""
             # fix440b r3-10：org 只认公司名，或 ASN 后带的名字段；裸 ASN
             # 编号本身不是组织名，不得填进 org。
             _org = company
@@ -5198,8 +5254,8 @@ class IPApiIs(Provider):
                 "isp": company,
                 "org": _org,
                 "asn": _parse_asn(asn_raw.split()[0]) if asn_raw else None,
-                "country": _clean_str(d.get("country")),
-                "country_code": "",
+                "country": _clean_str(_country),
+                "country_code": _clean_str(_country_code),
                 "region": _clean_str(d.get("region")),
                 "city": _clean_str(d.get("city")),
                 "latitude": _clean_coord(d.get("lat"), -90, 90),
@@ -5360,10 +5416,13 @@ class IPLocate(Provider):
             _tor = _strict_bool(pv.get("is_tor"))
             _hosting = _strict_bool(pv.get("is_hosting"))
             _abuser = _strict_bool(pv.get("is_abuser"))
+            # fix440g G-017：阳性旗标清单须含本类自己输出的 is_icloud_relay。
+            _icloud = _strict_bool(pv.get("is_icloud_relay"))
             # fix440b F3/r3-4：国家只认非空字符串；但有明确风险旗标时整源
             # 不得丢弃——返 ok True 保旗标，国家留空。
             if not _valid_country(d.get("country")) and not any(
-                    f is True for f in (_proxy, _vpn, _tor, _hosting, _abuser)):
+                    f is True for f in (_proxy, _vpn, _tor, _hosting, _abuser,
+                                        _icloud)):
                 return {"ok": False, "err": "empty response"}
             return {
                 "ok": True,
@@ -5541,13 +5600,24 @@ class OTX(Provider):
             # 非法值/None/bool/负数落 None，整源不丢；缺失字段亦为 None（r3-3），
             # 不得补 0 冒充“已查明为零”（_factor_rows 的 (x or 0) 口径仍安全）。
             _pi = _as_dict(d.get("pulse_info"))
+            # fix440g G-062：错型隔离后、完全没有可用数据的响应不得计成功——
+            # reputation/pulses/云厂商/国家/城市/ASN 全空时整源失败，不得
+            # 仅因 pulse_info 键存在即 ok（缺失字段仍为 None，r3-3 不变）。
+            _rep = _safe_nonneg_int(d["reputation"]) if "reputation" in d else None
+            _pul = _safe_nonneg_int(_pi["count"]) if "count" in _pi else None
+            _country = _clean_str(d.get("country_name"))
+            _city = _clean_str(d.get("city"))
+            _asn = _parse_asn(d.get("asn"))
+            if _rep is None and _pul is None and not cloud \
+                    and not _country and not _city and _asn is None:
+                return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "reputation": _safe_nonneg_int(d["reputation"]) if "reputation" in d else None,
-                "pulses": _safe_nonneg_int(_pi["count"]) if "count" in _pi else None,
+                "reputation": _rep,
+                "pulses": _pul,
                 "cloud_provider": cloud,
-                "country": _clean_str(d.get("country_name")), "city": _clean_str(d.get("city")),
-                "asn": _parse_asn(d.get("asn")),
+                "country": _country, "city": _city,
+                "asn": _asn,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -5571,14 +5641,29 @@ class BlocklistDE(Provider):
             #（S2 直取 api.blocklist.de，2026-11-27）——旧 (?m)^...(\d+)\s*$ 要求
             # 行尾，值后是 "<br />" 故双双失配、整源报 unexpected response；
             # 改为界＋值后断言，不再要求行尾。
-            ma = re.search(r"(?m)(?:^|[^A-Za-z_])attacks:\s*(\d+)(?![\d.])", raw)
-            mr = re.search(r"(?m)(?:^|[^A-Za-z_])reports:\s*(\d+)(?![\d.])", raw)
-            if not ma and not mr:
+            # fix440g G-014：上述“界＋断言”仍不是真正的字段边界——
+            # `[^A-Za-z_]` 接受数字（`v2attacks: 91` 抢命中），`(?![\d.])`
+            # 接受 `e`（`1e3` 截成 1）。改为按换行或 <br> 切分字段，再
+            # 要求值完整匹配整数（段首即字段名、段尾即数值末尾）。
+            _attacks = _reports = None
+            for _seg in re.split(r"<br\s*/?>|\r\n|\r|\n", raw):
+                _seg = _seg.strip()
+                if not _seg:
+                    continue
+                _m = re.match(r"attacks:\s*(\d+)$", _seg)
+                if _m:
+                    if _attacks is None:
+                        _attacks = int(_m.group(1))
+                    continue
+                _m = re.match(r"reports:\s*(\d+)$", _seg)
+                if _m and _reports is None:
+                    _reports = int(_m.group(1))
+            if _attacks is None and _reports is None:
                 return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "attacks": int(ma.group(1)) if ma else None,
-                "reports": int(mr.group(1)) if mr else None,
+                "attacks": _attacks,
+                "reports": _reports,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -5596,11 +5681,25 @@ class RDAP(Provider):
         # 身份”——前者是查找失败（报末因），后者才报无记录。
         _last_err = None
         _saw_json = False
+        # fix440g G-013：起止段须包含查询 IP 才算有效范围——查询地址
+        # 预解析一次供各端点复用（解析失败时退化为旧口径：只验有序）。
+        try:
+            _q_obj = ipaddress.ip_address(ip)
+        except Exception:
+            _q_obj = None
+        # fix440g G-061：两个明确的 404 是否定答复（无记录），不是查询
+        # 故障——仅当全部尝试均为 HTTP 404 时才报无记录；混有超时/不可达/
+        # 无效正文时仍报查找失败。
+        _tries = 0
+        _http_404s = 0
         for base in ("https://rdap.arin.net/registry/ip/",
                      "https://rdap.db.ripe.net/ip/"):
             ok, raw = http_get(base + _q_ip(ip), use_cache=False)
+            _tries += 1
             if not ok:
                 _last_err = raw
+                if isinstance(raw, str) and raw.startswith("HTTP 404:"):
+                    _http_404s += 1
                 continue
             try:
                 cand = json.loads(raw)
@@ -5623,6 +5722,11 @@ class RDAP(Provider):
                 and bool(cand.get("name").strip())
             # fix440b r3-2：只有起止地址的记录同样有效（两端须为合法 IP 且
             # start<=end），不得以“无 cidr0_cidrs”拒收。
+            # fix440g G-012：起止分属 IPv4/IPv6 时比较抛 TypeError——与
+            # ValueError 同处理（范围无效），不得逃出 check() 丢掉已解析的
+            # name、也不得截断第二端点。
+            # fix440g G-013：仅凭两端有序不得认定 _has_range——起止段还须
+            # 包含查询 IP，否则该端点不作范围证据（无名无 CIDR 时跳过回退）。
             _has_range = False
             _sa = cand.get("startAddress")
             _ea = cand.get("endAddress")
@@ -5631,7 +5735,9 @@ class RDAP(Provider):
                     _sa_obj = ipaddress.ip_address(_sa)
                     _ea_obj = ipaddress.ip_address(_ea)
                     _has_range = _sa_obj <= _ea_obj
-                except ValueError:
+                    if _has_range and _q_obj is not None:
+                        _has_range = _sa_obj <= _q_obj <= _ea_obj
+                except (ValueError, TypeError):
                     _has_range = False
             if not _has_name and not cand.get("cidr0_cidrs") and not _has_range:
                 continue  # 空字典/无网络身份：不得截断回退
@@ -5657,6 +5763,8 @@ class RDAP(Provider):
             break
         if d is None:
             if _saw_json:
+                return {"ok": False, "err": "no rdap record"}
+            if _tries and _tries == _http_404s:
                 return {"ok": False, "err": "no rdap record"}
             return {"ok": False, "err": f"rdap lookup failed: {_last_err}"[:80]
                     if _last_err else "no rdap record"}
@@ -5693,7 +5801,9 @@ class RDAP(Provider):
                         if _ip_obj in _net:
                             cidr = str(_net)
                             break
-                except ValueError:
+                except (ValueError, TypeError):
+                    # fix440g G-012：起止分属 IPv4/IPv6 时汇总亦抛 TypeError，
+                    # 与 ValueError 同处理（推导不出网段，cidr 留空）。
                     pass
         org = ""
         for e in d.get("entities") or []:
@@ -5852,8 +5962,11 @@ class HackerTarget(Provider):
             _asn = _parse_asn(asn)
             # fix440b r3-11：国家/州/城市/经纬度/ASN 全空时无可用结果，
             # 不得标 ok True。
+            # fix440g G-063：空结果判定须计入刚解析成功的有效前缀/网络名——
+            # aslookup 已取得含目标 IP 的前缀与网络名时保留它们，不得仅因
+            # ASN 为空即 empty geo。
             if not _country and not _region and not _city and _lat is None \
-                    and _lon is None and not _asn:
+                    and _lon is None and not _asn and not prefix and not netname:
                 return {"ok": False, "err": "empty geo"}
             return {
                 "ok": True,
@@ -6670,6 +6783,7 @@ def run_passive(ip, json_mode=False):
     total_p = len(avail_providers)
     done_cnt = [0]
     progress_closed = [False]  # 采集超时后迟到进度不再打印
+    _timed_out = [False]  # fix440g G-018：采集超时标记——超时后清行不得再取锁
 
     def _query_one(p):
         try:
@@ -6703,17 +6817,16 @@ def run_passive(ip, json_mode=False):
             # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
             # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
             progress_closed[0] = True
-            # r5a-7：超时且仍有未完成 future 时，旧池的运行中任务会占满
-            # worker、下一轮全 timeout——旧池 shutdown（不等运行中任务，
-            # 取消排队任务）后新建池并重绑全局与局部 _ex（coordgeo 提交
-            # 在 _ex 上，须用新池；正常完成时不动池）。替换假定无并发
-            # 提交方（菜单/CLI 皆单线程调用），见报告。
-            if any(not _f.done() for _f in _futs):
-                _old_pool = _ex
-                _old_pool.shutdown(wait=False, cancel_futures=True)
-                with _POOL_LOCK:
-                    _V4_POOL = ThreadPoolExecutor(max_workers=14)
-                    _ex = _V4_POOL
+            _timed_out[0] = True
+            # fix440g G-019：超时后不再换池——旧 r5a-7 换池让每轮超时的
+            # 运行中 worker 各占一个旧池、无上限跨轮累积（shutdown
+            # (wait=False) 只取消排队任务，不停运行中任务）。改为复用
+            # 单池：滞留 worker 总数恒 ≤ max_workers（14），排队 future
+            # 由下方循环 cancel（永不启动）；coordgeo 仍提交在同一 _ex
+            # 上。残留风险：若全部 worker 同时被挂起的 provider 占满，
+            # 后续轮次会全 timeout，直到 worker 释放——有界（≤14 线程）
+            # 但可能饿死快源；彻底根治须 provider 侧可取消/超时，此处
+            # 不展开。正常完成时不动池。
         except KeyboardInterrupt:
             # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
             # 后重新抛出（finally 复位进度状态）。
@@ -6729,7 +6842,10 @@ def run_passive(ip, json_mode=False):
         progress_closed[0] = True
         # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
-    if not json_mode:
+    # fix440g G-018：超时后清行不得再取 _progress_lock——卡住的进度渲染
+    # 可能正持有它（见上），取锁即把报告卡住；超时轮次直接不清行
+    # （残留进度行仅为 cosmetic），未超时时仍按旧口径持锁清行。
+    if not json_mode and not _timed_out[0]:
         with _progress_lock:
             print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
@@ -7278,7 +7394,10 @@ def _print_completeness(res):
     """数据完整度与置信度 (报告尾部, 两模式共用)。"""
     _section(T("sec_complete"))
     c = res.get("completeness") or {}
-    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    # fix440g G-067：`.get(k, "?")` 只处理缺键——显式 None 亦映射为 "?"，
+    # 但合法的 0 不得被掩盖（须用 `is None` 判别，不用 `or`）。
+    _q = lambda v: "?" if v is None else v
+    print(f"  {T('success_query')}: {_q(c.get('ok', '?'))}/{_q(c.get('total', '?'))} ({_q(c.get('pct', '?'))}%)")
     if c.get("failed"):
         # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
         # 加共享出口配额耗尽提示（不改变评分）。
@@ -7286,7 +7405,7 @@ def _print_completeness(res):
     print(f"  {_c(C.dim, T('fail_note'))}")
     if len(c.get("rate_limited") or []) >= 2:
         print(f"  {_c(C.dim, T('rate_limit_hint'))}")
-    print(f"  {T('confidence')}: {c.get('confidence', '?')}/100")
+    print(f"  {T('confidence')}: {_q(c.get('confidence', '?'))}/100")
 
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -7602,15 +7721,41 @@ def _factor_rows(s, wi_server, v6=False):
         # level "0" 字符串不再直接参与 >= 比较抛 TypeError。
         if isinstance(v, bool):
             return None
-        if isinstance(v, (int, float)):
+        # fix440g G-023：整数不得做浮点有限性检查——math.isfinite 会把
+        # 超大整数转 float 而抛 OverflowError；int 直接返回（比较运算
+        # 本身对任意大整数都安全）。
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
             return v if math.isfinite(v) else None
         if isinstance(v, str):
             try:
                 _f = float(v.strip())
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return None
             return _f if math.isfinite(_f) else None
         return None
+
+    def _gt(v, n):
+        # fix440g G-024：数值比较的未知守卫——_num 为 None（字段存在但
+        # 解析失败）时返 None（未知，不计入分母），不得经 `or 0` 变成 False。
+        _n = _num(v)
+        return None if _n is None else _n > n
+
+    def _ge(v, n):
+        _n = _num(v)
+        return None if _n is None else _n >= n
+
+    def _any_pos(*vs):
+        # fix440g G-024（多值版）：任一值 >0 即 True；无正值、但有字段
+        # 存在而解析失败时记未知（None）；缺字段（None）按旧口径不计入
+        # 判定（缺失≠否定，全缺时由调用方守卫先行返 None）。
+        _ns = [_num(v) for v in vs if v is not None]
+        if any(_n is not None and _n > 0 for _n in _ns):
+            return True
+        if any(_n is None for _n in _ns):
+            return None
+        return False
 
     def _h(d, cond):
         # r5a-4：cond 为值或零参可调用——失败源（ok 非真）不求值即返 None，
@@ -7624,30 +7769,33 @@ def _factor_rows(s, wi_server, v6=False):
             return None
         return True if cond else False
 
-    sf = s.get("stopforumspam", {})
-    us = s.get("urlscan", {})
-    sa = s.get("sansisc", {})
-    gn = s.get("greynoise", {})
-    fe = s.get("feodo", {})
-    et = s.get("et_compromised", {})
-    sp = s.get("spamhaus", {})
-    te = s.get("tor_exit", {})
-    pc = s.get("proxycheck", {})
-    wi = s.get("ipwhois", {})
-    fp = s.get("freeipapi", {})
-    il = s.get("iplocate", {})
-    iq = s.get("ipquery", {})
-    ti = s.get("twoip", {})
-    xv = s.get("x4bvpn", {})
-    isum = s.get("ipsum", {})
-    bd = s.get("blocklistde", {})
-    ox = s.get("otx", {})
+    # fix440g G-025：显式为 None 的源须按缺失处理——`s.get(k, {})` 只处理
+    # 缺键，键存在而值为 None 时仍得 None、随后 `.get()` 抛 AttributeError；
+    # 此处归一化后再传矩阵。
+    sf = s.get("stopforumspam") or {}
+    us = s.get("urlscan") or {}
+    sa = s.get("sansisc") or {}
+    gn = s.get("greynoise") or {}
+    fe = s.get("feodo") or {}
+    et = s.get("et_compromised") or {}
+    sp = s.get("spamhaus") or {}
+    te = s.get("tor_exit") or {}
+    pc = s.get("proxycheck") or {}
+    wi = s.get("ipwhois") or {}
+    fp = s.get("freeipapi") or {}
+    il = s.get("iplocate") or {}
+    iq = s.get("ipquery") or {}
+    ti = s.get("twoip") or {}
+    xv = s.get("x4bvpn") or {}
+    isum = s.get("ipsum") or {}
+    bd = s.get("blocklistde") or {}
+    ox = s.get("otx") or {}
     rows = [
         ("StopForumSpam", [None, None, None, None,
                            _h(sf, _sfs_hit(sf)), None]),
         ("urlscan.io", [None, None, None, None, None,
                         _h(us, lambda: None if us.get("total") is None
-                            else (_num(us.get("total")) or 0) > 0)]),
+                            else _gt(us.get("total"), 0))]),
         ("SANS ISC", [None, None, None, None, None,
                       None if sa.get("attack_count") is None else _h(sa, bool(sa.get("attack_count")))]),
         ("Shodan", [None, None, None, None, None, None]),
@@ -7706,21 +7854,19 @@ def _factor_rows(s, wi_server, v6=False):
         ("IPsum", [
             None, None, None, None,
             _h(isum, lambda: None if isum.get("level") is None
-                else (_num(isum.get("level")) or 0) >= 2),
+                else _ge(isum.get("level"), 2)),
             None]),
         ("blocklist.de", [
             None, None, None, None,
             _h(bd, lambda: None if bd.get("attacks") is None
                 and bd.get("reports") is None
-                else ((_num(bd.get("attacks")) or 0) > 0
-                      or (_num(bd.get("reports")) or 0) > 0)),
+                else _any_pos(bd.get("attacks"), bd.get("reports"))),
             None]),
         ("OTX", [
             None, None, None, None, None,
             _h(ox, lambda: None if ox.get("reputation") is None
                 and ox.get("pulses") is None
-                else ((_num(ox.get("reputation")) or 0) > 0
-                      or (_num(ox.get("pulses")) or 0) > 0))]),
+                else _any_pos(ox.get("reputation"), ox.get("pulses")))]),
     ]
     if v6:
         _v4only = {"StopForumSpam", "urlscan.io", "SANS ISC", "GreyNoise",
@@ -7756,7 +7902,10 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         if pc.get("ok") and pc.get("type"):
             type_sources.append(("proxycheck", pc["type"]))
         if wi.get("ok"):
-            if wi.get("hosting"):
+            # fix440g G-066：逐源文本不得用 Python 真值作肯定/否定判断——
+            # hosting="false" 等非布尔值须按未知处理，不得显示机房；只有
+            # 严格布尔 True 才认机房（False/未知走启发式/未知分支）。
+            if _strict_bool(wi.get("hosting")) is True:
                 type_sources.append(("ipwho.is", T("dc")))
             else:
                 dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
@@ -7768,7 +7917,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                     type_sources.append((T("heuristic"), T("unknown")))
         il = (s.get("iplocate") or {})
         if il.get("ok"):
-            if il.get("hosting") or il.get("asn_type") == "hosting":
+            if _strict_bool(il.get("hosting")) is True or il.get("asn_type") == "hosting":
                 type_sources.append(("iplocate.io", T("dc")))
             elif il.get("asn_type") == "isp":
                 type_sources.append((T("heuristic"), T("residential")))
@@ -7776,9 +7925,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                 type_sources.append(("iplocate.io", T("unknown")))
         iq = (s.get("ipquery") or {})
         if iq.get("ok"):
-            if iq.get("datacenter"):
+            if _strict_bool(iq.get("datacenter")) is True:
                 type_sources.append(("ipquery.io", T("dc")))
-            elif iq.get("mobile"):
+            elif _strict_bool(iq.get("mobile")) is True:
                 type_sources.append(("ipquery.io", T("mobile")))
             else:
                 type_sources.append((T("heuristic"), T("residential")
@@ -7834,27 +7983,40 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
         _section(T("sec_fraud"))
         sc = (s.get("scamalytics") or {})
+        # fix440g G-020/G-021：行显示、算术与脚注判断共用同一个已归一化的
+        # 可选分数（_opt_score）：缺失/None/字符串分一律为未知（None），
+        # 行印 "—"；缺失综合分时不计算纯净度；真实数值 0 保留。
+        def _dim(_key):
+            _dv = scs.get(_key)
+            if isinstance(_dv, (list, tuple)) and len(_dv):
+                return _opt_score(_dv[0])
+            return None
+
         _srows = [("Scamalytics",
-                   _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
-        for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
-                         (T("dim_fraud"), scs.get("fraud") or (0, [])),
-                         (T("dim_reputation"), scs.get("reputation") or (0, [])),
-                         (T("dim_platform"), scs.get("platform") or (0, []))):
-            _srows.append((_dn, _dv[0], ""))
-        _combined = scs.get("combined") or 0
-        _purity = 100 - _combined
-        if _purity >= 85:
-            _pl, _pc = T("purity_best"), C.green
-        elif _purity >= 70:
-            _pl, _pc = T("purity_good"), C.green
-        elif _purity >= 50:
-            _pl, _pc = T("purity_fair"), C.yellow
-        elif _purity >= 30:
-            _pl, _pc = T("purity_poor"), C.yellow
+                   _opt_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn, _dk in ((T("dim_threat"), "threat"),
+                         (T("dim_fraud"), "fraud"),
+                         (T("dim_reputation"), "reputation"),
+                         (T("dim_platform"), "platform")):
+            _srows.append((_dn, _dim(_dk), ""))
+        _combined = _opt_score(scs.get("combined"))
+        if _combined is not None:
+            _purity = 100 - _combined
+            if _purity >= 85:
+                _pl, _pc = T("purity_best"), C.green
+            elif _purity >= 70:
+                _pl, _pc = T("purity_good"), C.green
+            elif _purity >= 50:
+                _pl, _pc = T("purity_fair"), C.yellow
+            elif _purity >= 30:
+                _pl, _pc = T("purity_poor"), C.yellow
+            else:
+                _pl, _pc = T("purity_bad"), C.red
+            _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
+            _srows.append((T("purity"), _purity, _pl))
         else:
-            _pl, _pc = T("purity_bad"), C.red
-        _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
-        _srows.append((T("purity"), _purity, _pl))
+            _srows.append((T("combined"), None, ""))
+            _srows.append((T("purity"), None, ""))
         _lw3 = _bar_label_width()
         for _n, _v, _extra in _srows:
             if _v is None:
@@ -7869,7 +8031,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         if _verdict:
             print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
         print(f"  {_c(C.dim, T('purity_note'))}")
-        if (scs.get("platform") or (0,))[0] >= 30:
+        # fix440g G-021：脚注判断与行显示共用已归一化的平台分（未知时不触发）。
+        _plat = _dim("platform")
+        if _plat is not None and _plat >= 30:
             print(f"  {_c(C.dim, T('platform_note'))}")
 
         if include_streaming_inference:
@@ -7928,6 +8092,7 @@ def run_passive6(ip, json_mode=False):
     total_p = len(avail)
     done_cnt = [0]
     progress_closed = [False]  # 采集超时后迟到进度不再打印（与 run_passive 同口径）
+    _timed_out = [False]  # fix440g G-018：采集超时标记——超时后清行不得再取锁
 
     def _query_one(p):
         try:
@@ -7961,17 +8126,11 @@ def run_passive6(ip, json_mode=False):
             # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
             # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
             progress_closed[0] = True
-            # r5a-7：超时且仍有未完成 future 时，旧池的运行中任务会占满
-            # worker、下一轮全 timeout——旧池 shutdown（不等运行中任务，
-            # 取消排队任务）后新建池并重绑全局与局部 _ex（coordgeo 提交
-            # 在 _ex 上，须用新池；正常完成时不动池）。替换假定无并发
-            # 提交方（菜单/CLI 皆单线程调用），见报告。
-            if any(not _f.done() for _f in _futs):
-                _old_pool = _ex
-                _old_pool.shutdown(wait=False, cancel_futures=True)
-                with _POOL_LOCK:
-                    _V6_POOL = ThreadPoolExecutor(max_workers=10)
-                    _ex = _V6_POOL
+            _timed_out[0] = True
+            # fix440g G-022：与 run_passive 的 G-019 同根——超时后不再换池，
+            # 改为复用单池（滞留 worker 总数恒 ≤ max_workers（10），排队
+            # future 由下方循环 cancel）；旧换池每轮留 10 个运行中线程，
+            # 三轮即 30 个。残留风险同 v4（见 run_passive 注释）。
         except KeyboardInterrupt:
             # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
             # 后重新抛出（finally 复位进度状态）。
@@ -7987,7 +8146,9 @@ def run_passive6(ip, json_mode=False):
         progress_closed[0] = True
         # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
-    if not json_mode:
+    # fix440g G-018（v6 同口径）：超时后清行不得再取 _progress_lock，
+    # 超时轮次直接不清行，未超时时仍按旧口径持锁清行。
+    if not json_mode and not _timed_out[0]:
         with _progress_lock:
             print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
@@ -8073,7 +8234,9 @@ def _print_report6_tail(res):
     """[5] 完整度与免责 (L-02: 报告尾巴, 供主动模式末尾打印, 避免中途出现)。"""
     _section(T("sec_complete6"))
     c = res.get("completeness") or {}
-    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    # fix440g G-067（v6）：同 _print_completeness——显式 None 亦映射为 "?"。
+    _q = lambda v: "?" if v is None else v
+    print(f"  {T('success_query')}: {_q(c.get('ok', '?'))}/{_q(c.get('total', '?'))} ({_q(c.get('pct', '?'))}%)")
     if c.get("failed"):
         # 04-01 / 04-08（v6）：同 _print_completeness。
         print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
@@ -8115,7 +8278,8 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             _ts6.append(("proxycheck", _pc6["type"]))
         _wi6 = (s.get("ipwhois") or {})
         if _wi6.get("ok"):
-            if _wi6.get("hosting"):
+            # fix440g G-066：同 v4——hosting 只认严格布尔 True。
+            if _strict_bool(_wi6.get("hosting")) is True:
                 _ts6.append(("ipwho.is", T("dc")))
             else:
                 _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
@@ -8127,7 +8291,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
                     _ts6.append((T("heuristic"), T("unknown")))
         _il6 = (s.get("iplocate") or {})
         if _il6.get("ok"):
-            if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
+            if _strict_bool(_il6.get("hosting")) is True or _il6.get("asn_type") == "hosting":
                 _ts6.append(("iplocate.io", T("dc")))
             elif _il6.get("asn_type") == "isp":
                 _ts6.append((T("heuristic"), T("residential")))
@@ -8135,9 +8299,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
                 _ts6.append(("iplocate.io", T("unknown")))
         _iq6 = (s.get("ipquery") or {})
         if _iq6.get("ok"):
-            if _iq6.get("datacenter"):
+            if _strict_bool(_iq6.get("datacenter")) is True:
                 _ts6.append(("ipquery.io", T("dc")))
-            elif _iq6.get("mobile"):
+            elif _strict_bool(_iq6.get("mobile")) is True:
                 _ts6.append(("ipquery.io", T("mobile")))
             else:
                 _ts6.append((T("heuristic"), T("residential")
@@ -8208,27 +8372,48 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             _v = _iq6s["risk_score"]
             print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
         if sp.get("ok"):
-            _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
-                    else _c(C.green, T("v6_not_listed")))
+            # fix440g G-066：listed 三分——True 命中、False 未命中、未知
+            # （None/非布尔）印 "—"，不得把未知显示成绿色未命中。
+            _lst6 = _strict_bool(sp.get("listed"))
+            if _lst6 is True:
+                _lst = _c(C.red, T("v6_listed"))
+            elif _lst6 is False:
+                _lst = _c(C.green, T("v6_not_listed"))
+            else:
+                _lst = _c(C.dim, "—")
             print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
         if sh.get("ok"):
-            _ports = sh.get("ports") or []
-            # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
-            # 打印前逐个 _strip_cc，防终端转义注入。
-            _ptxt = ", ".join(_strip_cc(p) for p in _ports) if _ports else T("none")
+            # fix440g G-065：ports=None（未知）与 ports=[]（已核实为空）
+            # 显示须区分——未知印 "—"，不得与“无”逐字相同。
+            _ports = sh.get("ports")
+            if _ports is None:
+                _ptxt = _c(C.dim, "—")
+            elif _ports:
+                # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+                # 打印前逐个 _strip_cc，防终端转义注入。
+                _ptxt = ", ".join(_strip_cc(p) for p in _ports)
+            else:
+                _ptxt = T("none")
             print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
         # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
         _section(T("sec_fraud"))
         _scs6 = res.get("scores") or {}
+        # fix440g G-021（v6）：行显示、算术与脚注判断共用同一个已归一化的
+        # 可选分数（_opt_score），与 print_report 同口径。
+        def _dim6(_key):
+            _dv6 = _scs6.get(_key)
+            if isinstance(_dv6, (list, tuple)) and len(_dv6):
+                return _opt_score(_dv6[0])
+            return None
+
         _srows6 = [("Scamalytics",
-                    _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+                    _opt_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
         for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
                            (T("dim_reputation"), "reputation"),
                            (T("dim_platform"), "platform")):
-            _dv6 = _scs6.get(_dk6)
-            _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
-        _comb6 = _scs6.get("combined")
+            _srows6.append((_dn6, _dim6(_dk6), ""))
+        _comb6 = _opt_score(_scs6.get("combined"))
         _pcol6 = C.green
         if _comb6 is not None:
             _pur6 = 100 - _comb6
@@ -8259,7 +8444,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
         print(f"  {_c(C.dim, T('v6_score_note'))}")
         print(f"  {_c(C.dim, T('purity_note'))}")
-        if (_scs6.get("platform") or (0,))[0] >= 30:
+        # fix440g G-021（v6）：脚注判断与行显示共用已归一化的平台分。
+        _plat6 = _dim6("platform")
+        if _plat6 is not None and _plat6 >= 30:
             print(f"  {_c(C.dim, T('platform_note'))}")
 
         # [5] 完整度
