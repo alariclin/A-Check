@@ -3420,11 +3420,22 @@ def _wd_claim_ids(ent, prop):
     claims = ent.get("claims")
     if not isinstance(claims, dict):
         return out
-    for st in claims.get(prop, []) or []:
+    # fix440 GPT G-050：claims[prop] 本身错型（非列表，如整数）时返空表，
+    # 不得 for 循环抛 TypeError 中止整批候选。
+    _stmts = claims.get(prop, [])
+    if not isinstance(_stmts, (list, tuple)):
+        return out
+    for st in _stmts:
         # fix440a r2b-14：非 dict 声明跳过，不致全部候选作废；
         # r2b-11：deprecated 等级声明不作类型/归属证据。
         if not isinstance(st, dict) or st.get("rank") == "deprecated":
             continue
+        # fix440 GPT G-051：带结束日期限定符（P582）的 P31 声明是历史
+        # 类型，不得作为实体当前城市的类型证据。
+        if prop == "P31":
+            _quals = st.get("qualifiers")
+            if isinstance(_quals, dict) and _quals.get("P582"):
+                continue
         ms = st.get("mainsnak")
         if not isinstance(ms, dict):
             continue
@@ -3435,6 +3446,16 @@ def _wd_claim_ids(ent, prop):
         if isinstance(v, dict) and v.get("id"):
             out.append(v["id"])
     return out
+
+
+# fix440 GPT G-053：去消歧括号只去掉 Wikidata 注释形态（city／
+# disambiguation 等通用标注）；正式地名的一部分（如 Frankfurt (Oder)
+# 的 (Oder)）须保留——无法区分时宁可保留原文。
+_WD_PAREN_ANNOTATION = frozenset({
+    "city", "town", "village", "municipality", "settlement", "commune",
+    "borough", "district", "county", "locality", "disambiguation",
+    "消歧", "消歧义",
+})
 
 
 def _wd_pick_label(ent, langs):
@@ -3449,8 +3470,16 @@ def _wd_pick_label(ent, langs):
             _lv = labels[lg]
             if not isinstance(_lv, dict):
                 continue
-            v = re.sub(r"\s*[\(\（][^\\)\）]*[\\)\）]\s*$", "",
-                       str(_lv.get("value") or "")).strip()
+            # fix440 GPT G-052：value 错型（非字符串，如 123）时跳过该
+            # 语言继续下一候选，不得 str() 强制转成假成功。
+            _raw = _lv.get("value")
+            if not isinstance(_raw, str):
+                continue
+            _m = re.search(r"\s*[\(\（]([^)\）]*)[\)\）]\s*$", _raw)
+            if _m and _m.group(1).strip().lower() in _WD_PAREN_ANNOTATION:
+                v = _raw[:_m.start()].strip()
+            else:
+                v = _raw.strip()
             # fix440a r2b-22：标签过 _clean_str（剥离控制字符）；
             # r2b-13c：剥离为空后继续试下一优先级，而非直接返 None。
             v = _clean_str(v)
@@ -3497,9 +3526,19 @@ def _wd_label(name, kind, context):
             return [c for c in json.loads(raw).get("search", [])
                     if c.get("id") and (
                         (c.get("label") or "").lower() == name.lower()
+                        # fix440 GPT G-049：候选英文 label 与完整查询
+                        # （term，如 "Riverside, Ohio"）精确相等即收，
+                        # 不得只与裸名比较。
+                        or (c.get("label") or "").lower() == term.lower()
                         # fix440a r2b-15：label 或任一 alias 精确匹配即收，
                         # 不得只认 label（Bombay 别名 Mumbai 会被丢）。
                         or any(isinstance(al, str) and al.lower() == name.lower()
+                               for al in (c.get("aliases") or []))
+                        # fix440 GPT G-048：对象型 alias 的 value 与字符
+                        # 串元素同等接受（与 _resolve_qids 的处理对齐）。
+                        or any(isinstance(al, dict)
+                               and isinstance(al.get("value"), str)
+                               and al["value"].lower() == name.lower()
                                for al in (c.get("aliases") or [])))]
 
         def _resolve_qids(term):
@@ -3576,7 +3615,9 @@ def _wd_label(name, kind, context):
             实体无 P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
             # fix440a r2b-9：context 命中亦须校验——context 给出且与名不同时，
             # 实体 P17/P131 须与 context 成分相符；context 缺失或等于名时恒真。
-            if not context or context == name:
+            # fix440 GPT G-047：等于名的比较须大小写不敏感（"PARIS" 不得
+            # 因此丢 token 致 qids 为空）。
+            if not context or (context or "").strip().lower() == (name or "").lower():
                 return True
             ent = entities.get(eid, {})
             countries = set(_wd_claim_ids(ent, "P17"))
@@ -3611,9 +3652,17 @@ def _wd_label(name, kind, context):
             toks = [t.strip() for t in (context or "").split(",")]
             toks = [t for t in toks if t and t.lower() != name.lower()]
             qids = []
+            _unresolved = False
             for tok in toks:
-                qids.extend(_resolve_qids(tok))
+                _qs = _resolve_qids(tok)
+                if not _qs:
+                    _unresolved = True
+                qids.extend(_qs)
             if not qids:
+                return False
+            # fix440 GPT G-006：调用预算耗尽且仍有上下文成分未解出时，
+            # 州级证据未经验证，不得仅凭国家 QID 通过候选（返回未确认）。
+            if _unresolved and _calls["n"] >= _WD_LABEL_MAX_CALLS:
                 return False
             # B-06a-1: 须命中最具体的可解析上下文成分——任一成分命中
             # P131 链（州/省级）即确认；否则任一可解析成分若既非国家亦
@@ -3649,12 +3698,15 @@ def _wd_label(name, kind, context):
             all_p31 = sorted({p for ps in p31_map.values() for p in ps})
             parents = {}
             if all_p31:
-                ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                                   f"&ids={'|'.join(all_p31)}&props=claims&format=json",
-                                   timeout=5, retries=1, use_cache=False)
-                if ok:
-                    for tid, tent in json.loads(raw).get("entities", {}).items():
-                        parents[tid] = _wd_claim_ids(tent, "P279")
+                # fix440 GPT G-055：wbgetentities 每次最多 50 个 ID，分批
+                # 查询，沿用同一调用预算。
+                for _i in range(0, len(all_p31), 50):
+                    ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                       f"&ids={'|'.join(all_p31[_i:_i + 50])}&props=claims&format=json",
+                                       timeout=5, retries=1, use_cache=False)
+                    if ok:
+                        for tid, tent in json.loads(raw).get("entities", {}).items():
+                            parents[tid] = _wd_claim_ids(tent, "P279")
             for c in cands:
                 ps = []
                 for p in p31_map.get(c["id"], []):
@@ -3674,7 +3726,9 @@ def _wd_label(name, kind, context):
         if context and context != name and not _fallback:
             cands2 = _search(name)
             if cands2:
-                ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                # fix440 GPT G-054：第二轮裸名回退亦须走 _wd_get 预算，
+                # 不得直接 http_get 绕过上限。
+                ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                                    f"&ids={'|'.join(c['id'] for c in cands2)}"
                                    "&props=labels|claims"
                                    f"&languages={'|'.join(langs)}&format=json",
