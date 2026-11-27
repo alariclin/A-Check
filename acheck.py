@@ -1647,7 +1647,8 @@ def _render_progress_locked(current, total, name="", json_mode=False):
     if json_mode:
         return
     bar_len = 28
-    filled = int(bar_len * current / max(total, 1))
+    # L10：filled 钳制到 [0, bar_len]——current>total 时条长不得超 bar_len。
+    filled = min(bar_len, max(0, int(bar_len * current / max(total, 1))))
     bar = "█" * filled + "░" * (bar_len - filled)
     msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
     _lim = max(10, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
@@ -5555,7 +5556,7 @@ def run_passive(ip, json_mode=False):
 
     if not json_mode:
         with _progress_lock:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     # OPT-4：画像只读 sources（score_* 亦只读、不写 sources），故 _prof
     # 可前移到评分之前；逆地理随即提交到共享池，与评分/完整度/verdict
@@ -5695,7 +5696,8 @@ def _type_block(t):
 
 
 def _print_streaming_inference(res):
-    s = res["sources"]
+    # L1：print_report 缺 sources 时亦不得在此崩。
+    s = res.get("sources") or {}
     prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
     _section(T("sec_stream_passive"))
     country = prof.get("country", "") or ""
@@ -6085,16 +6087,16 @@ def _print_streaming_inference(res):
 def _print_completeness(res):
     """数据完整度与置信度 (报告尾部, 两模式共用)。"""
     _section(T("sec_complete"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
+    c = res.get("completeness") or {}
+    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    if c.get("failed"):
         # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
         # 加共享出口配额耗尽提示（不改变评分）。
         print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
     print(f"  {_c(C.dim, T('fail_note'))}")
     if len(c.get("rate_limited") or []) >= 2:
         print(f"  {_c(C.dim, T('rate_limit_hint'))}")
-    print(f"  {T('confidence')}: {c['confidence']}/100")
+    print(f"  {T('confidence')}: {c.get('confidence', '?')}/100")
 
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -6103,17 +6105,20 @@ def _print_completeness(res):
 
 
 def _print_basic_block(s, prof):
+    # L1：手造/残缺 res 可达——源字典取值 None 或 prof 缺失不得崩。
+    s = s or {}
+    prof = prof or {}
     _section(T("sec_basic"))
-    wi = s.get("ipwhois", {})
-    ii = s.get("ipinfo", {})
-    db = s.get("dbip", {})
+    wi = (s.get("ipwhois") or {})
+    ii = (s.get("ipinfo") or {})
+    db = (s.get("dbip") or {})
     if prof.get("ok"):
         isp_str = prof.get("isp") or "?"
         org_str = prof.get("org") or ""
         _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
         _isp_disp = isp_str + (f" / {org_str}" if org_str and org_str != isp_str else "")
         print(f"  {_c(C.dim, T('isp') + ':')} {_c(C.bold, _isp_disp)}" + (_c(C.cyan, _as_sfx) if _as_sfx else ""))
-    rs = s.get("ripestat", {})
+    rs = (s.get("ripestat") or {})
     if rs.get("ok"):
         if rs.get("age_years") is not None:
             age = f"{rs['age_years']} {(_ru_plural(rs['age_years'], 'год', 'года', 'лет') if LANG == 'ru' else T('years'))}"
@@ -6124,7 +6129,7 @@ def _print_basic_block(s, prof):
         vis = _strip_cc(rs.get("visibility") or "?")
         first = _strip_cc(rs.get("first_seen") or "?")
         print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
-    pt = s.get("ptr", {})
+    pt = (s.get("ptr") or {})
     if pt.get("ok"):
         if pt.get("ptr"):
             fcr = "✓" if pt.get("fcrdns") else "✗"
@@ -6134,17 +6139,17 @@ def _print_basic_block(s, prof):
             print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('ptr_none'))}")
     else:
         print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('unverifiable'))}")
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
     if pc.get("ok") and pc.get("range"):
         print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, pc['range'])}")
     else:
-        _rd = s.get("rdap", {})
+        _rd = (s.get("rdap") or {})
         if _rd.get("ok") and _rd.get("cidr"):
             print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, _rd['cidr'])}")
 
     # 地理位置组: 国家码徽章排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
 
     def _has_loc(*vals):
         # 定位记录判空：按全部展示字段判（省州亦计入），空白字符串视为空，
@@ -6164,39 +6169,39 @@ def _print_basic_block(s, prof):
     if pc.get("ok") and _has_loc(_clean_str(pc.get("country")), _clean_str(pc.get("city"))):
         locs.append(("proxycheck", _join_nonempty(_clean_str(pc.get("country")), _clean_str(pc.get("city"))),
                      _clean_str(pc.get("country")), _clean_str(pc.get("city"))))
-    fp = s.get("freeipapi", {})
+    fp = (s.get("freeipapi") or {})
     if fp.get("ok") and _has_loc(_clean_str(fp.get("country")), _clean_str(fp.get("city"))):
         locs.append(("freeipapi", _join_nonempty(_clean_str(fp.get("country")), _clean_str(fp.get("city"))),
                      _clean_str(fp.get("country")), _clean_str(fp.get("city"))))
-    wap = s.get("ipwhoisapp", {})
+    wap = (s.get("ipwhoisapp") or {})
     if wap.get("ok") and _has_loc(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))):
         locs.append(("ipwhois.app", _join_nonempty(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))),
                      _clean_str(wap.get("country")), _clean_str(wap.get("city"))))
-    ais = s.get("ipapiis", {})
+    ais = (s.get("ipapiis") or {})
     if ais.get("ok") and _has_loc(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))):
         locs.append(("ipapi.is", _join_nonempty(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))),
                      _clean_str(ais.get("country")), _clean_str(ais.get("city"))))
-    igd = s.get("ipguide", {})
+    igd = (s.get("ipguide") or {})
     if igd.get("ok") and _has_loc(_clean_str(igd.get("country")), _clean_str(igd.get("city"))):
         locs.append(("ip.guide", _join_nonempty(_clean_str(igd.get("country")), _clean_str(igd.get("city"))),
                      _clean_str(igd.get("country")), _clean_str(igd.get("city"))))
-    ilc = s.get("iplocate", {})
+    ilc = (s.get("iplocate") or {})
     if ilc.get("ok") and _has_loc(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))):
         locs.append(("iplocate.io", _join_nonempty(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))),
                      _clean_str(ilc.get("country")), _clean_str(ilc.get("city"))))
-    iqc = s.get("ipquery", {})
+    iqc = (s.get("ipquery") or {})
     if iqc.get("ok") and _has_loc(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))):
         locs.append(("ipquery.io", _join_nonempty(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))),
                      _clean_str(iqc.get("country")), _clean_str(iqc.get("city"))))
-    coc = s.get("ipapico", {})
+    coc = (s.get("ipapico") or {})
     if coc.get("ok") and _has_loc(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))):
         locs.append(("ipapi.co", _join_nonempty(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))),
                      _clean_str(coc.get("country")), _clean_str(coc.get("city"))))
-    tic = s.get("twoip", {})
+    tic = (s.get("twoip") or {})
     if tic.get("ok") and _has_loc(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))):
         locs.append(("2ip.io", _join_nonempty(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))),
                      _clean_str(tic.get("country")), _clean_str(tic.get("city"))))
-    gjs = s.get("geojs", {})
+    gjs = (s.get("geojs") or {})
     if gjs.get("ok") and _has_loc(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))):
         locs.append(("GeoJS", _join_nonempty(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))),
                      _clean_str(gjs.get("country")), _clean_str(gjs.get("city"))))
@@ -6292,7 +6297,7 @@ def _print_basic_block(s, prof):
                 _order.append(k)
             _groups[k][1].append(name)
         _order.sort(key=lambda k: -len(_groups[k][1]))
-    _cg = s.get("coordgeo", {})
+    _cg = (s.get("coordgeo") or {})
     _pcc = prof.get("country_code") or ""
     if not _pcc and locs and _order:
         # B-8-4：回退只取与画像国家一致的最大位置组——此前不校验，
@@ -6471,17 +6476,17 @@ def _factor_rows(s, wi_server, v6=False):
 def print_report(res, include_streaming_inference=True, sysinfo=None,
                  tail_completeness=True, dns_rec=False, footnote="passive"):
     _sec_begin()
-    s = res["sources"]
+    s = res.get("sources") or {}
     prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    scs = res["scores"]
-    ip = res["ip"]
+    scs = res.get("scores") or {}
+    ip = res.get("ip", "?")
 
     print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
     # [1] 基础信息 (支持多源融合兜底)
     _print_basic_block(s, prof)
-    wi = s.get("ipwhois", {})
+    wi = (s.get("ipwhois") or {})
 
     # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
     if sysinfo:
@@ -6490,7 +6495,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
     _section(T("sec_type"), sub=True)
     type_sources = []
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
     if pc.get("ok") and pc.get("type"):
         type_sources.append(("proxycheck", pc["type"]))
     if wi.get("ok"):
@@ -6504,7 +6509,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                 type_sources.append((T("heuristic"), T("residential")))
             else:
                 type_sources.append((T("heuristic"), T("unknown")))
-    il = s.get("iplocate", {})
+    il = (s.get("iplocate") or {})
     if il.get("ok"):
         if il.get("hosting") or il.get("asn_type") == "hosting":
             type_sources.append(("iplocate.io", T("dc")))
@@ -6512,7 +6517,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             type_sources.append((T("heuristic"), T("residential")))
         else:
             type_sources.append(("iplocate.io", T("unknown")))
-    iq = s.get("ipquery", {})
+    iq = (s.get("ipquery") or {})
     if iq.get("ok"):
         if iq.get("datacenter"):
             type_sources.append(("ipquery.io", T("dc")))
@@ -6544,8 +6549,8 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     _NA = None
     _Q = "?"
 
-    il = s.get("iplocate", {})
-    iq = s.get("ipquery", {})
+    il = (s.get("iplocate") or {})
+    iq = (s.get("ipquery") or {})
 
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
@@ -6568,15 +6573,15 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 
     # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
     _section(T("sec_fraud"))
-    sc = s.get("scamalytics", {})
+    sc = (s.get("scamalytics") or {})
     _srows = [("Scamalytics",
                sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
-    for _dn, _dv in ((T("dim_threat"), scs["threat"]),
-                     (T("dim_fraud"), scs["fraud"]),
-                     (T("dim_reputation"), scs["reputation"]),
-                     (T("dim_platform"), scs["platform"])):
+    for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
+                     (T("dim_fraud"), scs.get("fraud") or (0, [])),
+                     (T("dim_reputation"), scs.get("reputation") or (0, [])),
+                     (T("dim_platform"), scs.get("platform") or (0, []))):
         _srows.append((_dn, _dv[0], ""))
-    _combined = scs["combined"]
+    _combined = scs.get("combined") or 0
     _purity = 100 - _combined
     if _purity >= 85:
         _pl, _pc = T("purity_best"), C.green
@@ -6601,7 +6606,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         else:
             print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
     print(f"  {_c(C.dim, T('purity_note'))}")
-    if scs["platform"][0] >= 30:
+    if (scs.get("platform") or (0,))[0] >= 30:
         print(f"  {_c(C.dim, T('platform_note'))}")
 
     if include_streaming_inference:
@@ -6701,7 +6706,7 @@ def run_passive6(ip, json_mode=False):
 
     if not json_mode:
         with _progress_lock:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
@@ -6784,9 +6789,9 @@ def run_passive6(ip, json_mode=False):
 def _print_report6_tail(res):
     """[5] 完整度与免责 (L-02: 报告尾巴, 供主动模式末尾打印, 避免中途出现)。"""
     _section(T("sec_complete6"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
+    c = res.get("completeness") or {}
+    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    if c.get("failed"):
         # 04-01 / 04-08（v6）：同 _print_completeness。
         print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
     # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
@@ -6804,13 +6809,13 @@ def _print_report6_tail(res):
 def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     if not embedded:
         _sec_begin()
-    s = res["sources"]
+    s = res.get("sources") or {}
     prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    ip = res["ip"]
+    ip = res.get("ip", "?")
 
     if not embedded:
         print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
     _print_basic_block(s, prof)
 
@@ -6821,10 +6826,10 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
     _section(T("sec_type"), sub=True)
     _ts6 = []
-    _pc6 = s.get("proxycheck", {})
+    _pc6 = (s.get("proxycheck") or {})
     if _pc6.get("ok") and _pc6.get("type"):
         _ts6.append(("proxycheck", _pc6["type"]))
-    _wi6 = s.get("ipwhois", {})
+    _wi6 = (s.get("ipwhois") or {})
     if _wi6.get("ok"):
         if _wi6.get("hosting"):
             _ts6.append(("ipwho.is", T("dc")))
@@ -6836,7 +6841,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
                 _ts6.append((T("heuristic"), T("residential")))
             else:
                 _ts6.append((T("heuristic"), T("unknown")))
-    _il6 = s.get("iplocate", {})
+    _il6 = (s.get("iplocate") or {})
     if _il6.get("ok"):
         if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
             _ts6.append(("iplocate.io", T("dc")))
@@ -6844,7 +6849,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             _ts6.append((T("heuristic"), T("residential")))
         else:
             _ts6.append(("iplocate.io", T("unknown")))
-    _iq6 = s.get("ipquery", {})
+    _iq6 = (s.get("ipquery") or {})
     if _iq6.get("ok"):
         if _iq6.get("datacenter"):
             _ts6.append(("ipquery.io", T("dc")))
@@ -6875,10 +6880,10 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     print(f"  {_c(C.dim, T('v6_prefix_note'))}")
 
     _NA = None
-    pc = s.get("proxycheck", {})
-    wi = s.get("ipwhois", {})
-    sp = s.get("spamhaus", {})
-    sh = s.get("shodan_idb", {})
+    pc = (s.get("proxycheck") or {})
+    wi = (s.get("ipwhois") or {})
+    sp = (s.get("spamhaus") or {})
+    sh = (s.get("shodan_idb") or {})
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
     if wi.get("ok") and wi.get("hosting"):
@@ -6898,7 +6903,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
 
     # [3] 信誉信号 (逐源透传)
     _section(T("sec_signals6"))
-    sc = s.get("scamalytics", {})
+    sc = (s.get("scamalytics") or {})
     if sc.get("ok"):
         _v = sc.get("fraud_score", 0)
         print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
@@ -6909,7 +6914,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
         print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
     else:
         print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    _iq6s = s.get("ipquery", {})
+    _iq6s = (s.get("ipquery") or {})
     if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
         _v = _iq6s["risk_score"]
         print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
@@ -10824,7 +10829,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
         }
 
         if not json_mode:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
             print(f"  {_c(C.bold, cat_name)}:")
             print("    " + "".join(_pad(n, 11) for n, _ in results))
             print("    " + "".join(_st(st) for _, (st, _, _) in results))
@@ -12362,15 +12367,16 @@ def batch_node_test(nodes, ping_count=5):
 def _node_label(nd):
     """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
     （裸 userinfo 行曾使账密经 raw 进排名表与日志）。"""
-    host = _strip_cc(nd["host"])  # 纵深：即使解析层漏网，标签也不含控制字符
+    host = _strip_cc(nd.get("host") or "?")  # 纵深：即使解析层漏网，标签也不含控制字符
     if ":" in host and not host.startswith("["):
         host = "[%s]" % host
-    if nd["proto"] == "socks5" and (nd.get("user") is not None
-                                   or nd.get("pass") is not None):
-        return ("socks5://***@%s:%s" % (host, nd["port"]))[:38]
-    if nd["proto"] == "socks5":
-        return ("socks5://%s:%s" % (host, nd["port"]))[:38]
-    return ("%s:%s" % (host, nd["port"]))[:38]
+    _port = nd.get("port", "?")
+    if nd.get("proto") == "socks5" and (nd.get("user") is not None
+                                        or nd.get("pass") is not None):
+        return ("socks5://***@%s:%s" % (host, _port))[:38]
+    if nd.get("proto") == "socks5":
+        return ("socks5://%s:%s" % (host, _port))[:38]
+    return ("%s:%s" % (host, _port))[:38]
 
 
 def _sanitize_batch_results(results):
@@ -12398,17 +12404,23 @@ def _print_batch_results(results):
     print(_c(C.cyan, hdr))
     best_marked = False
     for i, r in enumerate(results, 1):
-        nd = r["node"]
+        r = r or {}
+        nd = r.get("node") or {}
+        if not nd:
+            continue  # 缺 node 的行无标签可打，跳过（L1）
         label = _node_label(nd)
-        tcp = r["tcp"]
+        tcp = r.get("tcp") or {}
         if tcp.get("ok"):
-            avg = "%.1fms" % tcp["avg_ms"]
-            jit = "%.1fms" % tcp["jitter_ms"]
-            loss = "%.0f%%" % tcp["loss_pct"]
+            avg = ("%.1fms" % tcp["avg_ms"]
+                   if tcp.get("avg_ms") is not None else "-")
+            jit = ("%.1fms" % tcp["jitter_ms"]
+                   if tcp.get("jitter_ms") is not None else "-")
+            loss = ("%.0f%%" % tcp["loss_pct"]
+                    if tcp.get("loss_pct") is not None else "-")
         else:
             avg = jit = loss = "-"
-        if nd["proto"] == "socks5":
-            hs = T("bn_ok") if r.get("socks5", {}).get("ok") else "✗"
+        if nd.get("proto") == "socks5":
+            hs = T("bn_ok") if (r.get("socks5") or {}).get("ok") else "✗"
         else:
             hs = "-"
         usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
