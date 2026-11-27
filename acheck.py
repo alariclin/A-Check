@@ -3823,9 +3823,21 @@ class IPWhoIs(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("success", True):
-                return {"ok": False, "err": d.get("message", "query failed")}
-            conn = d.get("connection") or {}
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b r2b-1：success 只认布尔 True——字符串 "false" 是真值，
+            # 旧 `not d.get("success", True)` 会把它当成功；无 success 且无
+            # 国家时亦为空响应，不得标 ok。
+            _succ = d.get("success", True)
+            if _succ is not True and _succ != 1:
+                return {"ok": False, "err": _clean_str(d.get("message")) or "query failed"}
+            if not _valid_country(d.get("country")):
+                return {"ok": False, "err": "empty country"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
+            # fix440b F1：connection 只认 dict（真值非 dict 不得进 .get()）。
+            conn = _as_dict(d.get("connection"))
             sec = d.get("security") if isinstance(d.get("security"), dict) else {}
 
             def _b(k):
@@ -3837,19 +3849,19 @@ class IPWhoIs(Provider):
 
             return {
                 "ok": True,
-                "isp": conn.get("isp") or "",
-                "org": conn.get("org") or "",
+                "isp": _clean_str(conn.get("isp")),
+                "org": _clean_str(conn.get("org")),
                 "asn": _parse_asn(conn.get("asn")),
-                "country": d.get("country") or "",
-                "country_code": d.get("country_code") or "",
-                "region": d.get("region") or "",
-                "city": d.get("city") or "",
-                "latitude": d.get("latitude"),
-                "longitude": d.get("longitude"),
+                "country": _clean_str(d.get("country")),
+                "country_code": _clean_str(d.get("country_code")),
+                "region": _clean_str(d.get("region")),
+                "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
                 "timezone": (
-                    d.get("timezone", {}).get("id", "")
+                    _clean_str(d.get("timezone", {}).get("id", ""))
                     if isinstance(d.get("timezone"), dict)
-                    else d.get("timezone", "")
+                    else _clean_str(d.get("timezone", ""))
                 ),
                 "proxy": _b("proxy"),
                 "hosting": _b("hosting"),
@@ -3874,9 +3886,19 @@ class IPInfo(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
-            org = d.get("org", "")
+            # fix440b r2b-1：空 JSON 不得标 ok（无国家即无可用画像）。
+            if not _valid_country(d.get("country")):
+                return {"ok": False, "err": "empty country"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
+            # fix440b F1：org 只认字符串——int/None 进 .split()/.startswith()
+            # 即抛错丢整源（含有效地理）。
+            org = d.get("org") if isinstance(d.get("org"), str) else ""
             return {
                 "ok": True,
                 "org": org,
@@ -3901,9 +3923,16 @@ class SANSISC(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            ipinfo = d.get("ip") or {}
-            cnt_raw = ipinfo.get("count")
-            count = int(cnt_raw) if cnt_raw not in (None, "") else None
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1/r2b-1：ip 只认非空 dict；空对象/null 不得标 ok
+            #（attack_count None 的空壳结果）。
+            ipinfo = _as_dict(d.get("ip"))
+            if not ipinfo:
+                return {"ok": False, "err": "missing ip field"}
+            # fix440b F8a/r2b-3：count 严格转非负整数——"abc" 不得抛错丢整
+            # 源（落 None 保其余字段），bool/小数/负数不得当计数。
+            count = _safe_nonneg_int(ipinfo.get("count"))
             return {
                 "ok": True,
                 "attack_count": count,
@@ -3928,13 +3957,16 @@ class GreyNoise(Provider):
         ok, raw = http_get(f"https://api.greynoise.io/v3/community/{_q_ip(ip)}", use_cache=True)
         if not ok:
             # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
-            # 404 表示该 IP 未被观测到扫描，视为非噪音（正常）
+            # fix440b r2b-4：404 只表示“未观测到”，不是“已查明干净”——
+            # noise/riot 一律返 None（未知）并标 unobserved，不得以确定
+            # False 否定（网关 404 与未观测 404 在响应层面无法区分）。
             if raw.startswith("HTTP 404:"):
                 return {
                     "ok": True,
-                    "noise": False,
-                    "riot": False,
+                    "noise": None,
+                    "riot": None,
                     "classification": "",
+                    "unobserved": True,
                     "ts": now_iso(),
                 }
             return {"ok": False, "err": raw}
@@ -3942,6 +3974,9 @@ class GreyNoise(Provider):
             d = json.loads(raw)
             if not isinstance(d, dict) or "noise" not in d or "riot" not in d:
                 return {"ok": False, "err": "missing noise/riot field"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
             # F08: 契约规定 JSON 布尔值; 必要字段类型无效 (如 null/
             # 字符串 "false") 即返 ok=False, 未知不得当否定。
             if not isinstance(d.get("noise"), bool) or not isinstance(d.get("riot"), bool):
@@ -4046,12 +4081,16 @@ class ProxyCheck(Provider):
             _positive = any(f is True for f in
                             (_proxy, _vpn, _tor, _hosting, _scraper,
                              _compromised))
-            try:
-                _risk = int(det["risk"]) if det.get("risk") is not None else None
-            except (TypeError, ValueError, OverflowError):
-                # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
-                # 其余字段继续返回，不丢整源（F05）。
+            # fix440b F6/r3-13：risk 只认数值（与 _clamp_score 同口径）——
+            # 数字串/布尔值一律返 None（未知），不得 int() 裸转（"85"→85、
+            # True→1、False→0）；浮点截断为整值后再钳制。
+            _rv = det.get("risk")
+            if isinstance(_rv, bool):
                 _risk = None
+            else:
+                _risk = _clamp_score(_rv)
+                if _risk is not None:
+                    _risk = int(_risk)
             # R4-H-04：风险分钳制到 [0, 100]（150 只溢出进度条，不崩溃）。
             if _risk is not None:
                 _risk = max(0, min(100, _risk))
@@ -4103,8 +4142,9 @@ class DBIP(Provider):
                 "ok": True,
                 "country": _cn.strip(),
                 "country_code": _clean_str(d.get("countryCode")),
-                "state": d.get("stateProv") or "",
-                "city": d.get("city") or "",
+                # fix440b F4：自由文本只认字符串，非字符串一律清为空串。
+                "state": _clean_str(d.get("stateProv")),
+                "city": _clean_str(d.get("city")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4117,13 +4157,24 @@ class FreeIPAPI(Provider):
     name = "freeipapi"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
-        if not ok:
-            ok, raw = http_get(f"https://freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
-        if not ok:
-            return {"ok": False, "err": raw}
+        # fix440b r3-8：主端点“请求失败”才回退不够——成功但正文不可用
+        #（非 JSON / 空对象）时同样回退备用端点；两端皆不可用才失败。
+        def _fetch(url):
+            ok, raw = http_get(url, use_cache=False)
+            if not ok:
+                return None
+            try:
+                d = json.loads(raw)
+            except Exception:
+                return None
+            return d if isinstance(d, dict) and d else None
+
+        d = _fetch(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}")
+        if d is None:
+            d = _fetch(f"https://freeipapi.com/api/json/{_q_ip(ip)}")
+        if d is None:
+            return {"ok": False, "err": "unusable response"}
         try:
-            d = json.loads(raw)
             raw_asn = d.get("asn")
             if isinstance(raw_asn, dict):
                 asn_val = str(raw_asn.get("asn", ""))
@@ -4132,14 +4183,18 @@ class FreeIPAPI(Provider):
             else:
                 asn_val = ""
             _cn = d.get("countryName")
-            if not isinstance(_cn, str) or not _cn.strip():
+            _proxy = _strict_bool(d.get("isProxy"))
+            # fix440b F3/r3-4：国家只认非空字符串；但国家缺失时若有明确
+            # 风险旗标（isProxy 真），整源不得丢弃——返 ok True 保旗标，
+            # 国家留空；无旗标时仍按空国家失败。
+            if not _valid_country(_cn) and _proxy is not True:
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "proxy": _strict_bool(d.get("isProxy")),
-                "country": _cn.strip(),
+                "proxy": _proxy,
+                "country": _cn.strip() if _valid_country(_cn) else "",
                 "country_code": _clean_str(d.get("countryCode")),
-                "city": d.get("cityName", ""),
+                "city": _clean_str(d.get("cityName")),
                 "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
             }
