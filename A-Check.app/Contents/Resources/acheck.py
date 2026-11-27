@@ -5603,12 +5603,17 @@ class OTX(Provider):
             # fix440g G-062：错型隔离后、完全没有可用数据的响应不得计成功——
             # reputation/pulses/云厂商/国家/城市/ASN 全空时整源失败，不得
             # 仅因 pulse_info 键存在即 ok（缺失字段仍为 None，r3-3 不变）。
+            # fix440-merge：G-062 全空门与 F2 的边界——门只在“无合规期望字段”
+            # 时才触发：reputation 键在位、或 pulse_info 为 dict，即为合规响应
+            # 形态（值非法/None 仍按 F2 落 None、整源不丢）；仅当两者皆无
+            # （如 pulse_info 为 list 错型且无 reputation 键）时，全空才判失败。
             _rep = _safe_nonneg_int(d["reputation"]) if "reputation" in d else None
             _pul = _safe_nonneg_int(_pi["count"]) if "count" in _pi else None
             _country = _clean_str(d.get("country_name"))
             _city = _clean_str(d.get("city"))
             _asn = _parse_asn(d.get("asn"))
-            if _rep is None and _pul is None and not cloud \
+            _wellformed = ("reputation" in d) or isinstance(d.get("pulse_info"), dict)
+            if not _wellformed and _rep is None and _pul is None and not cloud \
                     and not _country and not _city and _asn is None:
                 return {"ok": False, "err": "unexpected response"}
             return {
