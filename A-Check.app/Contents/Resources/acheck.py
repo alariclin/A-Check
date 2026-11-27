@@ -2855,6 +2855,10 @@ class StopForumSpam(Provider):
             _app_raw = ip_data.get("appears")
             if _app_raw is None or isinstance(_app_raw, bool):
                 return {"ok": False, "err": "invalid appears"}
+            # fix440g G-002：转换前验证类型——非整数 float（如 0.5）不得
+            # 经 int() 截断成有效值；整数值 float（1.0）与数字串仍走旧路。
+            if isinstance(_app_raw, float) and not _app_raw.is_integer():
+                return {"ok": False, "err": "invalid appears"}
             try:
                 appears = int(_app_raw)
             except (TypeError, ValueError, OverflowError):
@@ -2862,6 +2866,12 @@ class StopForumSpam(Provider):
             # 阳性但缺 frequency：频次未知，不填零（填零会把“已举报”抹成“零举报”）；
             # 消费者一律按 (frequency or 0) 取值，None 不得进比较。
             _freq_raw = ip_data.get("frequency")
+            # fix440g G-002：frequency 同口径验证——非整数 float/bool 不得
+            # 截断成 0（0.9 -> 0 会把阳性频次抹掉）；缺失/"" 仍按旧路填 None。
+            if _freq_raw not in (None, "") and (
+                    isinstance(_freq_raw, bool)
+                    or (isinstance(_freq_raw, float) and not _freq_raw.is_integer())):
+                return {"ok": False, "err": "invalid frequency"}
             freq = None if (appears and _freq_raw in (None, "")) else int(_freq_raw or 0)
             conf = float(ip_data.get("confidence") or 0.0)
             return {
