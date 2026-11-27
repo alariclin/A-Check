@@ -1531,6 +1531,17 @@ def _coerce_score(v):
     return v
 
 
+def _opt_score(v):
+    """fix440g G-021：归一化的可选分数——行显示、算术与脚注判断共用此
+    一口径：有限数值返原值，缺失/None/字符串/bool/非有限返 None（未知），
+    超大整数（如 10**400，math.isfinite 会抛 OverflowError）亦返 None
+    而不抛错，保证手造/残缺 res 永远打得出完整报告。"""
+    try:
+        return _coerce_score(v)
+    except Exception:
+        return None
+
+
 def _clean_coord(v, lo, hi):
     """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
     1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
@@ -4309,14 +4320,11 @@ class IPWhoIs(Provider):
             # fix440b r2b-1：success 只认布尔 True——字符串 "false" 是真值，
             # 旧 `not d.get("success", True)` 会把它当成功；无 success 且无
             # 国家时亦为空响应，不得标 ok。
+            # fix440g G-064：只认布尔 True——1.0/1 虽 `== 1` 亦非 True，
+            # 不得判成功。
             _succ = d.get("success", True)
-            if _succ is not True and _succ != 1:
+            if _succ is not True:
                 return {"ok": False, "err": _clean_str(d.get("message")) or "query failed"}
-            if not _valid_country(d.get("country")):
-                return {"ok": False, "err": "empty country"}
-            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
-            if not _resp_ip_ok(d, ip):
-                return {"ok": False, "err": "ip mismatch"}
             # fix440b F1：connection 只认 dict（真值非 dict 不得进 .get()）。
             conn = _as_dict(d.get("connection"))
             sec = d.get("security") if isinstance(d.get("security"), dict) else {}
@@ -4328,6 +4336,18 @@ class IPWhoIs(Provider):
                 v = sec.get(k) if k in sec else conn.get(k)
                 return v if isinstance(v, bool) else None
 
+            # fix440g G-015：国家门槛不得丢掉有明确独立证据的响应——
+            # security 任一真旗标、或 ASN/组织可解析时，国家留空保留证据；
+            # 全无证据时仍按空国家失败（r2b-1 空 JSON 口径不变）。
+            _has_evidence = (
+                any(_b(k) is True for k in ("proxy", "hosting", "vpn", "tor"))
+                or _parse_asn(conn.get("asn")) is not None
+                or bool(_clean_str(conn.get("isp")) or _clean_str(conn.get("org"))))
+            if not _valid_country(d.get("country")) and not _has_evidence:
+                return {"ok": False, "err": "empty country"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
             return {
                 "ok": True,
                 "isp": _clean_str(conn.get("isp")),
@@ -4372,19 +4392,23 @@ class IPInfo(Provider):
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
             # fix440b r2b-1：空 JSON 不得标 ok（无国家即无可用画像）。
-            if not _valid_country(d.get("country")):
+            # fix440b F1：org 只认字符串——int/None 进 .split()/.startswith()
+            # 即抛错丢整源（含有效地理）。
+            org = d.get("org") if isinstance(d.get("org"), str) else ""
+            _asn = _parse_asn(org.split()[0]) if org.startswith("AS") else None
+            # fix440g G-015：国家门槛不得丢掉有明确独立证据的响应——
+            # ASN/组织可解析时国家留空保留证据；全无证据时仍失败。
+            if not _valid_country(d.get("country")) and not org.strip() \
+                    and _asn is None:
                 return {"ok": False, "err": "empty country"}
             # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
             if not _resp_ip_ok(d, ip):
                 return {"ok": False, "err": "ip mismatch"}
-            # fix440b F1：org 只认字符串——int/None 进 .split()/.startswith()
-            # 即抛错丢整源（含有效地理）。
-            org = d.get("org") if isinstance(d.get("org"), str) else ""
             return {
                 "ok": True,
                 "org": org,
-                "asn": _parse_asn(org.split()[0]) if org.startswith("AS") else None,
-                "country": d.get("country", ""),
+                "asn": _asn,
+                "country": d.get("country", "") if isinstance(d.get("country"), str) else "",
                 "region": d.get("region", ""),
                 "city": d.get("city", ""),
                 "ts": now_iso(),
@@ -4641,19 +4665,26 @@ class FreeIPAPI(Provider):
         # fix440b r3-8：主端点“请求失败”才回退不够——成功但正文不可用
         #（非 JSON / 空对象）时同样回退备用端点；两端皆不可用才失败。
         def _fetch(url):
+            # fix440g G-060：回退不得抹掉已知 HTTP 错因——请求失败返
+            # (None, 原文)，正文不可用返 (None, None)，由调用方定夺。
             ok, raw = http_get(url, use_cache=False)
             if not ok:
-                return None
+                return None, raw
             try:
                 d = json.loads(raw)
             except Exception:
-                return None
-            return d if isinstance(d, dict) and d else None
+                return None, None
+            return (d if isinstance(d, dict) and d else None), None
 
-        d = _fetch(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}")
+        d, _err1 = _fetch(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}")
         if d is None:
-            d = _fetch(f"https://freeipapi.com/api/json/{_q_ip(ip)}")
+            d, _err2 = _fetch(f"https://freeipapi.com/api/json/{_q_ip(ip)}")
         if d is None:
+            # 两端皆不可用：优先保留备用端点的已知 HTTP 错因（如 429），
+            # 其次主端点的；皆无已知错因时才报正文不可用。
+            for _e in (_err2, _err1):
+                if isinstance(_e, str) and _e.startswith("HTTP "):
+                    return {"ok": False, "err": _e[:80]}
             return {"ok": False, "err": "unusable response"}
         try:
             raw_asn = d.get("asn")
@@ -4848,7 +4879,9 @@ class IPWhoisApp(Provider):
             d = json.loads(raw)
             if not isinstance(d, dict):
                 return {"ok": False, "err": "unexpected response"}
-            if not d.get("success"):
+            # fix440g G-064：success 只认布尔 True——"false" 等非空
+            # 字符串为真值，不得判成功；缺失亦失败（旧口径不变）。
+            if d.get("success") is not True:
                 return {"ok": False, "err": "query unsuccessful"}
             # fix440b F3：国家只认非空字符串。
             if not _valid_country(d.get("country")):
@@ -4894,11 +4927,34 @@ class IPApiIs(Provider):
                 return {"ok": False, "err": "unexpected response"}
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
+            # fix440g G-016：国家与网络身份须能读嵌套记录——
+            # location.country/country_code、asn.asn/asn.org、company.name；
+            # 扁平字段仍作回退（老格式不变）。
+            loc = _as_dict(d.get("location"))
+            _country = loc.get("country") or d.get("country")
+            _country_code = loc.get("country_code") or d.get("country_code") or ""
             # fix440b F3：国家只认非空字符串。
-            if not _valid_country(d.get("country")):
+            if not _valid_country(_country):
                 return {"ok": False, "err": "empty country"}
-            asn_raw = str(d.get("asn") or "").strip()
-            company = d.get("company") if isinstance(d.get("company"), str) else ""
+            _asn_field = d.get("asn")
+            if isinstance(_asn_field, dict):
+                _asn_num = _asn_field.get("asn")
+                _asn_org = _asn_field.get("org")
+                asn_raw = ((str(_asn_num) + " " + str(_asn_org)).strip()
+                           if _asn_num is not None
+                           else str(_asn_org or "").strip())
+            elif _asn_field is not None:
+                asn_raw = str(_asn_field).strip()
+            else:
+                asn_raw = ""
+            _company_field = d.get("company")
+            if isinstance(_company_field, dict):
+                company = _company_field.get("name") \
+                    if isinstance(_company_field.get("name"), str) else ""
+            elif isinstance(_company_field, str):
+                company = _company_field
+            else:
+                company = ""
             # fix440b r3-10：org 只认公司名，或 ASN 后带的名字段；裸 ASN
             # 编号本身不是组织名，不得填进 org。
             _org = company
@@ -4909,8 +4965,8 @@ class IPApiIs(Provider):
                 "isp": company,
                 "org": _org,
                 "asn": _parse_asn(asn_raw.split()[0]) if asn_raw else None,
-                "country": _clean_str(d.get("country")),
-                "country_code": "",
+                "country": _clean_str(_country),
+                "country_code": _clean_str(_country_code),
                 "region": _clean_str(d.get("region")),
                 "city": _clean_str(d.get("city")),
                 "latitude": _clean_coord(d.get("lat"), -90, 90),
@@ -5071,10 +5127,13 @@ class IPLocate(Provider):
             _tor = _strict_bool(pv.get("is_tor"))
             _hosting = _strict_bool(pv.get("is_hosting"))
             _abuser = _strict_bool(pv.get("is_abuser"))
+            # fix440g G-017：阳性旗标清单须含本类自己输出的 is_icloud_relay。
+            _icloud = _strict_bool(pv.get("is_icloud_relay"))
             # fix440b F3/r3-4：国家只认非空字符串；但有明确风险旗标时整源
             # 不得丢弃——返 ok True 保旗标，国家留空。
             if not _valid_country(d.get("country")) and not any(
-                    f is True for f in (_proxy, _vpn, _tor, _hosting, _abuser)):
+                    f is True for f in (_proxy, _vpn, _tor, _hosting, _abuser,
+                                        _icloud)):
                 return {"ok": False, "err": "empty response"}
             return {
                 "ok": True,
@@ -5252,13 +5311,24 @@ class OTX(Provider):
             # 非法值/None/bool/负数落 None，整源不丢；缺失字段亦为 None（r3-3），
             # 不得补 0 冒充“已查明为零”（_factor_rows 的 (x or 0) 口径仍安全）。
             _pi = _as_dict(d.get("pulse_info"))
+            # fix440g G-062：错型隔离后、完全没有可用数据的响应不得计成功——
+            # reputation/pulses/云厂商/国家/城市/ASN 全空时整源失败，不得
+            # 仅因 pulse_info 键存在即 ok（缺失字段仍为 None，r3-3 不变）。
+            _rep = _safe_nonneg_int(d["reputation"]) if "reputation" in d else None
+            _pul = _safe_nonneg_int(_pi["count"]) if "count" in _pi else None
+            _country = _clean_str(d.get("country_name"))
+            _city = _clean_str(d.get("city"))
+            _asn = _parse_asn(d.get("asn"))
+            if _rep is None and _pul is None and not cloud \
+                    and not _country and not _city and _asn is None:
+                return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "reputation": _safe_nonneg_int(d["reputation"]) if "reputation" in d else None,
-                "pulses": _safe_nonneg_int(_pi["count"]) if "count" in _pi else None,
+                "reputation": _rep,
+                "pulses": _pul,
                 "cloud_provider": cloud,
-                "country": _clean_str(d.get("country_name")), "city": _clean_str(d.get("city")),
-                "asn": _parse_asn(d.get("asn")),
+                "country": _country, "city": _city,
+                "asn": _asn,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -5282,14 +5352,29 @@ class BlocklistDE(Provider):
             #（S2 直取 api.blocklist.de，2026-11-27）——旧 (?m)^...(\d+)\s*$ 要求
             # 行尾，值后是 "<br />" 故双双失配、整源报 unexpected response；
             # 改为界＋值后断言，不再要求行尾。
-            ma = re.search(r"(?m)(?:^|[^A-Za-z_])attacks:\s*(\d+)(?![\d.])", raw)
-            mr = re.search(r"(?m)(?:^|[^A-Za-z_])reports:\s*(\d+)(?![\d.])", raw)
-            if not ma and not mr:
+            # fix440g G-014：上述“界＋断言”仍不是真正的字段边界——
+            # `[^A-Za-z_]` 接受数字（`v2attacks: 91` 抢命中），`(?![\d.])`
+            # 接受 `e`（`1e3` 截成 1）。改为按换行或 <br> 切分字段，再
+            # 要求值完整匹配整数（段首即字段名、段尾即数值末尾）。
+            _attacks = _reports = None
+            for _seg in re.split(r"<br\s*/?>|\r\n|\r|\n", raw):
+                _seg = _seg.strip()
+                if not _seg:
+                    continue
+                _m = re.match(r"attacks:\s*(\d+)$", _seg)
+                if _m:
+                    if _attacks is None:
+                        _attacks = int(_m.group(1))
+                    continue
+                _m = re.match(r"reports:\s*(\d+)$", _seg)
+                if _m and _reports is None:
+                    _reports = int(_m.group(1))
+            if _attacks is None and _reports is None:
                 return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "attacks": int(ma.group(1)) if ma else None,
-                "reports": int(mr.group(1)) if mr else None,
+                "attacks": _attacks,
+                "reports": _reports,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -5307,11 +5392,25 @@ class RDAP(Provider):
         # 身份”——前者是查找失败（报末因），后者才报无记录。
         _last_err = None
         _saw_json = False
+        # fix440g G-013：起止段须包含查询 IP 才算有效范围——查询地址
+        # 预解析一次供各端点复用（解析失败时退化为旧口径：只验有序）。
+        try:
+            _q_obj = ipaddress.ip_address(ip)
+        except Exception:
+            _q_obj = None
+        # fix440g G-061：两个明确的 404 是否定答复（无记录），不是查询
+        # 故障——仅当全部尝试均为 HTTP 404 时才报无记录；混有超时/不可达/
+        # 无效正文时仍报查找失败。
+        _tries = 0
+        _http_404s = 0
         for base in ("https://rdap.arin.net/registry/ip/",
                      "https://rdap.db.ripe.net/ip/"):
             ok, raw = http_get(base + _q_ip(ip), use_cache=False)
+            _tries += 1
             if not ok:
                 _last_err = raw
+                if isinstance(raw, str) and raw.startswith("HTTP 404:"):
+                    _http_404s += 1
                 continue
             try:
                 cand = json.loads(raw)
@@ -5334,6 +5433,11 @@ class RDAP(Provider):
                 and bool(cand.get("name").strip())
             # fix440b r3-2：只有起止地址的记录同样有效（两端须为合法 IP 且
             # start<=end），不得以“无 cidr0_cidrs”拒收。
+            # fix440g G-012：起止分属 IPv4/IPv6 时比较抛 TypeError——与
+            # ValueError 同处理（范围无效），不得逃出 check() 丢掉已解析的
+            # name、也不得截断第二端点。
+            # fix440g G-013：仅凭两端有序不得认定 _has_range——起止段还须
+            # 包含查询 IP，否则该端点不作范围证据（无名无 CIDR 时跳过回退）。
             _has_range = False
             _sa = cand.get("startAddress")
             _ea = cand.get("endAddress")
@@ -5342,7 +5446,9 @@ class RDAP(Provider):
                     _sa_obj = ipaddress.ip_address(_sa)
                     _ea_obj = ipaddress.ip_address(_ea)
                     _has_range = _sa_obj <= _ea_obj
-                except ValueError:
+                    if _has_range and _q_obj is not None:
+                        _has_range = _sa_obj <= _q_obj <= _ea_obj
+                except (ValueError, TypeError):
                     _has_range = False
             if not _has_name and not cand.get("cidr0_cidrs") and not _has_range:
                 continue  # 空字典/无网络身份：不得截断回退
@@ -5368,6 +5474,8 @@ class RDAP(Provider):
             break
         if d is None:
             if _saw_json:
+                return {"ok": False, "err": "no rdap record"}
+            if _tries and _tries == _http_404s:
                 return {"ok": False, "err": "no rdap record"}
             return {"ok": False, "err": f"rdap lookup failed: {_last_err}"[:80]
                     if _last_err else "no rdap record"}
@@ -5404,7 +5512,9 @@ class RDAP(Provider):
                         if _ip_obj in _net:
                             cidr = str(_net)
                             break
-                except ValueError:
+                except (ValueError, TypeError):
+                    # fix440g G-012：起止分属 IPv4/IPv6 时汇总亦抛 TypeError，
+                    # 与 ValueError 同处理（推导不出网段，cidr 留空）。
                     pass
         org = ""
         for e in d.get("entities") or []:
@@ -5563,8 +5673,11 @@ class HackerTarget(Provider):
             _asn = _parse_asn(asn)
             # fix440b r3-11：国家/州/城市/经纬度/ASN 全空时无可用结果，
             # 不得标 ok True。
+            # fix440g G-063：空结果判定须计入刚解析成功的有效前缀/网络名——
+            # aslookup 已取得含目标 IP 的前缀与网络名时保留它们，不得仅因
+            # ASN 为空即 empty geo。
             if not _country and not _region and not _city and _lat is None \
-                    and _lon is None and not _asn:
+                    and _lon is None and not _asn and not prefix and not netname:
                 return {"ok": False, "err": "empty geo"}
             return {
                 "ok": True,
