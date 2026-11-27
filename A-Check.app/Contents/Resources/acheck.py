@@ -16315,6 +16315,33 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                        % (paths["state_path"], e),
                        "無法刪除狀態檔案 %s：%s" % (paths["state_path"], e)))
                 _cleanup_failed = True
+        if not _cleanup_failed:
+            # D-1：状态文件已删净时清掉锁文件与受管理目录——0 字节
+            # <state>.lock 与空 acheck/ 目录是 remove 的残留。删锁文件
+            # 与另一持锁者竞态：先以 LOCK_EX|LOCK_NB 抢锁，抢到才删，
+            # 抢不到静默留置（残余竞态：对方在抢锁与 unlink 之间打开旧
+            # 路径并加锁，锁在已删 inode 上；窗口极小、后果仅为一次互斥
+            # 失效，见报告）。目录仅空时才删（rmdir 非空即失败保留）。
+            _lock_path = paths["state_path"] + ".lock"
+            try:
+                _lock_fd = os.open(_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+            except OSError:
+                _lock_fd = None
+            if _lock_fd is not None:
+                try:
+                    fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    try:
+                        os.unlink(_lock_path)
+                    except OSError:
+                        pass
+                except OSError:
+                    pass  # 另一进程持锁：留置锁文件
+                finally:
+                    os.close(_lock_fd)
+            try:
+                os.rmdir(paths["data_dir"])
+            except OSError:
+                pass  # 非空（有用户文件或锁文件留置）则保留
         # 受管理副本未删干净时保留状态文件，避免状态与磁盘不一致。
     else:
         new_state = dict(state)
