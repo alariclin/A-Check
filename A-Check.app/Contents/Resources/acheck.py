@@ -1516,6 +1516,54 @@ def _clean_coord(v, lo, hi):
     return f
 
 
+def _as_dict(v):
+    """fix440b F1：可选子对象只认 dict；真值非 dict（str/int/list/bool）
+    一律视为空对象，不让 `x or {}` 后的 `.get()` 抛错丢整源。"""
+    return v if isinstance(v, dict) else {}
+
+
+def _safe_nonneg_int(v):
+    """fix440b F2/F8a：严格转非负整数——int（不含 bool）、整数值 float、
+    纯数字串（含两侧空白）才接受；bool/负数/小数/非数字串/None 一律返 None
+    （未知），不得静默当计数或分值。"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 0 else None
+    if isinstance(v, float):
+        return int(v) if (math.isfinite(v) and v.is_integer() and v >= 0) else None
+    if isinstance(v, str):
+        s = v.strip()
+        if s.isdigit():
+            return int(s)
+        return None
+    return None
+
+
+def _resp_ip_ok(d, ip):
+    """fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致（按地址值比较，
+    展开式/压缩式 IPv6 等价）；无 ip 字段时不校验、不拒收。"""
+    rip = d.get("ip")
+    if rip is None:
+        return True
+    try:
+        return ipaddress.ip_address(str(rip)) == ipaddress.ip_address(str(ip))
+    except ValueError:
+        return str(rip) == str(ip)
+
+
+def _valid_country(v):
+    """fix440b F3：国家字段只认去空白后非空的字符串；数字/空白串/None
+    一律无效（不得仅凭真值放行）。"""
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _lucene_escape(s):
+    """fix440b B2：Lucene 双引号值内转义——只须处理反斜杠与双引号，
+    其余字符在引号值内无特殊含义；URL 编码（_q_ip）管不到 Lucene 层。"""
+    return str(s).replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _json_safe(obj):
     """JSON 输出边界清洗 (H-10)：递归把非有限 float（NaN/Infinity，
     上游 JSON 字面量 NaN/Infinity/1e309 均可解析为此类值）转 None，
@@ -2710,10 +2758,21 @@ class Scamalytics(Provider):
         ok, raw = http_get(f"https://scamalytics.com/ip/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
-        m = (
-            re.search(r'"score"\s*:\s*"(\d{1,3})"', raw)
-            or re.search(r"Fraud Score[^0-9]{1,40}?(\d{1,3})", raw, re.I | re.S)
-        )
+        # fix440b B1：两路正则均无锚点——说明文字里的数字（"100 signals"）、
+        # 标签内的数字（"</h1>" 里的 1）、无关 JSON 的 "score" 均可被误读成
+        # 分数，假 100 直接顶满欺诈分。修法：先去 HTML 标签再匹配，分数须
+        # 紧邻 "Fraud Score"（仅容冒号/等号/is 与空白）；JSON 分数另须在
+        # 500 字符内邻近 "fraud" 字样（本页即欺诈分页面，正常页恒满足）。
+        m = None
+        _fraud_pos = [mm.start() for mm in re.finditer(r"fraud", raw, re.I)]
+        for _sm in re.finditer(r'"score"\s*:\s*"?(\d{1,3})"?', raw):
+            if any(abs(_sm.start() - _fp) <= 500 for _fp in _fraud_pos):
+                m = _sm
+                break
+        if not m:
+            _text = re.sub(r"<[^>]*>", " ", raw)
+            m = re.search(r"fraud\s+score\s*(?:is\s*[:=]?|[:=])?\s*(\d{1,3})\b",
+                          _text, re.I)
         if not m:
             return {"ok": False, "err": "score parse failed (CF challenge or layout changed)"}
         score = min(100, max(0, int(m.group(1))))
@@ -2737,10 +2796,19 @@ class StopForumSpam(Provider):
             ip_data = d.get("ip")
             if not isinstance(ip_data, dict) or "appears" not in ip_data:
                 return {"ok": False, "err": "missing ip/appears field"}
-            appears = int(ip_data.get("appears") or 0)
+            # fix440b r2a-A02：appears:null 不得抹成 0（null 是未知，不是
+            # “零举报”）；frequency:"" 与缺失同口径——阳性时频次未知填 None。
+            _app_raw = ip_data.get("appears")
+            if _app_raw is None or isinstance(_app_raw, bool):
+                return {"ok": False, "err": "invalid appears"}
+            try:
+                appears = int(_app_raw)
+            except (TypeError, ValueError, OverflowError):
+                return {"ok": False, "err": "invalid appears"}
             # 阳性但缺 frequency：频次未知，不填零（填零会把“已举报”抹成“零举报”）；
             # 消费者一律按 (frequency or 0) 取值，None 不得进比较。
-            freq = None if (appears and ip_data.get("frequency") is None) else int(ip_data.get("frequency") or 0)
+            _freq_raw = ip_data.get("frequency")
+            freq = None if (appears and _freq_raw in (None, "")) else int(_freq_raw or 0)
             conf = float(ip_data.get("confidence") or 0.0)
             return {
                 "ok": True,
@@ -2762,8 +2830,11 @@ class Urlscan(Provider):
     def check(self, ip):
         # B-4-3：Lucene 值加引号——未加引号的 IPv6 冒号致 urlscan.io
         # HTTP 400（live 实测 2026-11-24）；加引号后 200。IPv4 同口径。
+        # fix440b B2：引号本身不是转义——ip 内含 " 或 \ 时仍可打破值边界
+        # 注入子句（URL 编码管不到 Lucene 层，_q_ip 同样无用）；值内先做
+        # Lucene 转义，再整体 URL 编码。
         q = urllib.parse.quote(
-            f"page.ip:\"{ip}\" AND (task.source:urlhaus OR task.source:openphish "
+            f"page.ip:\"{_lucene_escape(ip)}\" AND (task.source:urlhaus OR task.source:openphish "
             f"OR task.source:phishtank OR task.tags:phishing OR task.tags:malware)")
         ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
@@ -2774,10 +2845,45 @@ class Urlscan(Provider):
                 return {"ok": False, "err": d.get("message", "API error")}
             if "total" not in d:
                 return {"ok": False, "err": "missing total"}
-            total = int(d.get("total", 0))
+            # fix440b r2a-A08：total 只认非负整数；0.5/负数/数字串一律拒收
+            #（旧 int() 裸转把 0.5 截成 0、-1 当成功计数）。
+            _total = d.get("total")
+            if isinstance(_total, bool) or not isinstance(_total, int) or _total < 0:
+                return {"ok": False, "err": "invalid total"}
+            total = _total
             return {"ok": True, "total": total, "ts": now_iso()}
         except Exception as e:
             return {"ok": False, "err": str(e)[:80]}
+
+
+def _ripestat_date(st):
+    """fix440b B4/r2a-A04：RIPEstat starttime 归一化为 YYYY-MM-DD；
+    数值型 YYYYMMDD（如 20200101）按 %Y%m%d 解析，ISO 串取前 10 位并
+    校验，无效串/非法日期返 None（不得把 "not-a-date" 当 first_seen，
+    亦不得让 TypeError 吞掉整段路由历史）。"""
+    if isinstance(st, bool):
+        return None
+    if isinstance(st, (int, float)):
+        try:
+            s = str(int(st))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if len(s) == 8 and s.isdigit():
+            try:
+                return datetime.strptime(s, "%Y%m%d").strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+        return None
+    if not isinstance(st, str):
+        return None
+    s = st.strip()
+    if len(s) < 10:
+        return None
+    try:
+        datetime.strptime(s[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    return s[:10]
 
 
 @register
@@ -2791,39 +2897,70 @@ class RIPEstat(Provider):
         # 路径 prefix-overview 亦 200（服务在线）。prefix-overview 失败时仍
         # 试 routing-history：有历史则返部分 ok（asn/announced 为 None、
         # partial True）；两端点皆败才返失败，不崩溃、不误判。
+        # fix440b B3：空 data / 畸形 asns[0] 与 HTTP 失败同口径——不再直接
+        # return，同样落到路由历史兜底；历史无果时才以前缀错误收尾。
         ok, raw = http_get(
             f"https://stat.ripe.net/data/prefix-overview/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
         _pre_err = "" if ok else raw
         asn, announced = None, None
+        prefix_ok = ok
         if ok:
             try:
                 d = json.loads(raw).get("data", {})
-                if not d:
-                    return {"ok": False, "err": "empty data"}
-                asns = d.get("asns", [])
-                asn = asns[0].get("asn") if asns else None
-                announced = d.get("announced", False)
+                if not isinstance(d, dict) or not d:
+                    prefix_ok = False
+                    _pre_err = "empty data"
+                else:
+                    asns = d.get("asns", [])
+                    if not isinstance(asns, list):
+                        prefix_ok = False
+                        _pre_err = "invalid asns"
+                    else:
+                        if asns:
+                            _a0 = asns[0]
+                            if not isinstance(_a0, dict):
+                                prefix_ok = False
+                                _pre_err = "invalid asns[0]"
+                            else:
+                                asn = _a0.get("asn")
+                        # fix440b B5：announced 只认真布尔值；缺字段/字符串
+                        # 一律返 None（未知），不得报确定 False 或原样透传。
+                        announced = _strict_bool(d.get("announced"))
             except Exception as e:
-                return {"ok": False, "err": str(e)[:80]}
+                prefix_ok = False
+                _pre_err = str(e)[:80]
         age_years, first_seen, visibility = None, None, None
         ok2, raw2 = http_get(
             f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
+        _hist_ok = bool(ok2)
         if ok2:
             try:
                 h = json.loads(raw2).get("data", {})
+                if not isinstance(h, dict):
+                    raise ValueError("bad history data")
                 origins = h.get("by_origin", [])
                 earliest = None
                 max_peers = 0
+                _seen_tl = False
                 for o in origins:
-                    for pfx in o.get("prefixes", []):
-                        for tl in pfx.get("timelines", []):
-                            st = tl.get("starttime", "")
-                            if st and (earliest is None or st < earliest):
-                                earliest = st
+                    # fix440b r2a-A09b：单个坏项（null/非 dict）只跳过该项，
+                    # 不得丢弃此前已算出的有效历史。
+                    if not isinstance(o, dict):
+                        continue
+                    for pfx in o.get("prefixes", []) or []:
+                        if not isinstance(pfx, dict):
+                            continue
+                        for tl in pfx.get("timelines", []) or []:
+                            if not isinstance(tl, dict):
+                                continue
+                            _seen_tl = True
+                            _ds = _ripestat_date(tl.get("starttime", ""))
+                            if _ds and (earliest is None or _ds < earliest):
+                                earliest = _ds
                             fp = tl.get("full_peers_seeing", 0) or 0
                             # 字符串计数值先规范化：旧版直接比较，字符串
                             # （如 "2"）致整段路由历史 try 被 TypeError 截断
@@ -2835,18 +2972,23 @@ class RIPEstat(Provider):
                             if fp > max_peers:
                                 max_peers = fp
                 if earliest:
-                    first_seen = earliest[:10]
+                    first_seen = earliest
                     try:
                         dt0 = datetime.strptime(first_seen, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                         days = (datetime.now(timezone.utc) - dt0).days
                         age_years = round(max(0.0, days / 365.25), 1)
                     except Exception:
                         pass
-                if max_peers:
+                # fix440b r2a-A10：显式零对端是数据（"0"），不是缺失；
+                # 但零对端只有配有效 first_seen 时才算可用历史（r2a-A04：
+                # 无有效日期又零对端 = 无可用信号，不得仅凭一条空 timeline
+                # 构成部分成功）；正对端数本身即是可见度信号。
+                if _seen_tl and (earliest is not None or max_peers > 0):
                     visibility = f"{max_peers}"
             except Exception:
-                pass
-        if not ok:
+                _hist_ok = False
+                first_seen, visibility = None, None
+        if not prefix_ok:
             if first_seen is None and not visibility:
                 return {"ok": False, "err": _pre_err}
             return {
@@ -2859,7 +3001,7 @@ class RIPEstat(Provider):
                 "partial": True,
                 "ts": now_iso(),
             }
-        return {
+        _res = {
             "ok": True,
             "asn": _parse_asn(asn),
             "announced": announced,
@@ -2868,6 +3010,11 @@ class RIPEstat(Provider):
             "visibility": visibility,
             "ts": now_iso(),
         }
+        # fix440b r2a-A09a：前缀成功但历史请求失败，须标 partial——否则
+        # 调用方把“无年龄/无可见度”当成查无历史。
+        if not _hist_ok:
+            _res["partial"] = True
+        return _res
 
 
 # G4：PTR 正向校验全量遍历的单调总截止（秒）。见 PTRCheck.check 内注释。
@@ -2891,12 +3038,18 @@ class PTRCheck(Provider):
         _fwd_qtype = 28 if _ip_obj.version == 6 else 1
         sys_ns_list = _get_system_nameservers()
         ptrs = None
+        # fix440b r2a-A05：记下答出 PTR 的 NS——正向校验须先问它（分视图
+        # DNS 下各 NS 答案不同，从 NS A 重启会拿另一视图的答案否掉 FCrDNS）。
+        _ptr_ns = None
         for _ns in sys_ns_list:
             ptrs = _dns_query_udp(rev_ip, qtype=12, server=_ns, timeout=2.5)
             if ptrs is not None:
+                _ptr_ns = _ns
                 break
         if ptrs is None and "1.1.1.1" not in sys_ns_list:
             ptrs = _dns_query_udp(rev_ip, qtype=12, server="1.1.1.1", timeout=2.5)
+            if ptrs is not None:
+                _ptr_ns = "1.1.1.1"
         if ptrs is None:
             return {"ok": False, "err": "PTR query timeout"}
         if not ptrs:
@@ -2915,12 +3068,15 @@ class PTRCheck(Provider):
         # fcrdns False 的确定性否定。单次正查超时亦按剩余时间封顶。
         _fwd_deadline = time.monotonic() + _PTR_FWD_BUDGET
         _fwd_expired = False
+        # fix440b r2a-A05：正向校验先问答出 PTR 的 NS，再问其余系统 NS。
+        _fwd_ns_order = ([_ptr_ns] + [n for n in sys_ns_list if n != _ptr_ns]
+                         if _ptr_ns else list(sys_ns_list))
         for h in ptrs:
             if time.monotonic() >= _fwd_deadline:
                 _fwd_expired = True
                 break
             fwd_ips = None
-            for _ns in sys_ns_list:
+            for _ns in _fwd_ns_order:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns,
                                     timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is None:
@@ -2928,7 +3084,10 @@ class PTRCheck(Provider):
                 fwd_ips = _r
                 if _r:
                     break
-            if (fwd_ips is None or not fwd_ips) and "1.1.1.1" not in sys_ns_list:
+            # fix440b r2a-A06：系统 NS 返回 [] 是数据（无记录），不是失败——
+            # 只有全部系统 NS 均失败（None）时才回退 1.1.1.1；[] 不得把主机
+            # 名发往公共 DNS（内网主机名外泄），也不得被公共答案覆盖。
+            if fwd_ips is None and "1.1.1.1" not in sys_ns_list:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1",
                                     timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is not None:
