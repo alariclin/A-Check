@@ -260,6 +260,7 @@ STR = {
         "risk_low": "低风险",
         "risk_medium": "中风险",
         "risk_high": "高风险",
+        "verdict": "综合结论",
         "verdict_clean": "● 未发现明确风险信号",
         "verdict_low": "● 轻微风险",
         "verdict_medium": "● 中等风险",
@@ -473,6 +474,7 @@ STR = {
         "risk_low": "Low",
         "risk_medium": "Medium",
         "risk_high": "High",
+        "verdict": "Verdict",
         "verdict_clean": "● No clear risk signals",
         "verdict_low": "● Minor risk",
         "verdict_medium": "● Moderate risk",
@@ -686,6 +688,7 @@ STR = {
         "risk_low": "低風險",
         "risk_medium": "中風險",
         "risk_high": "高風險",
+        "verdict": "綜合結論",
         "verdict_clean": "● 未發現明確風險信號",
         "verdict_low": "● 輕微風險",
         "verdict_medium": "● 中等風險",
@@ -899,6 +902,7 @@ STR = {
         "risk_low": "低リスク",
         "risk_medium": "中リスク",
         "risk_high": "高リスク",
+        "verdict": "総合判定",
         "verdict_clean": "● 明確なリスクシグナルなし",
         "verdict_low": "● 軽微なリスク",
         "verdict_medium": "● 中程度のリスク",
@@ -1112,6 +1116,7 @@ STR = {
         "risk_low": "Низкий риск",
         "risk_medium": "Средний риск",
         "risk_high": "Высокий риск",
+        "verdict": "Вердикт",
         "verdict_clean": "● Явных признаков риска нет",
         "verdict_low": "● Незначительный риск",
         "verdict_medium": "● Средний риск",
@@ -1325,6 +1330,7 @@ STR = {
         "risk_low": "ریسک کم",
         "risk_medium": "ریسک متوسط",
         "risk_high": "ریسک بالا",
+        "verdict": "جمع‌بندی",
         "verdict_clean": "● سیگنال خطر مشخصی یافت نشد",
         "verdict_low": "● ریسک جزئی",
         "verdict_medium": "● ریسک متوسط",
@@ -1501,6 +1507,17 @@ def _clamp_score(v):
         return None
     f = max(0.0, min(100.0, f))
     return int(f) if f == int(f) else f
+
+
+def _coerce_score(v):
+    """L7/L8：打印层分值清洗——仅接受有限数值（bool 除外）；缺失/None/
+    字符串等非数值一律返 None（未知，印 "—"），不得把未知印成 0 或把
+    字符串原样印成数字（与 _clamp_score 拒收数字串的口径一致）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if not math.isfinite(v):
+        return None
+    return v
 
 
 def _clean_coord(v, lo, hi):
@@ -6092,7 +6109,7 @@ def _print_completeness(res):
     if c.get("failed"):
         # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
         # 加共享出口配额耗尽提示（不改变评分）。
-        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
     print(f"  {_c(C.dim, T('fail_note'))}")
     if len(c.get("rate_limited") or []) >= 2:
         print(f"  {_c(C.dim, T('rate_limit_hint'))}")
@@ -6575,7 +6592,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
     _section(T("sec_fraud"))
     sc = (s.get("scamalytics") or {})
     _srows = [("Scamalytics",
-               sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
+               _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
     for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
                      (T("dim_fraud"), scs.get("fraud") or (0, [])),
                      (T("dim_reputation"), scs.get("reputation") or (0, [])),
@@ -6605,6 +6622,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
             print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
         else:
             print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
+    _verdict = res.get("verdict")
+    if _verdict:
+        print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
     print(f"  {_c(C.dim, T('purity_note'))}")
     if (scs.get("platform") or (0,))[0] >= 30:
         print(f"  {_c(C.dim, T('platform_note'))}")
@@ -6793,7 +6813,7 @@ def _print_report6_tail(res):
     print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
     if c.get("failed"):
         # 04-01 / 04-08（v6）：同 _print_completeness。
-        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
     # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
@@ -6905,8 +6925,11 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     _section(T("sec_signals6"))
     sc = (s.get("scamalytics") or {})
     if sc.get("ok"):
-        _v = sc.get("fraud_score", 0)
-        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
+        _v = _coerce_score(sc.get("fraud_score"))
+        if _v is None:
+            print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        else:
+            print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
     else:
         print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
     if pc.get("ok") and pc.get("risk") is not None:
@@ -6926,14 +6949,14 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
         _ports = sh.get("ports") or []
         # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
         # 打印前逐个 _strip_cc，防终端转义注入。
-        _ptxt = ", ".join(_strip_cc(p) for p in _ports[:12]) if _ports else T("none")
+        _ptxt = ", ".join(_strip_cc(p) for p in _ports) if _ports else T("none")
         print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
     # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
     _section(T("sec_fraud"))
     _scs6 = res.get("scores") or {}
     _srows6 = [("Scamalytics",
-                sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
+                _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
     for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
                        (T("dim_reputation"), "reputation"),
                        (T("dim_platform"), "platform")):
@@ -6965,6 +6988,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
         else:
             print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
+    _verdict6 = res.get("verdict")
+    if _verdict6:
+        print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
     print(f"  {_c(C.dim, T('v6_score_note'))}")
     print(f"  {_c(C.dim, T('purity_note'))}")
     if (_scs6.get("platform") or (0,))[0] >= 30:
