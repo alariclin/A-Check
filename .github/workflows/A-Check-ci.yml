@@ -673,24 +673,43 @@ jobs:
           PATH="$BIN:$PATH" acheck --help </dev/null | grep -q "用法:"
           python3 acheck.py --shortcut status --json </dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); names={e['name'] for e in d.get('entries', []) if e.get('status')=='OK'}; assert d.get('installed') is True and names=={'acheck'}, d; print('status json OK:', sorted(names))"
           if python3 acheck.py --shortcut install --names ac </dev/null >/tmp/ac-err.txt 2>&1; then echo "ERROR: installing ac without --accept-ac-risk must fail" >&2; exit 1; fi
-          grep -q "accept-ac-risk" /tmp/ac-err.txt
+          echo "--- ac refusal (no flag) ---"; cat /tmp/ac-err.txt
+          if grep -q "accept-ac-risk" /tmp/ac-err.txt; then
+            AC_MODE=risk
+          elif grep -qE "系统路径命中|PATH 命中|System path hit|PATH hit" /tmp/ac-err.txt; then
+            AC_MODE=conflict
+            echo "ac is hard-blocked by an existing system command on this machine (macOS ships /usr/sbin/ac); the risk flag must not override it"
+          else
+            echo "ERROR: unexpected ac refusal text:" >&2; cat /tmp/ac-err.txt >&2; exit 1
+          fi
           python3 acheck.py --shortcut change --old-name acheck --new-name acheck-tmp </dev/null
           test -x "$BIN/acheck-tmp"
           test ! -e "$BIN/acheck"
           "$BIN/acheck-tmp" --help </dev/null | grep -q "用法:"
           if python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac </dev/null >/tmp/ac-err2.txt 2>&1; then echo "ERROR: renaming to ac without --accept-ac-risk must fail" >&2; exit 1; fi
-          python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac --accept-ac-risk </dev/null
-          test -x "$BIN/ac"
-          python3 acheck.py --shortcut remove </dev/null
-          test ! -e "$BIN/ac"
-          test ! -e "$BIN/acheck-tmp"
-          test ! -e "$BIN/acheck"
-          python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
-          python3 acheck.py --shortcut install --names ac --accept-ac-risk </dev/null
-          python3 acheck.py --shortcut status --json </dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); names={e['name'] for e in d.get('entries', []) if e.get('status')=='OK'}; assert d.get('installed') is True and names=={'ac'}, d; print('status json OK:', sorted(names))"
-          python3 acheck.py --shortcut remove </dev/null
-          python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
-          echo "OK: shortcut user-level cycle complete"
+          if [ "$AC_MODE" = risk ]; then
+            python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac --accept-ac-risk </dev/null
+            test -x "$BIN/ac"
+            python3 acheck.py --shortcut remove </dev/null
+            test ! -e "$BIN/ac"
+            test ! -e "$BIN/acheck-tmp"
+            test ! -e "$BIN/acheck"
+            python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+            python3 acheck.py --shortcut install --names ac --accept-ac-risk </dev/null
+            python3 acheck.py --shortcut status --json </dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); names={e['name'] for e in d.get('entries', []) if e.get('status')=='OK'}; assert d.get('installed') is True and names=={'ac'}, d; print('status json OK:', sorted(names))"
+            python3 acheck.py --shortcut remove </dev/null
+            python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+          else
+            # hard system conflict: --accept-ac-risk must NOT override it
+            if python3 acheck.py --shortcut install --names ac --accept-ac-risk </dev/null >/tmp/ac-err3.txt 2>&1; then echo "ERROR: --accept-ac-risk must not override a hard system conflict for ac" >&2; exit 1; fi
+            echo "--- ac refusal (with flag, still blocked) ---"; cat /tmp/ac-err3.txt
+            if python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac --accept-ac-risk </dev/null >/tmp/ac-err4.txt 2>&1; then echo "ERROR: renaming to ac with flag must still fail on a hard conflict" >&2; exit 1; fi
+            python3 acheck.py --shortcut remove </dev/null
+            test ! -e "$BIN/acheck-tmp"
+            test ! -e "$BIN/acheck"
+            python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+          fi
+          echo "OK: shortcut user-level cycle complete (ac mode: $AC_MODE)"
 
       - name: .app launcher osascript interception (macOS)
         if: runner.os == 'macOS'
