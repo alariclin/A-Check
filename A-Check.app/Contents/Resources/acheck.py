@@ -5245,11 +5245,15 @@ class BlocklistDE(Provider):
         if not ok:
             return {"ok": False, "err": raw}
         try:
-            # fix440b r3-7：字段名须行首锚定（"previous_attacks" 不得命中），
-            # 数值须整行是整数（"1.5" 不得截成 1）；缺失字段返 None（r3-3），
-            # 不得补 0 冒充“已查明为零”。
-            ma = re.search(r"(?m)^attacks:\s*(\d+)\s*$", raw)
-            mr = re.search(r"(?m)^reports:\s*(\d+)\s*$", raw)
+            # fix440b r3-7：字段名不得误命中 "previous_attacks"（须以行首或
+            # 非单词字符为界），数值须是整数（"1.5" 不得截成 1，值后须跟非
+            # 数字非点号）；缺失字段返 None（r3-3），不得补 0 冒充“已查明为零”。
+            # fix440-merge：实测 live 响应是单行 "attacks: 0<br />reports: 0<br />"
+            #（S2 直取 api.blocklist.de，2026-11-27）——旧 (?m)^...(\d+)\s*$ 要求
+            # 行尾，值后是 "<br />" 故双双失配、整源报 unexpected response；
+            # 改为界＋值后断言，不再要求行尾。
+            ma = re.search(r"(?m)(?:^|[^A-Za-z_])attacks:\s*(\d+)(?![\d.])", raw)
+            mr = re.search(r"(?m)(?:^|[^A-Za-z_])reports:\s*(\d+)(?![\d.])", raw)
             if not ma and not mr:
                 return {"ok": False, "err": "unexpected response"}
             return {
