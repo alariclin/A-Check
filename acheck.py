@@ -4228,11 +4228,13 @@ class ShodanInternetDB(Provider):
                 return {"ok": False, "err": str(d["error"])[:80]}
             return {
                 "ok": True,
-                "ports": d.get("ports") if isinstance(d.get("ports"), list) else [],
-                "vulns": d.get("vulns") if isinstance(d.get("vulns"), list) else [],
-                "tags": d.get("tags") if isinstance(d.get("tags"), list) else [],
-                "hostnames": d.get("hostnames") if isinstance(d.get("hostnames"), list) else [],
-                "cpes": d.get("cpes") if isinstance(d.get("cpes"), list) else [],
+                # fix440b r3-3：缺失字段是“未知”，不是“已查明为空”——未返回
+                # 的列表一律返 None（404 分支的 [] + no_data 标记不受影响）。
+                "ports": d.get("ports") if isinstance(d.get("ports"), list) else None,
+                "vulns": d.get("vulns") if isinstance(d.get("vulns"), list) else None,
+                "tags": d.get("tags") if isinstance(d.get("tags"), list) else None,
+                "hostnames": d.get("hostnames") if isinstance(d.get("hostnames"), list) else None,
+                "cpes": d.get("cpes") if isinstance(d.get("cpes"), list) else None,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4273,7 +4275,13 @@ class FeodoTracker(Provider):
         )
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        return {"ok": True, "listed": str(ip) in lst, "ts": now_iso()}
+        # fix440b F5：查询侧须与解析期同口径规范化——展开式 IPv6 字符串
+        # 与名单内压缩式失配会漏报。
+        try:
+            _nip = str(ipaddress.ip_address(str(ip)))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        return {"ok": True, "listed": _nip in lst, "ts": now_iso()}
 
 
 @register
@@ -4304,7 +4312,12 @@ class EmergingThreats(Provider):
         )
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        return {"ok": True, "listed": str(ip) in lst, "ts": now_iso()}
+        # fix440b F5：同 Feodo，查询侧规范化（名单解析期已规范化）。
+        try:
+            _nip = str(ipaddress.ip_address(str(ip)))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        return {"ok": True, "listed": _nip in lst, "ts": now_iso()}
 
 
 @register
@@ -4333,7 +4346,12 @@ class TorExitNodes(Provider):
         )
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        return {"ok": True, "is_tor_exit": str(ip) in lst, "ts": now_iso()}
+        # fix440b F5：同 Feodo，查询侧规范化（名单解析期已规范化）。
+        try:
+            _nip = str(ipaddress.ip_address(str(ip)))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        return {"ok": True, "is_tor_exit": _nip in lst, "ts": now_iso()}
 
 @register
 class IPWhoisApp(Provider):
