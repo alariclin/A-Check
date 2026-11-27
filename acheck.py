@@ -198,6 +198,7 @@ STR = {
         "diag_speed_fail": "吞吐测速失败",
         "batch_tp_testing": "测最优节点吞吐中…",
         "batch_tp_ok": "★ 最优节点实测下载: %.1f Mbps (经代理 · %s)",
+        "batch_tp_fail": "最优节点吞吐测试失败",
         "batch_hint": "逐行粘贴节点 (host:port 或 socks5://[user:pass@]host:port)，空行开始测试，b 返回",
         "batch_best": "最优",
         "batch_dead": "不可用",
@@ -412,6 +413,7 @@ STR = {
         "diag_speed_fail": "Throughput test failed",
         "batch_tp_testing": "Testing best node throughput…",
         "batch_tp_ok": "★ Best node measured download: %.1f Mbps (via proxy · %s)",
+        "batch_tp_fail": "Best-node throughput test failed",
         "batch_hint": "Paste nodes line by line (host:port or socks5://[user:pass@]host:port), empty line to start, b back",
         "batch_best": "Best",
         "batch_dead": "unusable",
@@ -626,6 +628,7 @@ STR = {
         "diag_speed_fail": "吞吐測速失敗",
         "batch_tp_testing": "測最優節點吞吐中…",
         "batch_tp_ok": "★ 最優節點實測下載: %.1f Mbps (經代理 · %s)",
+        "batch_tp_fail": "最優節點吞吐測試失敗",
         "batch_hint": "逐行貼上節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
         "batch_best": "最優",
         "batch_dead": "不可用",
@@ -840,6 +843,7 @@ STR = {
         "diag_speed_fail": "スループット測定に失敗",
         "batch_tp_testing": "最速ノードのスループットを測定中…",
         "batch_tp_ok": "★ 最速ノード実測ダウンロード: %.1f Mbps (プロキシ経由 · %s)",
+        "batch_tp_fail": "最速ノードのスループット測定に失敗しました",
         "batch_hint": "ノードを1行ずつ貼り付け (host:port または socks5://[user:pass@]host:port)、空行で開始、b 戻る",
         "batch_best": "最速",
         "batch_dead": "利用不可",
@@ -1054,6 +1058,7 @@ STR = {
         "diag_speed_fail": "Тест пропускной способности не удался",
         "batch_tp_testing": "Измерение пропускной способности лучшего узла…",
         "batch_tp_ok": "★ Лучший узел, измеренная загрузка: %.1f Mbps (через прокси · %s)",
+        "batch_tp_fail": "Не удалось измерить пропускную способность лучшего узла",
         "batch_hint": "Вставляйте узлы по одному (host:port или socks5://[user:pass@]host:port), пустая строка — старт, b назад",
         "batch_best": "Лучший",
         "batch_dead": "недоступен",
@@ -1268,13 +1273,14 @@ STR = {
         "diag_speed_fail": "تست توان عملیاتی ناموفق بود",
         "batch_tp_testing": "در حال اندازه‌گیری توان عملیاتی بهترین گره…",
         "batch_tp_ok": "★ دانلود اندازه‌گیری‌شده بهترین گره: %.1f Mbps (از طریق پروکسی · %s)",
+        "batch_tp_fail": "آزمایش توان عملیاتی بهترین گره ناموفق بود",
         "batch_hint": "گره‌ها را خط به خط وارد کنید (host:port یا socks5://[user:pass@]host:port)، خط خالی شروع، b بازگشت",
         "batch_best": "بهترین",
         "batch_dead": "غیرقابل استفاده",
         "batch_col_node": "گره",
         "batch_col_avg": "میانگین",
         "batch_col_jitter": "جیتر",
-        "batch_col_loss": "اتلاف بسته",
+        "batch_col_loss": "اتلاف",
         "batch_col_proto": "HS",
         "bn_system": "سیستم",
         "bn_hardware": "سخت‌افزار",
@@ -12443,8 +12449,9 @@ def batch_node_test(nodes, ping_count=5):
         results = list(ex.map(_one, nodes))
 
     def _key(r):
-        tcp_ok = bool(r["tcp"].get("ok"))
-        hs_ok = r.get("socks5", {}).get("ok", True)
+        tcp_ok = bool((r.get("tcp") or {}).get("ok"))
+        hs_ok = ((r.get("socks5") or {}).get("ok")
+                 if (r.get("node") or {}).get("proto") == "socks5" else True)
         usable = tcp_ok and hs_ok
         avg = r["tcp"].get("avg_ms")
         return (0 if usable else 1, avg if avg is not None else 1e9)
@@ -12454,17 +12461,23 @@ def batch_node_test(nodes, ping_count=5):
 
 def _node_label(nd):
     """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
-    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。"""
+    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。
+    L4：长主机名只截 host 段，端口恒保留（旧实现整串 [:38] 会把端口
+    截掉，文本表丢端口而 JSON 保留，造成文本/JSON 分歧）。"""
     host = _strip_cc(nd.get("host") or "?")  # 纵深：即使解析层漏网，标签也不含控制字符
     if ":" in host and not host.startswith("["):
         host = "[%s]" % host
     _port = nd.get("port", "?")
     if nd.get("proto") == "socks5" and (nd.get("user") is not None
                                         or nd.get("pass") is not None):
-        return ("socks5://***@%s:%s" % (host, _port))[:38]
-    if nd.get("proto") == "socks5":
-        return ("socks5://%s:%s" % (host, _port))[:38]
-    return ("%s:%s" % (host, _port))[:38]
+        _pre, _suf = "socks5://***@", ":%s" % _port
+    elif nd.get("proto") == "socks5":
+        _pre, _suf = "socks5://", ":%s" % _port
+    else:
+        _pre, _suf = "", ":%s" % _port
+    # 按显示宽截 host 段（CJK 双宽计 2 列），前后缀恒保留，总宽恒 <= 38。
+    _host = _truncate_disp(host, max(0, 38 - _disp_width(_pre) - _disp_width(_suf)))
+    return _pre + _host + _suf
 
 
 def _sanitize_batch_results(results):
@@ -12486,9 +12499,9 @@ def _sanitize_batch_results(results):
 def _print_batch_results(results):
     """打印排名表, 最优节点绿色标出。"""
     print()
-    hdr = ("  " + _pad("#", 2) + " " + _pad(T("batch_col_node"), 38) + " "
-           + _pad(T("batch_col_avg"), 9) + " " + _pad(T("batch_col_jitter"), 9)
-           + " " + _pad(T("batch_col_loss"), 7) + " " + T("batch_col_proto"))
+    hdr = ("  " + _pad("#", 2) + " " + _pad(_truncate_disp(T("batch_col_node"), 38), 38) + " "
+           + _pad(_truncate_disp(T("batch_col_avg"), 9), 9) + " " + _pad(_truncate_disp(T("batch_col_jitter"), 9), 9)
+           + " " + _pad(_truncate_disp(T("batch_col_loss"), 7), 7) + " " + T("batch_col_proto"))
     print(_c(C.cyan, hdr))
     best_marked = False
     for i, r in enumerate(results, 1):
@@ -12511,7 +12524,12 @@ def _print_batch_results(results):
             hs = T("bn_ok") if (r.get("socks5") or {}).get("ok") else "✗"
         else:
             hs = "-"
-        usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
+        # r5b-1：SOCKS5 节点握手结果缺失时不得按可用计——否则同节点
+        # 又在握手列画 ✗、又被标 ★ 选去测速。
+        if nd.get("proto") == "socks5":
+            usable = bool(tcp.get("ok") and (r.get("socks5") or {}).get("ok"))
+        else:
+            usable = bool(tcp.get("ok"))
         line = ("  " + _pad(str(i), 2) + " " + _pad(label, 38) + " "
                 + _pad(avg, 9) + " " + _pad(jit, 9) + " " + _pad(loss, 7)
                 + " " + hs)
@@ -12566,17 +12584,45 @@ def _batch_best_throughput(results):
         if tbest:
             print(_c(C.green, T("batch_tp_ok") % (tbest["down_mbps"],
                                                  _loc_hub_name(tbest["region"]))))
+        else:
+            # r5b-8：测速抛错/无结果时须有最终状态，不得止于 testing 行。
+            print(_c(C.red, T("batch_tp_fail")))
         return
 
 
 def run_batch_nodes(json_mode=False):
-    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。"""
+    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。
+    JSON 模式返回 {"results": [...], "partial": bool,
+    "invalid_lines": [...]}（r5b-7：解析失败行须标明，不得静默丢弃）。"""
+    def _read_line():
+        # r5b-6：交互终端粘贴带认证节点时，input() 会由终端行规程回显
+        # 密码明文；stdin 为 TTY 时关 ECHO 读行，管道/重定向仍用 input()。
+        # 不用 getpass：它以 TCSADRAIN 改 termios，须等回显队列排空才
+        # 返回；对方（pty master）未读回显时即死锁（实测挂死 >120s）。
+        # TCSANOW 立即生效，无此问题；termios 不可用时（Windows）回落。
+        try:
+            if sys.stdin.isatty():
+                import termios
+                _fd = sys.stdin.fileno()
+                _old = termios.tcgetattr(_fd)
+                _new = termios.tcgetattr(_fd)
+                _new[3] = _new[3] & ~termios.ECHO
+                try:
+                    termios.tcsetattr(_fd, termios.TCSANOW, _new)
+                    return sys.stdin.readline()
+                finally:
+                    termios.tcsetattr(_fd, termios.TCSANOW, _old)
+        except Exception:
+            pass
+        return input()
+
     nodes = []
+    invalid_lines = []
     if not json_mode:
         print(T("batch_hint"))
     while True:
         try:
-            ln = input()
+            ln = _read_line()
         except EOFError:
             break
         if ln.strip() == "":
@@ -12586,13 +12632,16 @@ def run_batch_nodes(json_mode=False):
         nd = _parse_node_line(ln)
         if nd:
             nodes.append(nd)
-        elif not json_mode:
+        elif json_mode:
+            invalid_lines.append(ln.strip())
+        else:
             print(T("invalid_input"))
     if not nodes:
         return None
     results = batch_node_test(nodes)
     if json_mode:
-        return results
+        return {"results": results, "partial": bool(invalid_lines),
+                "invalid_lines": invalid_lines}
     _print_batch_results(results)
     _batch_best_throughput(results)
     return results
