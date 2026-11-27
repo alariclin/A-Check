@@ -3123,6 +3123,41 @@ def _any2en(table):
     return m
 
 
+def _geo_static_ambig_names(table):
+    """静态表内真正的跨实体歧义名集合（与 _any2en 同款归属逻辑）：
+    同一本地化名被多个英文键共享且非仅差 " City" 后缀时为歧义名
+    （如五语同译“奥克兰”的 Oakland/Auckland）。供 _resolve_geo_online
+    判断在线标签能否写反向映射（fix440a r2b-16）。"""
+    _owner = {}
+    _ambig = set()
+    for per_lang in table.values():
+        for en, name in per_lang.items():
+            if name not in _owner:
+                _owner[name] = en
+            elif _owner[name] != en:
+                _prev = _owner[name]
+                if _prev is not None and (
+                        en == _prev + " City" or _prev == en + " City"):
+                    _keep = _prev if len(_prev) <= len(en) else en
+                    _owner[name] = _keep
+                else:
+                    _owner[name] = None
+                    _ambig.add(name)
+    return _ambig
+
+
+_GEO_STATIC_AMBIG = {}
+
+
+def _geo_static_ambig(kind):
+    """kind（city/region）的静态歧义名集合（首次使用时由静态表算出并缓存；
+    静态表只在导入时改动，运行时不变，故缓存安全）。"""
+    if kind not in _GEO_STATIC_AMBIG:
+        _GEO_STATIC_AMBIG[kind] = _geo_static_ambig_names(
+            _CITY_L10N if kind == "city" else _REGION_L10N)
+    return _GEO_STATIC_AMBIG[kind]
+
+
 _CITY_L10N["zh"].update({"New York City": "纽约市", "Oklahoma City": "俄克拉荷马城", "Mountain View": "山景城", "Palo Alto": "帕洛阿尔托"})
 _CITY_L10N["zh-TW"].update({"New York City": "紐約市", "Oklahoma City": "奧克拉荷馬城", "Mountain View": "山景城", "Palo Alto": "帕羅奧圖"})
 _CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma City": "オクラホマシティ", "Mountain View": "マウンテンビュー", "Palo Alto": "パロアルト"})
@@ -3176,21 +3211,39 @@ _WD_PLACE_QIDS = frozenset({"Q515", "Q486972", "Q3957", "Q532", "Q15284",
                             "Q51929311", "Q1093829", "Q2264924", "Q15063611"})
 _WD_PLACE_ROOT_QIDS = frozenset()
 # S6-N2：context 国家/行政区简称 -> 国家 QID（裸名回退校验用）：
-# 英格兰/苏格兰/威尔士/北爱尔兰的 P17 均为英国 Q145；America/USA/US
-# 的 P17 均为美国 Q30。仅作国家级等价，不含行政区级映射。
+# 美国 America/USA/US 的 P17 均为美国 Q30；英国构成国各有自己的 QID
+# （英格兰 Q21、苏格兰 Q22、威尔士 Q25、北爱尔兰 Q26），其 P17 亦为
+# 各自 QID，不得再全映射到英国 Q145（fix440a r2b-10：Wales 须解 Q25，
+# 否则 York, Wales 的实体校验误认英格兰）。uk/great britain/britain
+# 仍为英国 Q145。仅作国家/构成国级等价，不含行政区级映射。
 _WD_COUNTRY_ALIASES = {"us": "Q30", "usa": "Q30", "u.s.": "Q30",
                        "u.s.a.": "Q30", "america": "Q30",
                        "uk": "Q145", "great britain": "Q145",
-                       "britain": "Q145", "england": "Q145",
-                       "scotland": "Q145", "wales": "Q145",
-                       "northern ireland": "Q145"}
+                       "britain": "Q145", "england": "Q21",
+                       "scotland": "Q22", "wales": "Q25",
+                       "northern ireland": "Q26"}
 
 
 def _wd_claim_ids(ent, prop):
     """取实体某声明属性的 QID 列表 (缺失/畸形时为空表, 即类型无法确认)。"""
     out = []
-    for st in (ent.get("claims") or {}).get(prop, []):
-        v = (st.get("mainsnak") or {}).get("datavalue", {}).get("value")
+    if not isinstance(ent, dict):
+        return out
+    claims = ent.get("claims")
+    if not isinstance(claims, dict):
+        return out
+    for st in claims.get(prop, []) or []:
+        # fix440a r2b-14：非 dict 声明跳过，不致全部候选作废；
+        # r2b-11：deprecated 等级声明不作类型/归属证据。
+        if not isinstance(st, dict) or st.get("rank") == "deprecated":
+            continue
+        ms = st.get("mainsnak")
+        if not isinstance(ms, dict):
+            continue
+        dv = ms.get("datavalue")
+        if not isinstance(dv, dict):
+            continue
+        v = dv.get("value")
         if isinstance(v, dict) and v.get("id"):
             out.append(v["id"])
     return out
@@ -3198,12 +3251,23 @@ def _wd_claim_ids(ent, prop):
 
 def _wd_pick_label(ent, langs):
     """按界面语言优先级取条目标签 (去消歧后缀); 无则 None。"""
+    if not isinstance(ent, dict):
+        return None
     labels = ent.get("labels", {})
+    if not isinstance(labels, dict):
+        return None
     for lg in langs:
         if lg in labels:
+            _lv = labels[lg]
+            if not isinstance(_lv, dict):
+                continue
             v = re.sub(r"\s*[\(\（][^\\)\）]*[\\)\）]\s*$", "",
-                       labels[lg]["value"]).strip()
-            return v or None
+                       str(_lv.get("value") or "")).strip()
+            # fix440a r2b-22：标签过 _clean_str（剥离控制字符）；
+            # r2b-13c：剥离为空后继续试下一优先级，而非直接返 None。
+            v = _clean_str(v)
+            if v:
+                return v
     return None
 
 
@@ -3226,34 +3290,45 @@ def _wd_label(name, kind, context):
             if not ok:
                 return None
             return [c for c in json.loads(raw).get("search", [])
-                    if (c.get("label") or "").lower() == name.lower()
-                    and c.get("id")]
+                    if c.get("id") and (
+                        (c.get("label") or "").lower() == name.lower()
+                        # fix440a r2b-15：label 或任一 alias 精确匹配即收，
+                        # 不得只认 label（Bombay 别名 Mumbai 会被丢）。
+                        or any(isinstance(al, str) and al.lower() == name.lower()
+                               for al in (c.get("aliases") or [])))]
 
-        def _resolve_qid(term):
-            """context 成分 (国家/州名) -> QID：简称查表，余者按 label/
-            alias 精确匹配检索；解不出时返 None（即无法确认）。"""
+        def _resolve_qids(term):
+            """context 成分 (国家/州名) -> QID 列表：简称查表，余者按 label/
+            alias 精确匹配检索；解不出时为空表（即无法确认）。同一名多
+            实体时全保留（fix440a r2b-10：Georgia 国家 Q625 不得遮住
+            州 Q1428，上下文校验须取并集）。"""
             low = (term or "").strip().lower()
             if not low:
-                return None
+                return []
             if low in _WD_COUNTRY_ALIASES:
-                return _WD_COUNTRY_ALIASES[low]
+                return [_WD_COUNTRY_ALIASES[low]]
             q = urllib.parse.quote(term.strip())
             ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
                                f"&search={q}&language=en&format=json&limit=5&type=item",
                                timeout=5, retries=1, use_cache=False)
             if not ok:
-                return None
+                return []
             try:
                 items = json.loads(raw).get("search", [])
             except Exception:
-                return None
+                return []
+            out = []
             for c in items:
                 if (c.get("label") or "").lower() == low:
-                    return c.get("id")
+                    if c.get("id"):
+                        out.append(c["id"])
+                    continue
                 for al in c.get("aliases") or []:
                     if isinstance(al, str) and al.lower() == low:
-                        return c.get("id")
-            return None
+                        if c.get("id"):
+                            out.append(c["id"])
+                        break
+            return out
 
         _fallback = False
         cands = _search(context or name)
@@ -3286,9 +3361,13 @@ def _wd_label(name, kind, context):
         def _context_ok(eid):
             """裸名回退校验：实体 P17 国家 / P131 行政归属（沿链多级
             上溯，上限 8 跳防循环）须与 context 某一成分的 QID 相符；
-            非回退路径恒真；实体无 P17/P131 或 context 成分全解不出
-            时返 False（无法确认）。"""
-            if not _fallback:
+            context 给出且与名不同时亦须校验（fix440a r2b-9：上下文
+            命中不得绕过实体校验——"Springfield, Illinois" 的
+            Massachusetts 实体须被拒）；context 缺失或等于名时恒真；
+            实体无 P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            # fix440a r2b-9：context 命中亦须校验——context 给出且与名不同时，
+            # 实体 P17/P131 须与 context 成分相符；context 缺失或等于名时恒真。
+            if not context or context == name:
                 return True
             ent = entities.get(eid, {})
             countries = set(_wd_claim_ids(ent, "P17"))
@@ -3324,9 +3403,7 @@ def _wd_label(name, kind, context):
             toks = [t for t in toks if t and t.lower() != name.lower()]
             qids = []
             for tok in toks:
-                qid = _resolve_qid(tok)
-                if qid:
-                    qids.append(qid)
+                qids.extend(_resolve_qids(tok))
             if not qids:
                 return False
             # B-06a-1: 须命中最具体的可解析上下文成分——任一成分命中
@@ -3341,30 +3418,59 @@ def _wd_label(name, kind, context):
                 return False
             return any(q in countries for q in qids)
 
-        p31_map = {}
-        for c in cands:
-            p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
-            p31_map[c["id"]] = p31s
-            if any(p in want for p in p31s) and _context_ok(c["id"]):
-                return _wd_pick_label(entities.get(c["id"], {}), langs)
-        # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
-        all_p31 = sorted({p for ps in p31_map.values() for p in ps})
-        parents = {}
-        if all_p31:
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                               f"&ids={'|'.join(all_p31)}&props=claims&format=json",
-                               timeout=5, retries=1, use_cache=False)
-            if ok:
-                for tid, tent in json.loads(raw).get("entities", {}).items():
-                    parents[tid] = _wd_claim_ids(tent, "P279")
         roots = _WD_ADMIN_ROOT_QIDS if kind == "region" else _WD_PLACE_ROOT_QIDS
-        for c in cands:
-            ps = []
-            for p in p31_map.get(c["id"], []):
-                ps.extend(parents.get(p, []))
-            if any(p in want or p in roots for p in ps) \
-                    and _context_ok(c["id"]):
-                return _wd_pick_label(entities.get(c["id"], {}), langs)
+
+        def _eval(cands):
+            """对一批候选做类型 + 上下文校验，返回首个通过者的标签；无则 None。
+            直接 P31 检查亦接受行政根 QID（fix440a r2b-12：根 QID 是
+            类型族本身，不得只在 P279 上溯时接受）；标签取不到时继续
+            下一候选（r2b-13b），不提前返 None。"""
+            p31_map = {}
+            for c in cands:
+                p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
+                p31_map[c["id"]] = p31s
+                if any(p in want or p in roots for p in p31s) \
+                        and _context_ok(c["id"]):
+                    v = _wd_pick_label(entities.get(c["id"], {}), langs)
+                    if v:
+                        return v
+            # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
+            all_p31 = sorted({p for ps in p31_map.values() for p in ps})
+            parents = {}
+            if all_p31:
+                ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                   f"&ids={'|'.join(all_p31)}&props=claims&format=json",
+                                   timeout=5, retries=1, use_cache=False)
+                if ok:
+                    for tid, tent in json.loads(raw).get("entities", {}).items():
+                        parents[tid] = _wd_claim_ids(tent, "P279")
+            for c in cands:
+                ps = []
+                for p in p31_map.get(c["id"], []):
+                    ps.extend(parents.get(p, []))
+                if any(p in want or p in roots for p in ps) \
+                        and _context_ok(c["id"]):
+                    v = _wd_pick_label(entities.get(c["id"], {}), langs)
+                    if v:
+                        return v
+            return None
+
+        r = _eval(cands)
+        if r is not None:
+            return r
+        # fix440a r2b-13a：context 命中全错类型时，亦以裸名重查一次
+        # （原先只在 context 检索返空时重查，全错类型即提前停止）。
+        if context and context != name and not _fallback:
+            cands2 = _search(name)
+            if cands2:
+                ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                   f"&ids={'|'.join(c['id'] for c in cands2)}"
+                                   "&props=labels|claims"
+                                   f"&languages={'|'.join(langs)}&format=json",
+                                   timeout=5, retries=1, use_cache=False)
+                if ok:
+                    entities.update(json.loads(raw).get("entities", {}))
+                    return _eval(cands2)
         return None
     except Exception:
         return None
@@ -3410,7 +3516,12 @@ def _resolve_geo_online(jobs):
         if v:
             _GEO_EXTRA[kind][(name, ctx or "")] = v
             any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
-            any2en[v] = any2en.get(name, name)
+            # fix440a r2b-16：在线标签不得覆盖静态反向映射——译文已在
+            # 反向映射中（静态收录）或属静态歧义名（如奥克兰，_any2en
+            # 刻意丢弃）时，写回会覆盖静态归属（且与线程顺序有关、跨
+            # 语言切换残留）；只在两者皆不沾时才写。
+            if v not in any2en and v not in _geo_static_ambig(kind):
+                any2en[v] = any2en.get(name, name)
 
     if todo:
         with ThreadPoolExecutor(max_workers=4) as ex:
