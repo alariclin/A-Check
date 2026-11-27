@@ -7723,11 +7723,15 @@ _FORCE_STACK = None  # 自检范围覆盖: None=自动/询问, "4"/"6"=仅测该
 _getaddrinfo_sem = threading.BoundedSemaphore(16)
 
 
-def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5):
+def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5,
+                       register=False):
     """带超时的 getaddrinfo: 标准库解析无超时参数, DNS 失联时会无限阻塞;
     放守护线程里等, 超时按解析失败抛 OSError, 不让任何调用方挂死。
     并发 bound: 最多 16 路同时解析 (信号量), 超量调用在同一 timeout
-    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。"""
+    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。
+    r5b-9/O1：缺省不登记横幅 worker——非横幅路径（流媒体探针、代理
+    诊断、DNS 检测、测速）的 DNS 线程不得进横幅等待集，否则横幅
+    join 会等与横幅无关的线程；横幅 opener 仍经 _open_bounded 登记。"""
     _t0 = time.monotonic()
     if not _getaddrinfo_sem.acquire(timeout=timeout):
         raise OSError(f"DNS resolution concurrency limit reached: {host}")
@@ -7748,7 +7752,8 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
         _t = threading.Thread(target=_run, daemon=True)
         _t.start()
         _started = True
-        _banner_net_register_worker(_t)
+        if register:
+            _banner_net_register_worker(_t)
         _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
         if _t.is_alive():
             raise OSError(f"DNS resolution timed out: {host}")
@@ -12678,6 +12683,7 @@ _banner_net_thread = None
 _banner_net_deadline = None
 _banner_net_workers = []
 _banner_net_workers_lock = threading.Lock()
+_banner_net_register_count = [0]  # r5b-10：清理节流计数（见登记函数）
 
 
 def _logo_spread(lines, target=76):
@@ -12802,6 +12808,10 @@ def _urlopen_bounded(req, budget):
             lambda: urllib.request.urlopen(req, timeout=min(5, budget)),
             time.monotonic() + budget,
             register=_banner_net_register_worker)
+    except urllib.error.HTTPError:
+        # L11：即时 HTTPError 不再吞为 None——_open_bounded 已在抛出前
+        # 关闭错误响应，调用方（横幅地理步）须据此记失败、不缓存。
+        raise
     except Exception:
         return None
 
@@ -12811,7 +12821,9 @@ def _banner_net_info():
     渲染时按界面语言本地化) + IPv6 出口地址。
     整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。
     S5 L-01 残留：地理取数失败（限流/超时/坏体）时不写入永久缓存，
-    下次调用重取；地理未尝试（无出口 IP）时仍按旧行为缓存。"""
+    下次调用重取。M2：无出口 IP 时亦不缓存（旧行为缓存空结果，进程内
+    永不恢复）。r5b-9：DNS 探测已删（结果从未被横幅读取），探测顺序
+    变为出口 IP 优先。"""
     global _banner_net_cache, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
@@ -12821,16 +12833,11 @@ def _banner_net_info():
     def _rem():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False,
+            "ipv6_verified": False,
             "geo_country": "", "geo_city": "", "geo_net": "", "geo_org": ""}
-    if _rem() > 0:
-        try:
-            info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
-                                                      socket.AF_UNSPEC,
-                                                      socket.SOCK_DGRAM,
-                                                      timeout=min(5, _rem())))
-        except Exception:
-            info["dns_ok"] = False
+    # r5b-9/O1：DNS 探测已删——dns_ok 全文件只有写、没有读（print_banner
+    # 从不引用），删后探测顺序变为出口 IP 优先，不再为一行不显示的数据
+    # 等 DNS。_getaddrinfo_timed 的 register 缺省亦为 False（见该函数）。
     # S5 L-01 残留：地理失败标记——仅地理步抛错/失败体时置真，末尾
     # 凭此决定是否写入永久缓存；无出口 IP 时地理步未跑，不置真。
     _geo_failed = False
@@ -12862,7 +12869,9 @@ def _banner_net_info():
                 # R4-L-01：先校验 success（失败体不得填地理字段并缓存），
                 # 再按字典类型取值；conn 非字典的 AttributeError 会被下方
                 # except 吞掉，故校验须在取值之前，不依赖“会抛错”。
-                if not isinstance(d, dict) or not d.get("success", True):
+                # r5b-2：success 缺失或为字符串 "false" 均视作失败体——
+                # 缺省 True 会让无 success 的失败体照常填地理并进缓存。
+                if not isinstance(d, dict) or d.get("success") is not True:
                     raise ValueError("ipwho.is query failed")
                 conn = d.get("connection") if isinstance(d.get("connection"), dict) else {}
                 sec = d.get("security") if isinstance(d.get("security"), dict) else {}
@@ -12870,11 +12879,15 @@ def _banner_net_info():
                 # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
                 info["geo_country"] = d.get("country") or ""
                 info["geo_city"] = d.get("city") or ""
-                # M-11: 保留机房标记精度: connection 透传 hosting 时认它,
-                # 否则按 org 启发式判定。R4-L-01：security/connection 的
-                # hosting 均须严格布尔判真（字符串 "false" 不得判真），
-                # security 优先于 connection（与 IPWhoIs.check 同口径）。
-                if (sec.get("hosting") is True) or (conn.get("hosting") is True) or is_datacenter_heuristic(org, org)[0]:
+                # M-11: 保留机房标记精度。r5b-3：机房判定执行声明的字段
+                # 优先级 security＞connection＞启发式，与 IPWhoIs.check
+                # 的 _b 同口径（sec 有该键即取 sec，否则取 conn；严格布尔，
+                # 字符串 "false"/数字/null 皆为未知）；显式 False 是定论，
+                # 启发式不得反转它，仅当两源皆未知时才作后备。
+                _hv = sec.get("hosting") if "hosting" in sec else conn.get("hosting")
+                _hv = _hv if isinstance(_hv, bool) else None
+                if _hv is True or (_hv is None
+                                  and is_datacenter_heuristic(org, org)[0]):
                     info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
                     info["geo_net"] = "residential"
@@ -12888,9 +12901,13 @@ def _banner_net_info():
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
+    # r5b-4：预算耗尽致探测集未跑完时 ipv6 置 None（未知），不得当 False
+    # 缓存；仅当探测集完整跑完仍无地址时才判 False。
     _v6addr = None
+    _v6_skipped = False
     for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
         if _rem() <= 0:
+            _v6_skipped = True
             break
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
@@ -12927,13 +12944,16 @@ def _banner_net_info():
                     s6.close()
                 except Exception:
                     pass
+    if _v6addr is None and _rem() <= 0:
+        # 预算在探测集跑完前耗尽：有一步没跑上，判未知而非无 IPv6。
+        _v6_skipped = True
     info["ipv6_addr"] = _v6addr
-    info["ipv6"] = bool(_v6addr)
+    info["ipv6"] = None if (_v6addr is None and _v6_skipped) else bool(_v6addr)
     _banner_net_last_info = info
     _banner_net_last_attempt = _t0
-    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；其余情形
-    # （成功、无出口 IP）仍缓存。
-    if not _geo_failed:
+    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；M2：无出口 IP
+    # 时不缓存；r5b-4：IPv6 未探明时不缓存。三者任一成立即不写永久缓存。
+    if not _geo_failed and info.get("egress") and not _v6_skipped:
         _banner_net_cache = info
     return info
 
@@ -12968,19 +12988,24 @@ def _banner_geo_text(net):
 def _banner_net_register_worker(t):
     """登记一个守护工作线程（退出前 _banner_net_join 有界等待用）。
 
-    注意登记无调用方检查：_getaddrinfo_timed 对每路 DNS 工作线程都
-    登记（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径），
-    故等待集可能包含活着的非横幅 DNS worker。登记点在线程 start()
-    之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
+    注意：_getaddrinfo_timed 缺省不再登记（r5b-9/O1），登记点只剩
+    横幅 opener 的 _open_bounded 路径。登记点在线程 start() 之后，
+    顺序不得变。
+    r5b-10：全量清理（enumerate＋列表扫描）每 32 次登记才做一次——
+    逐次清理是 O(n²)：200 次登记约 19,900 次扫描；节流后约 700 次。
+    之间死亡的 worker 最多滞留 31 次登记，join 时按 is_alive 跳过，
+    无行为变化。
     """
     with _banner_net_workers_lock:
-        # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
-        # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
-        # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
-        _live = threading.enumerate()
-        _banner_net_workers[:] = [w for w in _banner_net_workers
-                                  if w.is_alive()
-                                  or any(x is w for x in _live)]
+        _banner_net_register_count[0] += 1
+        if _banner_net_register_count[0] % 32 == 0:
+            # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
+            # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
+            # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
+            _live = threading.enumerate()
+            _banner_net_workers[:] = [w for w in _banner_net_workers
+                                      if w.is_alive()
+                                      or any(x is w for x in _live)]
         _banner_net_workers.append(t)
 
 
@@ -13185,7 +13210,10 @@ def _banner_net_info_async():
     相同），使取数中途被 Ctrl-C 打断时退出路径的 join 仍有预算可等已
     登记 worker，不因 deadline 为空而立即返回；取数完成后缓存即生效，
     后续横幅直接命中缓存。"""
-    global _banner_net_deadline
+    # r5b-5：重试分支写回 _banner_net_last_info/_last_attempt，故须声明
+    # global——否则赋值使二者变局部变量，函数入口读到未绑定变量即抛
+    # UnboundLocalError（实测：两重试线程双双崩溃、零取数，夹具会假 PASS）。
+    global _banner_net_deadline, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
     _need_fetch = False
@@ -13206,12 +13234,23 @@ def _banner_net_info_async():
     if _banner_net_last_info is not None:
         if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
             return _banner_net_last_info
-        # B-15a-1：重试开新取数须刷新 deadline（首轮 deadline 已过期；
-        # 沿用它会使随后 join 立即返回、新登记 worker 无人等）。
-        _banner_net_deadline = time.monotonic() + _banner_net_budget
-        return _banner_net_info()
+        # r5b-5：重试分支须在锁内二次检查并写回结果——否则并发重试的
+        # 两个调用方各发一次取数。取完把结果写回 last_info/last_attempt，
+        # 后来者复用同一结果。B-15a-1：重试开新取数须刷新 deadline
+        # （首轮 deadline 已过期；沿用它会使随后 join 立即返回、新登记
+        # worker 无人等）。
+        with _banner_net_lock:
+            if _banner_net_cache is not None:
+                return _banner_net_cache
+            if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
+                return _banner_net_last_info
+            _banner_net_deadline = time.monotonic() + _banner_net_budget
+            _res = _banner_net_info()
+            _banner_net_last_info = _res
+            _banner_net_last_attempt = time.monotonic()
+            return _res
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False}
+            "ipv6_verified": False}
 
 
 def _white(s):
