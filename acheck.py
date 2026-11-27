@@ -2928,6 +2928,9 @@ def _ripestat_date(st):
     if isinstance(st, bool):
         return None
     if isinstance(st, (int, float)):
+        # fix440g G-037：带小数部分的数值拒绝（20200101.75 不得截成日期）。
+        if isinstance(st, float) and not st.is_integer():
+            return None
         try:
             s = str(int(st))
         except (TypeError, ValueError, OverflowError):
@@ -2947,6 +2950,12 @@ def _ripestat_date(st):
         datetime.strptime(s[:10], "%Y-%m-%d")
     except ValueError:
         return None
+    if len(s) > 10:
+        # fix440g G-037：尾随文本须是完整合法的时间后缀（T/空格 + HH:MM
+        # [:SS[.fff]] + 可选 Z/时区），"2020-01-01not-a-time" 之类拒绝。
+        if not re.fullmatch(r"[T ]([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?"
+                            r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?", s[10:]):
+            return None
     return s[:10]
 
 
@@ -3007,34 +3016,54 @@ class RIPEstat(Provider):
                 if not isinstance(h, dict):
                     raise ValueError("bad history data")
                 origins = h.get("by_origin", [])
+                # fix440g G-036：by_origin 错型（非列表）不是正常空历史，
+                # 置历史失败标记（与 by_origin=[] 可区分，末尾标 partial）。
+                if not isinstance(origins, list):
+                    _hist_ok = False
+                    origins = []
                 earliest = None
                 max_peers = 0
                 _seen_tl = False
+                _seen_fp = False
                 for o in origins:
                     # fix440b r2a-A09b：单个坏项（null/非 dict）只跳过该项，
                     # 不得丢弃此前已算出的有效历史。
                     if not isinstance(o, dict):
                         continue
-                    for pfx in o.get("prefixes", []) or []:
+                    # fix440g G-004：先验证集合本身是列表，错型项跳过、保留
+                    # 已算出的 earliest/max_peers（不得让 for pfx in 1 抛
+                    # TypeError 丢整段历史）。
+                    _pfxs = o.get("prefixes", [])
+                    if not isinstance(_pfxs, list):
+                        continue
+                    for pfx in _pfxs:
                         if not isinstance(pfx, dict):
                             continue
-                        for tl in pfx.get("timelines", []) or []:
+                        _tls = pfx.get("timelines", [])
+                        if not isinstance(_tls, list):
+                            continue
+                        for tl in _tls:
                             if not isinstance(tl, dict):
                                 continue
                             _seen_tl = True
                             _ds = _ripestat_date(tl.get("starttime", ""))
                             if _ds and (earliest is None or _ds < earliest):
                                 earliest = _ds
-                            fp = tl.get("full_peers_seeing", 0) or 0
-                            # 字符串计数值先规范化：旧版直接比较，字符串
-                            # （如 "2"）致整段路由历史 try 被 TypeError 截断
-                            # （first_seen/visibility 全丢；F04）。
-                            try:
-                                fp = int(fp)
-                            except (TypeError, ValueError, OverflowError):
-                                fp = 0
-                            if fp > max_peers:
-                                max_peers = fp
+                            # fix440g G-003：仅当 full_peers_seeing 字段真实
+                            # 出现（非 None）才算见过对端计数；缺字段的
+                            # timeline 不得把 visibility 抹成 "0"。
+                            if "full_peers_seeing" in tl and tl.get("full_peers_seeing") is not None:
+                                _seen_fp = True
+                                fp = tl.get("full_peers_seeing", 0) or 0
+                                # 字符串计数值先规范化：旧版直接比较，字符串
+                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                                # （first_seen/visibility 全丢；F04）。
+                                try:
+                                    fp = int(fp)
+                                except (TypeError, ValueError, OverflowError):
+                                    fp = 0
+                                if fp > max_peers:
+                                    max_peers = fp
                 if earliest:
                     first_seen = earliest
                     try:
@@ -3047,7 +3076,9 @@ class RIPEstat(Provider):
                 # 但零对端只有配有效 first_seen 时才算可用历史（r2a-A04：
                 # 无有效日期又零对端 = 无可用信号，不得仅凭一条空 timeline
                 # 构成部分成功）；正对端数本身即是可见度信号。
-                if _seen_tl and (earliest is not None or max_peers > 0):
+                # fix440g G-003：可见度须以真实见过对端计数为准（_seen_fp），
+                # 仅见过 timeline 不算；显式零对端配有效 first_seen 时仍为 "0"。
+                if _seen_fp and (earliest is not None or max_peers > 0):
                     visibility = f"{max_peers}"
             except Exception:
                 _hist_ok = False
@@ -3078,6 +3109,11 @@ class RIPEstat(Provider):
         # 调用方把“无年龄/无可见度”当成查无历史。
         if not _hist_ok:
             _res["partial"] = True
+        # fix440g G-035：仅元数据前缀（无 ASN/宣告）＋历史失败时不得计
+        # 成功——无任何可用信号，返失败而非 ok=True/partial=True。
+        if (not _hist_ok and _res["asn"] is None and _res["announced"] is None
+                and first_seen is None and not visibility):
+            return {"ok": False, "err": "no usable RIPEstat signals"}
         return _res
 
 
