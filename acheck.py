@@ -13279,26 +13279,44 @@ def print_banner():
             with open("/etc/os-release", encoding="utf-8", errors="replace") as f:
                 for ln in f:
                     if ln.startswith("PRETTY_NAME="):
-                        os_name = ln.split("=", 1)[1].strip().strip('"')
+                        # r5b-13：只剥首尾配对引号（" 或 '）——旧 .strip('"')
+                        # 把单引号值原样留引号、把双引号值两端多剥；首尾
+                        # 不成对（如 "abc'）一律保留原样。
+                        _v = ln.split("=", 1)[1].strip()
+                        if len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in ("\"", "'"):
+                            _v = _v[1:-1]
+                        os_name = _v
                         break
         except Exception:
             pass
-    cores = os.cpu_count() or 0
+    # r5b-14：cpu_count() 为 None 是“未知”，不得显示 0 核。
+    _cores = os.cpu_count()
+    cores = _cores if _cores is not None else "?"
     pyv = "%d.%d.%d" % sys.version_info[:3]
-    print(" %s:  %s" % (_c(C.cyan, T("bn_system")),
-                         _white("%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv))))
-    cores_word = _ru_plural(cores, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and cores == 1 else T("bn_cores"))
-    cpu = (si.get("cpu") or "?")[:36]
-    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")),
-                         _white("%s (%d%s) · %s %s · %s %s" % (
-                             cpu, cores, cores_word,
-                             T("sys_mem"), si.get("mem", "?"),
-                             T("sys_disk"), si.get("disk", "?")))))
+    # M3：各行内容按显示宽截断到边框内（W=78；行 = 1 空格＋标签＋": "＋值，
+    # 值预算 = 78 - 1 - 标签宽 - 3）。截断在拼行前对素文本做（_truncate_disp
+    # 是 ANSI 安全的），再上色；硬件行的 [:36] 字符切由整行截断取代
+    # （CJK 双宽下 36 字符仍可超宽）。
+    _sys_val = _truncate_disp(
+        "%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv),
+        max(0, W - 1 - _disp_width(T("bn_system")) - 3))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_system")), _white(_sys_val)))
+    cores_word = _ru_plural(_cores or 0, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and _cores == 1 else T("bn_cores"))
+    _hw_val = _truncate_disp(
+        "%s (%s%s) · %s %s · %s %s" % (
+            (si.get("cpu") or "?"), cores, cores_word,
+            T("sys_mem"), si.get("mem", "?"),
+            T("sys_disk"), si.get("disk", "?")),
+        max(0, W - 1 - _disp_width(T("bn_hardware")) - 3))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")), _white(_hw_val)))
     # 网络行
     if net["egress"]:
         _geo_txt = _banner_geo_text(net)
-        v4 = "%s %s" % (_c(C.green, "●"),
-                        _white(net["egress"] + ((" " + _geo_txt) if _geo_txt else "")))
+        # M3：geo 文本与出口 IP 一并截断到行预算（"IPv4 ● " 占 7 列）。
+        _v4_txt = _truncate_disp(
+            net["egress"] + ((" " + _geo_txt) if _geo_txt else ""),
+            max(0, W - 1 - _disp_width(T("bn_network")) - 3 - 7))
+        v4 = "%s %s" % (_c(C.green, "●"), _white(_v4_txt))
     else:
         v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
@@ -13307,6 +13325,9 @@ def print_banner():
         v6t = " " + net["ipv6_addr"]
     elif net["ipv6"]:
         v6t = ""
+    elif net.get("ipv6") is None:
+        # r5b-4 三态：IPv6 未探明显示“未测”，而非“无”。
+        v6t = " " + T("bn_untested")
     else:
         v6t = " " + T("bn_none")
     print("%s%s%s" % (" " * (_disp_width(T("bn_network")) + 4),
@@ -13338,7 +13359,10 @@ def print_menu():
         (_menu_item(13, T("m_shortcut")), ""),
     ]
     for left, right in rows:
-        print("  " + _pad(left, colw) + right)
+        # L2：左右列各按显示宽截断（左 40／右 38），fa 第 11 项 45 列
+        # 不再把行撑到 87 列；行宽恒为 2＋40＋38＝80。
+        print("  " + _pad(_truncate_disp(left, colw), colw)
+              + _truncate_disp(right, 38))
     print(_c(C.cyan, "═" * 78))
     print("  " + _c(C.cyan, "0.") + " " + T("m_quit"))
     print(_c(C.cyan, "═" * 78))
