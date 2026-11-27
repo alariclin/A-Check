@@ -6419,8 +6419,21 @@ def _print_basic_block(s, prof):
                                        _extra_sub(_f_mid_t, 'region', _disp),
                                        _extra_sub(_f_ci_t, 'city', _disp))
                 _names_sfx = (' (' + ', '.join(_names) + ')') if _names else ''
-                # L9：长城市/行政区会撑破 80 列，按显示宽截断（源名单后缀保留）。
-                _disp_t = _truncate_disp(_disp, max(0, 80 - 2 - _disp_width(_gf) - _disp_width(_lbl + ':') - 1 - _disp_width(_names_sfx)))
+                # L9：长城市/行政区会撑破 80 列，按显示宽截断。
+                # 后缀本身过长时（多源同组）须先缩后缀、给位置留至少 20 列——
+                # 否则位置预算归零、位置文本被挤到空串，且行宽仍超 80
+                # （7 源同组实测：后缀 73 列，位置全失、行宽 102）。
+                _disp_budget = (80 - 2 - _disp_width(_gf)
+                                - _disp_width(_lbl + ':') - 1
+                                - _disp_width(_names_sfx))
+                if _disp_budget < 20 and _names_sfx:
+                    _names_sfx = _truncate_disp(_names_sfx, max(
+                        0, 80 - 2 - _disp_width(_gf)
+                        - _disp_width(_lbl + ':') - 1 - 20))
+                    _disp_budget = (80 - 2 - _disp_width(_gf)
+                                    - _disp_width(_lbl + ':') - 1
+                                    - _disp_width(_names_sfx))
+                _disp_t = _truncate_disp(_disp, max(0, _disp_budget))
                 print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp_t}{_c(C.dim, _names_sfx)}")
         else:
             print(f"  {T('no_loc_data')}")
