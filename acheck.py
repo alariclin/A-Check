@@ -69,7 +69,7 @@ import atexit
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.38"
+VERSION = "4.14.39"
 
 
 def _init_console():
