@@ -3814,9 +3814,14 @@ def _extra_sub(disp, kind, ctx_text=None):
         if len(cands) == 1:
             _sctx, loc = cands[0]
             if not _geo_ctx_ok(_sctx, variant, _src):
-                _parts = [p.strip() for p in _src.split(",")]
-                if any(p and _geo_seg_norm(p) != _geo_seg_norm(variant)
-                       for p in _parts):
+                # fix440-merge：仅当整串带逗号分隔的结构化上下文（>=2 分段）
+                # 时才以“分段 != 变体”拒收；单分段无结构化上下文时沿用
+                # 旧行为直取（B-06a-2），否则 "Paris and Paris" 之类无逗
+                # 号复现串会被误拒（fix440b G2）。
+                _parts = [p.strip() for p in _src.split(",") if p.strip()]
+                if len(_parts) > 1 and any(
+                        _geo_seg_norm(p) != _geo_seg_norm(variant)
+                        for p in _parts):
                     loc = None
         else:
             _variant_seg = _geo_seg_norm(variant)
@@ -3830,7 +3835,8 @@ def _extra_sub(disp, kind, ctx_text=None):
             _uniq = list(dict.fromkeys(_winners))
             if len(_uniq) == 1:
                 loc = _uniq[0]
-        # 本变体在原始串中的首次出现（ASCII 用词界正则，非 ASCII 用子串）。
+        # 本变体在原始串中的全部出现（ASCII 用词界正则，非 ASCII 用子串；
+        # fix440b G2：同一变体的全部出现都要替换，旧版只换首次出现）。
         if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
             # fix440b G2：同一变体的全部出现都要替换（旧版只换首次出现）。
             _spans = [(m.start(), m.end()) for m in re.finditer(
@@ -3853,9 +3859,18 @@ def _extra_sub(disp, kind, ctx_text=None):
                 continue
             _before = _orig[:_span[0]]
             _mw = re.search(r"([A-Za-z0-9_]+)\s+$", _before)
-            if _mw and (_mw.group(1) + " " + variant).lower() in str(_src).lower():
-                _blocked.append(_span)
-                continue
+            # fix440-merge：前词+变体须是上下文整串的某个逗号分段本身
+            # 或某分段的前缀，才算“更长地名的后半段”；裸子串匹配会把
+            # "Paris and Paris" 的第二个 Paris 误判为 "and Paris" 长名
+            # （fix440b G2），而 "East York"／"New York City" 仍被拦住。
+            if _mw:
+                _phrase = " ".join((_mw.group(1) + " " + variant).lower().split())
+                _segs = [" ".join(p.lower().split())
+                         for p in str(_src).split(",") if p.strip()]
+                if any(s == _phrase or s.startswith(_phrase + " ")
+                       for s in _segs):
+                    _blocked.append(_span)
+                    continue
             _repl.append((_span[0], _span[1], loc))
     if not _repl:
         return disp
