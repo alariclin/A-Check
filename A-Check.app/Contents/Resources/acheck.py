@@ -6394,8 +6394,30 @@ def _factor_rows(s, wi_server, v6=False):
     其余 13 行与 v4 同源（此前 v6 独立维护的 6 行漏了 iplocate/ipquery/2ip/X4BNet/IPsum/blocklist.de/OTX，
     致 v6 因子百分比系统性偏低，如 X4BNet listed 时 VPN 因子误显 0%）。
     Shodan 漏洞不计入恶意列（漏洞暴露≠恶意行为；漏洞证据仍在威胁分与信号区）。"""
+    def _num(v):
+        # r5a-4：数值清洗——数值与数字串转 float；其余返 None。
+        # level "0" 字符串不再直接参与 >= 比较抛 TypeError。
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return v if math.isfinite(v) else None
+        if isinstance(v, str):
+            try:
+                _f = float(v.strip())
+            except (TypeError, ValueError):
+                return None
+            return _f if math.isfinite(_f) else None
+        return None
+
     def _h(d, cond):
+        # r5a-4：cond 为值或零参可调用——失败源（ok 非真）不求值即返 None，
+        # 本应跳过的失败源不再因实参求值抛错；cond 为 None 表示判定字段
+        # 缺失（r5a-3），返 None（未知，不计入分母），不得计成否定票。
         if not d.get("ok"):
+            return None
+        if callable(cond):
+            cond = cond()
+        if cond is None:
             return None
         return True if cond else False
 
@@ -6421,19 +6443,25 @@ def _factor_rows(s, wi_server, v6=False):
         ("StopForumSpam", [None, None, None, None,
                            _h(sf, _sfs_hit(sf)), None]),
         ("urlscan.io", [None, None, None, None, None,
-                        _h(us, (us.get("total") or 0) > 0)]),
+                        _h(us, lambda: None if us.get("total") is None
+                            else (_num(us.get("total")) or 0) > 0)]),
         ("SANS ISC", [None, None, None, None, None,
                       None if sa.get("attack_count") is None else _h(sa, bool(sa.get("attack_count")))]),
         ("Shodan", [None, None, None, None, None, None]),
         ("GreyNoise", [None, None, None, None, None,
-                       _h(gn, gn.get("classification") == "malicious")]),
+                       _h(gn, lambda: None if gn.get("classification") is None
+                           else gn.get("classification") == "malicious")]),
         ("Feodo", [None, None, None, None,
-                   _h(fe, _strict_bool(fe.get("listed")) is True), None]),
+                   _h(fe, lambda: None if fe.get("listed") is None
+                       else _strict_bool(fe.get("listed")) is True), None]),
         ("EmergingThreats", [None, None, None, None,
-                             _h(et, _strict_bool(et.get("listed")) is True), None]),
+                             _h(et, lambda: None if et.get("listed") is None
+                                 else _strict_bool(et.get("listed")) is True), None]),
         ("Spamhaus DROP", [None, None, None, None,
-                           _h(sp, _strict_bool(sp.get("listed")) is True), None]),
-        ("Tor Exit", [None, None, _h(te, _strict_bool(te.get("is_tor_exit")) is True),
+                           _h(sp, lambda: None if sp.get("listed") is None
+                               else _strict_bool(sp.get("listed")) is True), None]),
+        ("Tor Exit", [None, None, _h(te, lambda: None if te.get("is_tor_exit") is None
+                      else _strict_bool(te.get("is_tor_exit")) is True),
                       None, None, None]),
         ("proxycheck", [
             None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
@@ -6469,19 +6497,27 @@ def _factor_rows(s, wi_server, v6=False):
             None, None]),
         ("X4BNet VPN", [
             None,
-            _h(xv, _strict_bool(xv.get("listed")) is True),
+            _h(xv, lambda: None if xv.get("listed") is None
+                else _strict_bool(xv.get("listed")) is True),
             None, None, None, None]),
         ("IPsum", [
             None, None, None, None,
-            _h(isum, (isum.get("level") or 0) >= 2),
+            _h(isum, lambda: None if isum.get("level") is None
+                else (_num(isum.get("level")) or 0) >= 2),
             None]),
         ("blocklist.de", [
             None, None, None, None,
-            _h(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
+            _h(bd, lambda: None if bd.get("attacks") is None
+                and bd.get("reports") is None
+                else ((_num(bd.get("attacks")) or 0) > 0
+                      or (_num(bd.get("reports")) or 0) > 0)),
             None]),
         ("OTX", [
             None, None, None, None, None,
-            _h(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
+            _h(ox, lambda: None if ox.get("reputation") is None
+                and ox.get("pulses") is None
+                else ((_num(ox.get("reputation")) or 0) > 0
+                      or (_num(ox.get("pulses")) or 0) > 0))]),
     ]
     if v6:
         _v4only = {"StopForumSpam", "urlscan.io", "SANS ISC", "GreyNoise",
@@ -6571,8 +6607,10 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
 
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
-    if wi.get("ok") and wi.get("hosting"):
-        dc_w = True
+    if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+        # r5a-2：源明确给出 hosting  verdict 时以源为准，本地 ISP 启发式
+        # 不得反转它（hosting=False + Amazon 启发式此前误判服务器因子 100%）。
+        dc_w = _strict_bool(wi.get("hosting"))
     wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
 
     _rows = _factor_rows(s, wi_server)
@@ -6906,8 +6944,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     sh = (s.get("shodan_idb") or {})
     dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
                   if wi.get("ok") else (None, ""))
-    if wi.get("ok") and wi.get("hosting"):
-        dc_w = True
+    if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+        # r5a-2：同 v4——源 hosting verdict 优先于启发式。
+        dc_w = _strict_bool(wi.get("hosting"))
     wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
     _rows = _factor_rows(s, wi_server, v6=True)
     _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
