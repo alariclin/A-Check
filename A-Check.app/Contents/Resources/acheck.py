@@ -6637,6 +6637,8 @@ def _print_streaming_inference(res):
     is_korea = _cc_match("north korea", "kp", "dprk", "朝鲜", "朝鮮")
     is_india = _cc_match("india", "in", "印度")
     is_hk = _cc_match("hong kong", "hk", "香港")
+    is_macau = _cc_match("macau", "mo", "澳门", "澳門")
+    is_belarus = _cc_match("belarus", "by", "白俄罗斯", "白俄羅斯")
     is_afghanistan = _cc_match("afghanistan", "af", "阿富汗")
     is_somalia = _cc_match("somalia", "so", "索马里", "索馬里")
     is_uzbekistan = _cc_match("uzbekistan", "uz", "乌兹别克斯坦", "烏茲別克斯坦")
@@ -6659,6 +6661,11 @@ def _print_streaming_inference(res):
 
     # 国家级防火墙与制裁锁区表 (Sources: OONI, Freedom House 2025/2026, OFAC GL D-2 & Syria 2025 Rule, GitHub Blog)
     def _fw_check(service_name):
+        # fix440 r4-7：主动探针 test_chatgpt 按地区屏蔽 HK/MO/BY，
+        # 被动推断须与之一致——同一地区不得一面主动 blocked、一面
+        # 被动高置信可用。
+        if service_name == "ChatGPT" and (is_hk or is_macau or is_belarus):
+            return True
         if is_china_mainland:
             # 中国大陆 GFW: 封锁 16 项境外服务，放行本土 DeepSeek 与直连可用的 GitHub
             return service_name in {
@@ -6736,7 +6743,11 @@ def _print_streaming_inference(res):
         isinstance(_s, dict) and _s.get("ok")
         and (_strict_bool(_s.get("proxy")) is not None
              or _strict_bool(_s.get("vpn")) is not None)
-        for _s in (pc, wi, fp, il, iq))
+        for _s in (pc, wi, fp, il, iq)) or (
+        # fix440 r4-9：x4bvpn.listed 是真实的 VPN 布尔票，须计入——
+        # 它是唯一真实票时也不得因此把 high 置信判为不可达。
+        isinstance(xv, dict) and xv.get("ok")
+        and _strict_bool(xv.get("listed")) is not None)
     _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok")
                      and sc.get("fraud_score") is not None)
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
@@ -6819,7 +6830,11 @@ def _print_streaming_inference(res):
             _ip = (T("infer_limit"), "mid")
         elif is_tor or is_tor_exit or is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
-        elif is_dc or is_res:
+        elif is_dc:
+            # fix440 r4-8：宽松分支亦执行机房 IP 置信度上限——机房
+            # 分支封顶 mid，与 _infer_avail 的 cap_mid 口径一致。
+            _ip = _infer_avail(cap_mid=True)
+        elif is_res:
             _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
@@ -8634,6 +8649,45 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
     return True
 
 
+def _content_length_valid(headers):
+    """Content-Length 头是否合法（fix440 r4-13）：无头为合法；有头时
+    须为纯 ASCII 数字串且可转为 int，否则非法。仅判合法性，不核对
+    长度——供读满采样上限的分支使用（上限不得绕过合法性检查）。"""
+    try:
+        v = headers.get("Content-Length") if headers is not None else None
+    except Exception:
+        return True
+    if v is None:
+        return True
+    v = str(v).strip()
+    if v.isascii() and v.isdigit():
+        try:
+            int(v)
+            return True
+        except (ValueError, OverflowError):
+            return False
+    return False
+
+
+def _decode_body(raw, headers):
+    """按 Content-Type charset 解码正文（fix440 r4-11）：charset 声明
+    非 UTF-8 时（如 utf-16le）按声明解码，否则锁区短语会在 UTF-8
+    解码后消失；无声明／未知 charset／解码失败时回落 UTF-8
+    errors=replace。"""
+    _ct = ""
+    try:
+        _ct = str((headers or {}).get("content-type", "") or "")
+    except Exception:
+        _ct = ""
+    _m = re.search(r"charset\s*=\s*\"?([^\";\s]+)\"?", _ct, re.IGNORECASE)
+    if _m:
+        try:
+            return raw.decode(_m.group(1).strip(), errors="replace")
+        except Exception:
+            pass
+    return raw.decode("utf-8", errors="replace")
+
+
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location, complete, headers_dict)。
     headers_dict: 响应头小写键 dict（无头/异常时 {}），供挑战判定查 cf-mitigated。
@@ -8831,7 +8885,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
 
         def _partial():
             # 已读到的部分正文（解压后）：HTTPError 三处早返时保留挑战页特征。
-            return b"".join(_st["out"]).decode("utf-8", errors="replace")
+            return _decode_body(b"".join(_st["out"]), _hdrs)
 
         _comp_read = 0
         _hit_cap = False
@@ -8840,7 +8894,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if _remain <= 0:
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, "read deadline exceeded", "", False, {}
+                # fix440 r4-12：读超时亦保留已取的最终 URL 与响应头——
+                # URL 锁区证据独立于正文，不得因读体失败清掉。
+                return None, "read deadline exceeded", _loc, False, _hdrs
             try:
                 _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
             except http.client.IncompleteRead as e:
@@ -8850,13 +8906,13 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             except Exception as e:
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, str(e)[:100], "", False, {}
+                return None, str(e)[:100], _loc, False, _hdrs
             if _chunk is None:
                 # M-04：读超时即整体失败（code None），与旧单次读行为一致；
                 # HTTPError 响应保留状态码与已读正文（挑战页特征不丢）。
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, "read deadline exceeded", "", False, {}
+                return None, "read deadline exceeded", _loc, False, _hdrs
             if not _chunk:
                 _st["eof"] = True
                 break  # 干净 EOF
@@ -8890,7 +8946,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         if _st["trunc"]:
             _complete = False
         elif _hit_cap or _st["n"] >= _STREAM_CAP:
-            _complete = True  # 干净读满本地采样上限，不是失败
+            # 干净读满本地采样上限，不是失败；但 Content-Length 非法时
+            # 仍不完整——采样上限不得绕过 CL 合法性检查（fix440 r4-13）。
+            _complete = _content_length_valid(getattr(r, "headers", None))
         elif _gz["obj"] is not None:
             # 压缩分支：末成员须完整结束、无残留未喂字节，且按压缩传输
             # 字节数核对 CL（H-02：gzip 分支此前完全不核 CL）。
@@ -8905,7 +8963,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             # 用旧语义（干净 EOF 或达 cap 即完整）。
             _complete = (False if _gz["kind"] == "deflate"
                          else _resp_complete(_raw, getattr(r, "headers", None)))
-        return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
+        return _status, _decode_body(_raw, _hdrs), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
         try:
@@ -8918,27 +8976,64 @@ _unlock_cache = {}
 _unlock_lock = threading.Lock()
 
 
+_TWO_LABEL_PUBLIC_SUFFIXES = frozenset({
+    # 常见双段公共后缀（fix440 r4-5）：末两段比较会把共享此类后缀的
+    # 不同注册域当成同一域，须先剥到注册域再比较。
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "co.jp", "co.kr", "com.au",
+    "net.au", "org.au", "co.nz", "com.br", "com.cn", "net.cn", "org.cn",
+    "co.in", "com.mx", "com.ar", "com.tr", "co.za", "com.tw", "co.il",
+})
+
+
+def _reg_domain(name):
+    """取注册域（fix440 r4-5）：末两段为公共后缀时取末三段，否则取
+    末两段；不足两段时取全名。"""
+    _n = (name or "").strip().rstrip(".").lower()
+    if not _n:
+        return ""
+    _parts = _n.split(".")
+    if len(_parts) <= 2:
+        return _n
+    if ".".join(_parts[-2:]) in _TWO_LABEL_PUBLIC_SUFFIXES:
+        return ".".join(_parts[-3:]) if len(_parts) >= 3 else _n
+    return ".".join(_parts[-2:])
+
+
+def _cnames_share_reg_domain(sys_cnames, pub_cnames):
+    """两路 CNAME 是否共享同一注册域（fix440 r4-5）：比较注册域，
+    不是末两段——edge.alpha.co.uk 与 edge.beta.co.uk 注册域不同，
+    不算共享；a1.cloudfront.net 与 a2.cloudfront.net 共享。"""
+    if not sys_cnames or not pub_cnames:
+        return False
+    _sys = {_reg_domain(c) for c in sys_cnames if c}
+    _pub = {_reg_domain(c) for c in pub_cnames if c}
+    _sys.discard("")
+    _pub.discard("")
+    return bool(_sys & _pub)
+
+
 def get_unlock_type(domain, local_ip=None):
     """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
     三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
-    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
+    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→None
+    （fix440 D-12/r4-3：无重叠、无同注册域后缀时，合法多 PoP GeoDNS
+    与 DNS 解锁无法区分，保守返 None；本函数不再下确定 False 结论）。
     前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
-    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。
+    无 IPv4 出口时即使未传 local_ip 也查 AAAA（fix440 r4-2）。
+    fix440 r4-4：不再缓存判定结果——缓存无有效期，DNS 答案变化后
+    仍返回旧结论；每次调用重新查询（_unlock_cache 保留为空 dict，
+    仅供旧 clear() 调用点兼容）。
     H-03：系统 NS 按序遍历 [:3] 直至拿到响应（ns[0] 失败不再直接返 None）；
     公共对比 DNS 按出口切换：_FORCE_FAMILY==6 或无 IPv4 出口时用 IPv6 对
     (2606:4700:4700::1111 / 2001:4860:4860::8888)，否则用 IPv4 对。"""
     _ns_list = _get_system_nameservers()
-    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)) else 1
+    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)
+                   or not _has_ipv4_egress()) else 1
     if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
         _pub = ("2606:4700:4700::1111", "2001:4860:4860::8888")
     else:
         _pub = ("1.1.1.1", "8.8.8.8")
-    cache_key = (domain, local_ip or "", tuple(_ns_list[:3]), qtype)
-    with _unlock_lock:
-        if cache_key in _unlock_cache:
-            return _unlock_cache[cache_key]
-
     sys_ns = None
     sys_ips = sys_cnames = None
     for _cand in _ns_list[:3]:
@@ -8953,12 +9048,13 @@ def get_unlock_type(domain, local_ip=None):
         # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
         return None
     if sys_ns == _pub[0]:
-        # OPT-02 复用：sys 查询与公共查询是同一服务器、同一域名、
-        # 同一 qtype，结果直接复用，不再重复查。
-        pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
+        # fix440 r4-1：系统 DNS 恰为公共对照 DNS 时，复用系统答案作
+        # 公共答案是自比较，非空即强制 True；该路公共对照作废，只用
+        # 另一路公共 DNS 作比较。
+        pub_ips_1, pub_cnames_1 = None, None
         pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
     elif sys_ns == _pub[1]:
-        pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
+        pub_ips_2, pub_cnames_2 = None, None
         pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
     else:
         # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
@@ -8983,8 +9079,13 @@ def get_unlock_type(domain, local_ip=None):
             # 按实际地址族定粒度：点分判断会把 ::ffff:192.0.2.1 这类点分嵌入
             # IPv6 误送 IPv4 解析，失败后原串与对端 /64 归一化结果永不重叠，
             # 把“不可判定”变成错误的确定 False（F22）。
+            # fix440 r4-6：IPv4 映射 IPv6（::ffff:a.b.c.d）先解包为内嵌
+            # IPv4 再按 /24 比较——否则不同 IPv4 池同落一个 /64，误判重叠。
             try:
                 _a = ipaddress.ip_address(_ip)
+                if isinstance(_a, ipaddress.IPv6Address) \
+                        and _a.ipv4_mapped is not None:
+                    _a = _a.ipv4_mapped
                 if isinstance(_a, ipaddress.IPv4Address):
                     return str(ipaddress.IPv4Network((_a, 24),
                                                      strict=False).network_address)
@@ -8995,21 +9096,18 @@ def get_unlock_type(domain, local_ip=None):
         sys_prefixes = {_pfx(ip) for ip in sys_ips}
         pub_prefixes = {_pfx(ip) for ip in pub_ips}
         overlap = bool(sys_prefixes & pub_prefixes)
-        suffix = bool(sys_cnames and pub_cnames and any(
-            sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
-        ))
+        suffix = _cnames_share_reg_domain(sys_cnames, pub_cnames)
         # 真值表（§0-4/§0-II-a，字面执行）：overlap→True；仅 suffix→None（保守，无法区分合法多 PoP
-        # 与保留官方 CNAME 的 DNS 解锁）；余者→False（双方有效、无重叠、无同后缀）。
+        # 与保留官方 CNAME 的 DNS 解锁）；余者→None（fix440 D-12/r4-3：
+        # 无重叠、无同注册域后缀时，合法 GeoDNS 多 PoP 与 DNS 解锁无法
+        # 区分，不得下确定 False 结论）。
         if overlap:
             res = True
         elif suffix:
             res = None
         else:
-            res = False
+            res = None
 
-    if res is not None:
-        with _unlock_lock:
-            _unlock_cache[cache_key] = res
     return res
 
 
@@ -9024,28 +9122,85 @@ def _unlock_label(v):
 def _denied_error_page(body):
     """\"Access Denied\" 错误页结构（B-10-3；原 _tiktok_denied 的逻辑，
     现为 TikTok/Grok 共用）：
-    (1) <title>Access Denied</title>——错误页标题结构，长度不限；
-    (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
+    (1) <title>Access Denied</title>——错误页标题结构，长度不限，
+    标题后可带后缀（如 "Access Denied - TikTok"，D-03）；
+    (2) 短 HTML 错误页（<16 KiB）里 <title>/<h1> 含该短语（D-05：
+    正文散文仅提及该短语不算，须落在标题结构里）。
     JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
     SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
-    阈值不再定生死。"""
+    阈值不再定生死。r4-14：截断前缀只看标题结构，不再拿前缀长度
+    当整页长度、把前缀散文提及判 blocked。"""
     b = body or ""
-    if re.search(r"<title[^>]*>\s*access denied\s*</title>",
+    if re.search(r"<title[^>]*>\s*access denied\b[^<]*</title>",
                  b, re.IGNORECASE):
         return True
     # B-10-4：短 HTML 检查与标题检查一致，大小写不敏感——"Access Denied"
     # 须按小写比对，否则小写/大写拒绝页被漏判为 unlocked。
-    _low = b.lower()
-    if len(b) < 16384 and "access denied" in _low:
-        if ("<html" in _low or "<head" in _low or "<body" in _low
-                or "<h1" in _low):
-            return True
+    if len(b) < 16384 and _error_title_or_h1(b, r"access\s+denied"):
+        return True
     return False
 
 
 def _tiktok_denied(body):
     """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：见 _denied_error_page。"""
     return _denied_error_page(body)
+
+
+def _url_path_has_nsfw(final_url):
+    """最终 URL 路径段是否含 nsfw（fix440 D-02）：只看路径，查询串
+    （如 ?ref=nsfw）与片段不算；大小写不敏感。"""
+    try:
+        return "nsfw" in urllib.parse.urlparse(final_url or "").path.lower()
+    except Exception:
+        return False
+
+
+_NETFLIX_UI_LANGS = frozenset({
+    "en", "pt", "es", "fr", "de", "it", "nl", "ja", "zh", "ko", "ar",
+    "hi", "tr", "pl", "ru", "uk", "sv", "da", "fi", "nb", "nn", "no",
+    "cs", "sk", "hu", "ro", "bg", "hr", "sr", "sl", "et", "lv", "lt",
+    "el", "he", "id", "ms", "th", "vi", "fa", "ur", "bn",
+})
+
+
+def _netflix_region_from_url(final_url):
+    """Netflix 最终 URL 的地区段（fix440 D-01）：locale 形为
+    lang-region（如 en-gb、pt-br），地区是横杠后段，不是前段；
+    region-lang 形（如 us-en）取非语言码那段；单段语言码（如 /en/）
+    不是地区，返回 ""。BCP47 下双段皆非语言码时默认后段为地区。"""
+    try:
+        _segs = [s for s in urllib.parse.urlparse(final_url or "").path.split("/")
+                 if s]
+        if not _segs:
+            return ""
+        _seg = _segs[0].lower()
+    except Exception:
+        return ""
+    if "-" in _seg:
+        _a, _b = _seg.split("-", 1)
+        if len(_a) == 2 and len(_b) == 2:
+            if _a in _NETFLIX_UI_LANGS:
+                return _b.upper()
+            if _b in _NETFLIX_UI_LANGS:
+                return _a.upper()
+            return _b.upper()
+        return ""
+    if len(_seg) == 2 and _seg not in _NETFLIX_UI_LANGS:
+        return _seg.upper()
+    return ""
+
+
+def _scoped_json_field(body, field):
+    """JSON 正文字段取值（fix440 r4-20）：viewer/user 等观看者作用域
+    内的字段优先（如 {"viewer":{"region":"US"}}），避免内容作者等
+    其他对象的同名字段冒充服务地区；无作用域字段时回落首个匹配。"""
+    b = body or ""
+    m = re.search(r'"(?:viewer|user|currentUser|profile|account)"\s*:\s*\{'
+                  r'[^}]{0,400}?"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
+    if m:
+        return m.group(1)
+    m = re.search(r'"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
+    return m.group(1) if m else ""
 
 
 def test_tiktok(local_ip=None):
@@ -9059,8 +9214,8 @@ def test_tiktok(local_ip=None):
     if code == 200 and not complete and not _tiktok_denied(body):
         return T("unknown"), "", None
     if code == 200 and not _tiktok_denied(body):
-        m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
-        region = f"[{m.group(1)}]" if m else ""
+        region = _scoped_json_field(body, "region")
+        region = f"[{region}]" if region else ""
         return T("unlocked"), region, get_unlock_type("www.tiktok.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -9070,15 +9225,22 @@ def test_tiktok(local_ip=None):
 
 def _disney_url_blocked(final_url):
     """Disney+ 锁区 URL 信号（R4-H-01）：最终 URL 来自重定向链，不受正文
-    截断影响。"""
-    u = (final_url or "").lower()
-    return "/unavailable" in u or "preview.disneyplus.com/unavailable" in u
+    截断影响。fix440 D-08：只看路径段（/unavailable 或其子路径），
+    查询串（如 ?next=/unavailable）不算；旧第二条件
+    preview.disneyplus.com/unavailable 已被路径条件完全包含，删除。"""
+    try:
+        _p = urllib.parse.urlparse(final_url or "").path.lower()
+    except Exception:
+        return False
+    return _p == "/unavailable" or _p.startswith("/unavailable/")
 
 
 def _disney_head_blocked(body):
     """Disney+ 锁区正文信号（R4-H-01）：只认 <title> 或前 8 KiB 头部里的
     明确锁区短语。页脚法律文案（如 "Not available in U.S. territories."）
-    在 512 KiB 采样深处，不在此列，不得误判。"""
+    在 512 KiB 采样深处，不在此列，不得误判。fix440 D-10：除英文外
+    另认德/法/西/葡/意五语的“在你地区不可用”对应短语（探针发
+    Accept-Language: en-US，服务端应回英文，多语为纵深）。"""
     b = body or ""
     head = b[:8192]
     m = re.search(r"<title[^>]*>(.*?)</title>", b, re.IGNORECASE | re.DOTALL)
@@ -9086,7 +9248,20 @@ def _disney_head_blocked(body):
     hay = (head + "\n" + title).lower()
     return ("disney+ is not available" in hay
             or "not available in your region" in hay
-            or "not available in your country" in hay)
+            or "not available in your country" in hay
+            or "in deiner region nicht verfügbar" in hay
+            or "in ihrer region nicht verfügbar" in hay
+            or "in deinem land nicht verfügbar" in hay
+            or "pas disponible dans votre région" in hay
+            or "pas disponible dans votre pays" in hay
+            or "n'est pas disponible dans votre région" in hay
+            or "no está disponible en tu región" in hay
+            or "no disponible en tu región" in hay
+            or "no está disponible en tu país" in hay
+            or "não está disponível na sua região" in hay
+            or "não disponível na sua região" in hay
+            or "non è disponibile nella tua regione" in hay
+            or "non disponibile nella tua regione" in hay)
 
 
 def test_disney(local_ip=None):
@@ -9125,11 +9300,21 @@ def _error_title_or_h1(body, phrase):
     （512 KiB 采样上限下约 13 秒）；且 [^<]* 禁内层标签，<h1><span>
     …</span></h1> 形嵌套标题误判为未锁区。现改为 str.find 线性定位
     标题起止、去内层标签后再搜短语：单次前向扫描、无回溯，嵌套标
-    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。"""
+    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。
+    fix440 D 腿（D-06/r4-15）：先剥离 <script>/<style> 与 HTML 注释，
+    再扫描——JS 字符串与注释里的完整 <title>/<h1> 是假标题，不算。
+    fix440 D 腿（r4-16）：定位与切片须在同一字符串上进行——旧码用
+    小写串的下标切原串，Unicode 小写展开（如 İ→i̇）会使下标错位、
+    真实标题漏判；现定位、切片、比对全在小写后的同一副本上做。"""
     b = body or ""
     if not b:
         return False
-    _bl = b.lower()
+    _clean = re.sub(r"<!--.*?-->", "", b, flags=re.DOTALL)
+    _clean = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", _clean,
+                    flags=re.IGNORECASE | re.DOTALL)
+    _clean = re.sub(r"<style\b[^>]*>.*?</style\s*>", "", _clean,
+                    flags=re.IGNORECASE | re.DOTALL)
+    _bl = _clean.lower()
     for _tag in ("title", "h1"):
         _pos = 0
         _open_tag = "<" + _tag
@@ -9145,7 +9330,7 @@ def _error_title_or_h1(body, phrase):
             if _close < 0:
                 _pos = _gt + 1
                 continue
-            _text = re.sub(r"<[^>]*>", "", b[_gt + 1:_close])
+            _text = re.sub(r"<[^>]*>", "", _bl[_gt + 1:_close])
             if re.search(phrase, _text, re.IGNORECASE):
                 return True
             _pos = _close + len(_close_tag)
@@ -9154,8 +9339,9 @@ def _error_title_or_h1(body, phrase):
 
 def _reddit_blocked(body):
     """Reddit 锁区信号（B-10-3）："Blocked" 须在 <title>/<h1> 里；
-    JS 代码（如 isBlocked=false）与散文提及不算。"""
-    return _error_title_or_h1(body, r"blocked")
+    JS 代码（如 isBlocked=false）与散文提及不算。fix440 D 腿（D-04/
+    r4-17）：词界 \b 限定，"unblocked" 不得命中 "blocked"。"""
+    return _error_title_or_h1(body, r"\bblocked\b")
 
 
 def _claude_unavailable(body):
@@ -9165,11 +9351,12 @@ def _claude_unavailable(body):
 
 
 def _netflix_unavailable(final_url, body):
-    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 含 nsfw，
-    或 "Not Available" 出现在错误页结构（<title>/<h1>）里；正文散文
-    或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾因此误判
-    blocked）。URL 信号不受正文截断影响。"""
-    if "nsfw" in (final_url or ""):
+    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 路径段
+    含 nsfw，或 "Not Available" 出现在错误页结构（<title>/<h1>）里；
+    正文散文或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾
+    因此误判 blocked）。URL 信号不受正文截断影响。fix440 D-02：
+    nsfw 只看路径段、大小写不敏感，查询串（如 ?ref=nsfw）不算。"""
+    if _url_path_has_nsfw(final_url):
         return True
     return _error_title_or_h1(body, r"not\s+available")
 
@@ -9183,25 +9370,29 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
+    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 路径已含
     # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
-    if code == 200 and not complete and not _netflix_unavailable(final_url, body):
+    # fix440 r4-19：只有 URL 证据能绕过 unknown 门，截断正文里的标题
+    # 不行（标题可能来自未读完的页面，不可信）。
+    if code == 200 and not complete and not _url_path_has_nsfw(final_url):
         return T("unknown"), "", None
     if code == 200 and not _netflix_unavailable(final_url, body):
-        m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
-            r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
-        )
-        region = f"[{m.group(1).upper()}]" if m else ""
+        _country = _scoped_json_field(body, "country") \
+            or _netflix_region_from_url(final_url)
+        region = f"[{_country}]" if _country else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
     # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
     # 次探针 403 会被误判 blocked）。
-    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "nsfw" in (final_url or "").lower():
-        return T("blocked"), "", None
-    _ft = _http_fallthrough(code)
-    if _ft is not None:
-        return _ft, "", None
+    # M-07 改（fix440 r4-18）：3xx 本身不是锁区证据，路径 nsfw 信号
+    # 亦须次探针确认——此处不再直接判 blocked，跳过 fallthrough 落入
+    # 次探针；无路径 nsfw 信号的 3xx 仍走 fallthrough 判 unknown。
+    if 300 <= code <= 399 and _url_path_has_nsfw(final_url):
+        pass
+    else:
+        _ft = _http_fallthrough(code)
+        if _ft is not None:
+            return _ft, "", None
 
     code2, body2, final_url2, complete2, hdrs2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
@@ -9210,17 +9401,17 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
-    if code2 == 200 and not complete2 and not _netflix_unavailable(final_url2, body2):
+    if code2 == 200 and not complete2 and not _url_path_has_nsfw(final_url2):
         return T("unknown"), "", None
     if code2 == 200 and not _netflix_unavailable(final_url2, body2):
-        m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
-            r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
-        )
+        _country2 = _scoped_json_field(body2, "country") \
+            or _netflix_region_from_url(final_url2)
         orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?", zhtw="自製?")
-        region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
+        region = f"[{_country2}/{orig_tag}]" if _country2 else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
-    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code2 <= 399 and "nsfw" in (final_url2 or "").lower():
+    # M-07：3xx 先验命中锁区 URL（路径 nsfw）仍判 blocked，须排在 fallthrough 之前。
+    # 首探针已确认过一次，此为双探针确认后的结论（fix440 r4-18）。
+    if 300 <= code2 <= 399 and _url_path_has_nsfw(final_url2):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code2)
     if _ft is not None:
@@ -9242,7 +9433,14 @@ def test_youtube(local_ip=None):
         # 按旧口径判 blocked（夹具正向对照）。
         if not complete:
             return T("unknown"), "", None
-        if "YouTube Premium is not available in your country" in body:
+        # fix440 D-11：此处测的是 YouTube 本身，不是 Premium——
+        # "YouTube Premium is not available in your country" 只说明
+        # Premium 未覆盖该地区，不得据此判 YouTube blocked；只有
+        # YouTube 本身不可用的信号（通用锁区句或标题结构）才判 blocked。
+        _low = body.lower()
+        if ("youtube is not available in your country" in _low
+                or "youtube is not available in your region" in _low
+                or _error_title_or_h1(body, r"not\s+available")):
             return T("blocked"), "", None
         m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', body) or re.search(r'"GL"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
@@ -9265,6 +9463,12 @@ def test_primevideo(local_ip=None):
     if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
+        # fix440 D-09：完整 200 正文明确写地区不可用时判 blocked，
+        # 不再无条件 reachable。
+        _low = body.lower()
+        if ("not available in your region" in _low
+                or "not available in your country" in _low):
+            return T("blocked"), "", None
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r'"territory"\s*:\s*"([A-Z]{2})"', body
         )
@@ -9335,6 +9539,11 @@ def test_chatgpt(local_ip=None):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
     if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
         return T("blocked"), f"[{loc}]" if loc else "", None
+    # fix440 D-07：403 正文既无 unsupported_country 也无 blocked
+    # （如限流、CF 1020 类正文）不是锁区证据，判 unknown——与首探针
+    # “403 不直接判 blocked”的口径一致。
+    if api_code == 403:
+        return T("unknown"), "", None
     _ft = _http_fallthrough(api_code)
     if _ft is not None:
         return _ft, "", None
@@ -9429,8 +9638,22 @@ def test_grok(local_ip=None):
     return T("blocked"), "", None
 
 
+def _final_url_host_ok(final_url, *allowed):
+    """最终 URL 归属校验（fix440 r4-10）：裸 200 即判 unlocked 的探针
+    须确认最终页面确实属于被测服务——代理/劫持返回的无关站 200 不得
+    冒充解锁。allowed 为可接受的域名（自身及子域均可）。归属不明
+    时调用方判 unknown，不判 blocked。"""
+    try:
+        _host = (urllib.parse.urlparse(final_url or "").hostname or "").lower()
+    except Exception:
+        return False
+    if not _host:
+        return False
+    return any(_host == _a or _host.endswith("." + _a) for _a in allowed)
+
+
 def test_instagram(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.instagram.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.instagram.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -9439,6 +9662,8 @@ def test_instagram(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "instagram.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
@@ -9449,7 +9674,7 @@ def test_instagram(local_ip=None):
 
 
 def test_facebook(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.facebook.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.facebook.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -9458,6 +9683,8 @@ def test_facebook(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "facebook.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
@@ -9468,7 +9695,7 @@ def test_facebook(local_ip=None):
 
 
 def test_x(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://x.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://x.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -9481,6 +9708,8 @@ def test_x(local_ip=None):
     if code == 302:
         # F26：默认跟随重定向时暴露出来的 302 必是重定向未完成
         #（循环 / 缺可用 Location），不是成功，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "x.com", "twitter.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
@@ -9510,7 +9739,7 @@ def test_line(local_ip=None):
 
 
 def test_whatsapp(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.whatsapp.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.whatsapp.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -9519,6 +9748,8 @@ def test_whatsapp(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "whatsapp.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
@@ -9529,7 +9760,7 @@ def test_whatsapp(local_ip=None):
 
 
 def test_github(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://github.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://github.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -9538,6 +9769,8 @@ def test_github(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "github.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
@@ -9578,6 +9811,11 @@ def test_appletv(local_ip=None):
     if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
+        # fix440 D-09：同 test_primevideo，完整正文明确锁区时判 blocked。
+        _low = body.lower()
+        if ("not available in your region" in _low
+                or "not available in your country" in _low):
+            return T("blocked"), "", None
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
