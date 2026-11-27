@@ -36,6 +36,7 @@ except ImportError:  # Windows 等无 fcntl 的平台: 快捷键管理本就不�
     fcntl = None
 import gzip
 import hashlib
+import html
 import http.client
 import io
 import ipaddress
@@ -1399,11 +1400,13 @@ def T(key, **kwargs):
         try:
             s = s.format(**kwargs)
         except Exception:
-            # fix440a T()：格式失败不再静默吞掉——向 stderr 告警（含键名
-            # 与 format 字样）并返回未格式化模板（有文档的回退，不崩溃、
-            # 不中止整轮检测；抛异常会中止整轮，故不抛）。
-            print(f"[i18n] T({key!r}) format failed, returning template",
-                  file=sys.stderr)
+            # fix440g G-042：告警输出本身不得打断模板回退（stderr 已关闭
+            # 时 print 抛 ValueError，执行不到 return s）。
+            try:
+                print(f"[i18n] T({key!r}) format failed, returning template",
+                      file=sys.stderr)
+            except Exception:
+                pass
             return s
     return s
 
@@ -1526,6 +1529,10 @@ def _coerce_score(v):
     字符串原样印成数字（与 _clamp_score 拒收数字串的口径一致）。"""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
+    # fix440g G-039：整数不经浮点有限性检查（10**309 转 double 抛
+    # OverflowError）；只有 float 才查 math.isfinite。
+    if isinstance(v, int):
+        return v
     if not math.isfinite(v):
         return None
     return v
@@ -1563,7 +1570,12 @@ def _safe_nonneg_int(v):
     if isinstance(v, str):
         s = v.strip()
         if s.isdigit():
-            return int(s)
+            # fix440g G-040：保护实际 int() 转换——isdigit() 为真但 int()
+            # 拒绝的字符（如 "²"）与超 4300 位整数串上限时返 None 而非抛错。
+            try:
+                return int(s)
+            except ValueError:
+                return None
         return None
     return None
 
@@ -1571,9 +1583,13 @@ def _safe_nonneg_int(v):
 def _resp_ip_ok(d, ip):
     """fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致（按地址值比较，
     展开式/压缩式 IPv6 等价）；无 ip 字段时不校验、不拒收。"""
+    # fix440g G-041：缺键才豁免；显式 ip: null（有字段但值不是地址）
+    # 不得与缺键同等豁免，须校验不通过。
+    if "ip" not in d:
+        return True
     rip = d.get("ip")
     if rip is None:
-        return True
+        return False
     try:
         return ipaddress.ip_address(str(rip)) == ipaddress.ip_address(str(ip))
     except ValueError:
@@ -2794,12 +2810,21 @@ class Scamalytics(Provider):
         # 500 字符内邻近 "fraud" 字样（本页即欺诈分页面，正常页恒满足）。
         m = None
         _fraud_pos = [mm.start() for mm in re.finditer(r"fraud", raw, re.I)]
-        for _sm in re.finditer(r'"score"\s*:\s*"?(\d{1,3})"?', raw):
-            if any(abs(_sm.start() - _fp) <= 500 for _fp in _fraud_pos):
-                m = _sm
-                break
+        # fix440g G-001：JSON 分数须闭引号（或词界）——"100th" 不得取 100。
+        # fix440g G-034：位置列表已有序，用二分查找邻近 fraud，不再对每个
+        # 分数从头扫描（O(n·m) -> O(n log m)）。
+        for _sm in re.finditer(r'"score"\s*:\s*"?(\d{1,3})(?:"|\b)', raw):
+            _sp = _sm.start()
+            _i = bisect.bisect_left(_fraud_pos, _sp)
+            if not ((_i < len(_fraud_pos) and _fraud_pos[_i] - _sp <= 500)
+                    or (_i > 0 and _sp - _fraud_pos[_i - 1] <= 500)):
+                continue
+            m = _sm
+            break
         if not m:
-            _text = re.sub(r"<[^>]*>", " ", raw)
+            # fix440g G-033：匹配前用 html.unescape 解码（"&nbsp;" 致
+            # \s* 无法消费、分数解析失败）。
+            _text = html.unescape(re.sub(r"<[^>]*>", " ", raw))
             m = re.search(r"fraud\s+score\s*(?:is\s*[:=]?|[:=])?\s*(\d{1,3})\b",
                           _text, re.I)
         if not m:
@@ -2830,6 +2855,10 @@ class StopForumSpam(Provider):
             _app_raw = ip_data.get("appears")
             if _app_raw is None or isinstance(_app_raw, bool):
                 return {"ok": False, "err": "invalid appears"}
+            # fix440g G-002：转换前验证类型——非整数 float（如 0.5）不得
+            # 经 int() 截断成有效值；整数值 float（1.0）与数字串仍走旧路。
+            if isinstance(_app_raw, float) and not _app_raw.is_integer():
+                return {"ok": False, "err": "invalid appears"}
             try:
                 appears = int(_app_raw)
             except (TypeError, ValueError, OverflowError):
@@ -2837,6 +2866,12 @@ class StopForumSpam(Provider):
             # 阳性但缺 frequency：频次未知，不填零（填零会把“已举报”抹成“零举报”）；
             # 消费者一律按 (frequency or 0) 取值，None 不得进比较。
             _freq_raw = ip_data.get("frequency")
+            # fix440g G-002：frequency 同口径验证——非整数 float/bool 不得
+            # 截断成 0（0.9 -> 0 会把阳性频次抹掉）；缺失/"" 仍按旧路填 None。
+            if _freq_raw not in (None, "") and (
+                    isinstance(_freq_raw, bool)
+                    or (isinstance(_freq_raw, float) and not _freq_raw.is_integer())):
+                return {"ok": False, "err": "invalid frequency"}
             freq = None if (appears and _freq_raw in (None, "")) else int(_freq_raw or 0)
             conf = float(ip_data.get("confidence") or 0.0)
             return {
@@ -2893,6 +2928,9 @@ def _ripestat_date(st):
     if isinstance(st, bool):
         return None
     if isinstance(st, (int, float)):
+        # fix440g G-037：带小数部分的数值拒绝（20200101.75 不得截成日期）。
+        if isinstance(st, float) and not st.is_integer():
+            return None
         try:
             s = str(int(st))
         except (TypeError, ValueError, OverflowError):
@@ -2912,6 +2950,12 @@ def _ripestat_date(st):
         datetime.strptime(s[:10], "%Y-%m-%d")
     except ValueError:
         return None
+    if len(s) > 10:
+        # fix440g G-037：尾随文本须是完整合法的时间后缀（T/空格 + HH:MM
+        # [:SS[.fff]] + 可选 Z/时区），"2020-01-01not-a-time" 之类拒绝。
+        if not re.fullmatch(r"[T ]([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?"
+                            r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?", s[10:]):
+            return None
     return s[:10]
 
 
@@ -2972,34 +3016,54 @@ class RIPEstat(Provider):
                 if not isinstance(h, dict):
                     raise ValueError("bad history data")
                 origins = h.get("by_origin", [])
+                # fix440g G-036：by_origin 错型（非列表）不是正常空历史，
+                # 置历史失败标记（与 by_origin=[] 可区分，末尾标 partial）。
+                if not isinstance(origins, list):
+                    _hist_ok = False
+                    origins = []
                 earliest = None
                 max_peers = 0
                 _seen_tl = False
+                _seen_fp = False
                 for o in origins:
                     # fix440b r2a-A09b：单个坏项（null/非 dict）只跳过该项，
                     # 不得丢弃此前已算出的有效历史。
                     if not isinstance(o, dict):
                         continue
-                    for pfx in o.get("prefixes", []) or []:
+                    # fix440g G-004：先验证集合本身是列表，错型项跳过、保留
+                    # 已算出的 earliest/max_peers（不得让 for pfx in 1 抛
+                    # TypeError 丢整段历史）。
+                    _pfxs = o.get("prefixes", [])
+                    if not isinstance(_pfxs, list):
+                        continue
+                    for pfx in _pfxs:
                         if not isinstance(pfx, dict):
                             continue
-                        for tl in pfx.get("timelines", []) or []:
+                        _tls = pfx.get("timelines", [])
+                        if not isinstance(_tls, list):
+                            continue
+                        for tl in _tls:
                             if not isinstance(tl, dict):
                                 continue
                             _seen_tl = True
                             _ds = _ripestat_date(tl.get("starttime", ""))
                             if _ds and (earliest is None or _ds < earliest):
                                 earliest = _ds
-                            fp = tl.get("full_peers_seeing", 0) or 0
-                            # 字符串计数值先规范化：旧版直接比较，字符串
-                            # （如 "2"）致整段路由历史 try 被 TypeError 截断
-                            # （first_seen/visibility 全丢；F04）。
-                            try:
-                                fp = int(fp)
-                            except (TypeError, ValueError, OverflowError):
-                                fp = 0
-                            if fp > max_peers:
-                                max_peers = fp
+                            # fix440g G-003：仅当 full_peers_seeing 字段真实
+                            # 出现（非 None）才算见过对端计数；缺字段的
+                            # timeline 不得把 visibility 抹成 "0"。
+                            if "full_peers_seeing" in tl and tl.get("full_peers_seeing") is not None:
+                                _seen_fp = True
+                                fp = tl.get("full_peers_seeing", 0) or 0
+                                # 字符串计数值先规范化：旧版直接比较，字符串
+                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                                # （first_seen/visibility 全丢；F04）。
+                                try:
+                                    fp = int(fp)
+                                except (TypeError, ValueError, OverflowError):
+                                    fp = 0
+                                if fp > max_peers:
+                                    max_peers = fp
                 if earliest:
                     first_seen = earliest
                     try:
@@ -3012,7 +3076,9 @@ class RIPEstat(Provider):
                 # 但零对端只有配有效 first_seen 时才算可用历史（r2a-A04：
                 # 无有效日期又零对端 = 无可用信号，不得仅凭一条空 timeline
                 # 构成部分成功）；正对端数本身即是可见度信号。
-                if _seen_tl and (earliest is not None or max_peers > 0):
+                # fix440g G-003：可见度须以真实见过对端计数为准（_seen_fp），
+                # 仅见过 timeline 不算；显式零对端配有效 first_seen 时仍为 "0"。
+                if _seen_fp and (earliest is not None or max_peers > 0):
                     visibility = f"{max_peers}"
             except Exception:
                 _hist_ok = False
@@ -3043,6 +3109,11 @@ class RIPEstat(Provider):
         # 调用方把“无年龄/无可见度”当成查无历史。
         if not _hist_ok:
             _res["partial"] = True
+        # fix440g G-035：仅元数据前缀（无 ASN/宣告）＋历史失败时不得计
+        # 成功——无任何可用信号，返失败而非 ok=True/partial=True。
+        if (not _hist_ok and _res["asn"] is None and _res["announced"] is None
+                and first_seen is None and not visibility):
+            return {"ok": False, "err": "no usable RIPEstat signals"}
         return _res
 
 
@@ -3113,10 +3184,16 @@ class PTRCheck(Provider):
                 fwd_ips = _r
                 if _r:
                     break
+                # fix440g G-005：答出 PTR 的解析器的显式空正查 [] 是终局——
+                # 不得再由另一解析器的正答拼出 FCrDNS 成功（两视图各自无闭环）。
+                if _ns == _ptr_ns:
+                    break
             # fix440b r2a-A06：系统 NS 返回 [] 是数据（无记录），不是失败——
             # 只有全部系统 NS 均失败（None）时才回退 1.1.1.1；[] 不得把主机
             # 名发往公共 DNS（内网主机名外泄），也不得被公共答案覆盖。
-            if fwd_ips is None and "1.1.1.1" not in sys_ns_list:
+            # fix440g G-038：兜底须检查 1.1.1.1 是否已在 _fwd_ns_order 中
+            # 问过（答出 PTR 的公共解析器已在首位），不得对同一主机正查两次。
+            if fwd_ips is None and "1.1.1.1" not in _fwd_ns_order:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1",
                                     timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is not None:
@@ -3167,12 +3244,15 @@ _CC_EN.update({'u.s.a.': 'US', 'vatican': 'VA', 'vatican city': 'VA',
                'bouvet island': 'BV', 'cocos (keeling) islands': 'CC',
                'cocos islands': 'CC',
                'south georgia and the south sandwich islands': 'GS',
+               # fix440g G-045：CLDR 英文显示名亦须查到（& 式全称）。
+               'south georgia & south sandwich islands': 'GS',
                'heard island and mcdonald islands': 'HM',
                'british indian ocean territory': 'IO',
                'saint pierre and miquelon': 'PM',
                'svalbard and jan mayen': 'SJ',
                'french southern territories': 'TF', 'tokelau': 'TK',
                'united states minor outlying islands': 'UM',
+               'u.s. outlying islands': 'UM',
                'wallis and futuna': 'WF'})
 _EXTRA_CN = {'zh': {'AF': '阿富汗', 'AL': '阿尔巴尼亚', 'DZ': '阿尔及利亚', 'AS': '美属萨摩亚', 'AD': '安道尔', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南极洲', 'AG': '安提瓜和巴布达', 'AM': '亚美尼亚', 'AW': '阿鲁巴', 'AZ': '阿塞拜疆', 'BS': '巴哈马', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄罗斯', 'BZ': '伯利兹', 'BJ': '贝宁', 'BM': '百慕大', 'BT': '不丹', 'BO': '玻利维亚', 'BA': '波黑', 'BW': '博茨瓦纳', 'BN': '文莱', 'BG': '保加利亚', 'BF': '布基纳法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麦隆', 'CV': '佛得角', 'KY': '开曼群岛', 'CF': '中非共和国', 'TD': '乍得', 'KM': '科摩罗', 'CG': '刚果（布）', 'CD': '刚果（金）', 'CK': '库克群岛', 'CR': '哥斯达黎加', 'HR': '克罗地亚', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多米尼加', 'EC': '厄瓜多尔', 'SV': '萨尔瓦多', 'GQ': '赤道几内亚', 'ER': '厄立特里亚', 'EE': '爱沙尼亚', 'SZ': '斯威士兰', 'ET': '埃塞俄比亚', 'FK': '福克兰群岛', 'FO': '法罗群岛', 'FJ': '斐济', 'GA': '加蓬', 'GM': '冈比亚', 'GE': '格鲁吉亚', 'GH': '加纳', 'GI': '直布罗陀', 'GL': '格陵兰', 'GD': '格林纳达', 'GU': '关岛', 'GT': '危地马拉', 'GN': '几内亚', 'GW': '几内亚比绍', 'GY': '圭亚那', 'HT': '海地', 'HN': '洪都拉斯', 'IS': '冰岛', 'JM': '牙买加', 'JO': '约旦', 'KZ': '哈萨克斯坦', 'KI': '基里巴斯', 'XK': '科索沃', 'KG': '吉尔吉斯斯坦', 'LA': '老挝', 'LV': '拉脱维亚', 'LB': '黎巴嫩', 'LS': '莱索托', 'LR': '利比里亚', 'LY': '利比亚', 'LI': '列支敦士登', 'LT': '立陶宛', 'LU': '卢森堡', 'MO': '澳门', 'MG': '马达加斯加', 'MW': '马拉维', 'MV': '马尔代夫', 'ML': '马里', 'MT': '马耳他', 'MH': '马绍尔群岛', 'MR': '毛里塔尼亚', 'MU': '毛里求斯', 'FM': '密克罗尼西亚', 'MD': '摩尔多瓦', 'MC': '摩纳哥', 'MN': '蒙古', 'ME': '黑山', 'MZ': '莫桑比克', 'MM': '缅甸', 'NA': '纳米比亚', 'NP': '尼泊尔', 'NI': '尼加拉瓜', 'NE': '尼日尔', 'KP': '朝鲜', 'MK': '北马其顿', 'MP': '北马里亚纳群岛', 'OM': '阿曼', 'PW': '帕劳', 'PS': '巴勒斯坦', 'PA': '巴拿马', 'PG': '巴布亚新几内亚', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '卢旺达', 'KN': '圣基茨和尼维斯', 'LC': '圣卢西亚', 'WS': '萨摩亚', 'SM': '圣马力诺', 'ST': '圣多美和普林西比', 'SN': '塞内加尔', 'RS': '塞尔维亚', 'SC': '塞舌尔', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛文尼亚', 'SB': '所罗门群岛', 'SO': '索马里', 'SS': '南苏丹', 'LK': '斯里兰卡', 'SD': '苏丹', 'SR': '苏里南', 'SY': '叙利亚', 'TJ': '塔吉克斯坦', 'TZ': '坦桑尼亚', 'TL': '东帝汶', 'TG': '多哥', 'TO': '汤加', 'TT': '特立尼达和多巴哥', 'TN': '突尼斯', 'TM': '土库曼斯坦', 'TV': '图瓦卢', 'UG': '乌干达', 'UY': '乌拉圭', 'UZ': '乌兹别克斯坦', 'VU': '瓦努阿图', 'VE': '委内瑞拉', 'YE': '也门', 'ZM': '赞比亚', 'ZW': '津巴布韦', 'GG': '根西岛', 'JE': '泽西岛', 'IM': '马恩岛', 'AX': '奥兰群岛', 'CW': '库拉索', 'SX': '圣马丁（荷属）', 'BQ': '博奈尔、圣尤斯特歇斯和萨巴', 'BL': '圣巴泰勒米', 'MF': '圣马丁（法属）', 'YT': '马约特', 'RE': '留尼汪', 'MQ': '马提尼克', 'GP': '瓜德罗普', 'GF': '法属圭亚那', 'PF': '法属波利尼西亚', 'NC': '新喀里多尼亚', 'NU': '纽埃', 'NF': '诺福克岛', 'CX': '圣诞岛', 'PN': '皮特凯恩群岛', 'SH': '圣赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英属维尔京群岛', 'VI': '美属维尔京群岛', 'TC': '特克斯和凯科斯群岛', 'CI': '科特迪瓦', 'VC': '圣文森特和格林纳丁斯'}, 'zh-TW': {'AF': '阿富汗', 'AL': '阿爾巴尼亞', 'DZ': '阿爾及利亞', 'AS': '美屬薩摩亞', 'AD': '安道爾', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南極洲', 'AG': '安提瓜和巴布達', 'AM': '亞美尼亞', 'AW': '阿魯巴', 'AZ': '亞塞拜然', 'BS': '巴哈馬', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄羅斯', 'BZ': '貝里斯', 'BJ': '貝南', 'BM': '百慕達', 'BT': '不丹', 'BO': '玻利維亞', 'BA': '波赫', 'BW': '波札那', 'BN': '汶萊', 'BG': '保加利亞', 'BF': '布基納法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麥隆', 'CV': '維德角', 'KY': '開曼群島', 'CF': '中非共和國', 'TD': '查德', 'KM': '葛摩', 'CG': '剛果（布）', 'CD': '剛果（金）', 'CK': '庫克群島', 'CR': '哥斯大黎加', 'HR': '克羅埃西亞', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多明尼加', 'EC': '厄瓜多', 'SV': '薩爾瓦多', 'GQ': '赤道幾內亞', 'ER': '厄利垂亞', 'EE': '愛沙尼亞', 'SZ': '史瓦帝尼', 'ET': '衣索比亞', 'FK': '福克蘭群島', 'FO': '法羅群島', 'FJ': '斐濟', 'GA': '加彭', 'GM': '甘比亞', 'GE': '喬治亞', 'GH': '迦納', 'GI': '直布羅陀', 'GL': '格陵蘭', 'GD': '格瑞那達', 'GU': '關島', 'GT': '瓜地馬拉', 'GN': '幾內亞', 'GW': '幾內亞比索', 'GY': '蓋亞那', 'HT': '海地', 'HN': '宏都拉斯', 'IS': '冰島', 'JM': '牙買加', 'JO': '約旦', 'KZ': '哈薩克斯坦', 'KI': '吉里巴斯', 'XK': '科索沃', 'KG': '吉爾吉斯斯坦', 'LA': '寮國', 'LV': '拉脫維亞', 'LB': '黎巴嫩', 'LS': '賴索托', 'LR': '賴比瑞亞', 'LY': '利比亞', 'LI': '列支敦斯登', 'LT': '立陶宛', 'LU': '盧森堡', 'MO': '澳門', 'MG': '馬達加斯加', 'MW': '馬拉威', 'MV': '馬爾地夫', 'ML': '馬利', 'MT': '馬耳他', 'MH': '馬紹爾群島', 'MR': '茅利塔尼亞', 'MU': '模里西斯', 'FM': '密克羅尼西亞', 'MD': '摩爾多瓦', 'MC': '摩納哥', 'MN': '蒙古', 'ME': '蒙特內哥羅', 'MZ': '莫三比克', 'MM': '緬甸', 'NA': '納米比亞', 'NP': '尼泊爾', 'NI': '尼加拉瓜', 'NE': '尼日', 'KP': '北韓', 'MK': '北馬其頓', 'MP': '北馬里亞納群島', 'OM': '阿曼', 'PW': '帛琉', 'PS': '巴勒斯坦', 'PA': '巴拿馬', 'PG': '巴布亞紐幾內亞', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '盧安達', 'KN': '聖基茨和尼維斯', 'LC': '聖露西亞', 'WS': '薩摩亞', 'SM': '聖馬利諾', 'ST': '聖多美和普林西比', 'SN': '塞內加爾', 'RS': '塞爾維亞', 'SC': '塞舌爾', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛維尼亞', 'SB': '所羅門群島', 'SO': '索馬利亞', 'SS': '南蘇丹', 'LK': '斯里蘭卡', 'SD': '蘇丹', 'SR': '蘇利南', 'SY': '敘利亞', 'TJ': '塔吉克斯坦', 'TZ': '坦尚尼亞', 'TL': '東帝汶', 'TG': '多哥', 'TO': '東加', 'TT': '特立尼達和多巴哥', 'TN': '突尼西亞', 'TM': '土庫曼斯坦', 'TV': '圖瓦盧', 'UG': '烏干達', 'UY': '烏拉圭', 'UZ': '烏茲別克斯坦', 'VU': '瓦努阿圖', 'VE': '委內瑞拉', 'YE': '葉門', 'ZM': '贊比亞', 'ZW': '津巴布韋', 'GG': '根西島', 'JE': '澤西島', 'IM': '馬恩島', 'AX': '奧蘭群島', 'CW': '庫拉索', 'SX': '聖馬丁（荷屬）', 'BQ': '博奈爾、聖尤斯特歇斯和薩巴', 'BL': '聖巴泰勒米', 'MF': '聖馬丁（法屬）', 'YT': '馬約特', 'RE': '留尼汪', 'MQ': '馬提尼克', 'GP': '瓜德羅普', 'GF': '法屬圭亞那', 'PF': '法屬波利尼西亞', 'NC': '新喀里多尼亞', 'NU': '紐埃', 'NF': '諾福克島', 'CX': '聖誕島', 'PN': '皮特凱恩群島', 'SH': '聖赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英屬維爾京群島', 'VI': '美屬維爾京群島', 'TC': '特克斯和凱科斯群島', 'CI': '科特迪瓦', 'VC': '聖文森特和格林納丁斯'}, 'ja': {'AF': 'アフガニスタン', 'AL': 'アルバニア', 'DZ': 'アルジェリア', 'AS': '米領サモア', 'AD': 'アンドラ', 'AO': 'アンゴラ', 'AI': 'アンギラ', 'AQ': '南極', 'AG': 'アンティグア・バーブーダ', 'AM': 'アルメニア', 'AW': 'アルバ', 'AZ': 'アゼルバイジャン', 'BS': 'バハマ', 'BH': 'バーレーン', 'BB': 'バルバドス', 'BY': 'ベラルーシ', 'BZ': 'ベリーズ', 'BJ': 'ベナン', 'BM': 'バミューダ', 'BT': 'ブータン', 'BO': 'ボリビア', 'BA': 'ボスニア・ヘルツェゴビナ', 'BW': 'ボツワナ', 'BN': 'ブルネイ', 'BG': 'ブルガリア', 'BF': 'ブルキナファソ', 'BI': 'ブルンジ', 'KH': 'カンボジア', 'CM': 'カメルーン', 'CV': 'カーボベルデ', 'KY': 'ケイマン諸島', 'CF': '中央アフリカ', 'TD': 'チャド', 'KM': 'コモロ', 'CG': 'コンゴ共和国', 'CD': 'コンゴ民主共和国', 'CK': 'クック諸島', 'CR': 'コスタリカ', 'HR': 'クロアチア', 'CU': 'キューバ', 'CY': 'キプロス', 'DJ': 'ジブチ', 'DM': 'ドミニカ国', 'DO': 'ドミニカ共和国', 'EC': 'エクアドル', 'SV': 'エルサルバドル', 'GQ': '赤道ギニア', 'ER': 'エリトリア', 'EE': 'エストニア', 'SZ': 'エスワティニ', 'ET': 'エチオピア', 'FK': 'フォークランド諸島', 'FO': 'フェロー諸島', 'FJ': 'フィジー', 'GA': 'ガボン', 'GM': 'ガンビア', 'GE': 'ジョージア', 'GH': 'ガーナ', 'GI': 'ジブラルタル', 'GL': 'グリーンランド', 'GD': 'グレナダ', 'GU': 'グアム', 'GT': 'グアテマラ', 'GN': 'ギニア', 'GW': 'ギニアビサウ', 'GY': 'ガイアナ', 'HT': 'ハイチ', 'HN': 'ホンジュラス', 'IS': 'アイスランド', 'JM': 'ジャマイカ', 'JO': 'ヨルダン', 'KZ': 'カザフスタン', 'KI': 'キリバス', 'XK': 'コソボ', 'KG': 'キルギス', 'LA': 'ラオス', 'LV': 'ラトビア', 'LB': 'レバノン', 'LS': 'レソト', 'LR': 'リベリア', 'LY': 'リビア', 'LI': 'リヒテンシュタイン', 'LT': 'リトアニア', 'LU': 'ルクセンブルク', 'MO': 'マカオ', 'MG': 'マダガスカル', 'MW': 'マラウイ', 'MV': 'モルディブ', 'ML': 'マリ', 'MT': 'マルタ', 'MH': 'マーシャル諸島', 'MR': 'モーリタニア', 'MU': 'モーリシャス', 'FM': 'ミクロネシア', 'MD': 'モルドバ', 'MC': 'モナコ', 'MN': 'モンゴル', 'ME': 'モンテネグロ', 'MZ': 'モザンビーク', 'MM': 'ミャンマー', 'NA': 'ナミビア', 'NP': 'ネパール', 'NI': 'ニカラグア', 'NE': 'ニジェール', 'KP': '北朝鮮', 'MK': '北マケドニア', 'MP': '北マリアナ諸島', 'OM': 'オマーン', 'PW': 'パラオ', 'PS': 'パレスチナ', 'PA': 'パナマ', 'PG': 'パプアニューギニア', 'PY': 'パラグアイ', 'PR': 'プエルトリコ', 'RW': 'ルワンダ', 'KN': 'セントクリストファー・ネイビス', 'LC': 'セントルシア', 'WS': 'サモア', 'SM': 'サンマリノ', 'ST': 'サントメ・プリンシペ', 'SN': 'セネガル', 'RS': 'セルビア', 'SC': 'セーシェル', 'SL': 'シエラレオネ', 'SK': 'スロバキア', 'SI': 'スロベニア', 'SB': 'ソロモン諸島', 'SO': 'ソマリア', 'SS': '南スーダン', 'LK': 'スリランカ', 'SD': 'スーダン', 'SR': 'スリナム', 'SY': 'シリア', 'TJ': 'タジキスタン', 'TZ': 'タンザニア', 'TL': '東ティモール', 'TG': 'トーゴ', 'TO': 'トンガ', 'TT': 'トリニダード・トバゴ', 'TN': 'チュニジア', 'TM': 'トルクメニスタン', 'TV': 'ツバル', 'UG': 'ウガンダ', 'UY': 'ウルグアイ', 'UZ': 'ウズベキスタン', 'VU': 'バヌアツ', 'VE': 'ベネズエラ', 'YE': 'イエメン', 'ZM': 'ザンビア', 'ZW': 'ジンバブエ', 'GG': 'ガーンジー', 'JE': 'ジャージー', 'IM': 'マン島', 'AX': 'オーランド諸島', 'CW': 'キュラソー', 'SX': 'シント・マールテン', 'BQ': 'ボネール、シント・ユースタティウス、サバ', 'BL': 'サン・バルテルミー', 'MF': 'サン・マルタン', 'YT': 'マヨット', 'RE': 'レユニオン', 'MQ': 'マルティニーク', 'GP': 'グアドループ', 'GF': 'フランス領ギアナ', 'PF': 'フランス領ポリネシア', 'NC': 'ニューカレドニア', 'NU': 'ニウエ', 'NF': 'ノーフォーク島', 'CX': 'クリスマス島', 'PN': 'ピトケアン諸島', 'SH': 'セントヘレナ', 'MS': 'モントセラト', 'VG': '英領バージン諸島', 'VI': '米領バージン諸島', 'TC': 'タークス・カイコス諸島', 'CI': 'コートジボワール', 'VC': 'セントビンセント・グレナディーン'}, 'ru': {'AF': 'Афганистан', 'AL': 'Албания', 'DZ': 'Алжир', 'AS': 'Американское Самоа', 'AD': 'Андорра', 'AO': 'Ангола', 'AI': 'Ангилья', 'AQ': 'Антарктида', 'AG': 'Антигуа и Барбуда', 'AM': 'Армения', 'AW': 'Аруба', 'AZ': 'Азербайджан', 'BS': 'Багамы', 'BH': 'Бахрейн', 'BB': 'Барбадос', 'BY': 'Беларусь', 'BZ': 'Белиз', 'BJ': 'Бенин', 'BM': 'Бермуды', 'BT': 'Бутан', 'BO': 'Боливия', 'BA': 'Босния и Герцеговина', 'BW': 'Ботсвана', 'BN': 'Бруней', 'BG': 'Болгария', 'BF': 'Буркина-Фасо', 'BI': 'Бурунди', 'KH': 'Камбоджа', 'CM': 'Камерун', 'CV': 'Кабо-Верде', 'KY': 'Каймановы острова', 'CF': 'ЦАР', 'TD': 'Чад', 'KM': 'Коморы', 'CG': 'Конго', 'CD': 'ДР Конго', 'CK': 'Острова Кука', 'CR': 'Коста-Рика', 'HR': 'Хорватия', 'CU': 'Куба', 'CY': 'Кипр', 'DJ': 'Джибути', 'DM': 'Доминика', 'DO': 'Доминиканская Республика', 'EC': 'Эквадор', 'SV': 'Сальвадор', 'GQ': 'Экваториальная Гвинея', 'ER': 'Эритрея', 'EE': 'Эстония', 'SZ': 'Эсватини', 'ET': 'Эфиопия', 'FK': 'Фолклендские острова', 'FO': 'Фарерские острова', 'FJ': 'Фиджи', 'GA': 'Габон', 'GM': 'Гамбия', 'GE': 'Грузия', 'GH': 'Гана', 'GI': 'Гибралтар', 'GL': 'Гренландия', 'GD': 'Гренада', 'GU': 'Гуам', 'GT': 'Гватемала', 'GN': 'Гвинея', 'GW': 'Гвинея-Бисау', 'GY': 'Гайана', 'HT': 'Гаити', 'HN': 'Гондурас', 'IS': 'Исландия', 'JM': 'Ямайка', 'JO': 'Иордания', 'KZ': 'Казахстан', 'KI': 'Кирибати', 'XK': 'Косово', 'KG': 'Киргизия', 'LA': 'Лаос', 'LV': 'Латвия', 'LB': 'Ливан', 'LS': 'Лесото', 'LR': 'Либерия', 'LY': 'Ливия', 'LI': 'Лихтенштейн', 'LT': 'Литва', 'LU': 'Люксембург', 'MO': 'Макао', 'MG': 'Мадагаскар', 'MW': 'Малави', 'MV': 'Мальдивы', 'ML': 'Мали', 'MT': 'Мальта', 'MH': 'Маршалловы Острова', 'MR': 'Мавритания', 'MU': 'Маврикий', 'FM': 'Микронезия', 'MD': 'Молдова', 'MC': 'Монако', 'MN': 'Монголия', 'ME': 'Черногория', 'MZ': 'Мозамбик', 'MM': 'Мьянма', 'NA': 'Намибия', 'NP': 'Непал', 'NI': 'Никарагуа', 'NE': 'Нигер', 'KP': 'Северная Корея', 'MK': 'Северная Македония', 'MP': 'Северные Марианские острова', 'OM': 'Оман', 'PW': 'Палау', 'PS': 'Палестина', 'PA': 'Панама', 'PG': 'Папуа — Новая Гвинея', 'PY': 'Парагвай', 'PR': 'Пуэрто-Рико', 'RW': 'Руанда', 'KN': 'Сент-Китс и Невис', 'LC': 'Сент-Люсия', 'WS': 'Самоа', 'SM': 'Сан-Марино', 'ST': 'Сан-Томе и Принсипи', 'SN': 'Сенегал', 'RS': 'Сербия', 'SC': 'Сейшелы', 'SL': 'Сьерра-Леоне', 'SK': 'Словакия', 'SI': 'Словения', 'SB': 'Соломоновы Острова', 'SO': 'Сомали', 'SS': 'Южный Судан', 'LK': 'Шри-Ланка', 'SD': 'Судан', 'SR': 'Суринам', 'SY': 'Сирия', 'TJ': 'Таджикистан', 'TZ': 'Танзания', 'TL': 'Восточный Тимор', 'TG': 'Того', 'TO': 'Тонга', 'TT': 'Тринидад и Тобаго', 'TN': 'Тунис', 'TM': 'Туркменистан', 'TV': 'Тувалу', 'UG': 'Уганда', 'UY': 'Уругвай', 'UZ': 'Узбекистан', 'VU': 'Вануату', 'VE': 'Венесуэла', 'YE': 'Йемен', 'ZM': 'Замбия', 'ZW': 'Зимбабве', 'GG': 'Гернси', 'JE': 'Джерси', 'IM': 'Остров Мэн', 'AX': 'Аландские острова', 'CW': 'Кюрасао', 'SX': 'Синт-Мартен', 'BQ': 'Бонайре, Синт-Эстатиус и Саба', 'BL': 'Сен-Бартелеми', 'MF': 'Сен-Мартен', 'YT': 'Майотта', 'RE': 'Реюньон', 'MQ': 'Мартиника', 'GP': 'Гваделупа', 'GF': 'Французская Гвиана', 'PF': 'Французская Полинезия', 'NC': 'Новая Каледония', 'NU': 'Ниуэ', 'NF': 'Остров Норфолк', 'CX': 'Остров Рождества', 'PN': 'Питкэрн', 'SH': 'Остров Святой Елены', 'MS': 'Монтсеррат', 'VG': 'Британские Виргинские острова', 'VI': 'Американские Виргинские острова', 'TC': 'Теркс и Кайкос', 'CI': 'Кот-д’Ивуар', 'VC': 'Сент-Винсент и Гренадины'}, 'fa': {'AF': 'افغانستان', 'AL': 'آلبانی', 'DZ': 'الجزایر', 'AS': 'ساموآی آمریکا', 'AD': 'آندورا', 'AO': 'آنگولا', 'AI': 'آنگویلا', 'AQ': 'جنوبگان', 'AG': 'آنتیگوا و باربودا', 'AM': 'ارمنستان', 'AW': 'آروبا', 'AZ': 'آذربایجان', 'BS': 'باهاما', 'BH': 'بحرین', 'BB': 'باربادوس', 'BY': 'بلاروس', 'BZ': 'بلیز', 'BJ': 'بنین', 'BM': 'برمودا', 'BT': 'بوتان', 'BO': 'بولیوی', 'BA': 'بوسنی و هرزگوین', 'BW': 'بوتسوانا', 'BN': 'برونئی', 'BG': 'بلغارستان', 'BF': 'بورکینافاسو', 'BI': 'بوروندی', 'KH': 'کامبوج', 'CM': 'کامرون', 'CV': 'کیپ ورد', 'KY': 'جزایر کیمن', 'CF': 'جمهوری آفریقای مرکزی', 'TD': 'چاد', 'KM': 'کومور', 'CG': 'کنگو', 'CD': 'جمهوری دموکراتیک کنگو', 'CK': 'جزایر کوک', 'CR': 'کاستاریکا', 'HR': 'کرواسی', 'CU': 'کوبا', 'CY': 'قبرس', 'DJ': 'جیبوتی', 'DM': 'دومینیکا', 'DO': 'جمهوری دومینیکن', 'EC': 'اکوادور', 'SV': 'السالوادور', 'GQ': 'گینه استوایی', 'ER': 'اریتره', 'EE': 'استونی', 'SZ': 'اسواتینی', 'ET': 'اتیوپی', 'FK': 'جزایر فالکلند', 'FO': 'جزایر فارو', 'FJ': 'فیجی', 'GA': 'گابن', 'GM': 'گامبیا', 'GE': 'گرجستان', 'GH': 'غنا', 'GI': 'جبل\u200cالطارق', 'GL': 'گرینلند', 'GD': 'گرنادا', 'GU': 'گوام', 'GT': 'گواتمالا', 'GN': 'گینه', 'GW': 'گینه بیسائو', 'GY': 'گویان', 'HT': 'هائیتی', 'HN': 'هندوراس', 'IS': 'ایسلند', 'JM': 'جامائیکا', 'JO': 'اردن', 'KZ': 'قزاقستان', 'KI': 'کیریباتی', 'XK': 'کوزوو', 'KG': 'قرقیزستان', 'LA': 'لائوس', 'LV': 'لتونی', 'LB': 'لبنان', 'LS': 'لسوتو', 'LR': 'لیبریا', 'LY': 'لیبی', 'LI': 'لیختن\u200cاشتاین', 'LT': 'لیتوانی', 'LU': 'لوکزامبورگ', 'MO': 'ماکائو', 'MG': 'ماداگاسکار', 'MW': 'مالاوی', 'MV': 'مالدیو', 'ML': 'مالی', 'MT': 'مالت', 'MH': 'جزایر مارشال', 'MR': 'موریتانی', 'MU': 'موریس', 'FM': 'میکرونزی', 'MD': 'مولداوی', 'MC': 'موناکو', 'MN': 'مغولستان', 'ME': 'مونته\u200cنگرو', 'MZ': 'موزامبیک', 'MM': 'میانمار', 'NA': 'نامیبیا', 'NP': 'نپال', 'NI': 'نیکاراگوئه', 'NE': 'نیجر', 'KP': 'کره شمالی', 'MK': 'مقدونیه شمالی', 'MP': 'جزایر ماریانای شمالی', 'OM': 'عمان', 'PW': 'پالائو', 'PS': 'فلسطین', 'PA': 'پاناما', 'PG': 'پاپوا گینه نو', 'PY': 'پاراگوئه', 'PR': 'پورتوریکو', 'RW': 'رواندا', 'KN': 'سنت کیتس و نویس', 'LC': 'سنت لوسیا', 'WS': 'ساموآ', 'SM': 'سن مارینو', 'ST': 'سائوتومه و پرنسیپ', 'SN': 'سنگال', 'RS': 'صربستان', 'SC': 'سیشل', 'SL': 'سیرالئون', 'SK': 'اسلواکی', 'SI': 'اسلوونی', 'SB': 'جزایر سلیمان', 'SO': 'سومالی', 'SS': 'سودان جنوبی', 'LK': 'سری\u200cلانکا', 'SD': 'سودان', 'SR': 'سورینام', 'SY': 'سوریه', 'TJ': 'تاجیکستان', 'TZ': 'تانزانیا', 'TL': 'تیمور شرقی', 'TG': 'توگو', 'TO': 'تونگا', 'TT': 'ترینیداد و توباگو', 'TN': 'تونس', 'TM': 'ترکمنستان', 'TV': 'تووالو', 'UG': 'اوگاندا', 'UY': 'اروگوئه', 'UZ': 'ازبکستان', 'VU': 'وانواتو', 'VE': 'ونزوئلا', 'YE': 'یمن', 'ZM': 'زامبیا', 'ZW': 'زیمبابوه', 'GG': 'گرنزی', 'JE': 'جرزی', 'IM': 'جزیره من', 'AX': 'جزایر الند', 'CW': 'کوراسائو', 'SX': 'سینت مارتن', 'BQ': 'بونیر، سینت یوستاتیوس و سابا', 'BL': 'سن بارتلمی', 'MF': 'سن مارتن', 'YT': 'مایوت', 'RE': 'رئونیون', 'MQ': 'مارتینیک', 'GP': 'گوادلوپ', 'GF': 'گویان فرانسه', 'PF': 'پلی\u200cنزی فرانسه', 'NC': 'کالدونیای جدید', 'NU': 'نیوئه', 'NF': 'جزیره نورفک', 'CX': 'جزیره کریسمس', 'PN': 'پیتکرن', 'SH': 'سنت هلنا', 'MS': 'مونتسرات', 'VG': 'جزایر ویرجین بریتانیا', 'VI': 'جزایر ویرجین آمریکا', 'TC': 'جزایر تورکس و کایکوس', 'CI': 'ساحل عاج', 'VC': 'سنت وینسنت و گرنادین‌ها'}}
 for _lg in ("zh", "zh-TW", "ja", "ru", "fa"):
@@ -3242,7 +3322,10 @@ def _build_cc_local():
                 _owner[_low] = None
                 _m.pop(_low, None)
     for _alias, _code in (("ایالات متحده", "US"),
-                          ("ایالات متحده آمریکا", "US")):
+                          ("ایالات متحده آمریکا", "US"),
+                          # fix440g G-044：港式繁体格鲁吉亚与日语旧称亦须查到 GE。
+                          ("格魯吉亞", "GE"),
+                          ("グルジア", "GE")):
         _m.setdefault(_alias, _code)
     return _m
 
@@ -3267,7 +3350,9 @@ def _loc_country_name(text):
     code = _CC_EN.get(t.lower())
     if code is None:
         code = _CITY_CTX_COUNTRY_ALIASES.get(t.lower()) or _CC_LOCAL.get(t.lower())
-    if code is None and len(t) == 2 and t.isalpha():
+    if code is None and len(t) == 2 and t.isascii() and t.isalpha():
+        # fix440g G-046：国家码捷径须限定为两个 ASCII 字母；"ıo".upper()
+        # == "IO" 之类非 ASCII 输入不得命中真实国家码。
         code = t.upper()
     if code == "UK":
         code = "GB"
@@ -3308,6 +3393,12 @@ def _any2en(table):
                     _owner[name] = None
                     m.pop(name, None)
             # _owner[name] is None: 已是歧义名, 不再收录
+    # fix440g G-043：fa 城市新拼写含 U+200C，旧拼写（无 ZWNJ）仍须能反查；
+    # 显示名保留新拼写，仅反查表补两个旧键（_TZ_CITY["fa"] 仍用旧拼写，
+    # 补键后时区表与反查表可往返）。
+    for _old, _en in (("مکزیکوسیتی", "Mexico City"),
+                      ("اکلاهماسیتی", "Oklahoma City")):
+        m.setdefault(_old, _en)
     return m
 
 
