@@ -7105,7 +7105,10 @@ def _print_completeness(res):
     """数据完整度与置信度 (报告尾部, 两模式共用)。"""
     _section(T("sec_complete"))
     c = res.get("completeness") or {}
-    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    # fix440g G-067：`.get(k, "?")` 只处理缺键——显式 None 亦映射为 "?"，
+    # 但合法的 0 不得被掩盖（须用 `is None` 判别，不用 `or`）。
+    _q = lambda v: "?" if v is None else v
+    print(f"  {T('success_query')}: {_q(c.get('ok', '?'))}/{_q(c.get('total', '?'))} ({_q(c.get('pct', '?'))}%)")
     if c.get("failed"):
         # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
         # 加共享出口配额耗尽提示（不改变评分）。
@@ -7113,7 +7116,7 @@ def _print_completeness(res):
     print(f"  {_c(C.dim, T('fail_note'))}")
     if len(c.get("rate_limited") or []) >= 2:
         print(f"  {_c(C.dim, T('rate_limit_hint'))}")
-    print(f"  {T('confidence')}: {c.get('confidence', '?')}/100")
+    print(f"  {T('confidence')}: {_q(c.get('confidence', '?'))}/100")
 
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -7429,15 +7432,41 @@ def _factor_rows(s, wi_server, v6=False):
         # level "0" 字符串不再直接参与 >= 比较抛 TypeError。
         if isinstance(v, bool):
             return None
-        if isinstance(v, (int, float)):
+        # fix440g G-023：整数不得做浮点有限性检查——math.isfinite 会把
+        # 超大整数转 float 而抛 OverflowError；int 直接返回（比较运算
+        # 本身对任意大整数都安全）。
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
             return v if math.isfinite(v) else None
         if isinstance(v, str):
             try:
                 _f = float(v.strip())
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
                 return None
             return _f if math.isfinite(_f) else None
         return None
+
+    def _gt(v, n):
+        # fix440g G-024：数值比较的未知守卫——_num 为 None（字段存在但
+        # 解析失败）时返 None（未知，不计入分母），不得经 `or 0` 变成 False。
+        _n = _num(v)
+        return None if _n is None else _n > n
+
+    def _ge(v, n):
+        _n = _num(v)
+        return None if _n is None else _n >= n
+
+    def _any_pos(*vs):
+        # fix440g G-024（多值版）：任一值 >0 即 True；无正值、但有字段
+        # 存在而解析失败时记未知（None）；缺字段（None）按旧口径不计入
+        # 判定（缺失≠否定，全缺时由调用方守卫先行返 None）。
+        _ns = [_num(v) for v in vs if v is not None]
+        if any(_n is not None and _n > 0 for _n in _ns):
+            return True
+        if any(_n is None for _n in _ns):
+            return None
+        return False
 
     def _h(d, cond):
         # r5a-4：cond 为值或零参可调用——失败源（ok 非真）不求值即返 None，
@@ -7451,30 +7480,33 @@ def _factor_rows(s, wi_server, v6=False):
             return None
         return True if cond else False
 
-    sf = s.get("stopforumspam", {})
-    us = s.get("urlscan", {})
-    sa = s.get("sansisc", {})
-    gn = s.get("greynoise", {})
-    fe = s.get("feodo", {})
-    et = s.get("et_compromised", {})
-    sp = s.get("spamhaus", {})
-    te = s.get("tor_exit", {})
-    pc = s.get("proxycheck", {})
-    wi = s.get("ipwhois", {})
-    fp = s.get("freeipapi", {})
-    il = s.get("iplocate", {})
-    iq = s.get("ipquery", {})
-    ti = s.get("twoip", {})
-    xv = s.get("x4bvpn", {})
-    isum = s.get("ipsum", {})
-    bd = s.get("blocklistde", {})
-    ox = s.get("otx", {})
+    # fix440g G-025：显式为 None 的源须按缺失处理——`s.get(k, {})` 只处理
+    # 缺键，键存在而值为 None 时仍得 None、随后 `.get()` 抛 AttributeError；
+    # 此处归一化后再传矩阵。
+    sf = s.get("stopforumspam") or {}
+    us = s.get("urlscan") or {}
+    sa = s.get("sansisc") or {}
+    gn = s.get("greynoise") or {}
+    fe = s.get("feodo") or {}
+    et = s.get("et_compromised") or {}
+    sp = s.get("spamhaus") or {}
+    te = s.get("tor_exit") or {}
+    pc = s.get("proxycheck") or {}
+    wi = s.get("ipwhois") or {}
+    fp = s.get("freeipapi") or {}
+    il = s.get("iplocate") or {}
+    iq = s.get("ipquery") or {}
+    ti = s.get("twoip") or {}
+    xv = s.get("x4bvpn") or {}
+    isum = s.get("ipsum") or {}
+    bd = s.get("blocklistde") or {}
+    ox = s.get("otx") or {}
     rows = [
         ("StopForumSpam", [None, None, None, None,
                            _h(sf, _sfs_hit(sf)), None]),
         ("urlscan.io", [None, None, None, None, None,
                         _h(us, lambda: None if us.get("total") is None
-                            else (_num(us.get("total")) or 0) > 0)]),
+                            else _gt(us.get("total"), 0))]),
         ("SANS ISC", [None, None, None, None, None,
                       None if sa.get("attack_count") is None else _h(sa, bool(sa.get("attack_count")))]),
         ("Shodan", [None, None, None, None, None, None]),
@@ -7533,21 +7565,19 @@ def _factor_rows(s, wi_server, v6=False):
         ("IPsum", [
             None, None, None, None,
             _h(isum, lambda: None if isum.get("level") is None
-                else (_num(isum.get("level")) or 0) >= 2),
+                else _ge(isum.get("level"), 2)),
             None]),
         ("blocklist.de", [
             None, None, None, None,
             _h(bd, lambda: None if bd.get("attacks") is None
                 and bd.get("reports") is None
-                else ((_num(bd.get("attacks")) or 0) > 0
-                      or (_num(bd.get("reports")) or 0) > 0)),
+                else _any_pos(bd.get("attacks"), bd.get("reports"))),
             None]),
         ("OTX", [
             None, None, None, None, None,
             _h(ox, lambda: None if ox.get("reputation") is None
                 and ox.get("pulses") is None
-                else ((_num(ox.get("reputation")) or 0) > 0
-                      or (_num(ox.get("pulses")) or 0) > 0))]),
+                else _any_pos(ox.get("reputation"), ox.get("pulses")))]),
     ]
     if v6:
         _v4only = {"StopForumSpam", "urlscan.io", "SANS ISC", "GreyNoise",
@@ -7583,7 +7613,10 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         if pc.get("ok") and pc.get("type"):
             type_sources.append(("proxycheck", pc["type"]))
         if wi.get("ok"):
-            if wi.get("hosting"):
+            # fix440g G-066：逐源文本不得用 Python 真值作肯定/否定判断——
+            # hosting="false" 等非布尔值须按未知处理，不得显示机房；只有
+            # 严格布尔 True 才认机房（False/未知走启发式/未知分支）。
+            if _strict_bool(wi.get("hosting")) is True:
                 type_sources.append(("ipwho.is", T("dc")))
             else:
                 dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
@@ -7595,7 +7628,7 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                     type_sources.append((T("heuristic"), T("unknown")))
         il = (s.get("iplocate") or {})
         if il.get("ok"):
-            if il.get("hosting") or il.get("asn_type") == "hosting":
+            if _strict_bool(il.get("hosting")) is True or il.get("asn_type") == "hosting":
                 type_sources.append(("iplocate.io", T("dc")))
             elif il.get("asn_type") == "isp":
                 type_sources.append((T("heuristic"), T("residential")))
@@ -7603,9 +7636,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
                 type_sources.append(("iplocate.io", T("unknown")))
         iq = (s.get("ipquery") or {})
         if iq.get("ok"):
-            if iq.get("datacenter"):
+            if _strict_bool(iq.get("datacenter")) is True:
                 type_sources.append(("ipquery.io", T("dc")))
-            elif iq.get("mobile"):
+            elif _strict_bool(iq.get("mobile")) is True:
                 type_sources.append(("ipquery.io", T("mobile")))
             else:
                 type_sources.append((T("heuristic"), T("residential")
@@ -7661,27 +7694,40 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
         _section(T("sec_fraud"))
         sc = (s.get("scamalytics") or {})
+        # fix440g G-020/G-021：行显示、算术与脚注判断共用同一个已归一化的
+        # 可选分数（_opt_score）：缺失/None/字符串分一律为未知（None），
+        # 行印 "—"；缺失综合分时不计算纯净度；真实数值 0 保留。
+        def _dim(_key):
+            _dv = scs.get(_key)
+            if isinstance(_dv, (list, tuple)) and len(_dv):
+                return _opt_score(_dv[0])
+            return None
+
         _srows = [("Scamalytics",
-                   _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
-        for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
-                         (T("dim_fraud"), scs.get("fraud") or (0, [])),
-                         (T("dim_reputation"), scs.get("reputation") or (0, [])),
-                         (T("dim_platform"), scs.get("platform") or (0, []))):
-            _srows.append((_dn, _dv[0], ""))
-        _combined = scs.get("combined") or 0
-        _purity = 100 - _combined
-        if _purity >= 85:
-            _pl, _pc = T("purity_best"), C.green
-        elif _purity >= 70:
-            _pl, _pc = T("purity_good"), C.green
-        elif _purity >= 50:
-            _pl, _pc = T("purity_fair"), C.yellow
-        elif _purity >= 30:
-            _pl, _pc = T("purity_poor"), C.yellow
+                   _opt_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn, _dk in ((T("dim_threat"), "threat"),
+                         (T("dim_fraud"), "fraud"),
+                         (T("dim_reputation"), "reputation"),
+                         (T("dim_platform"), "platform")):
+            _srows.append((_dn, _dim(_dk), ""))
+        _combined = _opt_score(scs.get("combined"))
+        if _combined is not None:
+            _purity = 100 - _combined
+            if _purity >= 85:
+                _pl, _pc = T("purity_best"), C.green
+            elif _purity >= 70:
+                _pl, _pc = T("purity_good"), C.green
+            elif _purity >= 50:
+                _pl, _pc = T("purity_fair"), C.yellow
+            elif _purity >= 30:
+                _pl, _pc = T("purity_poor"), C.yellow
+            else:
+                _pl, _pc = T("purity_bad"), C.red
+            _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
+            _srows.append((T("purity"), _purity, _pl))
         else:
-            _pl, _pc = T("purity_bad"), C.red
-        _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
-        _srows.append((T("purity"), _purity, _pl))
+            _srows.append((T("combined"), None, ""))
+            _srows.append((T("purity"), None, ""))
         _lw3 = _bar_label_width()
         for _n, _v, _extra in _srows:
             if _v is None:
@@ -7696,7 +7742,9 @@ def print_report(res, include_streaming_inference=True, sysinfo=None,
         if _verdict:
             print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
         print(f"  {_c(C.dim, T('purity_note'))}")
-        if (scs.get("platform") or (0,))[0] >= 30:
+        # fix440g G-021：脚注判断与行显示共用已归一化的平台分（未知时不触发）。
+        _plat = _dim("platform")
+        if _plat is not None and _plat >= 30:
             print(f"  {_c(C.dim, T('platform_note'))}")
 
         if include_streaming_inference:
@@ -7897,7 +7945,9 @@ def _print_report6_tail(res):
     """[5] 完整度与免责 (L-02: 报告尾巴, 供主动模式末尾打印, 避免中途出现)。"""
     _section(T("sec_complete6"))
     c = res.get("completeness") or {}
-    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    # fix440g G-067（v6）：同 _print_completeness——显式 None 亦映射为 "?"。
+    _q = lambda v: "?" if v is None else v
+    print(f"  {T('success_query')}: {_q(c.get('ok', '?'))}/{_q(c.get('total', '?'))} ({_q(c.get('pct', '?'))}%)")
     if c.get("failed"):
         # 04-01 / 04-08（v6）：同 _print_completeness。
         print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
@@ -7939,7 +7989,8 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             _ts6.append(("proxycheck", _pc6["type"]))
         _wi6 = (s.get("ipwhois") or {})
         if _wi6.get("ok"):
-            if _wi6.get("hosting"):
+            # fix440g G-066：同 v4——hosting 只认严格布尔 True。
+            if _strict_bool(_wi6.get("hosting")) is True:
                 _ts6.append(("ipwho.is", T("dc")))
             else:
                 _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
@@ -7951,7 +8002,7 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
                     _ts6.append((T("heuristic"), T("unknown")))
         _il6 = (s.get("iplocate") or {})
         if _il6.get("ok"):
-            if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
+            if _strict_bool(_il6.get("hosting")) is True or _il6.get("asn_type") == "hosting":
                 _ts6.append(("iplocate.io", T("dc")))
             elif _il6.get("asn_type") == "isp":
                 _ts6.append((T("heuristic"), T("residential")))
@@ -7959,9 +8010,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
                 _ts6.append(("iplocate.io", T("unknown")))
         _iq6 = (s.get("ipquery") or {})
         if _iq6.get("ok"):
-            if _iq6.get("datacenter"):
+            if _strict_bool(_iq6.get("datacenter")) is True:
                 _ts6.append(("ipquery.io", T("dc")))
-            elif _iq6.get("mobile"):
+            elif _strict_bool(_iq6.get("mobile")) is True:
                 _ts6.append(("ipquery.io", T("mobile")))
             else:
                 _ts6.append((T("heuristic"), T("residential")
@@ -8032,27 +8083,48 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             _v = _iq6s["risk_score"]
             print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
         if sp.get("ok"):
-            _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
-                    else _c(C.green, T("v6_not_listed")))
+            # fix440g G-066：listed 三分——True 命中、False 未命中、未知
+            # （None/非布尔）印 "—"，不得把未知显示成绿色未命中。
+            _lst6 = _strict_bool(sp.get("listed"))
+            if _lst6 is True:
+                _lst = _c(C.red, T("v6_listed"))
+            elif _lst6 is False:
+                _lst = _c(C.green, T("v6_not_listed"))
+            else:
+                _lst = _c(C.dim, "—")
             print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
         if sh.get("ok"):
-            _ports = sh.get("ports") or []
-            # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
-            # 打印前逐个 _strip_cc，防终端转义注入。
-            _ptxt = ", ".join(_strip_cc(p) for p in _ports) if _ports else T("none")
+            # fix440g G-065：ports=None（未知）与 ports=[]（已核实为空）
+            # 显示须区分——未知印 "—"，不得与“无”逐字相同。
+            _ports = sh.get("ports")
+            if _ports is None:
+                _ptxt = _c(C.dim, "—")
+            elif _ports:
+                # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+                # 打印前逐个 _strip_cc，防终端转义注入。
+                _ptxt = ", ".join(_strip_cc(p) for p in _ports)
+            else:
+                _ptxt = T("none")
             print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
         # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
         _section(T("sec_fraud"))
         _scs6 = res.get("scores") or {}
+        # fix440g G-021（v6）：行显示、算术与脚注判断共用同一个已归一化的
+        # 可选分数（_opt_score），与 print_report 同口径。
+        def _dim6(_key):
+            _dv6 = _scs6.get(_key)
+            if isinstance(_dv6, (list, tuple)) and len(_dv6):
+                return _opt_score(_dv6[0])
+            return None
+
         _srows6 = [("Scamalytics",
-                    _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+                    _opt_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
         for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
                            (T("dim_reputation"), "reputation"),
                            (T("dim_platform"), "platform")):
-            _dv6 = _scs6.get(_dk6)
-            _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
-        _comb6 = _scs6.get("combined")
+            _srows6.append((_dn6, _dim6(_dk6), ""))
+        _comb6 = _opt_score(_scs6.get("combined"))
         _pcol6 = C.green
         if _comb6 is not None:
             _pur6 = 100 - _comb6
@@ -8083,7 +8155,9 @@ def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
             print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
         print(f"  {_c(C.dim, T('v6_score_note'))}")
         print(f"  {_c(C.dim, T('purity_note'))}")
-        if (_scs6.get("platform") or (0,))[0] >= 30:
+        # fix440g G-021（v6）：脚注判断与行显示共用已归一化的平台分。
+        _plat6 = _dim6("platform")
+        if _plat6 is not None and _plat6 >= 30:
             print(f"  {_c(C.dim, T('platform_note'))}")
 
         # [5] 完整度
