@@ -3184,10 +3184,16 @@ class PTRCheck(Provider):
                 fwd_ips = _r
                 if _r:
                     break
+                # fix440g G-005：答出 PTR 的解析器的显式空正查 [] 是终局——
+                # 不得再由另一解析器的正答拼出 FCrDNS 成功（两视图各自无闭环）。
+                if _ns == _ptr_ns:
+                    break
             # fix440b r2a-A06：系统 NS 返回 [] 是数据（无记录），不是失败——
             # 只有全部系统 NS 均失败（None）时才回退 1.1.1.1；[] 不得把主机
             # 名发往公共 DNS（内网主机名外泄），也不得被公共答案覆盖。
-            if fwd_ips is None and "1.1.1.1" not in sys_ns_list:
+            # fix440g G-038：兜底须检查 1.1.1.1 是否已在 _fwd_ns_order 中
+            # 问过（答出 PTR 的公共解析器已在首位），不得对同一主机正查两次。
+            if fwd_ips is None and "1.1.1.1" not in _fwd_ns_order:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1",
                                     timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is not None:
