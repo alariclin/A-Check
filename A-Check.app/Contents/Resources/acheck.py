@@ -16764,18 +16764,18 @@ def _print_cli_help():
   --ipv6-only     配合 --active: 仅检测 IPv6
   --proxy HOST:PORT
                   代理诊断模式 (SOCKS5 握手、代理出口 IP、出口 IP 信誉、DNS 泄漏、TCP 延迟)
-  --proxy-user USER / --proxy-pass PASS
-                  代理认证 (可选)
+  --proxy-user USER / --proxy-pass PASS （须同时给出）
+                  代理认证 (可选；只给其一会报错退出)
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
   --no-speed      自检时跳过网速测试
   --with-speed    自检时强制进行网速测试
   --no-geo-update  禁用离线 Geo 数据自动更新
   --geo-update     强制同步刷新一次离线 Geo 数据
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
-  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用；--shortcut 仅 status 支持 --json)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy/--speed/--batch/--explain 组合使用；--shortcut 仅 status 支持 --json)
   --explain       输出评分维度与扣分规则说明
   --shortcut install|status|change|remove
-                  管理命令入口：安装 / 查看状态 / 改名 / 移除
+                  管理命令入口：安装 / 查看状态 / 改名 / 移除（不带值默认为 status）
   --system        配合 --shortcut 使用系统级位置 (默认用户级)
   --accept-ac-risk 接受 ac 已知命名风险 (非交互安装 ac 时必填)
   --names 名称列表  配合 --shortcut install：指定安装的入口名（逗号分隔）
@@ -16813,18 +16813,18 @@ Options:
   --ipv6-only     With --active: IPv6 only
   --proxy HOST:PORT
                   Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP reputation, DNS leak check, TCP latency)
-  --proxy-user USER / --proxy-pass PASS
-                  Proxy authentication (optional)
+  --proxy-user USER / --proxy-pass PASS (both required together)
+                  Proxy authentication (optional; both or neither — one alone is an error)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
   --no-speed      Skip the speed test during self-check
   --with-speed    Force the speed test during self-check
   --no-geo-update  Disable automatic offline geo data updates
   --geo-update     Force a synchronous offline geo data refresh
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
-  --json          Output results in JSON format (works with passive IP, --active or --proxy; for --shortcut, only status supports --json)
+  --json          Output results in JSON format (works with passive IP, --active, --proxy, --speed, --batch or --explain; for --shortcut, only status supports --json)
   --explain       Show transparent scoring rules and weights
   --shortcut install|status|change|remove
-                  Manage command shortcuts: install / status / change / remove
+                  Manage command shortcuts: install / status / change / remove (bare --shortcut defaults to status)
   --system        With --shortcut: use system-wide locations (default is user-level)
   --accept-ac-risk Accept the known naming risk of ac (required for non-interactive ac install)
   --names NAMES     With --shortcut install: shortcut names to install (comma-separated)
@@ -16863,18 +16863,18 @@ Examples:
   --ipv6-only     配合 --active: 僅檢測 IPv6
   --proxy HOST:PORT
                   代理診斷模式 (SOCKS5 握手、代理出口 IP、出口 IP 信譽、DNS 洩漏、TCP 延遲)
-  --proxy-user USER / --proxy-pass PASS
-                  代理驗證 (可選)
+  --proxy-user USER / --proxy-pass PASS （須同時給出）
+                  代理驗證 (可選；只給其一會報錯退出)
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
   --no-speed      自檢時跳過網速測試
   --with-speed    自檢時強制進行網速測試
   --no-geo-update  停用離線 Geo 資料自動更新
   --geo-update     強制同步重新整理一次離線 Geo 資料
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
-  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用；--shortcut 僅 status 支援 --json)
+  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy/--speed/--batch/--explain 組合使用；--shortcut 僅 status 支援 --json)
   --explain       輸出評分維度與扣分規則說明
   --shortcut install|status|change|remove
-                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除
+                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除（不帶值預設為 status）
   --system        配合 --shortcut 使用系統級位置 (預設使用者級)
   --accept-ac-risk 接受 ac 已知命名風險 (非互動安裝 ac 時必填)
   --names 名稱清單  配合 --shortcut install：指定安裝的入口名（逗號分隔）
@@ -16912,18 +16912,18 @@ Examples:
   --ipv6-only     --active と併用: IPv6 のみ
   --proxy HOST:PORT
                   プロキシ診断 (SOCKS5 ハンドシェイク、プロキシ出口 IP、出口 IP の評価、DNS リーク、TCP 遅延)
-  --proxy-user USER / --proxy-pass PASS
-                  プロキシ認証 (任意)
+  --proxy-user USER / --proxy-pass PASS （両方同時に指定）
+                  プロキシ認証 (任意；片方のみはエラー)
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
   --no-speed      セルフチェック時に速度テストをスキップ
   --with-speed    セルフチェック時に速度テストを強制実行
   --no-geo-update  オフライン Geo データの自動更新を無効化
   --geo-update     オフライン Geo データを強制的に同期更新
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
-  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可；--shortcut では status のみ --json に対応)
+  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy、--speed、--batch、--explain と併用可；--shortcut では status のみ --json に対応)
   --explain       スコアリングのルールと重みを表示
   --shortcut install|status|change|remove
-                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
+                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除（値なしは status）
   --system        --shortcut と併用：システム全体の場所を使用 (既定はユーザー単位)
   --accept-ac-risk ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須)
   --names 名前一覧  --shortcut install と併用：インストールする入口名（カンマ区切り）
@@ -16961,18 +16961,18 @@ Examples:
   --ipv6-only     С --active: только IPv6
   --proxy HOST:PORT
                   Диагностика прокси (рукопожатие SOCKS5, выходной IP прокси, репутация выхода, утечка DNS, задержка TCP)
-  --proxy-user USER / --proxy-pass PASS
-                  Аутентификация прокси (необязательно)
+  --proxy-user USER / --proxy-pass PASS (указываются только вместе)
+                  Аутентификация прокси (необязательно; один без другого — ошибка)
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковая многопоточная скорость)
   --no-speed      Пропустить тест скорости при самопроверке
   --with-speed    Принудительно выполнять тест скорости при самопроверке
   --no-geo-update  Отключить автообновление офлайн-геоданных
   --geo-update     Принудительно синхронно обновить офлайн-геоданные
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
-  --json          Вывод в JSON (с IP, --active или --proxy; для --shortcut --json поддерживает только status)
+  --json          Вывод в JSON (с IP, --active, --proxy, --speed, --batch или --explain; для --shortcut --json поддерживает только status)
   --explain       Правила и веса скоринга
   --shortcut install|status|change|remove
-                  Управление ярлыками: установка / состояние / переименование / удаление
+                  Управление ярлыками: установка / состояние / переименование / удаление (без значения — status)
   --system        С --shortcut: системные каталоги (по умолчанию — уровень пользователя)
   --accept-ac-risk Принять известный риск имени ac (обязательно для неинтерактивной установки ac)
   --names ИМЕНА     С --shortcut install: имена ярлыков через запятую
@@ -17010,8 +17010,8 @@ Examples:
   --ipv6-only     همراه --active: فقط IPv6
   --proxy HOST:PORT
                   عیب‌یابی پروکسی (دست‌دهی SOCKS5، IP خروجی پروکسی، اعتبار خروجی، نشت DNS، تأخیر TCP)
-  --proxy-user USER / --proxy-pass PASS
-                  احراز هویت پروکسی (اختیاری)
+  --proxy-user USER / --proxy-pass PASS (هر دو با هم)
+                  احراز هویت پروکسی (اختیاری؛ تنها یکی خطاست)
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج سرعت با اتصالات همزمان)
   --no-speed      رد کردن تست سرعت هنگام خودبررسی
   --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
@@ -17019,10 +17019,10 @@ Examples:
   --geo-update     به‌روزرسانی همگام اجباری داده‌های جغرافیایی آفلاین
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
-  --json          خروجی JSON (با IP، --active یا --proxy؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
+  --json          خروجی JSON (با IP، --active، --proxy، --speed، --batch یا --explain؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
   --shortcut install|status|change|remove
-                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
+                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف (بدون مقدار، status است)
   --system        همراه --shortcut: استفاده از مسیرهای سیستمی (پیش‌فرض سطح کاربر)
   --accept-ac-risk پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است)
   --names نام‌ها     همراه --shortcut install: نام میانبرها (جدا شده با کاما)
