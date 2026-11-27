@@ -6829,8 +6829,9 @@ def run_passive(ip, json_mode=False):
             # 单池：滞留 worker 总数恒 ≤ max_workers（14），排队 future
             # 由下方循环 cancel（永不启动）；coordgeo 仍提交在同一 _ex
             # 上。残留风险：若全部 worker 同时被挂起的 provider 占满，
-            # 后续轮次会全 timeout，直到 worker 释放——有界（≤14 线程）
-            # 但可能饿死快源；彻底根治须 provider 侧可取消/超时，此处
+            # 后续轮次的快源须等 worker 释放才执行；但排队中从未启动的
+            # 源在下方收尾循环标 skipped、不误标 timeout（g05a case 7），
+            # 误标本身已消除。彻底根治须 provider 侧可取消/超时，此处
             # 不展开。正常完成时不动池。
         except KeyboardInterrupt:
             # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
@@ -6840,7 +6841,25 @@ def run_passive(ip, json_mode=False):
             raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
-                sources[_p.key] = {"ok": False, "err": "timeout"}
+                # fix440-merge：超时收尾须分三态，不得一律标 timeout——
+                # (1) 已完成但 as_completed 超时前未来得及取回：取真实结果；
+                # (2) 从未启动（池被上一轮挂起的 worker 占满、排队中）：
+                # 标 skipped 而非 timeout（g05a case 7：从未执行的源不得
+                # 误标 timeout），cancel 后永不启动；(3) 运行中未完成：
+                # 仍标 timeout。单池复用（G-019/G-022）的残留风险只剩
+                # 快源须等 worker 释放才执行，误标本身已消除。
+                if _f.done() and not _f.cancelled():
+                    try:
+                        _k2, _v2 = _f.result()
+                        sources[_p.key] = _v2
+                        continue
+                    except Exception:
+                        sources[_p.key] = {"ok": False, "err": "timeout"}
+                        continue
+                if not _f.running():
+                    sources[_p.key] = {"ok": False, "err": "skipped"}
+                else:
+                    sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
         # r5a-6：同上，无锁赋值。
@@ -8144,7 +8163,25 @@ def run_passive6(ip, json_mode=False):
             raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
-                sources[_p.key] = {"ok": False, "err": "timeout"}
+                # fix440-merge：超时收尾须分三态，不得一律标 timeout——
+                # (1) 已完成但 as_completed 超时前未来得及取回：取真实结果；
+                # (2) 从未启动（池被上一轮挂起的 worker 占满、排队中）：
+                # 标 skipped 而非 timeout（g05a case 7：从未执行的源不得
+                # 误标 timeout），cancel 后永不启动；(3) 运行中未完成：
+                # 仍标 timeout。单池复用（G-019/G-022）的残留风险只剩
+                # 快源须等 worker 释放才执行，误标本身已消除。
+                if _f.done() and not _f.cancelled():
+                    try:
+                        _k2, _v2 = _f.result()
+                        sources[_p.key] = _v2
+                        continue
+                    except Exception:
+                        sources[_p.key] = {"ok": False, "err": "timeout"}
+                        continue
+                if not _f.running():
+                    sources[_p.key] = {"ok": False, "err": "skipped"}
+                else:
+                    sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
         # r5a-6：同上，无锁赋值。
