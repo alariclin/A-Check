@@ -198,6 +198,7 @@ STR = {
         "diag_speed_fail": "吞吐测速失败",
         "batch_tp_testing": "测最优节点吞吐中…",
         "batch_tp_ok": "★ 最优节点实测下载: %.1f Mbps (经代理 · %s)",
+        "batch_tp_fail": "最优节点吞吐测试失败",
         "batch_hint": "逐行粘贴节点 (host:port 或 socks5://[user:pass@]host:port)，空行开始测试，b 返回",
         "batch_best": "最优",
         "batch_dead": "不可用",
@@ -260,6 +261,7 @@ STR = {
         "risk_low": "低风险",
         "risk_medium": "中风险",
         "risk_high": "高风险",
+        "verdict": "综合结论",
         "verdict_clean": "● 未发现明确风险信号",
         "verdict_low": "● 轻微风险",
         "verdict_medium": "● 中等风险",
@@ -411,6 +413,7 @@ STR = {
         "diag_speed_fail": "Throughput test failed",
         "batch_tp_testing": "Testing best node throughput…",
         "batch_tp_ok": "★ Best node measured download: %.1f Mbps (via proxy · %s)",
+        "batch_tp_fail": "Best-node throughput test failed",
         "batch_hint": "Paste nodes line by line (host:port or socks5://[user:pass@]host:port), empty line to start, b back",
         "batch_best": "Best",
         "batch_dead": "unusable",
@@ -473,6 +476,7 @@ STR = {
         "risk_low": "Low",
         "risk_medium": "Medium",
         "risk_high": "High",
+        "verdict": "Verdict",
         "verdict_clean": "● No clear risk signals",
         "verdict_low": "● Minor risk",
         "verdict_medium": "● Moderate risk",
@@ -488,7 +492,7 @@ STR = {
         "platform_note": "※ A high platform compatibility score indicates data center/proxy traits; some platforms may require additional verification, but this does not indicate malicious activity",
         "success_query": "Succeeded",
         "failed_sources": "Failed",
-        "fail_note": "※ Failed sources treated as [Unverifiable], excluded from scoring — does not mean clean",
+        "fail_note": "※ Failed sources are [Unverifiable], excluded from scoring — not clean",
         "rate_limit_hint": "※ Several sources rate-limited at once — usually the current egress IP (proxy relay / shared egress) quota is exhausted; retry once via a direct connection or a residential egress",
         "confidence": "Confidence",
         "disclaimer": "Note: passive queries reflect OSINT only; no evidence ≠ no risk.\nDC IP platform policy risk needs separate assessment.",
@@ -624,6 +628,7 @@ STR = {
         "diag_speed_fail": "吞吐測速失敗",
         "batch_tp_testing": "測最優節點吞吐中…",
         "batch_tp_ok": "★ 最優節點實測下載: %.1f Mbps (經代理 · %s)",
+        "batch_tp_fail": "最優節點吞吐測試失敗",
         "batch_hint": "逐行貼上節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
         "batch_best": "最優",
         "batch_dead": "不可用",
@@ -686,6 +691,7 @@ STR = {
         "risk_low": "低風險",
         "risk_medium": "中風險",
         "risk_high": "高風險",
+        "verdict": "綜合結論",
         "verdict_clean": "● 未發現明確風險信號",
         "verdict_low": "● 輕微風險",
         "verdict_medium": "● 中等風險",
@@ -837,6 +843,7 @@ STR = {
         "diag_speed_fail": "スループット測定に失敗",
         "batch_tp_testing": "最速ノードのスループットを測定中…",
         "batch_tp_ok": "★ 最速ノード実測ダウンロード: %.1f Mbps (プロキシ経由 · %s)",
+        "batch_tp_fail": "最速ノードのスループット測定に失敗しました",
         "batch_hint": "ノードを1行ずつ貼り付け (host:port または socks5://[user:pass@]host:port)、空行で開始、b 戻る",
         "batch_best": "最速",
         "batch_dead": "利用不可",
@@ -899,6 +906,7 @@ STR = {
         "risk_low": "低リスク",
         "risk_medium": "中リスク",
         "risk_high": "高リスク",
+        "verdict": "総合判定",
         "verdict_clean": "● 明確なリスクシグナルなし",
         "verdict_low": "● 軽微なリスク",
         "verdict_medium": "● 中程度のリスク",
@@ -1050,6 +1058,7 @@ STR = {
         "diag_speed_fail": "Тест пропускной способности не удался",
         "batch_tp_testing": "Измерение пропускной способности лучшего узла…",
         "batch_tp_ok": "★ Лучший узел, измеренная загрузка: %.1f Mbps (через прокси · %s)",
+        "batch_tp_fail": "Не удалось измерить пропускную способность лучшего узла",
         "batch_hint": "Вставляйте узлы по одному (host:port или socks5://[user:pass@]host:port), пустая строка — старт, b назад",
         "batch_best": "Лучший",
         "batch_dead": "недоступен",
@@ -1112,6 +1121,7 @@ STR = {
         "risk_low": "Низкий риск",
         "risk_medium": "Средний риск",
         "risk_high": "Высокий риск",
+        "verdict": "Вердикт",
         "verdict_clean": "● Явных признаков риска нет",
         "verdict_low": "● Незначительный риск",
         "verdict_medium": "● Средний риск",
@@ -1127,7 +1137,7 @@ STR = {
         "platform_note": "※ Высокий балл по совместимости с платформами указывает на признаки ДЦ/прокси; некоторые платформы могут требовать усиленной проверки. Это не означает вредоносность.",
         "success_query": "Успешных запросов",
         "failed_sources": "Источники с ошибками",
-        "fail_note": "※ Источникам с ошибками присваивается статус [Невозможно проверить]; они не учитываются при расчёте риска — это не означает, что IP чистый.",
+        "fail_note": "※ Источники с ошибками: [Невозможно проверить], в риск не входят.",
         "rate_limit_hint": "※ Сразу несколько источников вернули ограничение частоты — обычно это означает, что квота текущего выходного IP (прокси-реле / общий выход) исчерпана; повторите проверку напрямую или через residential-выход",
         "confidence": "Достоверность",
         "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски, связанные с правилами платформ для IP-адресов дата-центров, необходимо оценивать отдельно.",
@@ -1263,13 +1273,14 @@ STR = {
         "diag_speed_fail": "تست توان عملیاتی ناموفق بود",
         "batch_tp_testing": "در حال اندازه‌گیری توان عملیاتی بهترین گره…",
         "batch_tp_ok": "★ دانلود اندازه‌گیری‌شده بهترین گره: %.1f Mbps (از طریق پروکسی · %s)",
+        "batch_tp_fail": "آزمایش توان عملیاتی بهترین گره ناموفق بود",
         "batch_hint": "گره‌ها را خط به خط وارد کنید (host:port یا socks5://[user:pass@]host:port)، خط خالی شروع، b بازگشت",
         "batch_best": "بهترین",
         "batch_dead": "غیرقابل استفاده",
         "batch_col_node": "گره",
         "batch_col_avg": "میانگین",
         "batch_col_jitter": "جیتر",
-        "batch_col_loss": "اتلاف بسته",
+        "batch_col_loss": "اتلاف",
         "batch_col_proto": "HS",
         "bn_system": "سیستم",
         "bn_hardware": "سخت‌افزار",
@@ -1325,6 +1336,7 @@ STR = {
         "risk_low": "ریسک کم",
         "risk_medium": "ریسک متوسط",
         "risk_high": "ریسک بالا",
+        "verdict": "جمع‌بندی",
         "verdict_clean": "● سیگنال خطر مشخصی یافت نشد",
         "verdict_low": "● ریسک جزئی",
         "verdict_medium": "● ریسک متوسط",
@@ -1340,7 +1352,7 @@ STR = {
         "platform_note": "※ امتیاز بالای سازگاری با پلتفرم‌ها = ویژگی دیتاسنتر/پروکسی؛ ممکن است برخی پلتفرم‌ها بررسی‌های سخت‌گیرانه‌تری اعمال کنند؛ این به معنای مخرب بودن نیست",
         "success_query": "پرس‌وجوی موفق",
         "failed_sources": "منابع ناموفق",
-        "fail_note": "※ منابع ناموفق [غیرقابل تأیید] محسوب می‌شوند و در نمره ریسک لحاظ نمی‌شوند — به معنای پاک بودن نیست",
+        "fail_note": "※ منابع ناموفق [غیرقابل تأیید] هستند و در نمره نیستند — پاک بودن نیست",
         "rate_limit_hint": "※ چند منبع هم‌زمان با محدودیت نرخ مواجه شدند — معمولاً یعنی سهمیه IP خروجی فعلی (ریلی پروکسی / خروجی مشترک) تمام شده است؛ یک بار با اتصال مستقیم یا خروجی مسکونی دوباره امتحان کنید",
         "confidence": "اطمینان",
         "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک ناشی از سیاست‌های پلتفرم‌ها برای IPهای دیتاسنتر باید جداگانه ارزیابی شود.",
@@ -1506,6 +1518,17 @@ def _clamp_score(v):
         return None
     f = max(0.0, min(100.0, f))
     return int(f) if f == int(f) else f
+
+
+def _coerce_score(v):
+    """L7/L8：打印层分值清洗——仅接受有限数值（bool 除外）；缺失/None/
+    字符串等非数值一律返 None（未知，印 "—"），不得把未知印成 0 或把
+    字符串原样印成数字（与 _clamp_score 拒收数字串的口径一致）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    if not math.isfinite(v):
+        return None
+    return v
 
 
 def _clean_coord(v, lo, hi):
@@ -1700,7 +1723,8 @@ def _render_progress_locked(current, total, name="", json_mode=False):
     if json_mode:
         return
     bar_len = 28
-    filled = int(bar_len * current / max(total, 1))
+    # L10：filled 钳制到 [0, bar_len]——current>total 时条长不得超 bar_len。
+    filled = min(bar_len, max(0, int(bar_len * current / max(total, 1))))
     bar = "█" * filled + "░" * (bar_len - filled)
     msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
     _lim = max(10, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
@@ -6352,20 +6376,39 @@ def run_passive(ip, json_mode=False):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            with _progress_lock:
-                progress_closed[0] = True
+            # r5a-6：超时处理不得取 _progress_lock——卡住的进度渲染
+            # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
+            # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
+            progress_closed[0] = True
+            # r5a-7：超时且仍有未完成 future 时，旧池的运行中任务会占满
+            # worker、下一轮全 timeout——旧池 shutdown（不等运行中任务，
+            # 取消排队任务）后新建池并重绑全局与局部 _ex（coordgeo 提交
+            # 在 _ex 上，须用新池；正常完成时不动池）。替换假定无并发
+            # 提交方（菜单/CLI 皆单线程调用），见报告。
+            if any(not _f.done() for _f in _futs):
+                _old_pool = _ex
+                _old_pool.shutdown(wait=False, cancel_futures=True)
+                with _POOL_LOCK:
+                    _V4_POOL = ThreadPoolExecutor(max_workers=14)
+                    _ex = _V4_POOL
+        except KeyboardInterrupt:
+            # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
+            # 后重新抛出（finally 复位进度状态）。
+            for _f in _futs:
+                _f.cancel()
+            raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
                 sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        with _progress_lock:
-            progress_closed[0] = True
-        # 共享池不 shutdown：复用方持有，关掉即断后续调用
+        # r5a-6：同上，无锁赋值。
+        progress_closed[0] = True
+        # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
     if not json_mode:
         with _progress_lock:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     # OPT-4：画像只读 sources（score_* 亦只读、不写 sources），故 _prof
     # 可前移到评分之前；逆地理随即提交到共享池，与评分/完整度/verdict
@@ -6505,7 +6548,8 @@ def _type_block(t):
 
 
 def _print_streaming_inference(res):
-    s = res["sources"]
+    # L1：print_report 缺 sources 时亦不得在此崩。
+    s = res.get("sources") or {}
     prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
     _section(T("sec_stream_passive"))
     country = prof.get("country", "") or ""
@@ -6910,16 +6954,16 @@ def _print_streaming_inference(res):
 def _print_completeness(res):
     """数据完整度与置信度 (报告尾部, 两模式共用)。"""
     _section(T("sec_complete"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
+    c = res.get("completeness") or {}
+    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    if c.get("failed"):
         # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
         # 加共享出口配额耗尽提示（不改变评分）。
-        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
     print(f"  {_c(C.dim, T('fail_note'))}")
     if len(c.get("rate_limited") or []) >= 2:
         print(f"  {_c(C.dim, T('rate_limit_hint'))}")
-    print(f"  {T('confidence')}: {c['confidence']}/100")
+    print(f"  {T('confidence')}: {c.get('confidence', '?')}/100")
 
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -6928,17 +6972,22 @@ def _print_completeness(res):
 
 
 def _print_basic_block(s, prof):
+    # L1：手造/残缺 res 可达——源字典取值 None 或 prof 缺失不得崩。
+    s = s or {}
+    prof = prof or {}
     _section(T("sec_basic"))
-    wi = s.get("ipwhois", {})
-    ii = s.get("ipinfo", {})
-    db = s.get("dbip", {})
+    wi = (s.get("ipwhois") or {})
+    ii = (s.get("ipinfo") or {})
+    db = (s.get("dbip") or {})
     if prof.get("ok"):
         isp_str = prof.get("isp") or "?"
         org_str = prof.get("org") or ""
         _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
         _isp_disp = isp_str + (f" / {org_str}" if org_str and org_str != isp_str else "")
+        # L9：ISP/org 全量拼接会超 80 列，按显示宽截断（AS 后缀保留）。
+        _isp_disp = _truncate_disp(_isp_disp, max(0, 80 - 2 - _disp_width(T("isp") + ":") - 1 - _disp_width(_as_sfx)))
         print(f"  {_c(C.dim, T('isp') + ':')} {_c(C.bold, _isp_disp)}" + (_c(C.cyan, _as_sfx) if _as_sfx else ""))
-    rs = s.get("ripestat", {})
+    rs = (s.get("ripestat") or {})
     if rs.get("ok"):
         if rs.get("age_years") is not None:
             age = f"{rs['age_years']} {(_ru_plural(rs['age_years'], 'год', 'года', 'лет') if LANG == 'ru' else T('years'))}"
@@ -6949,27 +6998,34 @@ def _print_basic_block(s, prof):
         vis = _strip_cc(rs.get("visibility") or "?")
         first = _strip_cc(rs.get("first_seen") or "?")
         print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
-    pt = s.get("ptr", {})
+    pt = (s.get("ptr") or {})
     if pt.get("ok"):
         if pt.get("ptr"):
-            fcr = "✓" if pt.get("fcrdns") else "✗"
-            _fc = C.green if pt.get("fcrdns") else C.red
+            # r5a-1：fcrdns 未验证（None/缺失）是“未知”，不得画成红色 ✗
+            # （与已验证不匹配完全相同）；仅严格 False 才画红 ✗。
+            _fcr = _strict_bool(pt.get("fcrdns"))
+            if _fcr is True:
+                fcr, _fc = "✓", C.green
+            elif _fcr is False:
+                fcr, _fc = "✗", C.red
+            else:
+                fcr, _fc = "?", C.yellow
             print(f"  {_c(C.dim, 'PTR')} [{_c(_fc, fcr)}]: {_c(C.bold, pt['ptr'])}")
         else:
             print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('ptr_none'))}")
     else:
         print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('unverifiable'))}")
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
     if pc.get("ok") and pc.get("range"):
         print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, pc['range'])}")
     else:
-        _rd = s.get("rdap", {})
+        _rd = (s.get("rdap") or {})
         if _rd.get("ok") and _rd.get("cidr"):
             print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, _rd['cidr'])}")
 
     # 地理位置组: 国家码徽章排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
 
     def _has_loc(*vals):
         # 定位记录判空：按全部展示字段判（省州亦计入），空白字符串视为空，
@@ -6989,39 +7045,39 @@ def _print_basic_block(s, prof):
     if pc.get("ok") and _has_loc(_clean_str(pc.get("country")), _clean_str(pc.get("city"))):
         locs.append(("proxycheck", _join_nonempty(_clean_str(pc.get("country")), _clean_str(pc.get("city"))),
                      _clean_str(pc.get("country")), _clean_str(pc.get("city"))))
-    fp = s.get("freeipapi", {})
+    fp = (s.get("freeipapi") or {})
     if fp.get("ok") and _has_loc(_clean_str(fp.get("country")), _clean_str(fp.get("city"))):
         locs.append(("freeipapi", _join_nonempty(_clean_str(fp.get("country")), _clean_str(fp.get("city"))),
                      _clean_str(fp.get("country")), _clean_str(fp.get("city"))))
-    wap = s.get("ipwhoisapp", {})
+    wap = (s.get("ipwhoisapp") or {})
     if wap.get("ok") and _has_loc(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))):
         locs.append(("ipwhois.app", _join_nonempty(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))),
                      _clean_str(wap.get("country")), _clean_str(wap.get("city"))))
-    ais = s.get("ipapiis", {})
+    ais = (s.get("ipapiis") or {})
     if ais.get("ok") and _has_loc(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))):
         locs.append(("ipapi.is", _join_nonempty(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))),
                      _clean_str(ais.get("country")), _clean_str(ais.get("city"))))
-    igd = s.get("ipguide", {})
+    igd = (s.get("ipguide") or {})
     if igd.get("ok") and _has_loc(_clean_str(igd.get("country")), _clean_str(igd.get("city"))):
         locs.append(("ip.guide", _join_nonempty(_clean_str(igd.get("country")), _clean_str(igd.get("city"))),
                      _clean_str(igd.get("country")), _clean_str(igd.get("city"))))
-    ilc = s.get("iplocate", {})
+    ilc = (s.get("iplocate") or {})
     if ilc.get("ok") and _has_loc(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))):
         locs.append(("iplocate.io", _join_nonempty(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))),
                      _clean_str(ilc.get("country")), _clean_str(ilc.get("city"))))
-    iqc = s.get("ipquery", {})
+    iqc = (s.get("ipquery") or {})
     if iqc.get("ok") and _has_loc(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))):
         locs.append(("ipquery.io", _join_nonempty(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))),
                      _clean_str(iqc.get("country")), _clean_str(iqc.get("city"))))
-    coc = s.get("ipapico", {})
+    coc = (s.get("ipapico") or {})
     if coc.get("ok") and _has_loc(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))):
         locs.append(("ipapi.co", _join_nonempty(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))),
                      _clean_str(coc.get("country")), _clean_str(coc.get("city"))))
-    tic = s.get("twoip", {})
+    tic = (s.get("twoip") or {})
     if tic.get("ok") and _has_loc(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))):
         locs.append(("2ip.io", _join_nonempty(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))),
                      _clean_str(tic.get("country")), _clean_str(tic.get("city"))))
-    gjs = s.get("geojs", {})
+    gjs = (s.get("geojs") or {})
     if gjs.get("ok") and _has_loc(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))):
         locs.append(("GeoJS", _join_nonempty(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))),
                      _clean_str(gjs.get("country")), _clean_str(gjs.get("city"))))
@@ -7099,7 +7155,10 @@ def _print_basic_block(s, prof):
                 return _CC[txt]
             if txt in _CC_EN:
                 return _CC_EN[txt].lower()
-            txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
+            # r5a-9：不得删独立单词 City——"Union City" 与 "Union"
+            # 是两个城市，删后会错误合并为同一位置组；sheng/province/
+            # shi 仍 strip（"Beijing Shi" 与 "Beijing" 是同一城市）。
+            txt = re.sub(r"\b(?:sheng|province|shi)\b", " ", txt)
             return " ".join(txt.split())
 
         # 求同存异: 相同 (国家, 行政区, 城市) 合并为一行, 不同位置逐行对齐列出
@@ -7117,7 +7176,7 @@ def _print_basic_block(s, prof):
                 _order.append(k)
             _groups[k][1].append(name)
         _order.sort(key=lambda k: -len(_groups[k][1]))
-    _cg = s.get("coordgeo", {})
+    _cg = (s.get("coordgeo") or {})
     _pcc = prof.get("country_code") or ""
     if not _pcc and locs and _order:
         # B-8-4：回退只取与画像国家一致的最大位置组——此前不校验，
@@ -7152,7 +7211,9 @@ def _print_basic_block(s, prof):
     if _has_geo:
         print(f"  {_c(C.bold, _c(C.cyan, T('geo_group')))}")
         if _loc_str:
-            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_str}")
+            # L9：长城市名会撑破 80 列，按显示宽截断。
+            _loc_disp = _truncate_disp(_loc_str, max(0, 80 - 2 - 5 - _disp_width(T("location") + ":") - 1))
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_disp}")
         if prof.get("timezone"):
             print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {_loc_tz(prof['timezone'])}")
         if prof.get("latitude") is not None and prof.get("longitude") is not None:
@@ -7182,7 +7243,23 @@ def _print_basic_block(s, prof):
                 _disp = _join_nonempty(_f_co_t,
                                        _extra_sub(_f_mid_t, 'region', _disp),
                                        _extra_sub(_f_ci_t, 'city', _disp))
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                _names_sfx = (' (' + ', '.join(_names) + ')') if _names else ''
+                # L9：长城市/行政区会撑破 80 列，按显示宽截断。
+                # 后缀本身过长时（多源同组）须先缩后缀、给位置留至少 20 列——
+                # 否则位置预算归零、位置文本被挤到空串，且行宽仍超 80
+                # （7 源同组实测：后缀 73 列，位置全失、行宽 102）。
+                _disp_budget = (80 - 2 - _disp_width(_gf)
+                                - _disp_width(_lbl + ':') - 1
+                                - _disp_width(_names_sfx))
+                if _disp_budget < 20 and _names_sfx:
+                    _names_sfx = _truncate_disp(_names_sfx, max(
+                        0, 80 - 2 - _disp_width(_gf)
+                        - _disp_width(_lbl + ':') - 1 - 20))
+                    _disp_budget = (80 - 2 - _disp_width(_gf)
+                                    - _disp_width(_lbl + ':') - 1
+                                    - _disp_width(_names_sfx))
+                _disp_t = _truncate_disp(_disp, max(0, _disp_budget))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp_t}{_c(C.dim, _names_sfx)}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -7197,8 +7274,30 @@ def _factor_rows(s, wi_server, v6=False):
     其余 13 行与 v4 同源（此前 v6 独立维护的 6 行漏了 iplocate/ipquery/2ip/X4BNet/IPsum/blocklist.de/OTX，
     致 v6 因子百分比系统性偏低，如 X4BNet listed 时 VPN 因子误显 0%）。
     Shodan 漏洞不计入恶意列（漏洞暴露≠恶意行为；漏洞证据仍在威胁分与信号区）。"""
+    def _num(v):
+        # r5a-4：数值清洗——数值与数字串转 float；其余返 None。
+        # level "0" 字符串不再直接参与 >= 比较抛 TypeError。
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            return v if math.isfinite(v) else None
+        if isinstance(v, str):
+            try:
+                _f = float(v.strip())
+            except (TypeError, ValueError):
+                return None
+            return _f if math.isfinite(_f) else None
+        return None
+
     def _h(d, cond):
+        # r5a-4：cond 为值或零参可调用——失败源（ok 非真）不求值即返 None，
+        # 本应跳过的失败源不再因实参求值抛错；cond 为 None 表示判定字段
+        # 缺失（r5a-3），返 None（未知，不计入分母），不得计成否定票。
         if not d.get("ok"):
+            return None
+        if callable(cond):
+            cond = cond()
+        if cond is None:
             return None
         return True if cond else False
 
@@ -7224,19 +7323,25 @@ def _factor_rows(s, wi_server, v6=False):
         ("StopForumSpam", [None, None, None, None,
                            _h(sf, _sfs_hit(sf)), None]),
         ("urlscan.io", [None, None, None, None, None,
-                        _h(us, (us.get("total") or 0) > 0)]),
+                        _h(us, lambda: None if us.get("total") is None
+                            else (_num(us.get("total")) or 0) > 0)]),
         ("SANS ISC", [None, None, None, None, None,
                       None if sa.get("attack_count") is None else _h(sa, bool(sa.get("attack_count")))]),
         ("Shodan", [None, None, None, None, None, None]),
         ("GreyNoise", [None, None, None, None, None,
-                       _h(gn, gn.get("classification") == "malicious")]),
+                       _h(gn, lambda: None if gn.get("classification") is None
+                           else gn.get("classification") == "malicious")]),
         ("Feodo", [None, None, None, None,
-                   _h(fe, _strict_bool(fe.get("listed")) is True), None]),
+                   _h(fe, lambda: None if fe.get("listed") is None
+                       else _strict_bool(fe.get("listed")) is True), None]),
         ("EmergingThreats", [None, None, None, None,
-                             _h(et, _strict_bool(et.get("listed")) is True), None]),
+                             _h(et, lambda: None if et.get("listed") is None
+                                 else _strict_bool(et.get("listed")) is True), None]),
         ("Spamhaus DROP", [None, None, None, None,
-                           _h(sp, _strict_bool(sp.get("listed")) is True), None]),
-        ("Tor Exit", [None, None, _h(te, _strict_bool(te.get("is_tor_exit")) is True),
+                           _h(sp, lambda: None if sp.get("listed") is None
+                               else _strict_bool(sp.get("listed")) is True), None]),
+        ("Tor Exit", [None, None, _h(te, lambda: None if te.get("is_tor_exit") is None
+                      else _strict_bool(te.get("is_tor_exit")) is True),
                       None, None, None]),
         ("proxycheck", [
             None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
@@ -7272,19 +7377,27 @@ def _factor_rows(s, wi_server, v6=False):
             None, None]),
         ("X4BNet VPN", [
             None,
-            _h(xv, _strict_bool(xv.get("listed")) is True),
+            _h(xv, lambda: None if xv.get("listed") is None
+                else _strict_bool(xv.get("listed")) is True),
             None, None, None, None]),
         ("IPsum", [
             None, None, None, None,
-            _h(isum, (isum.get("level") or 0) >= 2),
+            _h(isum, lambda: None if isum.get("level") is None
+                else (_num(isum.get("level")) or 0) >= 2),
             None]),
         ("blocklist.de", [
             None, None, None, None,
-            _h(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
+            _h(bd, lambda: None if bd.get("attacks") is None
+                and bd.get("reports") is None
+                else ((_num(bd.get("attacks")) or 0) > 0
+                      or (_num(bd.get("reports")) or 0) > 0)),
             None]),
         ("OTX", [
             None, None, None, None, None,
-            _h(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
+            _h(ox, lambda: None if ox.get("reputation") is None
+                and ox.get("pulses") is None
+                else ((_num(ox.get("reputation")) or 0) > 0
+                      or (_num(ox.get("pulses")) or 0) > 0))]),
     ]
     if v6:
         _v4only = {"StopForumSpam", "urlscan.io", "SANS ISC", "GreyNoise",
@@ -7295,165 +7408,173 @@ def _factor_rows(s, wi_server, v6=False):
 
 def print_report(res, include_streaming_inference=True, sysinfo=None,
                  tail_completeness=True, dns_rec=False, footnote="passive"):
-    _sec_begin()
-    s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    scs = res["scores"]
-    ip = res["ip"]
+    try:
+        _sec_begin()
+        s = res.get("sources") or {}
+        prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
+        scs = res.get("scores") or {}
+        ip = res.get("ip", "?")
 
-    print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
-    # [1] 基础信息 (支持多源融合兜底)
-    _print_basic_block(s, prof)
-    wi = s.get("ipwhois", {})
+        # [1] 基础信息 (支持多源融合兜底)
+        _print_basic_block(s, prof)
+        wi = (s.get("ipwhois") or {})
 
-    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
+        # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
+        if sysinfo:
+            print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
-    _section(T("sec_type"), sub=True)
-    type_sources = []
-    pc = s.get("proxycheck", {})
-    if pc.get("ok") and pc.get("type"):
-        type_sources.append(("proxycheck", pc["type"]))
-    if wi.get("ok"):
-        if wi.get("hosting"):
-            type_sources.append(("ipwho.is", T("dc")))
-        else:
-            dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-            if dc:
-                type_sources.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
+        # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
+        _section(T("sec_type"), sub=True)
+        type_sources = []
+        pc = (s.get("proxycheck") or {})
+        if pc.get("ok") and pc.get("type"):
+            type_sources.append(("proxycheck", pc["type"]))
+        if wi.get("ok"):
+            if wi.get("hosting"):
+                type_sources.append(("ipwho.is", T("dc")))
+            else:
+                dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                if dc:
+                    type_sources.append((T("heuristic"), T("dc")))
+                elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
+                    type_sources.append((T("heuristic"), T("residential")))
+                else:
+                    type_sources.append((T("heuristic"), T("unknown")))
+        il = (s.get("iplocate") or {})
+        if il.get("ok"):
+            if il.get("hosting") or il.get("asn_type") == "hosting":
+                type_sources.append(("iplocate.io", T("dc")))
+            elif il.get("asn_type") == "isp":
                 type_sources.append((T("heuristic"), T("residential")))
             else:
-                type_sources.append((T("heuristic"), T("unknown")))
-    il = s.get("iplocate", {})
-    if il.get("ok"):
-        if il.get("hosting") or il.get("asn_type") == "hosting":
-            type_sources.append(("iplocate.io", T("dc")))
-        elif il.get("asn_type") == "isp":
-            type_sources.append((T("heuristic"), T("residential")))
+                type_sources.append(("iplocate.io", T("unknown")))
+        iq = (s.get("ipquery") or {})
+        if iq.get("ok"):
+            if iq.get("datacenter"):
+                type_sources.append(("ipquery.io", T("dc")))
+            elif iq.get("mobile"):
+                type_sources.append(("ipquery.io", T("mobile")))
+            else:
+                type_sources.append((T("heuristic"), T("residential")
+                                     if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
+                                     else T("unknown")))
+        if not wi.get("ok") and prof.get("ok"):
+            dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if dc:
+                type_sources.append((T("heuristic"), T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                type_sources.append((T("heuristic"), T("residential")))
+        if type_sources:
+            print("  " + _pad(_truncate_disp(T("database"), 12), 12) + "".join(_pad(_truncate_disp(n, 16), 16) for n, _ in type_sources))
+            cells = []
+            for _, t in type_sources:
+                colored, _ = _type_block(t)
+                # L9：未知长类型名原样进表会超 80 列，按显示宽截断。
+                cells.append(_pad(_truncate_disp(colored, 16), 16))
+            print("  " + _pad(_truncate_disp(T("usage_type"), 12), 12) + "".join(cells))
         else:
-            type_sources.append(("iplocate.io", T("unknown")))
-    iq = s.get("ipquery", {})
-    if iq.get("ok"):
-        if iq.get("datacenter"):
-            type_sources.append(("ipquery.io", T("dc")))
-        elif iq.get("mobile"):
-            type_sources.append(("ipquery.io", T("mobile")))
+            print(f"  {T('no_type_data')}")
+
+        # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
+        _section(T("sec_matrix"))
+
+        _NA = None
+        _Q = "?"
+
+        il = (s.get("iplocate") or {})
+        iq = (s.get("ipquery") or {})
+
+        dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                      if wi.get("ok") else (None, ""))
+        if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+            # r5a-2：源明确给出 hosting  verdict 时以源为准，本地 ISP 启发式
+            # 不得反转它（hosting=False + Amazon 启发式此前误判服务器因子 100%）。
+            dc_w = _strict_bool(wi.get("hosting"))
+        wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
+
+        _rows = _factor_rows(s, wi_server)
+        # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
+        _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                    T("f_blacklist"), T("f_malicious")]
+        _lw = _bar_label_width()
+        for _ci, _fname in enumerate(_factors):
+            _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+            if _decided:
+                _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            else:
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+        # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
+        _section(T("sec_fraud"))
+        sc = (s.get("scamalytics") or {})
+        _srows = [("Scamalytics",
+                   _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn, _dv in ((T("dim_threat"), scs.get("threat") or (0, [])),
+                         (T("dim_fraud"), scs.get("fraud") or (0, [])),
+                         (T("dim_reputation"), scs.get("reputation") or (0, [])),
+                         (T("dim_platform"), scs.get("platform") or (0, []))):
+            _srows.append((_dn, _dv[0], ""))
+        _combined = scs.get("combined") or 0
+        _purity = 100 - _combined
+        if _purity >= 85:
+            _pl, _pc = T("purity_best"), C.green
+        elif _purity >= 70:
+            _pl, _pc = T("purity_good"), C.green
+        elif _purity >= 50:
+            _pl, _pc = T("purity_fair"), C.yellow
+        elif _purity >= 30:
+            _pl, _pc = T("purity_poor"), C.yellow
         else:
-            type_sources.append((T("heuristic"), T("residential")
-                                 if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
-                                 else T("unknown")))
-    if not wi.get("ok") and prof.get("ok"):
-        dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if dc:
-            type_sources.append((T("heuristic"), T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            type_sources.append((T("heuristic"), T("residential")))
-    if type_sources:
-        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in type_sources))
-        cells = []
-        for _, t in type_sources:
-            colored, _ = _type_block(t)
-            cells.append(_pad(colored, 16))
-        print("  " + _pad(T("usage_type"), 12) + "".join(cells))
-    else:
-        print(f"  {T('no_type_data')}")
+            _pl, _pc = T("purity_bad"), C.red
+        _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
+        _srows.append((T("purity"), _purity, _pl))
+        _lw3 = _bar_label_width()
+        for _n, _v, _extra in _srows:
+            if _v is None:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            elif _n == T("purity"):
+                print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
+            elif _extra:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
+            else:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
+        _verdict = res.get("verdict")
+        if _verdict:
+            print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
+        print(f"  {_c(C.dim, T('purity_note'))}")
+        if (scs.get("platform") or (0,))[0] >= 30:
+            print(f"  {_c(C.dim, T('platform_note'))}")
 
-    # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
-    _section(T("sec_matrix"))
-
-    _NA = None
-    _Q = "?"
-
-    il = s.get("iplocate", {})
-    iq = s.get("ipquery", {})
-
-    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-                  if wi.get("ok") else (None, ""))
-    if wi.get("ok") and wi.get("hosting"):
-        dc_w = True
-    wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
-
-    _rows = _factor_rows(s, wi_server)
-    # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
-    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
-                T("f_blacklist"), T("f_malicious")]
-    _lw = _bar_label_width()
-    for _ci, _fname in enumerate(_factors):
-        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
-        if _decided:
-            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
-        else:
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-
-    # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
-    _section(T("sec_fraud"))
-    sc = s.get("scamalytics", {})
-    _srows = [("Scamalytics",
-               sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
-    for _dn, _dv in ((T("dim_threat"), scs["threat"]),
-                     (T("dim_fraud"), scs["fraud"]),
-                     (T("dim_reputation"), scs["reputation"]),
-                     (T("dim_platform"), scs["platform"])):
-        _srows.append((_dn, _dv[0], ""))
-    _combined = scs["combined"]
-    _purity = 100 - _combined
-    if _purity >= 85:
-        _pl, _pc = T("purity_best"), C.green
-    elif _purity >= 70:
-        _pl, _pc = T("purity_good"), C.green
-    elif _purity >= 50:
-        _pl, _pc = T("purity_fair"), C.yellow
-    elif _purity >= 30:
-        _pl, _pc = T("purity_poor"), C.yellow
-    else:
-        _pl, _pc = T("purity_bad"), C.red
-    _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
-    _srows.append((T("purity"), _purity, _pl))
-    _lw3 = _bar_label_width()
-    for _n, _v, _extra in _srows:
-        if _v is None:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-        elif _n == T("purity"):
-            print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
-        elif _extra:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
-        else:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
-    print(f"  {_c(C.dim, T('purity_note'))}")
-    if scs["platform"][0] >= 30:
-        print(f"  {_c(C.dim, T('platform_note'))}")
-
-    if include_streaming_inference:
-        _print_streaming_inference(res)
-    if dns_rec:
-        recommend_dns_for_ip(prof.get("country", ""))
-    if tail_completeness:
-        _print_completeness(res)
-    if include_streaming_inference:
-        _done_txt = "✓ " + T("done")
-        print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        if footnote == "proxy_diag":
-            # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
-            # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
-            print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
-        else:
-            print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
-            print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
-    _geo_attr = _geo_attribution(prof)
-    if _geo_attr:
-        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
-        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
-        print(f"  {_c(C.dim, _geo_attr)}")
-    # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
-    # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
-    # 显式恢复 _SEC["on"]=True（计数保留）。
-    _SEC["on"] = False
+        if include_streaming_inference:
+            _print_streaming_inference(res)
+        if dns_rec:
+            recommend_dns_for_ip(prof.get("country", ""))
+        if tail_completeness:
+            _print_completeness(res)
+        if include_streaming_inference:
+            _done_txt = "✓ " + T("done")
+            print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
+            if footnote == "proxy_diag":
+                # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
+                # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
+                print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
+            else:
+                print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
+                print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+        _geo_attr = _geo_attribution(prof)
+        if _geo_attr:
+            # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+            # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+            print(f"  {_c(C.dim, _geo_attr)}")
+        # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
+        # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
+        # 显式恢复 _SEC["on"]=True（计数保留）。
+    finally:
+        _SEC["on"] = False
 
 
 # ============================================================
@@ -7513,20 +7634,39 @@ def run_passive6(ip, json_mode=False):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            with _progress_lock:
-                progress_closed[0] = True
+            # r5a-6：超时处理不得取 _progress_lock——卡住的进度渲染
+            # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
+            # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
+            progress_closed[0] = True
+            # r5a-7：超时且仍有未完成 future 时，旧池的运行中任务会占满
+            # worker、下一轮全 timeout——旧池 shutdown（不等运行中任务，
+            # 取消排队任务）后新建池并重绑全局与局部 _ex（coordgeo 提交
+            # 在 _ex 上，须用新池；正常完成时不动池）。替换假定无并发
+            # 提交方（菜单/CLI 皆单线程调用），见报告。
+            if any(not _f.done() for _f in _futs):
+                _old_pool = _ex
+                _old_pool.shutdown(wait=False, cancel_futures=True)
+                with _POOL_LOCK:
+                    _V6_POOL = ThreadPoolExecutor(max_workers=10)
+                    _ex = _V6_POOL
+        except KeyboardInterrupt:
+            # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
+            # 后重新抛出（finally 复位进度状态）。
+            for _f in _futs:
+                _f.cancel()
+            raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
                 sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        with _progress_lock:
-            progress_closed[0] = True
-        # 共享池不 shutdown：复用方持有，关掉即断后续调用
+        # r5a-6：同上，无锁赋值。
+        progress_closed[0] = True
+        # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
     if not json_mode:
         with _progress_lock:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
@@ -7609,11 +7749,11 @@ def run_passive6(ip, json_mode=False):
 def _print_report6_tail(res):
     """[5] 完整度与免责 (L-02: 报告尾巴, 供主动模式末尾打印, 避免中途出现)。"""
     _section(T("sec_complete6"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
+    c = res.get("completeness") or {}
+    print(f"  {T('success_query')}: {c.get('ok', '?')}/{c.get('total', '?')} ({c.get('pct', '?')}%)")
+    if c.get("failed"):
         # 04-01 / 04-08（v6）：同 _print_completeness。
-        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
     # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
@@ -7629,177 +7769,187 @@ def _print_report6_tail(res):
 def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     if not embedded:
         _sec_begin()
-    s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    ip = res["ip"]
+    try:
+        s = res.get("sources") or {}
+        prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
+        ip = res.get("ip", "?")
 
-    if not embedded:
-        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+        if not embedded:
+            print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+            print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
-    _print_basic_block(s, prof)
+        _print_basic_block(s, prof)
 
-    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
+        # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
+        if sysinfo:
+            print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
-    _section(T("sec_type"), sub=True)
-    _ts6 = []
-    _pc6 = s.get("proxycheck", {})
-    if _pc6.get("ok") and _pc6.get("type"):
-        _ts6.append(("proxycheck", _pc6["type"]))
-    _wi6 = s.get("ipwhois", {})
-    if _wi6.get("ok"):
-        if _wi6.get("hosting"):
-            _ts6.append(("ipwho.is", T("dc")))
-        else:
-            _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
-            if _dc6:
-                _ts6.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+        # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
+        _section(T("sec_type"), sub=True)
+        _ts6 = []
+        _pc6 = (s.get("proxycheck") or {})
+        if _pc6.get("ok") and _pc6.get("type"):
+            _ts6.append(("proxycheck", _pc6["type"]))
+        _wi6 = (s.get("ipwhois") or {})
+        if _wi6.get("ok"):
+            if _wi6.get("hosting"):
+                _ts6.append(("ipwho.is", T("dc")))
+            else:
+                _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
+                if _dc6:
+                    _ts6.append((T("heuristic"), T("dc")))
+                elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+                    _ts6.append((T("heuristic"), T("residential")))
+                else:
+                    _ts6.append((T("heuristic"), T("unknown")))
+        _il6 = (s.get("iplocate") or {})
+        if _il6.get("ok"):
+            if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
+                _ts6.append(("iplocate.io", T("dc")))
+            elif _il6.get("asn_type") == "isp":
                 _ts6.append((T("heuristic"), T("residential")))
             else:
-                _ts6.append((T("heuristic"), T("unknown")))
-    _il6 = s.get("iplocate", {})
-    if _il6.get("ok"):
-        if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
-            _ts6.append(("iplocate.io", T("dc")))
-        elif _il6.get("asn_type") == "isp":
-            _ts6.append((T("heuristic"), T("residential")))
+                _ts6.append(("iplocate.io", T("unknown")))
+        _iq6 = (s.get("ipquery") or {})
+        if _iq6.get("ok"):
+            if _iq6.get("datacenter"):
+                _ts6.append(("ipquery.io", T("dc")))
+            elif _iq6.get("mobile"):
+                _ts6.append(("ipquery.io", T("mobile")))
+            else:
+                _ts6.append((T("heuristic"), T("residential")
+                             if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
+                             else T("unknown")))
+        if not _wi6.get("ok") and prof.get("ok"):
+            _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if _dc6:
+                _ts6.append((T("heuristic"), T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                _ts6.append((T("heuristic"), T("residential")))
+        if _ts6:
+            print("  " + _pad(_truncate_disp(T("database"), 12), 12) + "".join(_pad(_truncate_disp(n, 16), 16) for n, _ in _ts6))
+            _cells6 = []
+            for _, _t in _ts6:
+                _colored6, _ = _type_block(_t)
+                # L9：同 v4，类型单元格按显示宽截断。
+                _cells6.append(_pad(_truncate_disp(_colored6, 16), 16))
+            print("  " + _pad(_truncate_disp(T("usage_type"), 12), 12) + "".join(_cells6))
         else:
-            _ts6.append(("iplocate.io", T("unknown")))
-    _iq6 = s.get("ipquery", {})
-    if _iq6.get("ok"):
-        if _iq6.get("datacenter"):
-            _ts6.append(("ipquery.io", T("dc")))
-        elif _iq6.get("mobile"):
-            _ts6.append(("ipquery.io", T("mobile")))
+            print(f"  {T('no_type_data')}")
+
+        # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
+        _section(T("sec_matrix"))
+        print(f"  {_c(C.dim, T('v6_prefix_note'))}")
+
+        _NA = None
+        pc = (s.get("proxycheck") or {})
+        wi = (s.get("ipwhois") or {})
+        sp = (s.get("spamhaus") or {})
+        sh = (s.get("shodan_idb") or {})
+        dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                      if wi.get("ok") else (None, ""))
+        if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+            # r5a-2：同 v4——源 hosting verdict 优先于启发式。
+            dc_w = _strict_bool(wi.get("hosting"))
+        wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
+        _rows = _factor_rows(s, wi_server, v6=True)
+        _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                    T("f_blacklist"), T("f_malicious")]
+        _lw = _bar_label_width()
+        for _ci, _fname in enumerate(_factors):
+            _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+            if _decided:
+                _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            else:
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+        # [3] 信誉信号 (逐源透传)
+        _section(T("sec_signals6"))
+        sc = (s.get("scamalytics") or {})
+        if sc.get("ok"):
+            _v = _coerce_score(sc.get("fraud_score"))
+            if _v is None:
+                print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            else:
+                print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
         else:
-            _ts6.append((T("heuristic"), T("residential")
-                         if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
-                         else T("unknown")))
-    if not _wi6.get("ok") and prof.get("ok"):
-        _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if _dc6:
-            _ts6.append((T("heuristic"), T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            _ts6.append((T("heuristic"), T("residential")))
-    if _ts6:
-        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in _ts6))
-        _cells6 = []
-        for _, _t in _ts6:
-            _colored6, _ = _type_block(_t)
-            _cells6.append(_pad(_colored6, 16))
-        print("  " + _pad(T("usage_type"), 12) + "".join(_cells6))
-    else:
-        print(f"  {T('no_type_data')}")
-
-    # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
-    _section(T("sec_matrix"))
-    print(f"  {_c(C.dim, T('v6_prefix_note'))}")
-
-    _NA = None
-    pc = s.get("proxycheck", {})
-    wi = s.get("ipwhois", {})
-    sp = s.get("spamhaus", {})
-    sh = s.get("shodan_idb", {})
-    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-                  if wi.get("ok") else (None, ""))
-    if wi.get("ok") and wi.get("hosting"):
-        dc_w = True
-    wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
-    _rows = _factor_rows(s, wi_server, v6=True)
-    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
-                T("f_blacklist"), T("f_malicious")]
-    _lw = _bar_label_width()
-    for _ci, _fname in enumerate(_factors):
-        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
-        if _decided:
-            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        if pc.get("ok") and pc.get("risk") is not None:
+            _v = pc.get("risk")
+            print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
         else:
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        _iq6s = (s.get("ipquery") or {})
+        if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
+            _v = _iq6s["risk_score"]
+            print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
+        if sp.get("ok"):
+            _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
+                    else _c(C.green, T("v6_not_listed")))
+            print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
+        if sh.get("ok"):
+            _ports = sh.get("ports") or []
+            # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+            # 打印前逐个 _strip_cc，防终端转义注入。
+            _ptxt = ", ".join(_strip_cc(p) for p in _ports) if _ports else T("none")
+            print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
-    # [3] 信誉信号 (逐源透传)
-    _section(T("sec_signals6"))
-    sc = s.get("scamalytics", {})
-    if sc.get("ok"):
-        _v = sc.get("fraud_score", 0)
-        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
-    else:
-        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    if pc.get("ok") and pc.get("risk") is not None:
-        _v = pc.get("risk")
-        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
-    else:
-        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    _iq6s = s.get("ipquery", {})
-    if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
-        _v = _iq6s["risk_score"]
-        print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
-    if sp.get("ok"):
-        _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
-                else _c(C.green, T("v6_not_listed")))
-        print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
-    if sh.get("ok"):
-        _ports = sh.get("ports") or []
-        # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
-        # 打印前逐个 _strip_cc，防终端转义注入。
-        _ptxt = ", ".join(_strip_cc(p) for p in _ports[:12]) if _ports else T("none")
-        print(f"  {_pad('Shodan', _lw)}{_ptxt}")
+        # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
+        _section(T("sec_fraud"))
+        _scs6 = res.get("scores") or {}
+        _srows6 = [("Scamalytics",
+                    _coerce_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
+                           (T("dim_reputation"), "reputation"),
+                           (T("dim_platform"), "platform")):
+            _dv6 = _scs6.get(_dk6)
+            _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
+        _comb6 = _scs6.get("combined")
+        _pcol6 = C.green
+        if _comb6 is not None:
+            _pur6 = 100 - _comb6
+            if _pur6 >= 85:
+                _pl6, _pcol6 = T("purity_best"), C.green
+            elif _pur6 >= 70:
+                _pl6, _pcol6 = T("purity_good"), C.green
+            elif _pur6 >= 50:
+                _pl6, _pcol6 = T("purity_fair"), C.yellow
+            elif _pur6 >= 30:
+                _pl6, _pcol6 = T("purity_poor"), C.yellow
+            else:
+                _pl6, _pcol6 = T("purity_bad"), C.red
+            _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
+            _srows6.append((T("purity"), _pur6, _pl6))
+        _lw6 = _bar_label_width()
+        for _n6, _v6, _e6 in _srows6:
+            if _v6 is None:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            elif _n6 == T("purity"):
+                print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
+            elif _e6:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
+            else:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
+        _verdict6 = res.get("verdict")
+        if _verdict6:
+            print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
+        print(f"  {_c(C.dim, T('v6_score_note'))}")
+        print(f"  {_c(C.dim, T('purity_note'))}")
+        if (_scs6.get("platform") or (0,))[0] >= 30:
+            print(f"  {_c(C.dim, T('platform_note'))}")
 
-    # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
-    _section(T("sec_fraud"))
-    _scs6 = res.get("scores") or {}
-    _srows6 = [("Scamalytics",
-                sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
-    for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
-                       (T("dim_reputation"), "reputation"),
-                       (T("dim_platform"), "platform")):
-        _dv6 = _scs6.get(_dk6)
-        _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
-    _comb6 = _scs6.get("combined")
-    _pcol6 = C.green
-    if _comb6 is not None:
-        _pur6 = 100 - _comb6
-        if _pur6 >= 85:
-            _pl6, _pcol6 = T("purity_best"), C.green
-        elif _pur6 >= 70:
-            _pl6, _pcol6 = T("purity_good"), C.green
-        elif _pur6 >= 50:
-            _pl6, _pcol6 = T("purity_fair"), C.yellow
-        elif _pur6 >= 30:
-            _pl6, _pcol6 = T("purity_poor"), C.yellow
-        else:
-            _pl6, _pcol6 = T("purity_bad"), C.red
-        _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
-        _srows6.append((T("purity"), _pur6, _pl6))
-    _lw6 = _bar_label_width()
-    for _n6, _v6, _e6 in _srows6:
-        if _v6 is None:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-        elif _n6 == T("purity"):
-            print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
-        elif _e6:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
-        else:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
-    print(f"  {_c(C.dim, T('v6_score_note'))}")
-    print(f"  {_c(C.dim, T('purity_note'))}")
-    if (_scs6.get("platform") or (0,))[0] >= 30:
-        print(f"  {_c(C.dim, T('platform_note'))}")
-
-    # [5] 完整度
-    if tail_completeness:
-        _print_report6_tail(res)
-    _geo_attr = _geo_attribution(prof)
-    if _geo_attr:
-        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
-        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
-        print(f"  {_c(C.dim, _geo_attr)}")
-    # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
-    _SEC["on"] = False
+        # [5] 完整度
+        if tail_completeness:
+            _print_report6_tail(res)
+        _geo_attr = _geo_attribution(prof)
+        if _geo_attr:
+            # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+            # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+            print(f"  {_c(C.dim, _geo_attr)}")
+        # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
+    finally:
+        _SEC["on"] = False
 
 
 def get_egress_ip(budget=None):
@@ -8449,11 +8599,15 @@ _FORCE_STACK = None  # 自检范围覆盖: None=自动/询问, "4"/"6"=仅测该
 _getaddrinfo_sem = threading.BoundedSemaphore(16)
 
 
-def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5):
+def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5,
+                       register=False):
     """带超时的 getaddrinfo: 标准库解析无超时参数, DNS 失联时会无限阻塞;
     放守护线程里等, 超时按解析失败抛 OSError, 不让任何调用方挂死。
     并发 bound: 最多 16 路同时解析 (信号量), 超量调用在同一 timeout
-    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。"""
+    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。
+    r5b-9/O1：缺省不登记横幅 worker——非横幅路径（流媒体探针、代理
+    诊断、DNS 检测、测速）的 DNS 线程不得进横幅等待集，否则横幅
+    join 会等与横幅无关的线程；横幅 opener 仍经 _open_bounded 登记。"""
     _t0 = time.monotonic()
     if not _getaddrinfo_sem.acquire(timeout=timeout):
         raise OSError(f"DNS resolution concurrency limit reached: {host}")
@@ -8474,7 +8628,8 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
         _t = threading.Thread(target=_run, daemon=True)
         _t.start()
         _started = True
-        _banner_net_register_worker(_t)
+        if register:
+            _banner_net_register_worker(_t)
         _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
         if _t.is_alive():
             raise OSError(f"DNS resolution timed out: {host}")
@@ -11872,7 +12027,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
         }
 
         if not json_mode:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
             print(f"  {_c(C.bold, cat_name)}:")
             print("    " + "".join(_pad(n, 11) for n, _ in results))
             print("    " + "".join(_st(st) for _, (st, _, _) in results))
@@ -13398,8 +13553,9 @@ def batch_node_test(nodes, ping_count=5):
         results = list(ex.map(_one, nodes))
 
     def _key(r):
-        tcp_ok = bool(r["tcp"].get("ok"))
-        hs_ok = r.get("socks5", {}).get("ok", True)
+        tcp_ok = bool((r.get("tcp") or {}).get("ok"))
+        hs_ok = ((r.get("socks5") or {}).get("ok")
+                 if (r.get("node") or {}).get("proto") == "socks5" else True)
         usable = tcp_ok and hs_ok
         avg = r["tcp"].get("avg_ms")
         return (0 if usable else 1, avg if avg is not None else 1e9)
@@ -13409,16 +13565,23 @@ def batch_node_test(nodes, ping_count=5):
 
 def _node_label(nd):
     """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
-    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。"""
-    host = _strip_cc(nd["host"])  # 纵深：即使解析层漏网，标签也不含控制字符
+    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。
+    L4：长主机名只截 host 段，端口恒保留（旧实现整串 [:38] 会把端口
+    截掉，文本表丢端口而 JSON 保留，造成文本/JSON 分歧）。"""
+    host = _strip_cc(nd.get("host") or "?")  # 纵深：即使解析层漏网，标签也不含控制字符
     if ":" in host and not host.startswith("["):
         host = "[%s]" % host
-    if nd["proto"] == "socks5" and (nd.get("user") is not None
-                                   or nd.get("pass") is not None):
-        return ("socks5://***@%s:%s" % (host, nd["port"]))[:38]
-    if nd["proto"] == "socks5":
-        return ("socks5://%s:%s" % (host, nd["port"]))[:38]
-    return ("%s:%s" % (host, nd["port"]))[:38]
+    _port = nd.get("port", "?")
+    if nd.get("proto") == "socks5" and (nd.get("user") is not None
+                                        or nd.get("pass") is not None):
+        _pre, _suf = "socks5://***@", ":%s" % _port
+    elif nd.get("proto") == "socks5":
+        _pre, _suf = "socks5://", ":%s" % _port
+    else:
+        _pre, _suf = "", ":%s" % _port
+    # 按显示宽截 host 段（CJK 双宽计 2 列），前后缀恒保留，总宽恒 <= 38。
+    _host = _truncate_disp(host, max(0, 38 - _disp_width(_pre) - _disp_width(_suf)))
+    return _pre + _host + _suf
 
 
 def _sanitize_batch_results(results):
@@ -13440,26 +13603,37 @@ def _sanitize_batch_results(results):
 def _print_batch_results(results):
     """打印排名表, 最优节点绿色标出。"""
     print()
-    hdr = ("  " + _pad("#", 2) + " " + _pad(T("batch_col_node"), 38) + " "
-           + _pad(T("batch_col_avg"), 9) + " " + _pad(T("batch_col_jitter"), 9)
-           + " " + _pad(T("batch_col_loss"), 7) + " " + T("batch_col_proto"))
+    hdr = ("  " + _pad("#", 2) + " " + _pad(_truncate_disp(T("batch_col_node"), 38), 38) + " "
+           + _pad(_truncate_disp(T("batch_col_avg"), 9), 9) + " " + _pad(_truncate_disp(T("batch_col_jitter"), 9), 9)
+           + " " + _pad(_truncate_disp(T("batch_col_loss"), 7), 7) + " " + T("batch_col_proto"))
     print(_c(C.cyan, hdr))
     best_marked = False
     for i, r in enumerate(results, 1):
-        nd = r["node"]
+        r = r or {}
+        nd = r.get("node") or {}
+        if not nd:
+            continue  # 缺 node 的行无标签可打，跳过（L1）
         label = _node_label(nd)
-        tcp = r["tcp"]
+        tcp = r.get("tcp") or {}
         if tcp.get("ok"):
-            avg = "%.1fms" % tcp["avg_ms"]
-            jit = "%.1fms" % tcp["jitter_ms"]
-            loss = "%.0f%%" % tcp["loss_pct"]
+            avg = ("%.1fms" % tcp["avg_ms"]
+                   if tcp.get("avg_ms") is not None else "-")
+            jit = ("%.1fms" % tcp["jitter_ms"]
+                   if tcp.get("jitter_ms") is not None else "-")
+            loss = ("%.0f%%" % tcp["loss_pct"]
+                    if tcp.get("loss_pct") is not None else "-")
         else:
             avg = jit = loss = "-"
-        if nd["proto"] == "socks5":
-            hs = T("bn_ok") if r.get("socks5", {}).get("ok") else "✗"
+        if nd.get("proto") == "socks5":
+            hs = T("bn_ok") if (r.get("socks5") or {}).get("ok") else "✗"
         else:
             hs = "-"
-        usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
+        # r5b-1：SOCKS5 节点握手结果缺失时不得按可用计——否则同节点
+        # 又在握手列画 ✗、又被标 ★ 选去测速。
+        if nd.get("proto") == "socks5":
+            usable = bool(tcp.get("ok") and (r.get("socks5") or {}).get("ok"))
+        else:
+            usable = bool(tcp.get("ok"))
         line = ("  " + _pad(str(i), 2) + " " + _pad(label, 38) + " "
                 + _pad(avg, 9) + " " + _pad(jit, 9) + " " + _pad(loss, 7)
                 + " " + hs)
@@ -13514,17 +13688,45 @@ def _batch_best_throughput(results):
         if tbest:
             print(_c(C.green, T("batch_tp_ok") % (tbest["down_mbps"],
                                                  _loc_hub_name(tbest["region"]))))
+        else:
+            # r5b-8：测速抛错/无结果时须有最终状态，不得止于 testing 行。
+            print(_c(C.red, T("batch_tp_fail")))
         return
 
 
 def run_batch_nodes(json_mode=False):
-    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。"""
+    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。
+    JSON 模式返回 {"results": [...], "partial": bool,
+    "invalid_lines": [...]}（r5b-7：解析失败行须标明，不得静默丢弃）。"""
+    def _read_line():
+        # r5b-6：交互终端粘贴带认证节点时，input() 会由终端行规程回显
+        # 密码明文；stdin 为 TTY 时关 ECHO 读行，管道/重定向仍用 input()。
+        # 不用 getpass：它以 TCSADRAIN 改 termios，须等回显队列排空才
+        # 返回；对方（pty master）未读回显时即死锁（实测挂死 >120s）。
+        # TCSANOW 立即生效，无此问题；termios 不可用时（Windows）回落。
+        try:
+            if sys.stdin.isatty():
+                import termios
+                _fd = sys.stdin.fileno()
+                _old = termios.tcgetattr(_fd)
+                _new = termios.tcgetattr(_fd)
+                _new[3] = _new[3] & ~termios.ECHO
+                try:
+                    termios.tcsetattr(_fd, termios.TCSANOW, _new)
+                    return sys.stdin.readline()
+                finally:
+                    termios.tcsetattr(_fd, termios.TCSANOW, _old)
+        except Exception:
+            pass
+        return input()
+
     nodes = []
+    invalid_lines = []
     if not json_mode:
         print(T("batch_hint"))
     while True:
         try:
-            ln = input()
+            ln = _read_line()
         except EOFError:
             break
         if ln.strip() == "":
@@ -13534,13 +13736,16 @@ def run_batch_nodes(json_mode=False):
         nd = _parse_node_line(ln)
         if nd:
             nodes.append(nd)
-        elif not json_mode:
+        elif json_mode:
+            invalid_lines.append(ln.strip())
+        else:
             print(T("invalid_input"))
     if not nodes:
         return None
     results = batch_node_test(nodes)
     if json_mode:
-        return results
+        return {"results": results, "partial": bool(invalid_lines),
+                "invalid_lines": invalid_lines}
     _print_batch_results(results)
     _batch_best_throughput(results)
     return results
@@ -13577,6 +13782,7 @@ _banner_net_thread = None
 _banner_net_deadline = None
 _banner_net_workers = []
 _banner_net_workers_lock = threading.Lock()
+_banner_net_register_count = [0]  # r5b-10：清理节流计数（见登记函数）
 
 
 def _logo_spread(lines, target=76):
@@ -13701,6 +13907,10 @@ def _urlopen_bounded(req, budget):
             lambda: urllib.request.urlopen(req, timeout=min(5, budget)),
             time.monotonic() + budget,
             register=_banner_net_register_worker)
+    except urllib.error.HTTPError:
+        # L11：即时 HTTPError 不再吞为 None——_open_bounded 已在抛出前
+        # 关闭错误响应，调用方（横幅地理步）须据此记失败、不缓存。
+        raise
     except Exception:
         return None
 
@@ -13710,7 +13920,9 @@ def _banner_net_info():
     渲染时按界面语言本地化) + IPv6 出口地址。
     整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。
     S5 L-01 残留：地理取数失败（限流/超时/坏体）时不写入永久缓存，
-    下次调用重取；地理未尝试（无出口 IP）时仍按旧行为缓存。"""
+    下次调用重取。M2：无出口 IP 时亦不缓存（旧行为缓存空结果，进程内
+    永不恢复）。r5b-9：DNS 探测已删（结果从未被横幅读取），探测顺序
+    变为出口 IP 优先。"""
     global _banner_net_cache, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
@@ -13720,16 +13932,11 @@ def _banner_net_info():
     def _rem():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False,
+            "ipv6_verified": False,
             "geo_country": "", "geo_city": "", "geo_net": "", "geo_org": ""}
-    if _rem() > 0:
-        try:
-            info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
-                                                      socket.AF_UNSPEC,
-                                                      socket.SOCK_DGRAM,
-                                                      timeout=min(5, _rem())))
-        except Exception:
-            info["dns_ok"] = False
+    # r5b-9/O1：DNS 探测已删——dns_ok 全文件只有写、没有读（print_banner
+    # 从不引用），删后探测顺序变为出口 IP 优先，不再为一行不显示的数据
+    # 等 DNS。_getaddrinfo_timed 的 register 缺省亦为 False（见该函数）。
     # S5 L-01 残留：地理失败标记——仅地理步抛错/失败体时置真，末尾
     # 凭此决定是否写入永久缓存；无出口 IP 时地理步未跑，不置真。
     _geo_failed = False
@@ -13761,7 +13968,9 @@ def _banner_net_info():
                 # R4-L-01：先校验 success（失败体不得填地理字段并缓存），
                 # 再按字典类型取值；conn 非字典的 AttributeError 会被下方
                 # except 吞掉，故校验须在取值之前，不依赖“会抛错”。
-                if not isinstance(d, dict) or not d.get("success", True):
+                # r5b-2：success 缺失或为字符串 "false" 均视作失败体——
+                # 缺省 True 会让无 success 的失败体照常填地理并进缓存。
+                if not isinstance(d, dict) or d.get("success") is not True:
                     raise ValueError("ipwho.is query failed")
                 conn = d.get("connection") if isinstance(d.get("connection"), dict) else {}
                 sec = d.get("security") if isinstance(d.get("security"), dict) else {}
@@ -13769,11 +13978,15 @@ def _banner_net_info():
                 # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
                 info["geo_country"] = d.get("country") or ""
                 info["geo_city"] = d.get("city") or ""
-                # M-11: 保留机房标记精度: connection 透传 hosting 时认它,
-                # 否则按 org 启发式判定。R4-L-01：security/connection 的
-                # hosting 均须严格布尔判真（字符串 "false" 不得判真），
-                # security 优先于 connection（与 IPWhoIs.check 同口径）。
-                if (sec.get("hosting") is True) or (conn.get("hosting") is True) or is_datacenter_heuristic(org, org)[0]:
+                # M-11: 保留机房标记精度。r5b-3：机房判定执行声明的字段
+                # 优先级 security＞connection＞启发式，与 IPWhoIs.check
+                # 的 _b 同口径（sec 有该键即取 sec，否则取 conn；严格布尔，
+                # 字符串 "false"/数字/null 皆为未知）；显式 False 是定论，
+                # 启发式不得反转它，仅当两源皆未知时才作后备。
+                _hv = sec.get("hosting") if "hosting" in sec else conn.get("hosting")
+                _hv = _hv if isinstance(_hv, bool) else None
+                if _hv is True or (_hv is None
+                                  and is_datacenter_heuristic(org, org)[0]):
                     info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
                     info["geo_net"] = "residential"
@@ -13787,9 +14000,13 @@ def _banner_net_info():
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
+    # r5b-4：预算耗尽致探测集未跑完时 ipv6 置 None（未知），不得当 False
+    # 缓存；仅当探测集完整跑完仍无地址时才判 False。
     _v6addr = None
+    _v6_skipped = False
     for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
         if _rem() <= 0:
+            _v6_skipped = True
             break
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
@@ -13826,13 +14043,16 @@ def _banner_net_info():
                     s6.close()
                 except Exception:
                     pass
+    if _v6addr is None and _rem() <= 0:
+        # 预算在探测集跑完前耗尽：有一步没跑上，判未知而非无 IPv6。
+        _v6_skipped = True
     info["ipv6_addr"] = _v6addr
-    info["ipv6"] = bool(_v6addr)
+    info["ipv6"] = None if (_v6addr is None and _v6_skipped) else bool(_v6addr)
     _banner_net_last_info = info
     _banner_net_last_attempt = _t0
-    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；其余情形
-    # （成功、无出口 IP）仍缓存。
-    if not _geo_failed:
+    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；M2：无出口 IP
+    # 时不缓存；r5b-4：IPv6 未探明时不缓存。三者任一成立即不写永久缓存。
+    if not _geo_failed and info.get("egress") and not _v6_skipped:
         _banner_net_cache = info
     return info
 
@@ -13867,19 +14087,24 @@ def _banner_geo_text(net):
 def _banner_net_register_worker(t):
     """登记一个守护工作线程（退出前 _banner_net_join 有界等待用）。
 
-    注意登记无调用方检查：_getaddrinfo_timed 对每路 DNS 工作线程都
-    登记（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径），
-    故等待集可能包含活着的非横幅 DNS worker。登记点在线程 start()
-    之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
+    注意：_getaddrinfo_timed 缺省不再登记（r5b-9/O1），登记点只剩
+    横幅 opener 的 _open_bounded 路径。登记点在线程 start() 之后，
+    顺序不得变。
+    r5b-10：全量清理（enumerate＋列表扫描）每 32 次登记才做一次——
+    逐次清理是 O(n²)：200 次登记约 19,900 次扫描；节流后约 700 次。
+    之间死亡的 worker 最多滞留 31 次登记，join 时按 is_alive 跳过，
+    无行为变化。
     """
     with _banner_net_workers_lock:
-        # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
-        # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
-        # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
-        _live = threading.enumerate()
-        _banner_net_workers[:] = [w for w in _banner_net_workers
-                                  if w.is_alive()
-                                  or any(x is w for x in _live)]
+        _banner_net_register_count[0] += 1
+        if _banner_net_register_count[0] % 32 == 0:
+            # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
+            # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
+            # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
+            _live = threading.enumerate()
+            _banner_net_workers[:] = [w for w in _banner_net_workers
+                                      if w.is_alive()
+                                      or any(x is w for x in _live)]
         _banner_net_workers.append(t)
 
 
@@ -14084,7 +14309,10 @@ def _banner_net_info_async():
     相同），使取数中途被 Ctrl-C 打断时退出路径的 join 仍有预算可等已
     登记 worker，不因 deadline 为空而立即返回；取数完成后缓存即生效，
     后续横幅直接命中缓存。"""
-    global _banner_net_deadline
+    # r5b-5：重试分支写回 _banner_net_last_info/_last_attempt，故须声明
+    # global——否则赋值使二者变局部变量，函数入口读到未绑定变量即抛
+    # UnboundLocalError（实测：两重试线程双双崩溃、零取数，夹具会假 PASS）。
+    global _banner_net_deadline, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
     _need_fetch = False
@@ -14105,12 +14333,23 @@ def _banner_net_info_async():
     if _banner_net_last_info is not None:
         if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
             return _banner_net_last_info
-        # B-15a-1：重试开新取数须刷新 deadline（首轮 deadline 已过期；
-        # 沿用它会使随后 join 立即返回、新登记 worker 无人等）。
-        _banner_net_deadline = time.monotonic() + _banner_net_budget
-        return _banner_net_info()
+        # r5b-5：重试分支须在锁内二次检查并写回结果——否则并发重试的
+        # 两个调用方各发一次取数。取完把结果写回 last_info/last_attempt，
+        # 后来者复用同一结果。B-15a-1：重试开新取数须刷新 deadline
+        # （首轮 deadline 已过期；沿用它会使随后 join 立即返回、新登记
+        # worker 无人等）。
+        with _banner_net_lock:
+            if _banner_net_cache is not None:
+                return _banner_net_cache
+            if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
+                return _banner_net_last_info
+            _banner_net_deadline = time.monotonic() + _banner_net_budget
+            _res = _banner_net_info()
+            _banner_net_last_info = _res
+            _banner_net_last_attempt = time.monotonic()
+            return _res
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False}
+            "ipv6_verified": False}
 
 
 def _white(s):
@@ -14139,26 +14378,44 @@ def print_banner():
             with open("/etc/os-release", encoding="utf-8", errors="replace") as f:
                 for ln in f:
                     if ln.startswith("PRETTY_NAME="):
-                        os_name = ln.split("=", 1)[1].strip().strip('"')
+                        # r5b-13：只剥首尾配对引号（" 或 '）——旧 .strip('"')
+                        # 把单引号值原样留引号、把双引号值两端多剥；首尾
+                        # 不成对（如 "abc'）一律保留原样。
+                        _v = ln.split("=", 1)[1].strip()
+                        if len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in ("\"", "'"):
+                            _v = _v[1:-1]
+                        os_name = _v
                         break
         except Exception:
             pass
-    cores = os.cpu_count() or 0
+    # r5b-14：cpu_count() 为 None 是“未知”，不得显示 0 核。
+    _cores = os.cpu_count()
+    cores = _cores if _cores is not None else "?"
     pyv = "%d.%d.%d" % sys.version_info[:3]
-    print(" %s:  %s" % (_c(C.cyan, T("bn_system")),
-                         _white("%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv))))
-    cores_word = _ru_plural(cores, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and cores == 1 else T("bn_cores"))
-    cpu = (si.get("cpu") or "?")[:36]
-    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")),
-                         _white("%s (%d%s) · %s %s · %s %s" % (
-                             cpu, cores, cores_word,
-                             T("sys_mem"), si.get("mem", "?"),
-                             T("sys_disk"), si.get("disk", "?")))))
+    # M3：各行内容按显示宽截断到边框内（W=78；行 = 1 空格＋标签＋": "＋值，
+    # 值预算 = 78 - 1 - 标签宽 - 3）。截断在拼行前对素文本做（_truncate_disp
+    # 是 ANSI 安全的），再上色；硬件行的 [:36] 字符切由整行截断取代
+    # （CJK 双宽下 36 字符仍可超宽）。
+    _sys_val = _truncate_disp(
+        "%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv),
+        max(0, W - 1 - _disp_width(T("bn_system")) - 3))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_system")), _white(_sys_val)))
+    cores_word = _ru_plural(_cores or 0, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and _cores == 1 else T("bn_cores"))
+    _hw_val = _truncate_disp(
+        "%s (%s%s) · %s %s · %s %s" % (
+            (si.get("cpu") or "?"), cores, cores_word,
+            T("sys_mem"), si.get("mem", "?"),
+            T("sys_disk"), si.get("disk", "?")),
+        max(0, W - 1 - _disp_width(T("bn_hardware")) - 3))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")), _white(_hw_val)))
     # 网络行
     if net["egress"]:
         _geo_txt = _banner_geo_text(net)
-        v4 = "%s %s" % (_c(C.green, "●"),
-                        _white(net["egress"] + ((" " + _geo_txt) if _geo_txt else "")))
+        # M3：geo 文本与出口 IP 一并截断到行预算（"IPv4 ● " 占 7 列）。
+        _v4_txt = _truncate_disp(
+            net["egress"] + ((" " + _geo_txt) if _geo_txt else ""),
+            max(0, W - 1 - _disp_width(T("bn_network")) - 3 - 7))
+        v4 = "%s %s" % (_c(C.green, "●"), _white(_v4_txt))
     else:
         v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
@@ -14167,6 +14424,9 @@ def print_banner():
         v6t = " " + net["ipv6_addr"]
     elif net["ipv6"]:
         v6t = ""
+    elif net.get("ipv6") is None:
+        # r5b-4 三态：IPv6 未探明显示“未测”，而非“无”。
+        v6t = " " + T("bn_untested")
     else:
         v6t = " " + T("bn_none")
     print("%s%s%s" % (" " * (_disp_width(T("bn_network")) + 4),
@@ -14198,7 +14458,10 @@ def print_menu():
         (_menu_item(13, T("m_shortcut")), ""),
     ]
     for left, right in rows:
-        print("  " + _pad(left, colw) + right)
+        # L2：左右列各按显示宽截断（左 40／右 38），fa 第 11 项 45 列
+        # 不再把行撑到 87 列；行宽恒为 2＋40＋38＝80。
+        print("  " + _pad(_truncate_disp(left, colw), colw)
+              + _truncate_disp(right, 38))
     print(_c(C.cyan, "═" * 78))
     print("  " + _c(C.cyan, "0.") + " " + T("m_quit"))
     print(_c(C.cyan, "═" * 78))
@@ -14245,8 +14508,14 @@ def check_update():
         else:
             with r:
                 try:
-                    tag = json.loads(_read_limited(r, timeout=8).decode(
-                        "utf-8")).get("tag_name", "")
+                    _d = json.loads(_read_limited(r, timeout=8).decode(
+                        "utf-8"))
+                    # r5b-11：顶层非 dict（如 "[]"）时 .get 会抛
+                    # AttributeError、被误归为 unknown；显式校验并抛
+                    # ValueError，走 cause 'response'（响应侧错误）。
+                    if not isinstance(_d, dict):
+                        raise ValueError("update response is not a JSON object")
+                    tag = _d.get("tag_name", "")
                 finally:
                     _resp_shutdown(r)
     except (TimeoutError, socket.timeout):
@@ -14256,14 +14525,20 @@ def check_update():
         cause = "timeout"
     except urllib.error.URLError as e:
         tag = ""
-        reason = getattr(e, "reason", None)
-        if isinstance(reason, (TimeoutError, socket.timeout)):
-            cause = "timeout"
-        elif isinstance(reason, socket.gaierror):
-            cause = "dns"
-        elif isinstance(reason, (ConnectionError, OSError)):
-            cause = "connection"
+        # r5b-11：HTTPError 是 URLError 子类、携状态码——已知响应侧错误，
+        # 不得落入 reason 分支归为 unknown；先判 HTTPError。
+        if isinstance(e, urllib.error.HTTPError):
+            cause = "http_%s" % e.code
+            reason = None
         else:
+            reason = getattr(e, "reason", None)
+        if cause is None and isinstance(reason, (TimeoutError, socket.timeout)):
+            cause = "timeout"
+        elif cause is None and isinstance(reason, socket.gaierror):
+            cause = "dns"
+        elif cause is None and isinstance(reason, (ConnectionError, OSError)):
+            cause = "connection"
+        elif cause is None:
             cause = "unknown"
     except ValueError:
         # 响应体不可解析/超限：属响应侧问题，非请求异常。
@@ -14274,7 +14549,10 @@ def check_update():
         cause = "unknown"
     if not isinstance(tag, str):
         tag = ""
-    latest = tag.lstrip("v")
+    # r5b-12：只剥一个前导 "v"——lstrip("v") 会把 "vv4.14.39" 剥成
+    # "4.14.39" 当作新版本；留一个 "v" 后 _parse_version 失败，走
+    # cause 'response'（响应侧错误）。
+    latest = tag[1:] if tag.startswith("v") else tag
     if latest and _parse_version(latest) is None:
         latest = ""
     if not latest and cause is None:
@@ -17098,6 +17376,33 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                        % (paths["state_path"], e),
                        "無法刪除狀態檔案 %s：%s" % (paths["state_path"], e)))
                 _cleanup_failed = True
+        if not _cleanup_failed:
+            # D-1：状态文件已删净时清掉锁文件与受管理目录——0 字节
+            # <state>.lock 与空 acheck/ 目录是 remove 的残留。删锁文件
+            # 与另一持锁者竞态：先以 LOCK_EX|LOCK_NB 抢锁，抢到才删，
+            # 抢不到静默留置（残余竞态：对方在抢锁与 unlink 之间打开旧
+            # 路径并加锁，锁在已删 inode 上；窗口极小、后果仅为一次互斥
+            # 失效，见报告）。目录仅空时才删（rmdir 非空即失败保留）。
+            _lock_path = paths["state_path"] + ".lock"
+            try:
+                _lock_fd = os.open(_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+            except OSError:
+                _lock_fd = None
+            if _lock_fd is not None:
+                try:
+                    fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    try:
+                        os.unlink(_lock_path)
+                    except OSError:
+                        pass
+                except OSError:
+                    pass  # 另一进程持锁：留置锁文件
+                finally:
+                    os.close(_lock_fd)
+            try:
+                os.rmdir(paths["data_dir"])
+            except OSError:
+                pass  # 非空（有用户文件或锁文件留置）则保留
         # 受管理副本未删干净时保留状态文件，避免状态与磁盘不一致。
     else:
         new_state = dict(state)
@@ -17562,18 +17867,18 @@ def _print_cli_help():
   --ipv6-only     配合 --active: 仅检测 IPv6
   --proxy HOST:PORT
                   代理诊断模式 (SOCKS5 握手、代理出口 IP、出口 IP 信誉、DNS 泄漏、TCP 延迟)
-  --proxy-user USER / --proxy-pass PASS
-                  代理认证 (可选)
+  --proxy-user USER / --proxy-pass PASS （须同时给出）
+                  代理认证 (可选；只给其一会报错退出)
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
   --no-speed      自检时跳过网速测试
   --with-speed    自检时强制进行网速测试
   --no-geo-update  禁用离线 Geo 数据自动更新
   --geo-update     强制同步刷新一次离线 Geo 数据
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
-  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用；--shortcut 仅 status 支持 --json)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy/--speed/--batch/--explain 组合使用；--shortcut 仅 status 支持 --json)
   --explain       输出评分维度与扣分规则说明
   --shortcut install|status|change|remove
-                  管理命令入口：安装 / 查看状态 / 改名 / 移除
+                  管理命令入口：安装 / 查看状态 / 改名 / 移除（不带值默认为 status）
   --system        配合 --shortcut 使用系统级位置 (默认用户级)
   --accept-ac-risk 接受 ac 已知命名风险 (非交互安装 ac 时必填)
   --names 名称列表  配合 --shortcut install：指定安装的入口名（逗号分隔）
@@ -17611,18 +17916,18 @@ Options:
   --ipv6-only     With --active: IPv6 only
   --proxy HOST:PORT
                   Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP reputation, DNS leak check, TCP latency)
-  --proxy-user USER / --proxy-pass PASS
-                  Proxy authentication (optional)
+  --proxy-user USER / --proxy-pass PASS (both required together)
+                  Proxy authentication (optional; both or neither — one alone is an error)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
   --no-speed      Skip the speed test during self-check
   --with-speed    Force the speed test during self-check
   --no-geo-update  Disable automatic offline geo data updates
   --geo-update     Force a synchronous offline geo data refresh
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
-  --json          Output results in JSON format (works with passive IP, --active or --proxy; for --shortcut, only status supports --json)
+  --json          Output results in JSON format (works with passive IP, --active, --proxy, --speed, --batch or --explain; for --shortcut, only status supports --json)
   --explain       Show transparent scoring rules and weights
   --shortcut install|status|change|remove
-                  Manage command shortcuts: install / status / change / remove
+                  Manage command shortcuts: install / status / change / remove (bare --shortcut defaults to status)
   --system        With --shortcut: use system-wide locations (default is user-level)
   --accept-ac-risk Accept the known naming risk of ac (required for non-interactive ac install)
   --names NAMES     With --shortcut install: shortcut names to install (comma-separated)
@@ -17661,18 +17966,18 @@ Examples:
   --ipv6-only     配合 --active: 僅檢測 IPv6
   --proxy HOST:PORT
                   代理診斷模式 (SOCKS5 握手、代理出口 IP、出口 IP 信譽、DNS 洩漏、TCP 延遲)
-  --proxy-user USER / --proxy-pass PASS
-                  代理驗證 (可選)
+  --proxy-user USER / --proxy-pass PASS （須同時給出）
+                  代理驗證 (可選；只給其一會報錯退出)
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
   --no-speed      自檢時跳過網速測試
   --with-speed    自檢時強制進行網速測試
   --no-geo-update  停用離線 Geo 資料自動更新
   --geo-update     強制同步重新整理一次離線 Geo 資料
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
-  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用；--shortcut 僅 status 支援 --json)
+  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy/--speed/--batch/--explain 組合使用；--shortcut 僅 status 支援 --json)
   --explain       輸出評分維度與扣分規則說明
   --shortcut install|status|change|remove
-                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除
+                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除（不帶值預設為 status）
   --system        配合 --shortcut 使用系統級位置 (預設使用者級)
   --accept-ac-risk 接受 ac 已知命名風險 (非互動安裝 ac 時必填)
   --names 名稱清單  配合 --shortcut install：指定安裝的入口名（逗號分隔）
@@ -17710,18 +18015,18 @@ Examples:
   --ipv6-only     --active と併用: IPv6 のみ
   --proxy HOST:PORT
                   プロキシ診断 (SOCKS5 ハンドシェイク、プロキシ出口 IP、出口 IP の評価、DNS リーク、TCP 遅延)
-  --proxy-user USER / --proxy-pass PASS
-                  プロキシ認証 (任意)
+  --proxy-user USER / --proxy-pass PASS （両方同時に指定）
+                  プロキシ認証 (任意；片方のみはエラー)
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
   --no-speed      セルフチェック時に速度テストをスキップ
   --with-speed    セルフチェック時に速度テストを強制実行
   --no-geo-update  オフライン Geo データの自動更新を無効化
   --geo-update     オフライン Geo データを強制的に同期更新
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
-  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可；--shortcut では status のみ --json に対応)
+  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy、--speed、--batch、--explain と併用可；--shortcut では status のみ --json に対応)
   --explain       スコアリングのルールと重みを表示
   --shortcut install|status|change|remove
-                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
+                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除（値なしは status）
   --system        --shortcut と併用：システム全体の場所を使用 (既定はユーザー単位)
   --accept-ac-risk ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須)
   --names 名前一覧  --shortcut install と併用：インストールする入口名（カンマ区切り）
@@ -17759,18 +18064,18 @@ Examples:
   --ipv6-only     С --active: только IPv6
   --proxy HOST:PORT
                   Диагностика прокси (рукопожатие SOCKS5, выходной IP прокси, репутация выхода, утечка DNS, задержка TCP)
-  --proxy-user USER / --proxy-pass PASS
-                  Аутентификация прокси (необязательно)
+  --proxy-user USER / --proxy-pass PASS (указываются только вместе)
+                  Аутентификация прокси (необязательно; один без другого — ошибка)
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковая многопоточная скорость)
   --no-speed      Пропустить тест скорости при самопроверке
   --with-speed    Принудительно выполнять тест скорости при самопроверке
   --no-geo-update  Отключить автообновление офлайн-геоданных
   --geo-update     Принудительно синхронно обновить офлайн-геоданные
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
-  --json          Вывод в JSON (с IP, --active или --proxy; для --shortcut --json поддерживает только status)
+  --json          Вывод в JSON (с IP, --active, --proxy, --speed, --batch или --explain; для --shortcut --json поддерживает только status)
   --explain       Правила и веса скоринга
   --shortcut install|status|change|remove
-                  Управление ярлыками: установка / состояние / переименование / удаление
+                  Управление ярлыками: установка / состояние / переименование / удаление (без значения — status)
   --system        С --shortcut: системные каталоги (по умолчанию — уровень пользователя)
   --accept-ac-risk Принять известный риск имени ac (обязательно для неинтерактивной установки ac)
   --names ИМЕНА     С --shortcut install: имена ярлыков через запятую
@@ -17808,8 +18113,8 @@ Examples:
   --ipv6-only     همراه --active: فقط IPv6
   --proxy HOST:PORT
                   عیب‌یابی پروکسی (دست‌دهی SOCKS5، IP خروجی پروکسی، اعتبار خروجی، نشت DNS، تأخیر TCP)
-  --proxy-user USER / --proxy-pass PASS
-                  احراز هویت پروکسی (اختیاری)
+  --proxy-user USER / --proxy-pass PASS (هر دو با هم)
+                  احراز هویت پروکسی (اختیاری؛ تنها یکی خطاست)
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج سرعت با اتصالات همزمان)
   --no-speed      رد کردن تست سرعت هنگام خودبررسی
   --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
@@ -17817,10 +18122,10 @@ Examples:
   --geo-update     به‌روزرسانی همگام اجباری داده‌های جغرافیایی آفلاین
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
-  --json          خروجی JSON (با IP، --active یا --proxy؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
+  --json          خروجی JSON (با IP، --active، --proxy، --speed، --batch یا --explain؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
   --shortcut install|status|change|remove
-                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
+                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف (بدون مقدار، status است)
   --system        همراه --shortcut: استفاده از مسیرهای سیستمی (پیش‌فرض سطح کاربر)
   --accept-ac-risk پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است)
   --names نام‌ها     همراه --shortcut install: نام میانبرها (جدا شده با کاما)
