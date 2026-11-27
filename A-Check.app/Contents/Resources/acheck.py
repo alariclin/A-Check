@@ -3406,15 +3406,46 @@ def _resolve_geo_online(jobs):
             list(ex.map(_one, todo))
 
 
-def _geo_ctx_ok(stored_ctx, name, ctx_words):
-    """单候选缓存条目上下文检查（B-06a-2）：缓存条目上下文词（去变体
-    本身）须为当前上下文词集的子集；条目无上下文信息时无法核对，
-    沿用旧行为（视为通过）。"""
-    _stored = set(re.findall(r"[A-Za-z0-9]+", str(stored_ctx or "").lower())) \
-        - set(re.findall(r"[A-Za-z0-9]+", str(name or "").lower()))
+def _geo_seg_norm(seg):
+    """单条上下文分段归一化（fix440a）：国家名（任意语言/口语别名）-> ISO 码；
+    州/省/城市名（任意语言，含重音折叠形）-> 英文名；其余 -> 小写去空白。
+    供 _geo_ctx_ok 的分段级比较用：同一地点不同语言/写法归一为同一键。"""
+    s = str(seg or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low) \
+        or _CC_LOCAL.get(low)
+    if code:
+        return code
+    en = _ANY_REGION2EN.get(s) or _ANY_CITY2EN.get(s)
+    if en:
+        return en
+    folded = "".join(c for c in unicodedata.normalize("NFKD", s)
+                     if not unicodedata.combining(c))
+    if folded != s:
+        en = _ANY_REGION2EN.get(folded) or _ANY_CITY2EN.get(folded)
+        if en:
+            return en
+    return " ".join(low.split())
+
+
+def _geo_ctx_ok(stored_ctx, name, ctx):
+    """单候选缓存条目上下文检查（B-06a-2；fix440a 改为分段级比较）：
+    缓存条目上下文分段（去条目名本身）须为当前上下文分段的子集；条目无
+    上下文信息时无法核对，沿用旧行为（视为通过）。
+    ctx：当前上下文原始串（逗号分隔；此前为 ASCII 词集）。分段先经
+    _geo_seg_norm 归一（本地化名/口语别名归一为同一键），再按分段比较——
+    词集比较会丢行政区边界（Virginia 通过 West Virginia 检查；Kansas
+    州名被当城市名减去），且 ASCII 正则会把非 ASCII 上下文清空为“通过”。"""
+    _stored = {_geo_seg_norm(p) for p in str(stored_ctx or "").split(",")}
+    _stored.discard("")
+    _stored.discard(_geo_seg_norm(name))
     if not _stored:
         return True
-    return _stored <= set(ctx_words)
+    _ctx = {_geo_seg_norm(p) for p in str(ctx or "").split(",")}
+    _ctx.discard("")
+    return _stored <= _ctx
 
 
 def _extra_sub(disp, kind, ctx_text=None):
@@ -3431,27 +3462,29 @@ def _extra_sub(disp, kind, ctx_text=None):
     _by_variant = {}
     for (variant, _ctx), loc in _GEO_EXTRA[kind].items():
         _by_variant.setdefault(variant, []).append((_ctx, loc))
-    # CONF-FIXES-2.1：上下文词集须取自原始整串；取自不断被替换的当前 disp 时，
-    # 前序替换会抹掉后序变体的上下文词（如 New York 先被译走，York 的 {new} 消失）。
-    _orig_words = set(re.findall(r"[A-Za-z0-9]+", (ctx_text if ctx_text is not None else disp).lower()))
+    # CONF-FIXES-2.1：上下文分段须取自原始整串；取自不断被替换的当前 disp 时，
+    # 前序替换会抹掉后序变体的上下文分段（如 New York 先被译走，York 的分段消失）。
+    _src = ctx_text if ctx_text is not None else disp
+    _disp_segs = {_geo_seg_norm(p) for p in str(_src).split(",")}
+    _disp_segs.discard("")
     # 最长变体优先：短名称先替换会破坏完整长名称（如 York 抢先于 East York）。
     for variant, cands in sorted(_by_variant.items(), key=lambda kv: -len(kv[0])):
         if not variant:
             continue
         if len(cands) == 1:
             _sctx, loc = cands[0]
-            if not _geo_ctx_ok(_sctx, variant, _orig_words):
-                _src = ctx_text if ctx_text is not None else disp
+            if not _geo_ctx_ok(_sctx, variant, _src):
                 _parts = [p.strip() for p in _src.split(",")]
                 if any(p and variant.lower() not in p.lower() for p in _parts):
                     continue
         else:
-            _disp_words = _orig_words
-            _variant_words = set(re.findall(r"[A-Za-z0-9]+", variant.lower()))
+            _variant_seg = _geo_seg_norm(variant)
             _winners = []
             for _ctx, _loc in cands:
-                _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(_ctx or "").lower())) - _variant_words
-                if _ctx_words and _ctx_words <= _disp_words:
+                _ctx_segs = {_geo_seg_norm(p) for p in str(_ctx or "").split(",")}
+                _ctx_segs.discard("")
+                _ctx_segs.discard(_variant_seg)
+                if _ctx_segs and _ctx_segs <= _disp_segs:
                     _winners.append(_loc)
             if len(_winners) != 1:
                 continue
@@ -3484,9 +3517,8 @@ def _loc_region(text, ctx=None):
             # 无上下文静态表（B-06a-2 规则）。注意：仅当确有条目时才
             # 过滤——无条目时沿旧行为退静态表（空 _pairs 提前返回会
             # 截断静态表回落，致 f_city/json_geo/p2a 三支回归失败）。
-            _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
             _pairs = [(c, v) for (c, v) in _pairs
-                      if _geo_ctx_ok(c, t, _ctx_words)]
+                      if _geo_ctx_ok(c, t, ctx)]
             if not _pairs:
                 return text
         _matches = [v for _, v in _pairs]
@@ -3514,6 +3546,64 @@ _CITY_CTX_COUNTRY_ALIASES = {"usa": "US", "us": "US", "u.s.": "US",
                              "great britain": "GB"}
 
 
+# fix440a L-03：州/省名 -> 国家码（仅静态表守卫用）。由 _REGION_L10N 英文键分组导出。
+_US_STATES = ("Alabama", "Alaska", "Arizona", "Arkansas", "California",
+              "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
+              "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas",
+              "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts",
+              "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana",
+              "Nebraska", "Nevada", "New Hampshire", "New Jersey",
+              "New Mexico", "New York", "North Carolina", "North Dakota",
+              "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island",
+              "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah",
+              "Vermont", "Virginia", "Washington", "West Virginia",
+              "Wisconsin", "Wyoming", "District of Columbia")
+_CA_PROVINCES = ("Ontario", "Quebec", "British Columbia", "Alberta",
+                 "Manitoba", "Saskatchewan", "Nova Scotia", "New Brunswick",
+                 "Newfoundland and Labrador", "Prince Edward Island")
+_AU_STATES = ("New South Wales", "Victoria", "Queensland",
+              "Western Australia", "South Australia", "Tasmania",
+              "Northern Territory", "Australian Capital Territory")
+_REGION_HOME = {n: "US" for n in _US_STATES}
+_REGION_HOME.update({n: "CA" for n in _CA_PROVINCES})
+_REGION_HOME.update({n: "AU" for n in _AU_STATES})
+_REGION_HOME.update({"England": "GB", "Scotland": "GB", "Wales": "GB",
+                     "Bavaria": "DE"})
+_US_STATE_ABBR = {"AL": "US", "AK": "US", "AZ": "US", "AR": "US",
+                  "CA": "US", "CO": "US", "CT": "US", "DE": "US",
+                  "FL": "US", "GA": "US", "HI": "US", "ID": "US",
+                  "IL": "US", "IN": "US", "IA": "US", "KS": "US",
+                  "KY": "US", "LA": "US", "ME": "US", "MD": "US",
+                  "MA": "US", "MI": "US", "MN": "US", "MS": "US",
+                  "MO": "US", "MT": "US", "NE": "US", "NV": "US",
+                  "NH": "US", "NJ": "US", "NM": "US", "NY": "US",
+                  "NC": "US", "ND": "US", "OH": "US", "OK": "US",
+                  "OR": "US", "PA": "US", "RI": "US", "SC": "US",
+                  "SD": "US", "TN": "US", "TX": "US", "UT": "US",
+                  "VT": "US", "VA": "US", "WA": "US", "WV": "US",
+                  "WI": "US", "WY": "US", "DC": "US"}
+
+
+def _geo_region_countries(ctx):
+    """上下文串中州/省名指明的国家码集合（fix440a L-03）：分段查 _REGION_HOME
+    （州/省英文名，本地化名先经 _ANY_REGION2EN 归一）与美州缩写表；
+    城市名等无法解析的段忽略。仅用于静态表守卫，不进 _geo_ctx_countries
+    （GP1：自由文本中 VA 不得解析为梵蒂冈国家码；此处 VA 解析为弗吉尼亚
+    州、进而指明美国，是另一条有界路径——州缩写只在守卫内指认国家）。"""
+    codes = set()
+    for tok in str(ctx or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        en = _ANY_REGION2EN.get(t) or t
+        c = _REGION_HOME.get(en)
+        if c is None and len(t) == 2 and t.isascii() and t.isalpha():
+            c = _US_STATE_ABBR.get(t.upper())
+        if c:
+            codes.add(c)
+    return codes
+
+
 def _city_static_ctx_ok(en, ctx, bare_code=False):
     """静态城市表上下文检查（B-06a-3；C-03 与 GP1 对齐）：歧义城市的静态译文只属于其归属国；
     ctx 指明他国时返 False（调用方跳过静态表、留原文）；ctx 未指明国家、
@@ -3527,6 +3617,11 @@ def _city_static_ctx_ok(en, ctx, bare_code=False):
     if not home or ctx is None:
         return True
     codes = _geo_ctx_countries(ctx, bare_code=bare_code)
+    if not codes:
+        # fix440a L-03：无国家信息时再看州/省名（Virginia/VA -> US；
+        # Ontario -> CA）——仅 region 上下文、无国家字段时，州名是唯一
+        # 的国家信号；仍无信号时沿用旧行为（返 True）。
+        codes = _geo_region_countries(ctx)
     if not codes:
         return True
     if len(codes) == 1:
@@ -3542,7 +3637,15 @@ def _geo_ctx_countries(stored_ctx, bare_code=False):
     （_CC_EN + 口语别名 + 2 字母代码）；城市/州名等无法解析的段忽略。
     bare_code：仅调用方 country= 这种明确国家字段可用（True）——裸码
     本身就是国家码；缓存上下文的自由文本段禁用（False，默认），否则
-    州缩写 VA 会被误读为梵蒂冈、误拒正确候选（GPT 补丁复审 GP1）。"""
+    州缩写 VA 会被误读为梵蒂冈、误拒正确候选（GPT 补丁复审 GP1）。
+    fix440a：先整串查一次——单个国名本身含逗号时（如 ru 'Бонайре,
+    Синт-Эстатиус и Саба'）分段会切碎它；整串命中即返单码，否则再分段。"""
+    _whole = str(stored_ctx or "").strip().lower()
+    if _whole:
+        _code = _CITY_CTX_COUNTRY_ALIASES.get(_whole) or _CC_EN.get(_whole) \
+            or _CC_LOCAL.get(_whole)
+        if _code:
+            return {_code}
     codes = set()
     for tok in str(stored_ctx or "").split(","):
         t = tok.strip()
@@ -3562,12 +3665,28 @@ def _geo_ctx_countries(stored_ctx, bare_code=False):
     return codes
 
 
+_REGION_NAMES_LOWER = frozenset(k.lower() for k in _REGION_L10N["zh"])
+
+
 def _geo_cache_country_ok(stored_ctx, code):
     """缓存候选国家检查（G1）：条目上下文无国家信息、或含多国
     （如 Georgia, United States——州名撞国家名，无法判定）时沿用
-    旧行为（返 True）；仅含一国且与给定码不符时返 False。"""
+    旧行为（返 True）；仅含一国且与给定码不符时返 False。
+    fix440a r1b-1：唯一码若仅来自“国家/州同名”分段（如 Georgia 既是
+    国家 GE 又是美国州名），无法判定条目上下文指哪国，亦沿用旧行为。"""
     codes = _geo_ctx_countries(stored_ctx)
     if len(codes) != 1:
+        return True
+    for tok in str(stored_ctx or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        _c = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low) \
+            or _CC_LOCAL.get(low)
+        if _c and low not in _REGION_NAMES_LOWER:
+            break
+    else:
         return True
     return next(iter(codes)) == code
 
@@ -3580,7 +3699,10 @@ def _city_ctx_kwargs(region, country):
     守卫须走 country=（bare_code=True）才能认出 "Ontario, CA" 里的
     CA；只给自由文本 ctx 时裸码不可信（GP1），守卫会丢国家信息。
     缓存分支的 country= 过滤用 _geo_cache_country_ok，只剔除上下文
-    明确指名另一国的候选，不误伤州级条目。"""
+    明确指名另一国的候选，不误伤州级条目。
+    fix440a r1b-8：country= 为空串时按缺失处理（不得遮住有效 ctx）。"""
+    if country is not None and not str(country).strip():
+        country = None
     if region and str(region).strip():
         return {"ctx": _join_nonempty(region, country, sep=", "),
                 "country": country}
@@ -3599,6 +3721,9 @@ def _loc_city(text, ctx=None, country=None):
     if LANG == "en" or not text:
         return text
     t = str(text).strip()
+    # fix440a r1b-8：country= 为空串时按缺失处理（不得遮住有效 ctx）。
+    if country is not None and not str(country).strip():
+        country = None
     cands = [t]
     folded = "".join(c for c in unicodedata.normalize("NFKD", t)
                      if not unicodedata.combining(c))
@@ -3613,9 +3738,8 @@ def _loc_city(text, ctx=None, country=None):
                 # 条目时记下后跳过本候选的无上下文静态表回落。仅当确有
                 # 条目时才过滤——无条目时沿旧行为退静态表（见 _loc_region
                 # 同款注记；空 _pairs 提前返回会截断静态表回落）。
-                _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
                 _pairs = [(c, v) for (c, v) in _pairs
-                          if _geo_ctx_ok(c, cand, _ctx_words)]
+                          if _geo_ctx_ok(c, cand, ctx)]
                 if not _pairs:
                     _ctx_rejected = True
                     continue
@@ -3660,9 +3784,12 @@ def _localize_profile_copy(prof):
     if prof.get("city") or prof.get("region"):
         _jobs = []
         if prof.get("city"):
+            # fix440a r1b-1：城市任务须带国家（否则 ES/US 的 Toledo 任务完全相同，
+            # 在线兜底无法消歧）；region 缺失时 job ctx 为 "城市, 国家"。
             _jobs.append(("city", prof["city"],
                           _join_nonempty(prof.get("city"),
-                                         _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")), sep=", ")))
+                                         _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")),
+                                         prof.get("country"), sep=", ")))
         if prof.get("region"):
             _jobs.append(("region", prof["region"],
                           _join_nonempty(prof.get("region"), prof.get("country"), sep=", ")))
