@@ -3105,9 +3105,20 @@ def _any2en(table):
                 _owner[name] = en
                 m[name] = en
             elif _owner[name] != en:
-                # 歧义名: 已有另一英文键占用, 撤出反查表并标记为歧义
-                _owner[name] = None
-                m.pop(name, None)
+                # fix440a r1b-12/OBS-03：同名仅差 " City" 后缀时（如 ru/fa 的
+                # "New York" 与 "New York City" 同译 Нью-Йорк/نیویورک），
+                # 两者实为同一座城，取较短者（New York）而非丢弃；真正的
+                # 跨城歧义（如 Oakland/Auckland 同译“奥克兰”）仍丢弃。
+                _prev = _owner[name]
+                if _prev is not None and (
+                        en == _prev + " City" or _prev == en + " City"):
+                    _keep = _prev if len(_prev) <= len(en) else en
+                    _owner[name] = _keep
+                    m[name] = _keep
+                else:
+                    # 歧义名: 已有另一英文键占用, 撤出反查表并标记为歧义
+                    _owner[name] = None
+                    m.pop(name, None)
             # _owner[name] is None: 已是歧义名, 不再收录
     return m
 
@@ -3406,6 +3417,25 @@ def _resolve_geo_online(jobs):
             list(ex.map(_one, todo))
 
 
+_GEO_INDEX = {"city": {}, "region": {}}
+_GEO_INDEX_SIG = {}
+
+
+def _geo_index(kind):
+    """_GEO_EXTRA 按名索引（fix440a r1b-13）：名 -> [(ctx, loc)]；索引随
+    _GEO_EXTRA 内容失效（lang/对象 id/长度任一变化即重建），每次查找
+    不再全表扫描。"""
+    d = _GEO_EXTRA[kind]
+    sig = (_GEO_EXTRA.get("lang"), id(d), len(d))
+    if _GEO_INDEX_SIG.get(kind) != sig:
+        idx = {}
+        for (name, ctx), loc in d.items():
+            idx.setdefault(name, []).append((ctx, loc))
+        _GEO_INDEX[kind] = idx
+        _GEO_INDEX_SIG[kind] = sig
+    return _GEO_INDEX[kind]
+
+
 def _geo_seg_norm(seg):
     """单条上下文分段归一化（fix440a）：国家名（任意语言/口语别名）-> ISO 码；
     州/省/城市名（任意语言，含重音折叠形）-> 英文名；其余 -> 小写去空白。
@@ -3452,31 +3482,40 @@ def _extra_sub(disp, kind, ctx_text=None):
     """把在线兜底命中的地名替换进对比行整串（disp 为待替换串）。
     同一变体有多个上下文候选时，只采用上下文成分出现在整串中的唯一候选；
     无法消歧时不任意采用首项（该变体原样保留）。单候选亦须过上下文检查
-    （B-06a-2）：缓存条目上下文词不在整串词集中且整串带逗号分隔的结构化
+    （B-06a-2）：缓存条目上下文分段不在整串分段中且整串带逗号分隔的结构化
     上下文成分时不取译文；整串无结构化上下文成分时（如 "Zork City"）
     无可核成分，沿用旧行为直取。
     ctx_text：消歧上下文来源，默认 disp；调用方可传整串以保留跨字段上下文
-    （CONF-FIXES-2.1），同时把替换限定在本字段内。"""
+    （CONF-FIXES-2.1），同时把替换限定在本字段内。
+    fix440a：替换一律按原始串坐标落点、最后一次性拼接——已写好的译文
+    不再被后序变体重扫（r1b-7）；被跳过的变体占位受保护，短变体不得
+    改写其内部（r1b-6）；多候选按不同译文数判歧义（r2b-19）；分段相等
+    才算“含该变体”，子串不算（r1b-5）——"New York" 不含 "York"；
+    命中处若是更长地名的后半段（如 "East York" 中的 "York"，且该长名
+    出现在上下文整串中），不替换（r1b-6/r2b-20）。"""
     if _GEO_EXTRA.get("lang") != LANG:
         return disp
-    _by_variant = {}
-    for (variant, _ctx), loc in _GEO_EXTRA[kind].items():
-        _by_variant.setdefault(variant, []).append((_ctx, loc))
+    _by_variant = _geo_index(kind)
     # CONF-FIXES-2.1：上下文分段须取自原始整串；取自不断被替换的当前 disp 时，
     # 前序替换会抹掉后序变体的上下文分段（如 New York 先被译走，York 的分段消失）。
     _src = ctx_text if ctx_text is not None else disp
     _disp_segs = {_geo_seg_norm(p) for p in str(_src).split(",")}
     _disp_segs.discard("")
+    _orig = disp
+    _repl = []     # (start, end, loc)：已确定的替换（原始串坐标）
+    _blocked = []  # (start, end)：受保护的跨度（被跳过的变体占位）
     # 最长变体优先：短名称先替换会破坏完整长名称（如 York 抢先于 East York）。
     for variant, cands in sorted(_by_variant.items(), key=lambda kv: -len(kv[0])):
         if not variant:
             continue
+        loc = None
         if len(cands) == 1:
             _sctx, loc = cands[0]
             if not _geo_ctx_ok(_sctx, variant, _src):
                 _parts = [p.strip() for p in _src.split(",")]
-                if any(p and variant.lower() not in p.lower() for p in _parts):
-                    continue
+                if any(p and _geo_seg_norm(p) != _geo_seg_norm(variant)
+                       for p in _parts):
+                    loc = None
         else:
             _variant_seg = _geo_seg_norm(variant)
             _winners = []
@@ -3486,16 +3525,43 @@ def _extra_sub(disp, kind, ctx_text=None):
                 _ctx_segs.discard(_variant_seg)
                 if _ctx_segs and _ctx_segs <= _disp_segs:
                     _winners.append(_loc)
-            if len(_winners) != 1:
-                continue
-            loc = _winners[0]
+            _uniq = list(dict.fromkeys(_winners))
+            if len(_uniq) == 1:
+                loc = _uniq[0]
+        # 本变体在原始串中的首次出现（ASCII 用词界正则，非 ASCII 用子串）。
         if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
-            m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
-            if m:
-                disp = disp[:m.start()] + loc + disp[m.end():]
-        elif variant in disp:
-            disp = disp.replace(variant, loc, 1)
-    return disp
+            _m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant)
+                           + r"(?![A-Za-z0-9])", _orig)
+            _span = (_m.start(), _m.end()) if _m else None
+        elif variant in _orig:
+            _i = _orig.find(variant)
+            _span = (_i, _i + len(variant))
+        else:
+            _span = None
+        if _span is None:
+            continue
+        if loc is None:
+            _blocked.append(_span)
+            continue
+        if any(s < _span[1] and _span[0] < e for s, e, _ in _repl) or \
+                any(s < _span[1] and _span[0] < e for s, e in _blocked):
+            continue
+        _before = _orig[:_span[0]]
+        _mw = re.search(r"([A-Za-z0-9_]+)\s+$", _before)
+        if _mw and (_mw.group(1) + " " + variant).lower() in str(_src).lower():
+            _blocked.append(_span)
+            continue
+        _repl.append((_span[0], _span[1], loc))
+    if not _repl:
+        return disp
+    _out = []
+    _pos = 0
+    for s, e, loc in sorted(_repl):
+        _out.append(_orig[_pos:s])
+        _out.append(loc)
+        _pos = e
+    _out.append(_orig[_pos:])
+    return "".join(_out)
 
 def _loc_region(text, ctx=None):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。
@@ -3506,11 +3572,14 @@ def _loc_region(text, ctx=None):
     格鲁吉亚），不得取美国州译文；ctx 未指明国家/多国歧义时沿用旧行为。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
-    if LANG == "en" or not text:
+    if not text:
         return text
+    if LANG == "en":
+        # fix440a r1b-11：en 界面亦须把本地化州名反查回英文（加利福尼亚州 -> California）。
+        return _ANY_REGION2EN.get(text.strip(), text)
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
-        _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["region"].items() if n == t]
+        _pairs = list(_geo_index("region").get(t, []))
         if ctx is not None and _pairs:
             # GPT-H1：先按上下文过滤再判唯一——多条目同译文时只验首条
             # 会随插入序拒掉有效译文；无匹配条目时不取译文、亦不回落
@@ -3718,9 +3787,17 @@ def _loc_city(text, ctx=None, country=None):
     （GPT-G1：无国家信息/多国歧义时沿用旧行为）。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
-    if LANG == "en" or not text:
+    if not text:
         return text
     t = str(text).strip()
+    if LANG == "en":
+        # fix440a r1b-11：en 界面把本地化城市名反查回英文（柏林 -> Berlin）。
+        for _cand in (t, "".join(c for c in unicodedata.normalize("NFKD", t)
+                                 if not unicodedata.combining(c))):
+            _en = _ANY_CITY2EN.get(_cand)
+            if _en:
+                return _en
+        return text
     # fix440a r1b-8：country= 为空串时按缺失处理（不得遮住有效 ctx）。
     if country is not None and not str(country).strip():
         country = None
@@ -3729,10 +3806,12 @@ def _loc_city(text, ctx=None, country=None):
                      if not unicodedata.combining(c))
     if folded != t:
         cands.append(folded)
-    _ctx_rejected = False
     for cand in cands:
+        # fix440a r1b-10：拒绝标志按候选拼写分别记——前一拼写（Montréal）
+        # 的缓存拒绝不得泄漏到折叠拼写（Montreal）的静态表回落。
+        _ctx_rejected = False
         if _GEO_EXTRA.get("lang") == LANG:
-            _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["city"].items() if n == cand]
+            _pairs = list(_geo_index("city").get(cand, []))
             if ctx is not None and _pairs:
                 # GPT-H1：同 _loc_region，先按上下文过滤再判唯一；无匹配
                 # 条目时记下后跳过本候选的无上下文静态表回落。仅当确有
