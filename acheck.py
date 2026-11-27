@@ -3555,6 +3555,9 @@ def _wd_claim_ids(ent, prop):
 # fix440 GPT G-053：去消歧括号只去掉 Wikidata 注释形态（city／
 # disambiguation 等通用标注）；正式地名的一部分（如 Frankfurt (Oder)
 # 的 (Oder)）须保留——无法区分时宁可保留原文。
+# fix440-merge：括号内容为已知行政区/国家名时亦剥离（见 _wd_pick_label
+# 内 _ANY_REGION2EN/_CC_EN/_CC_LOCAL 三表判定，如 (俄勒岡州) 是州名
+# 消歧后缀、(Oder) 不是行政区名故保留；430e boardman 例为凭据）。
 _WD_PAREN_ANNOTATION = frozenset({
     "city", "town", "village", "municipality", "settlement", "commune",
     "borough", "district", "county", "locality", "disambiguation",
@@ -3580,7 +3583,17 @@ def _wd_pick_label(ent, langs):
             if not isinstance(_raw, str):
                 continue
             _m = re.search(r"\s*[\(\（]([^)\）]*)[\)\）]\s*$", _raw)
-            if _m and _m.group(1).strip().lower() in _WD_PAREN_ANNOTATION:
+            # fix440-merge：G-053 的白名单之外，括号内容若为已知行政区/
+            # 国家名（如 (俄勒岡州)、(Oregon)、(Illinois)）同样是消歧
+            # 后缀——Wikidata 以包含性行政区名消歧同名地；(Oder) 等非
+            # 行政区名仍保留（无法区分时宁可保留原文）。行政区名查
+            # _ANY_REGION2EN（六语州/省名反查表，英文键自查），国名查
+            # _CC_EN/_CC_LOCAL（小写键）。
+            _inner = _m.group(1).strip() if _m else ""
+            if _m and (_inner.lower() in _WD_PAREN_ANNOTATION
+                       or _inner in _ANY_REGION2EN
+                       or _inner.lower() in _CC_EN
+                       or _inner.lower() in _CC_LOCAL):
                 v = _raw[:_m.start()].strip()
             else:
                 v = _raw.strip()
