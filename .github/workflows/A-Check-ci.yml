@@ -1055,22 +1055,24 @@ jobs:
           # interactively and the output file is just its banner, which is
           # not JSON. Invoke run.bat directly: Git Bash runs .bat files via
           # cmd itself, and the `--...` args are untouched by conversion.
-          ./run.bat --explain --json > "$RUNNER_TEMP/rb-explain.json" 2>&1
-          rc=$?
+          # NOTE: run.bat is EXPECTED to exit non-zero on the --shortcut
+          # gate (rc 2). Under `bash -e`, a bare failing command aborts
+          # the step before `rc=$?` ever runs (R7: step died with rc 2
+          # and no ERROR line). So every run.bat call uses
+          # `rc=0; <cmd> || rc=$?` -- the `||` list exempts it from -e.
+          rc=0; ./run.bat --explain --json > "$RUNNER_TEMP/rb-explain.json" 2>&1 || rc=$?
           test "$rc" -eq 0 || { echo "ERROR: run.bat --explain --json rc=$rc"; cat "$RUNNER_TEMP/rb-explain.json"; exit 1; }
           python -m json.tool "$RUNNER_TEMP/rb-explain.json" > /dev/null || { echo "ERROR: run.bat --explain --json output is not valid JSON"; exit 1; }
           echo "OK: run.bat --explain --json forwards and is valid JSON"
-          ./run.bat --shortcut status > "$RUNNER_TEMP/rb-sc.txt" 2>&1
-          rc=$?
+          rc=0; ./run.bat --shortcut status > "$RUNNER_TEMP/rb-sc.txt" 2>&1 || rc=$?
           test "$rc" -eq 2 || { echo "ERROR: run.bat --shortcut status rc=$rc want 2"; cat "$RUNNER_TEMP/rb-sc.txt"; exit 1; }
           grep -q "Windows 不支持" "$RUNNER_TEMP/rb-sc.txt" || { echo "ERROR: run.bat --shortcut status lacks win32 message:"; cat "$RUNNER_TEMP/rb-sc.txt"; exit 1; }
           echo "OK: run.bat --shortcut status forwards into the Windows gate"
-          (cd / && "$GITHUB_WORKSPACE/run.bat" --help > "$RUNNER_TEMP/rb-help.txt" 2>&1)
-          rc=$?
+          rc=0; (cd / && "$GITHUB_WORKSPACE/run.bat" --help > "$RUNNER_TEMP/rb-help.txt" 2>&1) || rc=$?
           test "$rc" -eq 0 || { echo "ERROR: run.bat --help from C:\\ rc=$rc"; cat "$RUNNER_TEMP/rb-help.txt"; exit 1; }
           grep -q "用法:" "$RUNNER_TEMP/rb-help.txt" || { echo "ERROR: run.bat --help lacks help text:"; cat "$RUNNER_TEMP/rb-help.txt"; exit 1; }
           echo "OK: run.bat --help works from another directory (cd /d %~dp0)"
-          python acheck.py --help > "$RUNNER_TEMP/help.txt" 2>&1
+          python acheck.py --help > "$RUNNER_TEMP/help.txt" 2>&1 || true
           grep -q "用法:" "$RUNNER_TEMP/help.txt" || { echo "ERROR: --help lacks help text"; exit 1; }
           grep -q "IP 信誉检测" "$RUNNER_TEMP/help.txt" || { echo "ERROR: --help lacks Chinese title (UTF-8 stdio?)"; exit 1; }
           echo "OK: --help renders Chinese on Windows (UTF-8 stdio reconfigure)"
