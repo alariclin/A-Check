@@ -3859,6 +3859,36 @@ def _extra_sub(disp, kind, ctx_text=None):
             _uniq = list(dict.fromkeys(_winners))
             if len(_uniq) == 1:
                 loc = _uniq[0]
+            elif not _winners and len(_disp_segs) == 1:
+                # fix440-merge：无逗号的整串（生产 _join_nonempty 以空格
+                # 拼的 "Country B Example"）只有一个分段，分段子集永不
+                # 命中，多候选恒无法消歧（r4b3 回归：城市不译）。退到短
+                # 语包含：上下文词串须以词界出现在整串中，且位于串首或
+                # 紧贴变体之后——"X West Virginia" 的 Virginia 前有
+                # West（非变体），不得匹配，防单字边界误判（r1b-3 同款
+                # Virginia/West Virginia 危险）；"Country B"／
+                # "Illinois"（紧贴变体）与串首上下文均可匹配。
+                _disp_w = " ".join(re.findall(
+                    r"[A-Za-z0-9]+", str(_src).lower()))
+                _var_w = " ".join(re.findall(
+                    r"[A-Za-z0-9]+", variant.lower()))
+                for _ctx, _loc in cands:
+                    _ctx_w = " ".join(re.findall(
+                        r"[A-Za-z0-9]+", str(_ctx or "").lower()))
+                    if not _ctx_w:
+                        continue
+                    _mm = re.search(
+                        r"(?<![A-Za-z0-9])" + re.escape(_ctx_w)
+                        + r"(?![A-Za-z0-9])", _disp_w)
+                    if not _mm:
+                        continue
+                    _before = _disp_w[:_mm.start()].strip()
+                    if not _before or _before == _var_w \
+                            or _before.endswith(" " + _var_w):
+                        _winners.append(_loc)
+                _uniq = list(dict.fromkeys(_winners))
+                if len(_uniq) == 1:
+                    loc = _uniq[0]
         # 本变体在原始串中的全部出现（ASCII 用词界正则，非 ASCII 用子串；
         # fix440b G2：同一变体的全部出现都要替换，旧版只换首次出现）。
         if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
