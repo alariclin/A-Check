@@ -5566,16 +5566,35 @@ def run_passive(ip, json_mode=False):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            with _progress_lock:
-                progress_closed[0] = True
+            # r5a-6：超时处理不得取 _progress_lock——卡住的进度渲染
+            # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
+            # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
+            progress_closed[0] = True
+            # r5a-7：超时且仍有未完成 future 时，旧池的运行中任务会占满
+            # worker、下一轮全 timeout——旧池 shutdown（不等运行中任务，
+            # 取消排队任务）后新建池并重绑全局与局部 _ex（coordgeo 提交
+            # 在 _ex 上，须用新池；正常完成时不动池）。替换假定无并发
+            # 提交方（菜单/CLI 皆单线程调用），见报告。
+            if any(not _f.done() for _f in _futs):
+                _old_pool = _ex
+                _old_pool.shutdown(wait=False, cancel_futures=True)
+                with _POOL_LOCK:
+                    _V4_POOL = ThreadPoolExecutor(max_workers=14)
+                    _ex = _V4_POOL
+        except KeyboardInterrupt:
+            # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
+            # 后重新抛出（finally 复位进度状态）。
+            for _f in _futs:
+                _f.cancel()
+            raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
                 sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        with _progress_lock:
-            progress_closed[0] = True
-        # 共享池不 shutdown：复用方持有，关掉即断后续调用
+        # r5a-6：同上，无锁赋值。
+        progress_closed[0] = True
+        # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
     if not json_mode:
         with _progress_lock:
@@ -6777,16 +6796,35 @@ def run_passive6(ip, json_mode=False):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            with _progress_lock:
-                progress_closed[0] = True
+            # r5a-6：超时处理不得取 _progress_lock——卡住的进度渲染
+            # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
+            # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
+            progress_closed[0] = True
+            # r5a-7：超时且仍有未完成 future 时，旧池的运行中任务会占满
+            # worker、下一轮全 timeout——旧池 shutdown（不等运行中任务，
+            # 取消排队任务）后新建池并重绑全局与局部 _ex（coordgeo 提交
+            # 在 _ex 上，须用新池；正常完成时不动池）。替换假定无并发
+            # 提交方（菜单/CLI 皆单线程调用），见报告。
+            if any(not _f.done() for _f in _futs):
+                _old_pool = _ex
+                _old_pool.shutdown(wait=False, cancel_futures=True)
+                with _POOL_LOCK:
+                    _V6_POOL = ThreadPoolExecutor(max_workers=10)
+                    _ex = _V6_POOL
+        except KeyboardInterrupt:
+            # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
+            # 后重新抛出（finally 复位进度状态）。
+            for _f in _futs:
+                _f.cancel()
+            raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
                 sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        with _progress_lock:
-            progress_closed[0] = True
-        # 共享池不 shutdown：复用方持有，关掉即断后续调用
+        # r5a-6：同上，无锁赋值。
+        progress_closed[0] = True
+        # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
     if not json_mode:
         with _progress_lock:
