@@ -385,7 +385,15 @@ jobs:
                   rx = re.compile(pat.encode())
                   d_end = min(time.time() + deadline, t_end)
                   while True:
-                      if rx.search(buf):
+                      m = rx.search(buf)
+                      if m:
+                          # consume through the match: the next wait must
+                          # match fresh output only. Without this, the
+                          # second wait matches the stale first prompt and
+                          # input is sent while the process is still busy
+                          # (on macOS that input is lost; the process then
+                          # waits at the prompt forever).
+                          buf = buf[m.end():]
                           return True
                       now = time.time()
                       if now >= d_end:
@@ -406,10 +414,19 @@ jobs:
                   if step.get("send"):
                       os.write(master, step["send"].encode())
               try:
-                  rc = proc.wait(timeout=max(0, t_end - time.time()))
+                  rc = proc.wait(timeout=min(20, max(0, t_end - time.time())))
               except subprocess.TimeoutExpired:
-                  proc.kill(); proc.wait()
-                  raise TimeoutError(f"process did not exit; tail={buf[-1500:]!r}")
+                  # input may have been lost while the process was busy;
+                  # retry once now that it is visibly at the prompt
+                  try:
+                      os.write(master, b"q\n")
+                  except OSError:
+                      pass
+                  try:
+                      rc = proc.wait(timeout=max(0, t_end - time.time()))
+                  except subprocess.TimeoutExpired:
+                      proc.kill(); proc.wait()
+                      raise TimeoutError(f"process did not exit; tail={buf[-1500:]!r}")
               while True:
                   r, _, _ = select.select([master], [], [], 0.5)
                   if not r:
