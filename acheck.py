@@ -8238,6 +8238,63 @@ def _tiktok_denied(body):
     return _denied_error_page(body)
 
 
+def _url_path_has_nsfw(final_url):
+    """最终 URL 路径段是否含 nsfw（fix440 D-02）：只看路径，查询串
+    （如 ?ref=nsfw）与片段不算；大小写不敏感。"""
+    try:
+        return "nsfw" in urllib.parse.urlparse(final_url or "").path.lower()
+    except Exception:
+        return False
+
+
+_NETFLIX_UI_LANGS = frozenset({
+    "en", "pt", "es", "fr", "de", "it", "nl", "ja", "zh", "ko", "ar",
+    "hi", "tr", "pl", "ru", "uk", "sv", "da", "fi", "nb", "nn", "no",
+    "cs", "sk", "hu", "ro", "bg", "hr", "sr", "sl", "et", "lv", "lt",
+    "el", "he", "id", "ms", "th", "vi", "fa", "ur", "bn",
+})
+
+
+def _netflix_region_from_url(final_url):
+    """Netflix 最终 URL 的地区段（fix440 D-01）：locale 形为
+    lang-region（如 en-gb、pt-br），地区是横杠后段，不是前段；
+    region-lang 形（如 us-en）取非语言码那段；单段语言码（如 /en/）
+    不是地区，返回 ""。BCP47 下双段皆非语言码时默认后段为地区。"""
+    try:
+        _segs = [s for s in urllib.parse.urlparse(final_url or "").path.split("/")
+                 if s]
+        if not _segs:
+            return ""
+        _seg = _segs[0].lower()
+    except Exception:
+        return ""
+    if "-" in _seg:
+        _a, _b = _seg.split("-", 1)
+        if len(_a) == 2 and len(_b) == 2:
+            if _a in _NETFLIX_UI_LANGS:
+                return _b.upper()
+            if _b in _NETFLIX_UI_LANGS:
+                return _a.upper()
+            return _b.upper()
+        return ""
+    if len(_seg) == 2 and _seg not in _NETFLIX_UI_LANGS:
+        return _seg.upper()
+    return ""
+
+
+def _scoped_json_field(body, field):
+    """JSON 正文字段取值（fix440 r4-20）：viewer/user 等观看者作用域
+    内的字段优先（如 {"viewer":{"region":"US"}}），避免内容作者等
+    其他对象的同名字段冒充服务地区；无作用域字段时回落首个匹配。"""
+    b = body or ""
+    m = re.search(r'"(?:viewer|user|currentUser|profile|account)"\s*:\s*\{'
+                  r'[^}]{0,400}?"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
+    if m:
+        return m.group(1)
+    m = re.search(r'"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
+    return m.group(1) if m else ""
+
+
 def test_tiktok(local_ip=None):
     code, body, _, complete, hdrs = _active_get("https://www.tiktok.com/")
     if code is None:
@@ -8249,8 +8306,8 @@ def test_tiktok(local_ip=None):
     if code == 200 and not complete and not _tiktok_denied(body):
         return T("unknown"), "", None
     if code == 200 and not _tiktok_denied(body):
-        m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
-        region = f"[{m.group(1)}]" if m else ""
+        region = _scoped_json_field(body, "region")
+        region = f"[{region}]" if region else ""
         return T("unlocked"), region, get_unlock_type("www.tiktok.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -8366,11 +8423,12 @@ def _claude_unavailable(body):
 
 
 def _netflix_unavailable(final_url, body):
-    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 含 nsfw，
-    或 "Not Available" 出现在错误页结构（<title>/<h1>）里；正文散文
-    或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾因此误判
-    blocked）。URL 信号不受正文截断影响。"""
-    if "nsfw" in (final_url or ""):
+    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 路径段
+    含 nsfw，或 "Not Available" 出现在错误页结构（<title>/<h1>）里；
+    正文散文或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾
+    因此误判 blocked）。URL 信号不受正文截断影响。fix440 D-02：
+    nsfw 只看路径段、大小写不敏感，查询串（如 ?ref=nsfw）不算。"""
+    if _url_path_has_nsfw(final_url):
         return True
     return _error_title_or_h1(body, r"not\s+available")
 
@@ -8384,25 +8442,29 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
+    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 路径已含
     # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
-    if code == 200 and not complete and not _netflix_unavailable(final_url, body):
+    # fix440 r4-19：只有 URL 证据能绕过 unknown 门，截断正文里的标题
+    # 不行（标题可能来自未读完的页面，不可信）。
+    if code == 200 and not complete and not _url_path_has_nsfw(final_url):
         return T("unknown"), "", None
     if code == 200 and not _netflix_unavailable(final_url, body):
-        m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
-            r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
-        )
-        region = f"[{m.group(1).upper()}]" if m else ""
+        _country = _scoped_json_field(body, "country") \
+            or _netflix_region_from_url(final_url)
+        region = f"[{_country}]" if _country else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
     # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
     # 次探针 403 会被误判 blocked）。
-    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "nsfw" in (final_url or "").lower():
-        return T("blocked"), "", None
-    _ft = _http_fallthrough(code)
-    if _ft is not None:
-        return _ft, "", None
+    # M-07 改（fix440 r4-18）：3xx 本身不是锁区证据，路径 nsfw 信号
+    # 亦须次探针确认——此处不再直接判 blocked，跳过 fallthrough 落入
+    # 次探针；无路径 nsfw 信号的 3xx 仍走 fallthrough 判 unknown。
+    if 300 <= code <= 399 and _url_path_has_nsfw(final_url):
+        pass
+    else:
+        _ft = _http_fallthrough(code)
+        if _ft is not None:
+            return _ft, "", None
 
     code2, body2, final_url2, complete2, hdrs2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
@@ -8411,17 +8473,17 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
-    if code2 == 200 and not complete2 and not _netflix_unavailable(final_url2, body2):
+    if code2 == 200 and not complete2 and not _url_path_has_nsfw(final_url2):
         return T("unknown"), "", None
     if code2 == 200 and not _netflix_unavailable(final_url2, body2):
-        m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
-            r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
-        )
+        _country2 = _scoped_json_field(body2, "country") \
+            or _netflix_region_from_url(final_url2)
         orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?", zhtw="自製?")
-        region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
+        region = f"[{_country2}/{orig_tag}]" if _country2 else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
-    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code2 <= 399 and "nsfw" in (final_url2 or "").lower():
+    # M-07：3xx 先验命中锁区 URL（路径 nsfw）仍判 blocked，须排在 fallthrough 之前。
+    # 首探针已确认过一次，此为双探针确认后的结论（fix440 r4-18）。
+    if 300 <= code2 <= 399 and _url_path_has_nsfw(final_url2):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code2)
     if _ft is not None:
