@@ -782,6 +782,10 @@ jobs:
           where.exe python
           where.exe acheck; if ($LASTEXITCODE -ne 0) { echo "where acheck: no hit (expected)" }
           where.exe ac; if ($LASTEXITCODE -ne 0) { echo "where ac: no hit (expected)" }
+          # where.exe exits 1 on no match and $LASTEXITCODE stays 1 even
+          # after the echo above; the Actions pwsh shell fails the step
+          # on a non-zero final native exit code, so reset it explicitly.
+          exit 0
 
       - name: Shortcuts Windows gate (Windows)
         if: runner.os == 'Windows'
