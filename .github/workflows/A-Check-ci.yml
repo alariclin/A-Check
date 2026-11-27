@@ -7,6 +7,9 @@ name: A-Check CI
 #   consistency: 根文件与包内副本逐字节一致；全仓版本号一致、无旧版残留；
 #            版本变化时 12 张 report/ipv6 截图须同批改动（PNG 版本门禁）；
 #            run.bat 全行 CRLF；两个测试脚本 bash 语法通过。
+#   os-smoke: Windows/macOS 冒烟（py_compile + --help + --explain + 确定性
+#            CLI 错误路径 + 各系统启动器），单 Python 3.13；覆盖此前从未实测
+#            过的 Windows/macOS 导入与 CLI 路径。不覆盖联网行为与交互菜单。
 # 不覆盖：170 份回归夹具（在 ~/workspace/.astra_review/fix-tools/，不在仓库内，
 # 故 CI 跑不到；如要进 CI，须先把夹具审过后提交进仓库，另立项决定）。
 # 也不覆盖：联网行为（被动/主动检测、流媒体探针），由悉尼实机腿覆盖。
@@ -139,3 +142,50 @@ jobs:
         run: |
           bash -n acheck-all-systems-test.sh
           bash -n vps-test.sh
+
+  os-smoke:
+    # Windows/macOS smoke: import + CLI on real GH runners. Single Python
+    # 3.13: the goal is OS coverage, not another Python matrix. The harness
+    # local mode is NOT reused on Windows (its python3 lookup is uncertain
+    # there; the three gates below are exactly what local mode runs).
+    # macOS additionally runs the harness local mode under the runner's
+    # shipped bash 3.2 (the harness has no bash 4-only syntax).
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            py: python
+          - os: macos-latest
+            py: python3
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+      - name: py_compile + --help + --explain + deterministic CLI errors
+        shell: bash
+        run: |
+          ${{ matrix.py }} -m py_compile acheck.py
+          ${{ matrix.py }} acheck.py --help </dev/null
+          ${{ matrix.py }} acheck.py --explain </dev/null
+          ${{ matrix.py }} acheck.py --explain --json </dev/null | ${{ matrix.py }} -m json.tool > /dev/null
+          if ${{ matrix.py }} acheck.py --ipv4-only --ipv6-only --json </dev/null; then
+            echo "ERROR: conflicting stack flags must fail" >&2; exit 1
+          fi
+          if ${{ matrix.py }} acheck.py --no-speed --with-speed --json </dev/null; then
+            echo "ERROR: conflicting speed flags must fail" >&2; exit 1
+          fi
+          if ${{ matrix.py }} acheck.py --json --proxy badformat </dev/null; then
+            echo "ERROR: bad --proxy format must fail" >&2; exit 1
+          fi
+      - name: Windows launcher smoke (run.bat)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: run.bat --help
+      - name: Harness local mode (macOS shipped bash)
+        if: runner.os == 'macOS'
+        run: ACHECK_LOCAL_ONLY=1 bash acheck-all-systems-test.sh ./acheck.py
