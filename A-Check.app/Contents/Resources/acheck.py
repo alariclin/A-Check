@@ -5827,6 +5827,8 @@ def _print_streaming_inference(res):
     is_korea = _cc_match("north korea", "kp", "dprk", "朝鲜", "朝鮮")
     is_india = _cc_match("india", "in", "印度")
     is_hk = _cc_match("hong kong", "hk", "香港")
+    is_macau = _cc_match("macau", "mo", "澳门", "澳門")
+    is_belarus = _cc_match("belarus", "by", "白俄罗斯", "白俄羅斯")
     is_afghanistan = _cc_match("afghanistan", "af", "阿富汗")
     is_somalia = _cc_match("somalia", "so", "索马里", "索馬里")
     is_uzbekistan = _cc_match("uzbekistan", "uz", "乌兹别克斯坦", "烏茲別克斯坦")
@@ -5849,6 +5851,11 @@ def _print_streaming_inference(res):
 
     # 国家级防火墙与制裁锁区表 (Sources: OONI, Freedom House 2025/2026, OFAC GL D-2 & Syria 2025 Rule, GitHub Blog)
     def _fw_check(service_name):
+        # fix440 r4-7：主动探针 test_chatgpt 按地区屏蔽 HK/MO/BY，
+        # 被动推断须与之一致——同一地区不得一面主动 blocked、一面
+        # 被动高置信可用。
+        if service_name == "ChatGPT" and (is_hk or is_macau or is_belarus):
+            return True
         if is_china_mainland:
             # 中国大陆 GFW: 封锁 16 项境外服务，放行本土 DeepSeek 与直连可用的 GitHub
             return service_name in {
@@ -5926,7 +5933,11 @@ def _print_streaming_inference(res):
         isinstance(_s, dict) and _s.get("ok")
         and (_strict_bool(_s.get("proxy")) is not None
              or _strict_bool(_s.get("vpn")) is not None)
-        for _s in (pc, wi, fp, il, iq))
+        for _s in (pc, wi, fp, il, iq)) or (
+        # fix440 r4-9：x4bvpn.listed 是真实的 VPN 布尔票，须计入——
+        # 它是唯一真实票时也不得因此把 high 置信判为不可达。
+        isinstance(xv, dict) and xv.get("ok")
+        and _strict_bool(xv.get("listed")) is not None)
     _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok")
                      and sc.get("fraud_score") is not None)
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
@@ -6009,7 +6020,11 @@ def _print_streaming_inference(res):
             _ip = (T("infer_limit"), "mid")
         elif is_tor or is_tor_exit or is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
-        elif is_dc or is_res:
+        elif is_dc:
+            # fix440 r4-8：宽松分支亦执行机房 IP 置信度上限——机房
+            # 分支封顶 mid，与 _infer_avail 的 cap_mid 口径一致。
+            _ip = _infer_avail(cap_mid=True)
+        elif is_res:
             _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
@@ -8151,27 +8166,64 @@ _unlock_cache = {}
 _unlock_lock = threading.Lock()
 
 
+_TWO_LABEL_PUBLIC_SUFFIXES = frozenset({
+    # 常见双段公共后缀（fix440 r4-5）：末两段比较会把共享此类后缀的
+    # 不同注册域当成同一域，须先剥到注册域再比较。
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "co.jp", "co.kr", "com.au",
+    "net.au", "org.au", "co.nz", "com.br", "com.cn", "net.cn", "org.cn",
+    "co.in", "com.mx", "com.ar", "com.tr", "co.za", "com.tw", "co.il",
+})
+
+
+def _reg_domain(name):
+    """取注册域（fix440 r4-5）：末两段为公共后缀时取末三段，否则取
+    末两段；不足两段时取全名。"""
+    _n = (name or "").strip().rstrip(".").lower()
+    if not _n:
+        return ""
+    _parts = _n.split(".")
+    if len(_parts) <= 2:
+        return _n
+    if ".".join(_parts[-2:]) in _TWO_LABEL_PUBLIC_SUFFIXES:
+        return ".".join(_parts[-3:]) if len(_parts) >= 3 else _n
+    return ".".join(_parts[-2:])
+
+
+def _cnames_share_reg_domain(sys_cnames, pub_cnames):
+    """两路 CNAME 是否共享同一注册域（fix440 r4-5）：比较注册域，
+    不是末两段——edge.alpha.co.uk 与 edge.beta.co.uk 注册域不同，
+    不算共享；a1.cloudfront.net 与 a2.cloudfront.net 共享。"""
+    if not sys_cnames or not pub_cnames:
+        return False
+    _sys = {_reg_domain(c) for c in sys_cnames if c}
+    _pub = {_reg_domain(c) for c in pub_cnames if c}
+    _sys.discard("")
+    _pub.discard("")
+    return bool(_sys & _pub)
+
+
 def get_unlock_type(domain, local_ip=None):
     """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
     三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
-    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
+    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→None
+    （fix440 D-12/r4-3：无重叠、无同注册域后缀时，合法多 PoP GeoDNS
+    与 DNS 解锁无法区分，保守返 None；本函数不再下确定 False 结论）。
     前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
-    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。
+    无 IPv4 出口时即使未传 local_ip 也查 AAAA（fix440 r4-2）。
+    fix440 r4-4：不再缓存判定结果——缓存无有效期，DNS 答案变化后
+    仍返回旧结论；每次调用重新查询（_unlock_cache 保留为空 dict，
+    仅供旧 clear() 调用点兼容）。
     H-03：系统 NS 按序遍历 [:3] 直至拿到响应（ns[0] 失败不再直接返 None）；
     公共对比 DNS 按出口切换：_FORCE_FAMILY==6 或无 IPv4 出口时用 IPv6 对
     (2606:4700:4700::1111 / 2001:4860:4860::8888)，否则用 IPv4 对。"""
     _ns_list = _get_system_nameservers()
-    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)) else 1
+    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)
+                   or not _has_ipv4_egress()) else 1
     if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
         _pub = ("2606:4700:4700::1111", "2001:4860:4860::8888")
     else:
         _pub = ("1.1.1.1", "8.8.8.8")
-    cache_key = (domain, local_ip or "", tuple(_ns_list[:3]), qtype)
-    with _unlock_lock:
-        if cache_key in _unlock_cache:
-            return _unlock_cache[cache_key]
-
     sys_ns = None
     sys_ips = sys_cnames = None
     for _cand in _ns_list[:3]:
@@ -8186,12 +8238,13 @@ def get_unlock_type(domain, local_ip=None):
         # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
         return None
     if sys_ns == _pub[0]:
-        # OPT-02 复用：sys 查询与公共查询是同一服务器、同一域名、
-        # 同一 qtype，结果直接复用，不再重复查。
-        pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
+        # fix440 r4-1：系统 DNS 恰为公共对照 DNS 时，复用系统答案作
+        # 公共答案是自比较，非空即强制 True；该路公共对照作废，只用
+        # 另一路公共 DNS 作比较。
+        pub_ips_1, pub_cnames_1 = None, None
         pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
     elif sys_ns == _pub[1]:
-        pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
+        pub_ips_2, pub_cnames_2 = None, None
         pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
     else:
         # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
@@ -8216,8 +8269,13 @@ def get_unlock_type(domain, local_ip=None):
             # 按实际地址族定粒度：点分判断会把 ::ffff:192.0.2.1 这类点分嵌入
             # IPv6 误送 IPv4 解析，失败后原串与对端 /64 归一化结果永不重叠，
             # 把“不可判定”变成错误的确定 False（F22）。
+            # fix440 r4-6：IPv4 映射 IPv6（::ffff:a.b.c.d）先解包为内嵌
+            # IPv4 再按 /24 比较——否则不同 IPv4 池同落一个 /64，误判重叠。
             try:
                 _a = ipaddress.ip_address(_ip)
+                if isinstance(_a, ipaddress.IPv6Address) \
+                        and _a.ipv4_mapped is not None:
+                    _a = _a.ipv4_mapped
                 if isinstance(_a, ipaddress.IPv4Address):
                     return str(ipaddress.IPv4Network((_a, 24),
                                                      strict=False).network_address)
@@ -8228,21 +8286,18 @@ def get_unlock_type(domain, local_ip=None):
         sys_prefixes = {_pfx(ip) for ip in sys_ips}
         pub_prefixes = {_pfx(ip) for ip in pub_ips}
         overlap = bool(sys_prefixes & pub_prefixes)
-        suffix = bool(sys_cnames and pub_cnames and any(
-            sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
-        ))
+        suffix = _cnames_share_reg_domain(sys_cnames, pub_cnames)
         # 真值表（§0-4/§0-II-a，字面执行）：overlap→True；仅 suffix→None（保守，无法区分合法多 PoP
-        # 与保留官方 CNAME 的 DNS 解锁）；余者→False（双方有效、无重叠、无同后缀）。
+        # 与保留官方 CNAME 的 DNS 解锁）；余者→None（fix440 D-12/r4-3：
+        # 无重叠、无同注册域后缀时，合法 GeoDNS 多 PoP 与 DNS 解锁无法
+        # 区分，不得下确定 False 结论）。
         if overlap:
             res = True
         elif suffix:
             res = None
         else:
-            res = False
+            res = None
 
-    if res is not None:
-        with _unlock_lock:
-            _unlock_cache[cache_key] = res
     return res
 
 
