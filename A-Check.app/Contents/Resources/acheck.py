@@ -9315,23 +9315,33 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
 
 
 def _content_length_valid(headers):
-    """Content-Length 头是否合法（fix440 r4-13）：无头为合法；有头时
-    须为纯 ASCII 数字串且可转为 int，否则非法。仅判合法性，不核对
+    """Content-Length 头是否合法（fix440 r4-13；G-078）：无头为合法；
+    有头时须为纯 ASCII 数字串且可转为 int，否则非法；重复出现时各值
+    须一致（get_all() 检查，矛盾值不得判完整）。仅判合法性，不核对
     长度——供读满采样上限的分支使用（上限不得绕过合法性检查）。"""
     try:
-        v = headers.get("Content-Length") if headers is not None else None
+        if headers is None:
+            return True
+        if hasattr(headers, "get_all"):
+            _vals = headers.get_all("Content-Length")
+            _vals = list(_vals) if _vals is not None else []
+        else:
+            _v = headers.get("Content-Length")
+            _vals = [] if _v is None else [_v]
     except Exception:
         return True
-    if v is None:
+    if not _vals:
         return True
-    v = str(v).strip()
-    if v.isascii() and v.isdigit():
+    _nums = []
+    for _v in _vals:
+        _v = str(_v).strip()
+        if not (_v.isascii() and _v.isdigit()):
+            return False
         try:
-            int(v)
-            return True
+            _nums.append(int(_v))
         except (ValueError, OverflowError):
             return False
-    return False
+    return len(set(_nums)) == 1
 
 
 def _decode_body(raw, headers):
@@ -9344,7 +9354,9 @@ def _decode_body(raw, headers):
         _ct = str((headers or {}).get("content-type", "") or "")
     except Exception:
         _ct = ""
-    _m = re.search(r"charset\s*=\s*\"?([^\";\s]+)\"?", _ct, re.IGNORECASE)
+    _m = re.search(r"(?:^|;)\s*charset\s*=\s*\"?([^\";\s]+)\"?", _ct,
+                   re.IGNORECASE)  # G-079：须按完整参数名读取——
+    # "x-charset" 的后半段不得被命中（参数须以 ; 或串首为界）。
     if _m:
         try:
             return raw.decode(_m.group(1).strip(), errors="replace")
@@ -9784,6 +9796,56 @@ def _unlock_label(v):
     return T("unknown")
 
 
+_HIDDEN_OPEN_RE = re.compile(r"<!--|<script\b[^>]*>|<style\b[^>]*>",
+                            re.IGNORECASE)
+_HIDDEN_CLOSE_SCRIPT_RE = re.compile(r"</script\s*>", re.IGNORECASE)
+_HIDDEN_CLOSE_STYLE_RE = re.compile(r"</style\s*>", re.IGNORECASE)
+
+
+def _strip_hidden_html(body):
+    """剥离 HTML 注释与 <script>/<style> 块（G-029/G-030）：单次向前
+    扫描，未闭合的起符直接截断到采样末尾——不得从每个起符重新扫描
+    到末尾（旧 <!--.*?--> 在多未闭合注释下二次方耗时）。剥离后 JS/
+    注释里的假 <title>/<h1> 与锁区文案不再参与可见信号判定。"""
+    b = body or ""
+    if not b:
+        return b
+    out = []
+    pos = 0
+    while True:
+        m = _HIDDEN_OPEN_RE.search(b, pos)
+        if m is None:
+            out.append(b[pos:])
+            break
+        out.append(b[pos:m.start()])
+        _tok = m.group(0)
+        if _tok.startswith("<!--"):
+            _end = b.find("-->", m.end())
+            if _end < 0:
+                break
+            pos = _end + 3
+        elif _tok[1:7].lower() == "script":
+            _cm = _HIDDEN_CLOSE_SCRIPT_RE.search(b, m.end())
+            if _cm is None:
+                break
+            pos = _cm.end()
+        else:
+            _cm = _HIDDEN_CLOSE_STYLE_RE.search(b, m.end())
+            if _cm is None:
+                break
+            pos = _cm.end()
+    return "".join(out)
+
+
+def _visible_text(body):
+    """可见文本（G-028）：剥离 script/style/注释与全部标签后余下的
+    文本，标签以空格代换防粘连。JS/JSON 里的锁区文案不是可见提示，
+    不得据此判 blocked；正文散文里的明确锁区句仍算（D-09a）。"""
+    _t = _strip_hidden_html(body or "")
+    _t = re.sub(r"<[^>]*>", " ", _t)
+    return _t.lower()
+
+
 def _denied_error_page(body):
     """\"Access Denied\" 错误页结构（B-10-3；原 _tiktok_denied 的逻辑，
     现为 TikTok/Grok 共用）：
@@ -9795,7 +9857,7 @@ def _denied_error_page(body):
     SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
     阈值不再定生死。r4-14：截断前缀只看标题结构，不再拿前缀长度
     当整页长度、把前缀散文提及判 blocked。"""
-    b = body or ""
+    b = _strip_hidden_html(body or "")
     if re.search(r"<title[^>]*>\s*access denied\b[^<]*</title>",
                  b, re.IGNORECASE):
         return True
@@ -9829,41 +9891,94 @@ _NETFLIX_UI_LANGS = frozenset({
 
 
 def _netflix_region_from_url(final_url):
-    """Netflix 最终 URL 的地区段（fix440 D-01）：locale 形为
-    lang-region（如 en-gb、pt-br），地区是横杠后段，不是前段；
-    region-lang 形（如 us-en）取非语言码那段；单段语言码（如 /en/）
-    不是地区，返回 ""。BCP47 下双段皆非语言码时默认后段为地区。"""
+    """Netflix 最终 URL 的地区段（fix440 D-01；G-074/G-075）：仅
+    netflix.com 域名下的路径才取地区（portal.example 等外域路径不
+    算）；locale 形为 lang-region（如 en-gb、pt-br），地区是横杠后
+    段，不是前段；region-lang 形（如 us-en）取非语言码那段；单段语
+    言码（如 /en/）不是地区，返回 ""。G-074：双段须按有效国家码消
+    歧——EN 不是国家码（fr-en 取 FR）；"12" 不是国家码（en-12 留
+    空）；两段皆有效时取后段（BCP47 默认），皆无效留空。"""
     try:
-        _segs = [s for s in urllib.parse.urlparse(final_url or "").path.split("/")
-                 if s]
+        _u = urllib.parse.urlparse(final_url or "")
+        _host = (_u.hostname or "").lower()
+        if _host.endswith("."):
+            _host = _host[:-1]
+        if not (_host == "netflix.com" or _host.endswith(".netflix.com")):
+            return ""
+        _segs = [s for s in _u.path.split("/") if s]
         if not _segs:
             return ""
         _seg = _segs[0].lower()
     except Exception:
         return ""
+    _codes = set(_CC_EN.values())
     if "-" in _seg:
         _a, _b = _seg.split("-", 1)
         if len(_a) == 2 and len(_b) == 2:
-            if _a in _NETFLIX_UI_LANGS:
-                return _b.upper()
-            if _b in _NETFLIX_UI_LANGS:
+            _a_ok = _a.isalpha() and _a.upper() in _codes
+            _b_ok = _b.isalpha() and _b.upper() in _codes
+            if _a_ok and not _b_ok:
                 return _a.upper()
-            return _b.upper()
+            if _b_ok:
+                return _b.upper()
+            return ""
         return ""
-    if len(_seg) == 2 and _seg not in _NETFLIX_UI_LANGS:
+    if len(_seg) == 2 and _seg.isalpha() and _seg.upper() in _codes:
         return _seg.upper()
     return ""
 
 
+def _scoped_object_text(body, scope):
+    """取正文中 "scope": {...} 对象的花括号配对文本（G-031）：从首个
+    "scope": { 起按花括号计数取到配对右括号；找不到或括号不配对时
+    返回 ""。只做花括号计数，不解析字符串内容——对象内字符串值含
+    花括号时可能提前截断，调用方仍有首个匹配回落。"""
+    m = re.search(r'"' + re.escape(scope) + r'"\s*:\s*\{', body or "")
+    if not m:
+        return ""
+    _start = m.end() - 1
+    _depth = 0
+    for _i in range(_start, len(body)):
+        _ch = body[_i]
+        if _ch == "{":
+            _depth += 1
+        elif _ch == "}":
+            _depth -= 1
+            if _depth == 0:
+                return body[_start:_i + 1]
+    return ""
+
+
 def _scoped_json_field(body, field):
-    """JSON 正文字段取值（fix440 r4-20）：viewer/user 等观看者作用域
-    内的字段优先（如 {"viewer":{"region":"US"}}），避免内容作者等
-    其他对象的同名字段冒充服务地区；无作用域字段时回落首个匹配。"""
+    """JSON 正文字段取值（fix440 r4-20；G-031）：viewer/user 等观看者
+    作用域内的字段优先（如 {"viewer":{"region":"US"}}），避免内容作者等
+    其他对象的同名字段冒充服务地区；无作用域字段时回落首个匹配。
+    G-031：旧正则 [^}]{0,400}? 不能越过嵌套右花括号，viewer 内有空
+    对象（如 "geo":{}）时跳过真正的 viewer.region、误取 video.user
+    的同名字段。现先按 JSON 解析整段正文（viewer 优先于其他作用
+    域），非 JSON 正文再用花括号配对扫描作用域对象，仍无时回落首
+    个匹配。"""
     b = body or ""
-    m = re.search(r'"(?:viewer|user|currentUser|profile|account)"\s*:\s*\{'
-                  r'[^}]{0,400}?"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
-    if m:
-        return m.group(1)
+    if not b:
+        return ""
+    _scopes = ("viewer", "currentUser", "profile", "account", "user")
+    try:
+        _d = json.loads(b)
+    except Exception:
+        _d = None
+    if isinstance(_d, dict):
+        for _s in _scopes:
+            _v = _d.get(_s)
+            if isinstance(_v, dict):
+                _f = _v.get(field)
+                if isinstance(_f, str) and re.fullmatch(r"[A-Z]{2}", _f):
+                    return _f
+    for _s in _scopes:
+        _obj = _scoped_object_text(b, _s)
+        if _obj:
+            m = re.search(r'"' + field + r'"\s*:\s*"([A-Z]{2})"', _obj)
+            if m:
+                return m.group(1)
     m = re.search(r'"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
     return m.group(1) if m else ""
 
@@ -9897,7 +10012,9 @@ def _disney_url_blocked(final_url):
         _p = urllib.parse.urlparse(final_url or "").path.lower()
     except Exception:
         return False
-    return _p == "/unavailable" or _p.startswith("/unavailable/")
+    # G-076：按解析后路径分段匹配，unavailable 是任一完整路径段即
+    # 算（/en-gb/unavailable/ 的前置 locale 段不得把它排除）。
+    return "unavailable" in [s for s in _p.split("/") if s]
 
 
 def _disney_head_blocked(body):
@@ -9906,7 +10023,7 @@ def _disney_head_blocked(body):
     在 512 KiB 采样深处，不在此列，不得误判。fix440 D-10：除英文外
     另认德/法/西/葡/意五语的“在你地区不可用”对应短语（探针发
     Accept-Language: en-US，服务端应回英文，多语为纵深）。"""
-    b = body or ""
+    b = _strip_hidden_html(body or "")
     head = b[:8192]
     m = re.search(r"<title[^>]*>(.*?)</title>", b, re.IGNORECASE | re.DOTALL)
     title = m.group(1) if m else ""
@@ -9970,15 +10087,14 @@ def _error_title_or_h1(body, phrase):
     再扫描——JS 字符串与注释里的完整 <title>/<h1> 是假标题，不算。
     fix440 D 腿（r4-16）：定位与切片须在同一字符串上进行——旧码用
     小写串的下标切原串，Unicode 小写展开（如 İ→i̇）会使下标错位、
-    真实标题漏判；现定位、切片、比对全在小写后的同一副本上做。"""
+    真实标题漏判；现定位、切片、比对全在小写后的同一副本上做。
+    G-030：注释/script/style 剥离改走 _strip_hidden_html 单次向前
+    扫描（未闭合起符截断到末尾），不再用 <!--.*?--> 从每个起符重
+    新扫描到末尾。"""
     b = body or ""
     if not b:
         return False
-    _clean = re.sub(r"<!--.*?-->", "", b, flags=re.DOTALL)
-    _clean = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", _clean,
-                    flags=re.IGNORECASE | re.DOTALL)
-    _clean = re.sub(r"<style\b[^>]*>.*?</style\s*>", "", _clean,
-                    flags=re.IGNORECASE | re.DOTALL)
+    _clean = _strip_hidden_html(b)
     _bl = _clean.lower()
     for _tag in ("title", "h1"):
         _pos = 0
@@ -10102,10 +10218,15 @@ def test_youtube(local_ip=None):
         # "YouTube Premium is not available in your country" 只说明
         # Premium 未覆盖该地区，不得据此判 YouTube blocked；只有
         # YouTube 本身不可用的信号（通用锁区句或标题结构）才判 blocked。
+        # G-027：标题分支须要求主语是 YouTube 本身——"YouTube Premium
+        # is not available ..." 的主语是 Premium，不算；标题须形如
+        # "YouTube is not available ..." 才判 blocked。
         _low = body.lower()
         if ("youtube is not available in your country" in _low
                 or "youtube is not available in your region" in _low
-                or _error_title_or_h1(body, r"not\s+available")):
+                or _error_title_or_h1(
+                    body, r"youtube\s+(is\s+)?not\s+available"
+                          r"|youtube\s+is\s+unavailable")):
             return T("blocked"), "", None
         m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', body) or re.search(r'"GL"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
@@ -10129,10 +10250,12 @@ def test_primevideo(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         # fix440 D-09：完整 200 正文明确写地区不可用时判 blocked，
-        # 不再无条件 reachable。
-        _low = body.lower()
-        if ("not available in your region" in _low
-                or "not available in your country" in _low):
+        # 不再无条件 reachable。G-028：只认可见提示——脚本/JSON 里的
+        # geoError 文案（如 <script> 内 "Not available in your region"）
+        # 不是当前错误页的可见提示，不得据此判 blocked。
+        _vis = _visible_text(body)
+        if ("not available in your region" in _vis
+                or "not available in your country" in _vis):
             return T("blocked"), "", None
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r'"territory"\s*:\s*"([A-Z]{2})"', body
@@ -10202,7 +10325,18 @@ def test_chatgpt(local_ip=None):
         return T("unknown"), "", None
     if api_code in (200, 401):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
-    if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
+    # G-032：显式否定的字段值不是肯定证据——{"blocked":false} 不得因
+    # 子串 "blocked" 先命中而判 blocked；否定值走 D-07 unknown 分支。
+    # 肯定证据只认：unsupported_country（非 :false 形式）或 blocked
+    #（非 :false 形式）；D-07b 的 "unsupported_country: ..." 裸文本
+    # 仍算肯定。
+    _api_low = api_body.lower()
+    _blocked_neg = re.search(r'"blocked"\s*:\s*"?false"?\b', _api_low) is not None
+    _unsup_neg = re.search(r'"unsupported_country"\s*:\s*"?false"?\b',
+                           _api_low) is not None
+    _blocked_yes = "blocked" in _api_low and not _blocked_neg
+    _unsup_yes = "unsupported_country" in _api_low and not _unsup_neg
+    if api_code == 403 and (_unsup_yes or _blocked_yes):
         return T("blocked"), f"[{loc}]" if loc else "", None
     # fix440 D-07：403 正文既无 unsupported_country 也无 blocked
     # （如限流、CF 1020 类正文）不是锁区证据，判 unknown——与首探针
@@ -10314,6 +10448,8 @@ def _final_url_host_ok(final_url, *allowed):
         return False
     if not _host:
         return False
+    if _host.endswith("."):
+        _host = _host[:-1]  # G-077：去掉单个末尾 DNS 根点再比较
     return any(_host == _a or _host.endswith("." + _a) for _a in allowed)
 
 
@@ -10477,9 +10613,10 @@ def test_appletv(local_ip=None):
         return T("unknown"), "", None
     if code == 200:
         # fix440 D-09：同 test_primevideo，完整正文明确锁区时判 blocked。
-        _low = body.lower()
-        if ("not available in your region" in _low
-                or "not available in your country" in _low):
+        # G-028：只认可见提示，脚本/JSON 里的锁区文案不算。
+        _vis = _visible_text(body)
+        if ("not available in your region" in _vis
+                or "not available in your country" in _vis):
             return T("blocked"), "", None
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
@@ -14073,14 +14210,49 @@ def batch_node_test(nodes, ping_count=5):
     return results
 
 
+def _node_line_reason(line):
+    """无效节点行的脱敏失败原因（G-026）：只返回固定文案，绝不含原
+    行内容（行内可能含明文账密）。"""
+    s = (line or "").strip()
+    if "://" in s and not s.lower().startswith("socks5://"):
+        return "unsupported scheme"
+    _rest = s[len("socks5://"):] if s.lower().startswith("socks5://") else s
+    if "@" in _rest:
+        _rest = _rest.rsplit("@", 1)[1]
+    if _rest.startswith("["):
+        _hend = _rest.find("]")
+        if _hend < 0 or _hend + 1 >= len(_rest) or _rest[_hend + 1] != ":":
+            return "invalid node format"
+        _port = _rest[_hend + 2:]
+    elif ":" in _rest:
+        _port = _rest.rsplit(":", 1)[1]
+    else:
+        return "missing port"
+    if not _port.isascii() or not _port.isdigit():
+        return "invalid port"
+    try:
+        _pn = int(_port)
+    except ValueError:
+        return "invalid port"
+    if not 0 < _pn < 65536:
+        return "port out of range"
+    return "invalid node format"
+
+
 def _node_label(nd):
     """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
     （裸 userinfo 行曾使账密经 raw 进排名表与日志）。
     L4：长主机名只截 host 段，端口恒保留（旧实现整串 [:38] 会把端口
-    截掉，文本表丢端口而 JSON 保留，造成文本/JSON 分歧）。"""
+    截掉，文本表丢端口而 JSON 保留，造成文本/JSON 分歧）。
+    G-070：[ 与 ]:port 均属不可截的前后缀，只截地址本身——长 IPv6
+    不得截掉表示端口边界的 ]。"""
     host = _strip_cc(nd.get("host") or "?")  # 纵深：即使解析层漏网，标签也不含控制字符
-    if ":" in host and not host.startswith("["):
-        host = "[%s]" % host
+    if host.startswith("[") and host.endswith("]") and len(host) >= 2:
+        _br_open, _br_close, _addr = "[", "]", host[1:-1]
+    elif ":" in host:
+        _br_open, _br_close, _addr = "[", "]", host
+    else:
+        _br_open, _br_close, _addr = "", "", host
     _port = nd.get("port", "?")
     if nd.get("proto") == "socks5" and (nd.get("user") is not None
                                         or nd.get("pass") is not None):
@@ -14090,8 +14262,10 @@ def _node_label(nd):
     else:
         _pre, _suf = "", ":%s" % _port
     # 按显示宽截 host 段（CJK 双宽计 2 列），前后缀恒保留，总宽恒 <= 38。
-    _host = _truncate_disp(host, max(0, 38 - _disp_width(_pre) - _disp_width(_suf)))
-    return _pre + _host + _suf
+    _budget = max(0, 38 - _disp_width(_pre) - _disp_width(_suf)
+                  - _disp_width(_br_open) - _disp_width(_br_close))
+    _host = _truncate_disp(_addr, _budget)
+    return _pre + _br_open + _host + _br_close + _suf
 
 
 def _sanitize_batch_results(results):
@@ -14207,7 +14381,11 @@ def _batch_best_throughput(results):
 def run_batch_nodes(json_mode=False):
     """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。
     JSON 模式返回 {"results": [...], "partial": bool,
-    "invalid_lines": [...]}（r5b-7：解析失败行须标明，不得静默丢弃）。"""
+    "invalid_lines": [{"line": 行号, "reason": 脱敏原因}]}（r5b-7：
+    解析失败行须标明，不得静默丢弃；G-026：明细不得含原始行——行
+    内可能含明文账密；G-069：只输入无效行时亦返回空 results＋
+    partial:true＋脱敏明细，而非 None）。results 经
+    _sanitize_batch_results 脱敏（不含 user/pass/raw）。"""
     def _read_line():
         # r5b-6：交互终端粘贴带认证节点时，input() 会由终端行规程回显
         # 密码明文；stdin 为 TTY 时关 ECHO 读行，管道/重定向仍用 input()。
@@ -14232,6 +14410,7 @@ def run_batch_nodes(json_mode=False):
 
     nodes = []
     invalid_lines = []
+    _line_no = 0
     if not json_mode:
         print(T("batch_hint"))
     while True:
@@ -14243,18 +14422,24 @@ def run_batch_nodes(json_mode=False):
             break
         if ln.strip().lower() == "b":
             return None
+        _line_no += 1
         nd = _parse_node_line(ln)
         if nd:
             nodes.append(nd)
         elif json_mode:
-            invalid_lines.append(ln.strip())
+            invalid_lines.append({"line": _line_no,
+                                  "reason": _node_line_reason(ln)})
         else:
             print(T("invalid_input"))
     if not nodes:
+        if json_mode and invalid_lines:
+            return {"results": [], "partial": True,
+                    "invalid_lines": invalid_lines}
         return None
     results = batch_node_test(nodes)
     if json_mode:
-        return {"results": results, "partial": bool(invalid_lines),
+        return {"results": _sanitize_batch_results(results),
+                "partial": bool(invalid_lines),
                 "invalid_lines": invalid_lines}
     _print_batch_results(results)
     _batch_best_throughput(results)
@@ -14490,11 +14675,16 @@ def _banner_net_info():
                 info["geo_city"] = d.get("city") or ""
                 # M-11: 保留机房标记精度。r5b-3：机房判定执行声明的字段
                 # 优先级 security＞connection＞启发式，与 IPWhoIs.check
-                # 的 _b 同口径（sec 有该键即取 sec，否则取 conn；严格布尔，
-                # 字符串 "false"/数字/null 皆为未知）；显式 False 是定论，
-                # 启发式不得反转它，仅当两源皆未知时才作后备。
-                _hv = sec.get("hosting") if "hosting" in sec else conn.get("hosting")
-                _hv = _hv if isinstance(_hv, bool) else None
+                # 的 _b 同口径（按 security＞connection 取第一个布尔值，
+                # 非布尔值跳过；严格布尔，字符串 "false"/数字/null 皆为
+                # 未知）；显式 False 是定论，启发式不得反转它，仅当两源
+                # 皆未知时才作后备。
+                _hv = None
+                for _src in (sec, conn):
+                    _v = _src.get("hosting")
+                    if isinstance(_v, bool):
+                        _hv = _v
+                        break
                 if _hv is True or (_hv is None
                                   and is_datacenter_heuristic(org, org)[0]):
                     info["geo_net"] = "dc"
@@ -14911,12 +15101,17 @@ def print_banner():
         max(0, W - 1 - _disp_width(T("bn_system")) - 3))
     print(" %s:  %s" % (_c(C.cyan, T("bn_system")), _white(_sys_val)))
     cores_word = _ru_plural(_cores or 0, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and _cores == 1 else T("bn_cores"))
+    # G-072：先为核数、内存、磁盘留出列宽，再按显示宽度截 CPU——长型号
+    # 不得挤掉其他硬件信息；78 列限制不动。
+    _hw_budget = max(0, W - 1 - _disp_width(T("bn_hardware")) - 3)
+    _hw_tail = " (%s%s) · %s %s · %s %s" % (
+        cores, cores_word,
+        T("sys_mem"), si.get("mem", "?"),
+        T("sys_disk"), si.get("disk", "?"))
     _hw_val = _truncate_disp(
-        "%s (%s%s) · %s %s · %s %s" % (
-            (si.get("cpu") or "?"), cores, cores_word,
-            T("sys_mem"), si.get("mem", "?"),
-            T("sys_disk"), si.get("disk", "?")),
-        max(0, W - 1 - _disp_width(T("bn_hardware")) - 3))
+        _truncate_disp(si.get("cpu") or "?",
+                       max(0, _hw_budget - _disp_width(_hw_tail)))
+        + _hw_tail, _hw_budget)
     print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")), _white(_hw_val)))
     # 网络行
     if net["egress"]:
@@ -17902,10 +18097,26 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
             # 路径并加锁，锁在已删 inode 上；窗口极小、后果仅为一次互斥
             # 失效，见报告）。目录仅空时才删（rmdir 非空即失败保留）。
             _lock_path = paths["state_path"] + ".lock"
+            # G-073：删除路径不得创建文件、不得跟随符号链接——旧
+            # os.open(O_CREAT|O_RDWR) 会跟随悬空符号链接，在管理目录
+            # 外创建目标空文件。先 lstat：符号链接直接 unlink；常规文
+            # 件才以不创建方式打开（O_NOFOLLOW 防竞态替换）再抢锁删链。
             try:
-                _lock_fd = os.open(_lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+                _lock_st = os.lstat(_lock_path)
             except OSError:
+                _lock_st = None
+            if _lock_st is not None and stat.S_ISLNK(_lock_st.st_mode):
+                try:
+                    os.unlink(_lock_path)
+                except OSError:
+                    pass
                 _lock_fd = None
+            else:
+                try:
+                    _lock_fd = os.open(_lock_path,
+                                       os.O_RDWR | os.O_NOFOLLOW)
+                except OSError:
+                    _lock_fd = None
             if _lock_fd is not None:
                 try:
                     fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
