@@ -4365,20 +4365,26 @@ class IPWhoisApp(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if not d.get("success"):
                 return {"ok": False, "err": "query unsuccessful"}
+            # fix440b F3：国家只认非空字符串。
+            if not _valid_country(d.get("country")):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "isp": d.get("isp", ""),
-                "org": d.get("org", ""),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "isp": _clean_str(d.get("isp")),
+                "org": _clean_str(d.get("org")),
                 "asn": _parse_asn(d.get("asn")),
-                "country": d.get("country", ""),
-                "country_code": d.get("country_code", ""),
-                "region": d.get("region", ""),
-                "city": d.get("city", ""),
-                "latitude": d.get("latitude"),
-                "longitude": d.get("longitude"),
-                "timezone": d.get("timezone", ""),
+                "country": _clean_str(d.get("country")),
+                "country_code": _clean_str(d.get("country_code")),
+                "region": _clean_str(d.get("region")),
+                "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
+                "timezone": _clean_str(d.get("timezone")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4403,26 +4409,32 @@ class IPApiIs(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
-            if not d.get("country"):
+            # fix440b F3：国家只认非空字符串。
+            if not _valid_country(d.get("country")):
                 return {"ok": False, "err": "empty country"}
             asn_raw = str(d.get("asn") or "").strip()
-            company = d.get("company") or ""
-            if not isinstance(company, str):
-                company = ""
+            company = d.get("company") if isinstance(d.get("company"), str) else ""
+            # fix440b r3-10：org 只认公司名，或 ASN 后带的名字段；裸 ASN
+            # 编号本身不是组织名，不得填进 org。
+            _org = company
+            if not _org and " " in asn_raw:
+                _org = asn_raw.split(" ", 1)[-1].strip()
             return {
                 "ok": True,
                 "isp": company,
-                "org": company or asn_raw.split(" ", 1)[-1],
+                "org": _org,
                 "asn": _parse_asn(asn_raw.split()[0]) if asn_raw else None,
-                "country": d.get("country", ""),
+                "country": _clean_str(d.get("country")),
                 "country_code": "",
-                "region": d.get("region", ""),
-                "city": d.get("city", ""),
-                "latitude": d.get("lat"),
-                "longitude": d.get("lon"),
-                "timezone": d.get("timezone", ""),
+                "region": _clean_str(d.get("region")),
+                "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("lat"), -90, 90),
+                "longitude": _clean_coord(d.get("lon"), -180, 180),
+                "timezone": _clean_str(d.get("timezone")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4441,24 +4453,29 @@ class IPGuide(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            net = d.get("network") or {}
-            asys = net.get("autonomous_system") or {}
-            loc = d.get("location") or {}
-            if not (d.get("location") or {}).get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            net = _as_dict(d.get("network"))
+            asys = _as_dict(net.get("autonomous_system"))
+            loc = _as_dict(d.get("location"))
+            if not _valid_country(loc.get("country")):
                 return {"ok": False, "err": "empty country"}
+            _isp = _clean_str(asys.get("organization")) or _clean_str(asys.get("name"))
             return {
                 "ok": True,
-                "isp": asys.get("organization") or asys.get("name") or "",
-                "org": asys.get("organization") or asys.get("name") or "",
+                "isp": _isp,
+                "org": _isp,
                 "asn": _parse_asn(asys.get("asn")),
-                "country": loc.get("country", ""),
+                "country": _clean_str(loc.get("country")),
                 "country_code": "",
                 "region": "",
-                "city": loc.get("city") or "",
-                "latitude": loc.get("latitude"),
-                "longitude": loc.get("longitude"),
-                "timezone": loc.get("timezone", ""),
-                "range": net.get("cidr", ""),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "city": _clean_str(loc.get("city")),
+                "latitude": _clean_coord(loc.get("latitude"), -90, 90),
+                "longitude": _clean_coord(loc.get("longitude"), -180, 180),
+                "timezone": _clean_str(loc.get("timezone")),
+                "range": _clean_str(net.get("cidr")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4478,19 +4495,13 @@ class GeoJS(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
-            if not d.get("country"):
+            # fix440b F3：国家只认非空字符串。
+            if not _valid_country(d.get("country")):
                 return {"ok": False, "err": "empty country"}
-
-            def _f(v):
-                # H-10: float('nan')/float('inf')/float('1e309') 不抛错，
-                # 非有限值须在此拦截（否则经画像进 --json 输出裸 NaN/Infinity）。
-                try:
-                    _fv = float(v)
-                except (TypeError, ValueError):
-                    return None
-                return _fv if math.isfinite(_fv) else None
 
             return {
                 "ok": True,
@@ -4501,8 +4512,10 @@ class GeoJS(Provider):
                 "country_code": d.get("country_code", ""),
                 "region": d.get("region") or "",
                 "city": d.get("city") or "",
-                "latitude": _f(d.get("latitude")),
-                "longitude": _f(d.get("longitude")),
+                # fix440b r3-6：经纬度须范围校验（旧 _f 只拦非有限值，
+                # lat 91 / lon 200 照收）；_clean_coord 与 IpapiCo 同口径。
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
                 "timezone": d.get("timezone", ""),
                 "ts": now_iso(),
             }
@@ -4566,29 +4579,42 @@ class IPLocate(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            asn = _as_dict(d.get("asn"))
+            pv = _as_dict(d.get("privacy"))
+            ho = _as_dict(d.get("hosting"))
+            _proxy = _strict_bool(pv.get("is_proxy"))
+            _vpn = _strict_bool(pv.get("is_vpn"))
+            _tor = _strict_bool(pv.get("is_tor"))
+            _hosting = _strict_bool(pv.get("is_hosting"))
+            _abuser = _strict_bool(pv.get("is_abuser"))
+            # fix440b F3/r3-4：国家只认非空字符串；但有明确风险旗标时整源
+            # 不得丢弃——返 ok True 保旗标，国家留空。
+            if not _valid_country(d.get("country")) and not any(
+                    f is True for f in (_proxy, _vpn, _tor, _hosting, _abuser)):
                 return {"ok": False, "err": "empty response"}
-            asn = d.get("asn") or {}
-            pv = d.get("privacy") or {}
-            ho = d.get("hosting") or {}
             return {
                 "ok": True,
-                "country": d.get("country", ""), "country_code": d.get("country_code", ""),
-                "region": d.get("subdivision", ""), "city": d.get("city", ""),
-                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
-                "timezone": d.get("time_zone", ""),
-                "asn": _parse_asn(asn.get("asn")), "asn_type": asn.get("type", ""),
-                "isp": asn.get("name", ""), "org": asn.get("name", ""),
-                "proxy": _strict_bool(pv.get("is_proxy")),
-                "vpn": _strict_bool(pv.get("is_vpn")),
-                "tor": _strict_bool(pv.get("is_tor")),
-                "hosting": _strict_bool(pv.get("is_hosting")),
-                "is_abuser": _strict_bool(pv.get("is_abuser")),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "country": _clean_str(d.get("country")), "country_code": _clean_str(d.get("country_code")),
+                "region": _clean_str(d.get("subdivision")), "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
+                "timezone": _clean_str(d.get("time_zone")),
+                "asn": _parse_asn(asn.get("asn")), "asn_type": _clean_str(asn.get("type")),
+                "isp": _clean_str(asn.get("name")), "org": _clean_str(asn.get("name")),
+                "proxy": _proxy,
+                "vpn": _vpn,
+                "tor": _tor,
+                "hosting": _hosting,
+                "is_abuser": _abuser,
                 "is_anycast": _strict_bool(d.get("is_anycast")),
                 "is_satellite": _strict_bool(d.get("is_satellite")),
                 "is_icloud_relay": _strict_bool(pv.get("is_icloud_relay")),
-                "cloud_provider": ho.get("provider", ""),
-                "network": ho.get("network") or asn.get("route", ""),
+                "cloud_provider": _clean_str(ho.get("provider")),
+                "network": _clean_str(ho.get("network")) or _clean_str(asn.get("route")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4606,23 +4632,36 @@ class IPQuery(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            loc = d.get("location") or {}
-            isp = d.get("isp") or {}
-            risk = d.get("risk") or {}
-            if not loc.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            loc = _as_dict(d.get("location"))
+            isp = _as_dict(d.get("isp"))
+            risk = _as_dict(d.get("risk"))
+            _proxy = _strict_bool(risk.get("is_proxy"))
+            _vpn = _strict_bool(risk.get("is_vpn"))
+            _tor = _strict_bool(risk.get("is_tor"))
+            _dc = _strict_bool(risk.get("is_datacenter"))
+            _mobile = _strict_bool(risk.get("is_mobile"))
+            # fix440b F3/r3-4：国家只认非空字符串；但有明确风险旗标时整源
+            # 不得丢弃——返 ok True 保旗标，国家留空。
+            if not _valid_country(loc.get("country")) and not any(
+                    f is True for f in (_proxy, _vpn, _tor, _dc, _mobile)):
                 return {"ok": False, "err": "empty response"}
             return {
                 "ok": True,
-                "country": loc.get("country", ""), "country_code": loc.get("country_code", ""),
-                "region": loc.get("state", ""), "city": loc.get("city", ""),
-                "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
-                "timezone": loc.get("timezone", ""),
-                "asn": _parse_asn(isp.get("asn")), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
-                "proxy": _strict_bool(risk.get("is_proxy")),
-                "vpn": _strict_bool(risk.get("is_vpn")),
-                "tor": _strict_bool(risk.get("is_tor")),
-                "datacenter": _strict_bool(risk.get("is_datacenter")),
-                "mobile": _strict_bool(risk.get("is_mobile")),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "country": _clean_str(loc.get("country")), "country_code": _clean_str(loc.get("country_code")),
+                "region": _clean_str(loc.get("state")), "city": _clean_str(loc.get("city")),
+                "latitude": _clean_coord(loc.get("latitude"), -90, 90),
+                "longitude": _clean_coord(loc.get("longitude"), -180, 180),
+                "timezone": _clean_str(loc.get("timezone")),
+                "asn": _parse_asn(isp.get("asn")), "isp": _clean_str(isp.get("isp")), "org": _clean_str(isp.get("org")),
+                "proxy": _proxy,
+                "vpn": _vpn,
+                "tor": _tor,
+                "datacenter": _dc,
+                "mobile": _mobile,
                 # R4-H-04：风险分只认有限数值并钳制到 [0, 100]。
                 "risk_score": _clamp_score(risk.get("risk_score")),
                 "ts": now_iso(),
@@ -4674,17 +4713,25 @@ class TwoIp(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            asn = d.get("asn") or {}
-            if not d.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            asn = _as_dict(d.get("asn"))
+            _hosting = _strict_bool(asn.get("hosting"))
+            # fix440b F3/r3-4：国家只认非空字符串；但 hosting 为真时整源
+            # 不得丢弃——返 ok True 保旗标，国家留空。
+            if not _valid_country(d.get("country")) and _hosting is not True:
                 return {"ok": False, "err": "empty response"}
             return {
                 "ok": True,
-                "country": d.get("country", ""), "country_code": d.get("code", ""),
-                "region": d.get("region", ""), "city": d.get("city", ""),
-                "latitude": d.get("lat"), "longitude": d.get("lon"),
-                "timezone": d.get("timezone", ""),
-                "asn": _parse_asn(asn.get("id")), "isp": asn.get("name", ""),
-                "hosting": _strict_bool(asn.get("hosting")),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "country": _clean_str(d.get("country")), "country_code": _clean_str(d.get("code")),
+                "region": _clean_str(d.get("region")), "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("lat"), -90, 90),
+                "longitude": _clean_coord(d.get("lon"), -180, 180),
+                "timezone": _clean_str(d.get("timezone")),
+                "asn": _parse_asn(asn.get("id")), "isp": _clean_str(asn.get("name")),
+                "hosting": _hosting,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4708,19 +4755,28 @@ class OTX(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if "reputation" not in d and "pulse_info" not in d:
                 return {"ok": False, "err": "unexpected response"}
             cloud = ""
-            for v in d.get("validation") or []:
+            # fix440b F1：validation 只认 list，元素只认 dict。
+            for v in d.get("validation") if isinstance(d.get("validation"), list) else []:
+                if not isinstance(v, dict):
+                    continue
                 msg = str(v.get("message", ""))
                 if "provider=" in msg:
                     cloud = msg.split("provider=")[-1].strip()
+            # fix440b F2：reputation/pulses 安全转非负 int——字符串 "10"→10，
+            # 非法值/None/bool/负数落 None，整源不丢；缺失字段亦为 None（r3-3），
+            # 不得补 0 冒充“已查明为零”（_factor_rows 的 (x or 0) 口径仍安全）。
+            _pi = _as_dict(d.get("pulse_info"))
             return {
                 "ok": True,
-                "reputation": d.get("reputation", 0),
-                "pulses": (d.get("pulse_info") or {}).get("count", 0),
+                "reputation": _safe_nonneg_int(d["reputation"]) if "reputation" in d else None,
+                "pulses": _safe_nonneg_int(_pi["count"]) if "count" in _pi else None,
                 "cloud_provider": cloud,
-                "country": d.get("country_name", ""), "city": d.get("city", ""),
+                "country": _clean_str(d.get("country_name")), "city": _clean_str(d.get("city")),
                 "asn": _parse_asn(d.get("asn")),
                 "ts": now_iso(),
             }
@@ -4738,14 +4794,17 @@ class BlocklistDE(Provider):
         if not ok:
             return {"ok": False, "err": raw}
         try:
-            ma = re.search(r"attacks:\s*(\d+)", raw)
-            mr = re.search(r"reports:\s*(\d+)", raw)
+            # fix440b r3-7：字段名须行首锚定（"previous_attacks" 不得命中），
+            # 数值须整行是整数（"1.5" 不得截成 1）；缺失字段返 None（r3-3），
+            # 不得补 0 冒充“已查明为零”。
+            ma = re.search(r"(?m)^attacks:\s*(\d+)\s*$", raw)
+            mr = re.search(r"(?m)^reports:\s*(\d+)\s*$", raw)
             if not ma and not mr:
                 return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "attacks": int(ma.group(1)) if ma else 0,
-                "reports": int(mr.group(1)) if mr else 0,
+                "attacks": int(ma.group(1)) if ma else None,
+                "reports": int(mr.group(1)) if mr else None,
                 "ts": now_iso(),
             }
         except Exception as e:
