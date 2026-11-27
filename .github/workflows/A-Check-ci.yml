@@ -10,6 +10,11 @@ name: A-Check CI
 #   os-smoke: Windows/macOS 冒烟（py_compile + --help + --explain + 确定性
 #            CLI 错误路径 + 各系统启动器），单 Python 3.13；覆盖此前从未实测
 #            过的 Windows/macOS 导入与 CLI 路径。不覆盖联网行为与交互菜单。
+#   os-smoke 的 macOS 腿另有深测：OBS-1 发布 zip 双解包器模式门禁（从
+#            checkout 重建，等价发布字节）、run.command 直接执行、PTY 菜单
+#            系统信息（与实时 sysctl 对照）、DNS darwin scutil 分支、快捷
+#            方式用户级全循环（CLI）、.app 启动器 osascript 拦截；系统级
+#            快捷方式为可选步骤。Finder 双击与真实 Terminal 开窗仍不可测。
 # 不覆盖：170 份回归夹具（在 ~/workspace/.astra_review/fix-tools/，不在仓库内，
 # 故 CI 跑不到；如要进 CI，须先把夹具审过后提交进仓库，另立项决定）。
 # 也不覆盖：联网行为（被动/主动检测、流媒体探针），由悉尼实机腿覆盖。
@@ -151,6 +156,7 @@ jobs:
     # macOS additionally runs the harness local mode under the runner's
     # shipped bash 3.2 (the harness has no bash 4-only syntax).
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -189,3 +195,567 @@ jobs:
       - name: Harness local mode (macOS shipped bash)
         if: runner.os == 'macOS'
         run: ACHECK_LOCAL_ONLY=1 bash acheck-all-systems-test.sh ./acheck.py
+
+      # ---- macOS deep tests (no local Mac available; GitHub runner is the
+      # real macOS). See ~/workspace/finalcheck/macos-test/DESIGN.md. ----
+      - name: Runner environment (macOS, informational)
+        if: runner.os == 'macOS'
+        run: |
+          sw_vers
+          uname -m
+          python3 --version
+          xcode-select -p || echo "no CLT path"
+          echo "console user: $(stat -f '%Su' /dev/console)"
+          pgrep -x WindowServer >/dev/null && echo "WindowServer: running" || echo "WindowServer: not running"
+
+      - name: OBS-1 build release zips from checkout (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python3 - <<'PY'
+          import os, re, shutil, zipfile
+          SRC = "."
+          STAGE = os.path.join(os.environ["RUNNER_TEMP"], "obs1", "stage")
+          DIST = os.path.join(os.environ["RUNNER_TEMP"], "obs1", "zips")
+          DT = (1980, 1, 1, 0, 0, 0)
+          READMES = ["README.md", "README.zh.md", "README.zh-TW.md", "README.ru.md",
+                     "README.ja.md", "README.fa.md", "README.en.md"]
+          DIR_MODE = 0o40755; FILE_MODE = 0o100644; EXEC_MODE = 0o100755
+          EXEC_NAMES = ("acheck.py", "run.sh", "vps-test.sh", "run.command", "A-Check")
+          VER = re.search(r'^VERSION\s*=\s*"([^"]+)"', open("acheck.py").read(), re.M).group(1)
+          def zipdir(src_dir, zip_path, arc_root):
+              names = []
+              for root, dirs, files in os.walk(src_dir):
+                  dirs.sort()
+                  for d in sorted(dirs):
+                      p = os.path.join(root, d)
+                      names.append((p, os.path.relpath(p, src_dir) + "/"))
+                  for f in sorted(files):
+                      p = os.path.join(root, f)
+                      names.append((p, os.path.relpath(p, src_dir)))
+              names.sort(key=lambda t: t[1])
+              with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+                  zi_root = zipfile.ZipInfo(arc_root + "/", DT)
+                  zi_root.external_attr = (DIR_MODE << 16)
+                  z.writestr(zi_root, b"", compress_type=zipfile.ZIP_STORED)
+                  for p, rel in names:
+                      arc = arc_root + "/" + rel
+                      if rel.endswith("/"):
+                          zi = zipfile.ZipInfo(arc, DT)
+                          zi.external_attr = (DIR_MODE << 16)
+                          z.writestr(zi, b"", compress_type=zipfile.ZIP_STORED)
+                      else:
+                          data = open(p, "rb").read()
+                          zi = zipfile.ZipInfo(arc, DT)
+                          mode = EXEC_MODE if os.path.basename(p) in EXEC_NAMES else FILE_MODE
+                          zi.external_attr = (mode << 16)
+                          z.writestr(zi, data, compress_type=zipfile.ZIP_DEFLATED)
+          if os.path.exists(STAGE):
+              shutil.rmtree(STAGE)
+          os.makedirs(STAGE)
+          for plat, extra in (("acheck-linux", []), ("acheck-mac", ["run.command"]), ("acheck-win", ["run.bat"])):
+              d = os.path.join(STAGE, plat)
+              os.makedirs(os.path.join(d, "docs"))
+              for png in sorted(os.listdir(os.path.join(SRC, "docs"))):
+                  if png.startswith("showcase-") and png.endswith(".png"):
+                      shutil.copy2(os.path.join(SRC, "docs", png), os.path.join(d, "docs", png))
+              for f in ["acheck.py", "run.sh", "vps-test.sh", "icon.webp", "LICENSE"] + READMES + extra:
+                  shutil.copy2(os.path.join(SRC, f), os.path.join(d, f))
+          shutil.copytree(os.path.join(SRC, "A-Check.app"), os.path.join(STAGE, "A-Check.app"))
+          os.makedirs(DIST, exist_ok=True)
+          zipdir(os.path.join(STAGE, "acheck-linux"), os.path.join(DIST, f"A-Check-v{VER}-linux.zip"), "acheck-linux")
+          zipdir(os.path.join(STAGE, "acheck-mac"), os.path.join(DIST, f"A-Check-v{VER}-mac.zip"), "acheck-mac")
+          zipdir(os.path.join(STAGE, "acheck-win"), os.path.join(DIST, f"A-Check-v{VER}-windows.zip"), "acheck-win")
+          zipdir(os.path.join(STAGE, "A-Check.app"), os.path.join(DIST, f"A-Check-v{VER}-mac-app.zip"), "A-Check.app")
+          print(f"built 4 zips (v{VER}) in {DIST}")
+          PY
+
+      - name: OBS-1 zip modes with unzip and ditto (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cat > "$RUNNER_TEMP/obs1/check.py" <<'PY'
+          import hashlib, os, sys, zipfile
+          DIR_MODE = 0o40755; FILE_MODE = 0o100644; EXEC_MODE = 0o100755
+          zpath, arc_root, checkout_acheck, dest, *exes = sys.argv[1:]
+          exes = set(exes)
+          fails = []
+          want_sha = hashlib.sha256(open(checkout_acheck, "rb").read()).hexdigest()
+          with zipfile.ZipFile(zpath) as z:
+              names = set(z.namelist())
+              missing = exes - names
+              if missing:
+                  fails.append(f"missing expected executables: {sorted(missing)}")
+              for info in z.infolist():
+                  want = DIR_MODE if info.is_dir() else (EXEC_MODE if info.filename in exes else FILE_MODE)
+                  stored = info.external_attr >> 16
+                  if info.create_system != 3:
+                      fails.append(f"ZIP {info.filename}: create_system={info.create_system} want 3")
+                  if stored != want:
+                      fails.append(f"ZIP {info.filename}: mode={oct(stored)} want={oct(want)}")
+                  p = os.path.join(dest, info.filename)
+                  try:
+                      got = os.lstat(p).st_mode
+                  except OSError as e:
+                      fails.append(f"disk {info.filename}: missing ({e})")
+                      continue
+                  if got != want:
+                      fails.append(f"disk {info.filename}: mode={oct(got)} want={oct(want)}")
+              for cand in (f"{arc_root}/acheck.py", f"{arc_root}/Contents/Resources/acheck.py"):
+                  if cand in names:
+                      got_sha = hashlib.sha256(z.read(cand)).hexdigest()
+                      if got_sha != want_sha:
+                          fails.append(f"{cand}: sha mismatch with checkout acheck.py")
+          if fails:
+              print("FAIL:")
+              for f in fails:
+                  print("  - " + f)
+              sys.exit(1)
+          print(f"OK: {zpath}")
+          PY
+          VER=$(python3 -c "import re; print(re.search(r'^VERSION\s*=\s*\"([^\"]+)\"', open('acheck.py').read(), re.M).group(1))")
+          Z="$RUNNER_TEMP/obs1/zips"
+          check_zip() {
+            local zip="$1" root="$2"; shift 2
+            for tool in unzip ditto; do
+              d=$(mktemp -d "$RUNNER_TEMP/obs1.XXXXXX")
+              case "$tool" in
+                unzip) /usr/bin/unzip -q "$zip" -d "$d" ;;
+                ditto) /usr/bin/ditto -x -k "$zip" "$d" ;;
+              esac
+              echo "--- $tool: $(basename "$zip")"
+              python3 "$RUNNER_TEMP/obs1/check.py" "$zip" "$root" acheck.py "$d" "$@"
+            done
+          }
+          check_zip "$Z/A-Check-v$VER-linux.zip" acheck-linux acheck-linux/acheck.py acheck-linux/run.sh acheck-linux/vps-test.sh
+          check_zip "$Z/A-Check-v$VER-mac.zip" acheck-mac acheck-mac/acheck.py acheck-mac/run.sh acheck-mac/vps-test.sh acheck-mac/run.command
+          check_zip "$Z/A-Check-v$VER-windows.zip" acheck-win acheck-win/acheck.py acheck-win/run.sh acheck-win/vps-test.sh
+          check_zip "$Z/A-Check-v$VER-mac-app.zip" A-Check.app A-Check.app/Contents/MacOS/A-Check A-Check.app/Contents/Resources/acheck.py
+          APP_ZIP="$Z/A-Check-v$VER-mac-app.zip"
+          d=$(mktemp -d "$RUNNER_TEMP/obs1.XXXXXX")
+          /usr/bin/ditto -x -k "$APP_ZIP" "$d"
+          APP="$d/A-Check.app"
+          /usr/bin/plutil -lint "$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")" = "A-Check"
+          for p in Contents/MacOS/A-Check Contents/Resources/acheck.py Contents/Resources/A-Check.icns Contents/Info.plist Contents/Resources/LICENSE; do
+            test -e "$APP/$p" || { echo "missing $p" >&2; exit 1; }
+          done
+          rm -rf "$RUNNER_TEMP/obs1/extracted-mac" "$RUNNER_TEMP/obs1/extracted-app"
+          /usr/bin/ditto -x -k "$Z/A-Check-v$VER-mac.zip" "$RUNNER_TEMP/obs1/extracted-mac"
+          /usr/bin/ditto -x -k "$APP_ZIP" "$RUNNER_TEMP/obs1/extracted-app"
+          echo "OBS1_EXTRACTED_MAC=$RUNNER_TEMP/obs1/extracted-mac" >> "$GITHUB_ENV"
+          echo "OBS1_EXTRACTED_APP=$RUNNER_TEMP/obs1/extracted-app" >> "$GITHUB_ENV"
+          echo "OK: OBS-1 zip modes + app bundle checks passed"
+
+      - name: run.command direct execution (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        run: |
+          RC="$OBS1_EXTRACTED_MAC/acheck-mac/run.command"
+          cd /
+          "$RC" --help </dev/null >"$RUNNER_TEMP/rc-help.txt" 2>&1 || { echo "run.command failed:"; cat "$RUNNER_TEMP/rc-help.txt"; exit 1; }
+          grep -q "用法:" "$RUNNER_TEMP/rc-help.txt" || { echo "help text mismatch:"; cat "$RUNNER_TEMP/rc-help.txt"; exit 1; }
+          env -i PATH=/usr/bin:/bin "$RC" --help </dev/null >"$RUNNER_TEMP/rc-help-min.txt" 2>&1 || { echo "run.command (minimal PATH) failed:"; cat "$RUNNER_TEMP/rc-help-min.txt"; exit 1; }
+          grep -q "用法:" "$RUNNER_TEMP/rc-help-min.txt" || { echo "help text mismatch (minimal PATH):"; cat "$RUNNER_TEMP/rc-help-min.txt"; exit 1; }
+          echo "OK: run.command --help (full PATH and minimal PATH)"
+
+      - name: PTY probe (macOS diagnostic, round 4)
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          # Diagnostic only: does a bare input() work twice under the same
+          # pty.openpty() driver on this runner, with/without readline,
+          # with/without TERM, with/without a controlling terminal?
+          # Round 3: the app reads "4" at the first prompt, then "0"/"q"
+          # at the second prompt never take effect (no echo, no exit).
+          # acheck.py imports readline in _init_console (line 81), so
+          # input() goes through libedit on macOS. This probe isolates
+          # whether the second read fails in a minimal program.
+          cat > /tmp/ptyprobe.py <<'PROBE_EOF'
+          import os, pty, select, subprocess, sys, termios, time
+          mode = sys.argv[1]                         # plain, edit, cat, or app
+          m, s = pty.openpty()
+          env = dict(os.environ, ACHECK_NO_GEO_UPDATE="1")
+          env.pop("TERM", None)
+          if os.environ.get("TEST_TERM"):
+              env["TERM"] = os.environ["TEST_TERM"]
+          code = """
+          import os, sys
+          if sys.argv[1] == 'edit':
+              import readline
+          print('backend:', getattr(sys.modules.get('readline'), 'backend', None), flush=True)
+          for _ in range(2):
+              x = input('probe [0-13]: ')
+              print('GOT=' + ascii(x), flush=True)
+          """
+          argv = [sys.executable, "-c", code, mode]
+          if mode == "cat":
+              a = termios.tcgetattr(s)
+              a[3] &= ~termios.ECHO
+              termios.tcsetattr(s, termios.TCSANOW, a)
+              argv = ["/bin/cat"]
+          elif mode == "app":
+              argv = [sys.executable, "acheck.py"]
+          if os.getenv("CTTY") == "1":
+              argv = [sys.executable, "-c",
+                      "import os,sys,fcntl,termios;os.setsid();"
+                      "fcntl.ioctl(0,termios.TIOCSCTTY,0);os.execv(sys.argv[1],sys.argv[1:])",
+                      *argv]
+          p = subprocess.Popen(argv, stdin=s, stdout=s, stderr=s, env=env, close_fds=True)
+          buf = b""
+          limit = float(os.getenv("LIMIT", "6"))
+          def expect(token):
+              global buf
+              end = time.monotonic() + limit
+              while token not in buf:
+                  rem = end - time.monotonic()
+                  if rem <= 0 or not select.select([m], [], [], rem)[0]:
+                      raise TimeoutError((token, p.poll(), buf[-200:]))
+                  data = os.read(m, 65536)
+                  if not data:
+                      raise EOFError(token)
+                  print("read", repr(data[-200:]), flush=True)
+                  buf += data
+              buf = buf.split(token, 1)[1]
+          try:
+              for x in os.getenv("KEYS", "40").encode("ascii"):
+                  digit = bytes([x])
+                  if mode != "cat":
+                      expect(b"[0-13]: ")
+                  time.sleep(float(os.getenv("DELAY", "0")))
+                  a = termios.tcgetattr(s)
+                  print("pid", p.pid, "tty", os.ttyname(s), "flags", a[:4],
+                        "icanon", bool(a[3] & termios.ICANON),
+                        "echo", bool(a[3] & termios.ECHO), flush=True)
+                  line = digit + b"\n"
+                  n = os.write(m, line)
+                  print("write", repr(line), n, flush=True)
+                  assert n == len(line)
+                  if mode == "cat":
+                      expect(digit)
+                  elif mode != "app":
+                      expect(b"GOT='" + digit + b"'")
+              if mode != "cat":
+                  end = time.monotonic() + limit
+                  while p.poll() is None and time.monotonic() < end:
+                      if select.select([m], [], [], 0.1)[0]:
+                          print("drain", repr(os.read(m, 65536)[-200:]), flush=True)
+                  if p.poll() is None:
+                      raise TimeoutError("no exit")
+                  print("exit", p.returncode)
+          finally:
+              if p.poll() is None:
+                  p.kill()
+              p.wait()
+              os.close(s)
+              os.close(m)
+          PROBE_EOF
+          python3 -c "import ast; ast.parse(open('/tmp/ptyprobe.py').read()); print('probe syntax OK')"
+          echo "=== cat control (ECHO off: digit back proves cat read it) ==="
+          python3 /tmp/ptyprobe.py cat || echo "PROBE-RESULT: cat FAILED"
+          echo "=== plain/edit x TERM x CTTY matrix (KEYS=40: two inputs) ==="
+          for mode in plain edit; do
+            for t in '' xterm-256color; do
+              for c in 0 1; do
+                echo "--- mode=$mode TERM='$t' CTTY=$c ---"
+                TEST_TERM="$t" CTTY="$c" python3 /tmp/ptyprobe.py "$mode" && echo "PROBE-RESULT: mode=$mode TERM='$t' CTTY=$c PASS" || echo "PROBE-RESULT: mode=$mode TERM='$t' CTTY=$c FAILED"
+              done
+            done
+          done
+          echo "=== app: quit at first prompt (KEYS=0) ==="
+          KEYS=0 LIMIT=30 python3 /tmp/ptyprobe.py app && echo "PROBE-RESULT: app KEYS=0 PASS" || echo "PROBE-RESULT: app KEYS=0 FAILED"
+          echo "=== app: M4 then quit (KEYS=40) ==="
+          KEYS=40 LIMIT=30 python3 /tmp/ptyprobe.py app && echo "PROBE-RESULT: app KEYS=40 PASS" || echo "PROBE-RESULT: app KEYS=40 FAILED"
+          echo "OK: probe matrix complete (see PROBE-RESULT lines above)"
+
+      - name: PTY menu system info + run.command menu (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          BRAND=$(/usr/sbin/sysctl -n machdep.cpu.brand_string)
+          MEMB=$(/usr/sbin/sysctl -n hw.memsize)
+          HV=$(/usr/sbin/sysctl -n kern.hv_vmm_present)
+          MEMGB=$((MEMB / 1024 / 1024 / 1024))
+          if [ "$HV" = "1" ]; then VIRT="虚拟机"; elif [ "$HV" = "0" ]; then VIRT="物理机"; else VIRT="?"; fi
+          echo "expect CPU: $BRAND | mem: ${MEMGB}GB | virt: $VIRT"
+          export EXPECT_BRAND="$BRAND" EXPECT_MEM="${MEMGB}GB" EXPECT_VIRT="$VIRT"
+          export RUN_COMMAND_PATH="$OBS1_EXTRACTED_MAC/acheck-mac/run.command"
+          python3 - <<'PY'
+          import os, pty, re, select, subprocess, time
+          ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][A-Za-z0-9]")
+          def run_session(argv, script, overall=240, cwd=None):
+              master, slave = pty.openpty()
+              proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave, cwd=cwd, close_fds=True)
+              os.close(slave)
+              buf = b""; out = b""
+              t_end = time.time() + overall
+              def drain_until(pat, deadline):
+                  nonlocal buf, out
+                  rx = re.compile(pat.encode())
+                  d_end = min(time.time() + deadline, t_end)
+                  while True:
+                      m = rx.search(buf)
+                      if m:
+                          # consume through the match: the next wait must
+                          # match fresh output only. Without this, the
+                          # second wait matches the stale first prompt and
+                          # input is sent while the process is still busy
+                          # (on macOS that input is lost; the process then
+                          # waits at the prompt forever).
+                          buf = buf[m.end():]
+                          return True
+                      now = time.time()
+                      if now >= d_end:
+                          return False
+                      r, _, _ = select.select([master], [], [], max(0, min(5.0, d_end - now)))
+                      if not r:
+                          continue
+                      try:
+                          chunk = os.read(master, 65536)
+                      except OSError:
+                          chunk = b""
+                      if not chunk:
+                          return False
+                      buf += chunk; out += chunk
+              for step in script:
+                  if not drain_until(step["wait"], step.get("deadline", 30)):
+                      raise TimeoutError(f"timed out waiting for {step['wait']!r}; tail={buf[-1500:]!r}")
+                  if step.get("send"):
+                      os.write(master, step["send"].encode())
+              def wait_exit(timeout):
+                  # Never bare proc.wait() on a PTY child: libedit (which
+                  # acheck.py pulls in via `import readline`) issues
+                  # tcsetattr(TCSADRAIN) when finishing a line, and that
+                  # blocks until pending output (its echo) is drained by
+                  # the master side. If nobody reads the master, the child
+                  # wedges in tcsetattr forever (proven round 4: the same
+                  # app + same keys exit 0 when the driver drains, and
+                  # /usr/bin/sample shows the stuck child in
+                  # libedit el_set -> tcsetattr -> ioctl, not in read()).
+                  # So poll the child while draining the master.
+                  nonlocal out
+                  end = time.time() + timeout
+                  while True:
+                      rc = proc.poll()
+                      if rc is not None:
+                          return rc
+                      if time.time() >= end:
+                          raise subprocess.TimeoutExpired(proc.args, timeout)
+                      r, _, _ = select.select([master], [], [], 0.2)
+                      if not r:
+                          continue
+                      try:
+                          chunk = os.read(master, 65536)
+                      except OSError:
+                          chunk = b""
+                      if chunk:
+                          out += chunk
+              try:
+                  rc = wait_exit(min(20, max(0, t_end - time.time())))
+              except subprocess.TimeoutExpired:
+                  # input may have been lost while the process was busy;
+                  # retry once now that it is visibly at the prompt
+                  try:
+                      os.write(master, b"q\n")
+                  except OSError:
+                      pass
+                  try:
+                      rc = wait_exit(max(0, t_end - time.time()))
+                  except subprocess.TimeoutExpired:
+                      # Diagnostic (round 4): capture where the stuck
+                      # process is BEFORE killing it -- a main thread in
+                      # stdio read vs libedit vs a lock are different
+                      # diagnoses. sample/ps output goes to the job log.
+                      try:
+                          subprocess.run(["/usr/bin/sample", str(proc.pid), "1", "-file", "/tmp/acheck.sample"], timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                          print(open("/tmp/acheck.sample", errors="replace").read()[:4000], flush=True)
+                      except Exception as e:
+                          print(f"sample failed: {e}", flush=True)
+                      try:
+                          ps = subprocess.run(["/bin/ps", "-o", "pid,ppid,pgid,tpgid,tty,stat,command", "-p", str(proc.pid)], capture_output=True, text=True, timeout=10)
+                          print(ps.stdout, flush=True)
+                      except Exception as e:
+                          print(f"ps failed: {e}", flush=True)
+                      proc.kill(); proc.wait()
+                      raise TimeoutError(f"process did not exit; tail={buf[-1500:]!r}")
+              while True:
+                  r, _, _ = select.select([master], [], [], 0.5)
+                  if not r:
+                      break
+                  try:
+                      chunk = os.read(master, 65536)
+                  except OSError:
+                      break
+                  if not chunk:
+                      break
+                  out += chunk
+              os.close(master)
+              return rc, out
+          rc, out = run_session(["python3", "acheck.py"], [
+              {"wait": r"\[0-13\]:", "send": "4\n", "deadline": 30},
+              {"wait": r"\[0-13\]:", "send": "0\n", "deadline": 120},
+          ])
+          txt = ANSI.sub(b"", out).decode("utf-8", "replace").replace("\r", "")
+          assert rc == 0, f"menu session rc={rc}"
+          for label, want in (("CPU brand", os.environ["EXPECT_BRAND"]),
+                              ("memory", os.environ["EXPECT_MEM"]),
+                              ("virt", os.environ["EXPECT_VIRT"])):
+              assert want in txt, f"M4 missing {label} {want!r}:\n{txt[-2000:]}"
+          assert re.search(r"磁盘 I/O\s*: 写 \d+ MiB/s / 读 \d+ MiB/s", txt), "M4 missing disk IO line"
+          print("OK: menu 4 system info matches live sysctl values")
+          rc2, out2 = run_session([os.environ["RUN_COMMAND_PATH"]], [
+              {"wait": r"\[0-13\]:", "send": "0\n", "deadline": 60},
+          ], cwd="/")
+          assert rc2 == 0, f"run.command session rc={rc2}"
+          print("OK: run.command launches the menu and quits cleanly")
+          PY
+
+      - name: DNS darwin scutil branch (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          python3 - <<'PY'
+          import builtins, io, ipaddress, os, re, subprocess
+          import acheck
+          real_open = builtins.open
+          def patched_open(path, *a, **k):
+              if os.fspath(path) == "/etc/resolv.conf":
+                  return io.StringIO("")
+              return real_open(path, *a, **k)
+          builtins.open = patched_open
+          try:
+              got = acheck._get_system_nameservers()
+          finally:
+              builtins.open = real_open
+          out = subprocess.run(["scutil", "--dns"], capture_output=True, text=True, timeout=10).stdout
+          want = set()
+          for m in re.finditer(r"nameserver\[\d+\]\s*:\s*(\S+)", out):
+              try:
+                  ip = ipaddress.ip_address(m.group(1).split("%", 1)[0])
+              except ValueError:
+                  continue
+              s = str(ip)
+              if acheck._ns_addr_usable(s):
+                  want.add(s)
+          if not want:
+              if acheck._FORCE_FAMILY == 6 or not acheck._has_ipv4_egress():
+                  want = {"2606:4700:4700::1111", "2001:4860:4860::8888"}
+              else:
+                  want = {"1.1.1.1", "8.8.8.8"}
+          assert set(got) == want, f"scutil branch mismatch: got={got} want={sorted(want)}"
+          print(f"OK: darwin scutil branch -> {got}")
+          PY
+
+      - name: Isolated HOME for shortcut tests (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          AH=$(mktemp -d "$RUNNER_TEMP/acheck-home.XXXXXX")
+          echo "HOME=$AH" >> "$GITHUB_ENV"
+          echo "XDG_DATA_HOME=" >> "$GITHUB_ENV"
+          echo "isolated HOME=$AH"
+
+      - name: Shortcuts user-level cycle via CLI (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          BIN="$HOME/.local/bin"
+          python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+          python3 acheck.py --shortcut install --names acheck </dev/null
+          test -x "$BIN/acheck"
+          test "$(stat -f '%Lp' "$BIN/acheck")" = "755"
+          "$BIN/acheck" --help </dev/null | grep -q "用法:"
+          PATH="$BIN:$PATH" acheck --help </dev/null | grep -q "用法:"
+          python3 acheck.py --shortcut status --json </dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); names={e['name'] for e in d.get('entries', []) if e.get('status')=='OK'}; assert d.get('installed') is True and names=={'acheck'}, d; print('status json OK:', sorted(names))"
+          if python3 acheck.py --shortcut install --names ac </dev/null >/tmp/ac-err.txt 2>&1; then echo "ERROR: installing ac without --accept-ac-risk must fail" >&2; exit 1; fi
+          echo "--- ac refusal (no flag) ---"; cat /tmp/ac-err.txt
+          if grep -q "accept-ac-risk" /tmp/ac-err.txt; then
+            AC_MODE=risk
+          elif grep -qE "系统路径命中|PATH 命中|System path hit|PATH hit" /tmp/ac-err.txt; then
+            AC_MODE=conflict
+            echo "ac is hard-blocked by an existing system command on this machine (macOS ships /usr/sbin/ac); the risk flag must not override it"
+          else
+            echo "ERROR: unexpected ac refusal text:" >&2; cat /tmp/ac-err.txt >&2; exit 1
+          fi
+          python3 acheck.py --shortcut change --old-name acheck --new-name acheck-tmp </dev/null
+          test -x "$BIN/acheck-tmp"
+          test ! -e "$BIN/acheck"
+          "$BIN/acheck-tmp" --help </dev/null | grep -q "用法:"
+          if python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac </dev/null >/tmp/ac-err2.txt 2>&1; then echo "ERROR: renaming to ac without --accept-ac-risk must fail" >&2; exit 1; fi
+          if [ "$AC_MODE" = risk ]; then
+            python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac --accept-ac-risk </dev/null
+            test -x "$BIN/ac"
+            python3 acheck.py --shortcut remove </dev/null
+            test ! -e "$BIN/ac"
+            test ! -e "$BIN/acheck-tmp"
+            test ! -e "$BIN/acheck"
+            python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+            python3 acheck.py --shortcut install --names ac --accept-ac-risk </dev/null
+            python3 acheck.py --shortcut status --json </dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); names={e['name'] for e in d.get('entries', []) if e.get('status')=='OK'}; assert d.get('installed') is True and names=={'ac'}, d; print('status json OK:', sorted(names))"
+            python3 acheck.py --shortcut remove </dev/null
+            python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+          else
+            # hard system conflict: --accept-ac-risk must NOT override it
+            if python3 acheck.py --shortcut install --names ac --accept-ac-risk </dev/null >/tmp/ac-err3.txt 2>&1; then echo "ERROR: --accept-ac-risk must not override a hard system conflict for ac" >&2; exit 1; fi
+            echo "--- ac refusal (with flag, still blocked) ---"; cat /tmp/ac-err3.txt
+            if python3 acheck.py --shortcut change --old-name acheck-tmp --new-name ac --accept-ac-risk </dev/null >/tmp/ac-err4.txt 2>&1; then echo "ERROR: renaming to ac with flag must still fail on a hard conflict" >&2; exit 1; fi
+            python3 acheck.py --shortcut remove </dev/null
+            test ! -e "$BIN/acheck-tmp"
+            test ! -e "$BIN/acheck"
+            python3 acheck.py --shortcut status </dev/null | grep -q "未安装任何入口"
+          fi
+          echo "OK: shortcut user-level cycle complete (ac mode: $AC_MODE)"
+
+      - name: .app launcher osascript interception (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          APP_SRC="$OBS1_EXTRACTED_APP/A-Check.app"
+          APP_SP="$RUNNER_TEMP/A-Check Test/A-Check.app"
+          mkdir -p "$RUNNER_TEMP/A-Check Test"
+          cp -R "$APP_SRC" "$APP_SP"
+          S=$(mktemp -d "$RUNNER_TEMP/launcher.XXXXXX")
+          mkdir -p "$S/bin" "$S/capture"
+          cat > "$S/bin/osascript" <<'SH'
+          #!/bin/bash
+          d=$(mktemp -d "$CAPTURE/call.XXXXXX") || exit 1
+          printf '<%s>\n' "$@" >"$d/args"
+          cat >"$d/stdin"
+          SH
+          chmod 755 "$S/bin/osascript"
+          ( cd /; CAPTURE="$S/capture" PATH="$S/bin:$PATH" "$APP_SP/Contents/MacOS/A-Check" </dev/null )
+          test "$(find "$S/capture" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" = "1"
+          CALL=$(find "$S/capture" -mindepth 1 -maxdepth 1 -type d)
+          grep -q "do script" "$CALL/stdin"
+          grep -q "Terminal" "$CALL/stdin"
+          grep -q "acheck.py" "$CALL/stdin"
+          grep -q "A-Check Test" "$CALL/args"
+          grep -q "Contents/Resources" "$CALL/args"
+          PYBIN=$(sed -n '3p' "$CALL/args" | tr -d '<>')
+          test -x "$PYBIN"
+          "$PYBIN" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)'
+          echo "OK: launcher resolves python ($PYBIN) and builds the Terminal command"
+
+      - name: Shortcuts system scope (macOS, optional)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          if ! sudo -n true 2>/dev/null; then echo "SKIP: no passwordless sudo on this runner"; exit 0; fi
+          PY=$(command -v python3)
+          sudo "$PY" acheck.py --shortcut install --system --names acheck </dev/null
+          test -x /usr/local/bin/acheck
+          sudo "$PY" acheck.py --shortcut status --system </dev/null | grep -q "acheck"
+          sudo "$PY" acheck.py --shortcut remove --system </dev/null
+          test ! -e /usr/local/bin/acheck
+          sudo "$PY" acheck.py --shortcut status --system </dev/null | grep -q "未安装任何入口"
+          echo "OK: shortcut system scope cycle complete"
