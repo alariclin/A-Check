@@ -357,6 +357,117 @@ jobs:
           grep -q "用法:" "$RUNNER_TEMP/rc-help-min.txt" || { echo "help text mismatch (minimal PATH):"; cat "$RUNNER_TEMP/rc-help-min.txt"; exit 1; }
           echo "OK: run.command --help (full PATH and minimal PATH)"
 
+      - name: PTY probe (macOS diagnostic, round 4)
+        if: runner.os == 'macOS'
+        timeout-minutes: 10
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          # Diagnostic only: does a bare input() work twice under the same
+          # pty.openpty() driver on this runner, with/without readline,
+          # with/without TERM, with/without a controlling terminal?
+          # Round 3: the app reads "4" at the first prompt, then "0"/"q"
+          # at the second prompt never take effect (no echo, no exit).
+          # acheck.py imports readline in _init_console (line 81), so
+          # input() goes through libedit on macOS. This probe isolates
+          # whether the second read fails in a minimal program.
+          cat > /tmp/ptyprobe.py <<'PROBE_EOF'
+          import os, pty, select, subprocess, sys, termios, time
+          mode = sys.argv[1]                         # plain, edit, cat, or app
+          m, s = pty.openpty()
+          env = dict(os.environ, ACHECK_NO_GEO_UPDATE="1")
+          env.pop("TERM", None)
+          if os.environ.get("TEST_TERM"):
+              env["TERM"] = os.environ["TEST_TERM"]
+          code = """
+          import os, sys
+          if sys.argv[1] == 'edit':
+              import readline
+          print('backend:', getattr(sys.modules.get('readline'), 'backend', None), flush=True)
+          for _ in range(2):
+              x = input('probe [0-13]: ')
+              print('GOT=' + ascii(x), flush=True)
+          """
+          argv = [sys.executable, "-c", code, mode]
+          if mode == "cat":
+              a = termios.tcgetattr(s)
+              a[3] &= ~termios.ECHO
+              termios.tcsetattr(s, termios.TCSANOW, a)
+              argv = ["/bin/cat"]
+          elif mode == "app":
+              argv = [sys.executable, "acheck.py"]
+          if os.getenv("CTTY") == "1":
+              argv = [sys.executable, "-c",
+                      "import os,sys,fcntl,termios;os.setsid();"
+                      "fcntl.ioctl(0,termios.TIOCSCTTY,0);os.execv(sys.argv[1],sys.argv[1:])",
+                      *argv]
+          p = subprocess.Popen(argv, stdin=s, stdout=s, stderr=s, env=env, close_fds=True)
+          buf = b""
+          limit = float(os.getenv("LIMIT", "6"))
+          def expect(token):
+              global buf
+              end = time.monotonic() + limit
+              while token not in buf:
+                  rem = end - time.monotonic()
+                  if rem <= 0 or not select.select([m], [], [], rem)[0]:
+                      raise TimeoutError((token, p.poll(), buf[-200:]))
+                  data = os.read(m, 65536)
+                  if not data:
+                      raise EOFError(token)
+                  print("read", repr(data[-200:]), flush=True)
+                  buf += data
+              buf = buf.split(token, 1)[1]
+          try:
+              for x in os.getenv("KEYS", "40").encode("ascii"):
+                  digit = bytes([x])
+                  if mode != "cat":
+                      expect(b"[0-13]: ")
+                  time.sleep(float(os.getenv("DELAY", "0")))
+                  a = termios.tcgetattr(s)
+                  print("pid", p.pid, "tty", os.ttyname(s), "flags", a[:4],
+                        "icanon", bool(a[3] & termios.ICANON),
+                        "echo", bool(a[3] & termios.ECHO), flush=True)
+                  line = digit + b"\n"
+                  n = os.write(m, line)
+                  print("write", repr(line), n, flush=True)
+                  assert n == len(line)
+                  if mode == "cat":
+                      expect(digit)
+                  elif mode != "app":
+                      expect(b"GOT='" + digit + b"'")
+              if mode != "cat":
+                  end = time.monotonic() + limit
+                  while p.poll() is None and time.monotonic() < end:
+                      if select.select([m], [], [], 0.1)[0]:
+                          print("drain", repr(os.read(m, 65536)[-200:]), flush=True)
+                  if p.poll() is None:
+                      raise TimeoutError("no exit")
+                  print("exit", p.returncode)
+          finally:
+              if p.poll() is None:
+                  p.kill()
+              p.wait()
+              os.close(s)
+              os.close(m)
+          PROBE_EOF
+          python3 -c "import ast; ast.parse(open('/tmp/ptyprobe.py').read()); print('probe syntax OK')"
+          echo "=== cat control (ECHO off: digit back proves cat read it) ==="
+          python3 /tmp/ptyprobe.py cat || echo "PROBE-RESULT: cat FAILED"
+          echo "=== plain/edit x TERM x CTTY matrix (KEYS=40: two inputs) ==="
+          for mode in plain edit; do
+            for t in '' xterm-256color; do
+              for c in 0 1; do
+                echo "--- mode=$mode TERM='$t' CTTY=$c ---"
+                TEST_TERM="$t" CTTY="$c" python3 /tmp/ptyprobe.py "$mode" && echo "PROBE-RESULT: mode=$mode TERM='$t' CTTY=$c PASS" || echo "PROBE-RESULT: mode=$mode TERM='$t' CTTY=$c FAILED"
+              done
+            done
+          done
+          echo "=== app: quit at first prompt (KEYS=0) ==="
+          KEYS=0 LIMIT=30 python3 /tmp/ptyprobe.py app && echo "PROBE-RESULT: app KEYS=0 PASS" || echo "PROBE-RESULT: app KEYS=0 FAILED"
+          echo "=== app: M4 then quit (KEYS=40) ==="
+          KEYS=40 LIMIT=30 python3 /tmp/ptyprobe.py app && echo "PROBE-RESULT: app KEYS=40 PASS" || echo "PROBE-RESULT: app KEYS=40 FAILED"
+          echo "OK: probe matrix complete (see PROBE-RESULT lines above)"
+
       - name: PTY menu system info + run.command menu (macOS)
         if: runner.os == 'macOS'
         timeout-minutes: 10
@@ -425,6 +536,20 @@ jobs:
                   try:
                       rc = proc.wait(timeout=max(0, t_end - time.time()))
                   except subprocess.TimeoutExpired:
+                      # Diagnostic (round 4): capture where the stuck
+                      # process is BEFORE killing it -- a main thread in
+                      # stdio read vs libedit vs a lock are different
+                      # diagnoses. sample/ps output goes to the job log.
+                      try:
+                          subprocess.run(["/usr/bin/sample", str(proc.pid), "1", "-file", "/tmp/acheck.sample"], timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                          print(open("/tmp/acheck.sample", errors="replace").read()[:4000], flush=True)
+                      except Exception as e:
+                          print(f"sample failed: {e}", flush=True)
+                      try:
+                          ps = subprocess.run(["/bin/ps", "-o", "pid,ppid,pgid,tpgid,tty,stat,command", "-p", str(proc.pid)], capture_output=True, text=True, timeout=10)
+                          print(ps.stdout, flush=True)
+                      except Exception as e:
+                          print(f"ps failed: {e}", flush=True)
                       proc.kill(); proc.wait()
                       raise TimeoutError(f"process did not exit; tail={buf[-1500:]!r}")
               while True:
