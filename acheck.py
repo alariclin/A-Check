@@ -1399,11 +1399,13 @@ def T(key, **kwargs):
         try:
             s = s.format(**kwargs)
         except Exception:
-            # fix440a T()：格式失败不再静默吞掉——向 stderr 告警（含键名
-            # 与 format 字样）并返回未格式化模板（有文档的回退，不崩溃、
-            # 不中止整轮检测；抛异常会中止整轮，故不抛）。
-            print(f"[i18n] T({key!r}) format failed, returning template",
-                  file=sys.stderr)
+            # fix440g G-042：告警输出本身不得打断模板回退（stderr 已关闭
+            # 时 print 抛 ValueError，执行不到 return s）。
+            try:
+                print(f"[i18n] T({key!r}) format failed, returning template",
+                      file=sys.stderr)
+            except Exception:
+                pass
             return s
     return s
 
@@ -1526,6 +1528,10 @@ def _coerce_score(v):
     字符串原样印成数字（与 _clamp_score 拒收数字串的口径一致）。"""
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
+    # fix440g G-039：整数不经浮点有限性检查（10**309 转 double 抛
+    # OverflowError）；只有 float 才查 math.isfinite。
+    if isinstance(v, int):
+        return v
     if not math.isfinite(v):
         return None
     return v
@@ -1563,7 +1569,12 @@ def _safe_nonneg_int(v):
     if isinstance(v, str):
         s = v.strip()
         if s.isdigit():
-            return int(s)
+            # fix440g G-040：保护实际 int() 转换——isdigit() 为真但 int()
+            # 拒绝的字符（如 "²"）与超 4300 位整数串上限时返 None 而非抛错。
+            try:
+                return int(s)
+            except ValueError:
+                return None
         return None
     return None
 
@@ -1571,9 +1582,13 @@ def _safe_nonneg_int(v):
 def _resp_ip_ok(d, ip):
     """fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致（按地址值比较，
     展开式/压缩式 IPv6 等价）；无 ip 字段时不校验、不拒收。"""
+    # fix440g G-041：缺键才豁免；显式 ip: null（有字段但值不是地址）
+    # 不得与缺键同等豁免，须校验不通过。
+    if "ip" not in d:
+        return True
     rip = d.get("ip")
     if rip is None:
-        return True
+        return False
     try:
         return ipaddress.ip_address(str(rip)) == ipaddress.ip_address(str(ip))
     except ValueError:
