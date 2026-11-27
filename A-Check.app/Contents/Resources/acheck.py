@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-IP 信誉检测 v4.14.38 — 全量修复与并发优化公开版 (零 API Key 依赖)
+IP 信誉检测 v4.14.39 — 全量修复与并发优化公开版 (零 API Key 依赖)
 
 被动模式: 仅凭 IP 地址做公开情报查询，不发起任何指向该 IP 的主动连接。
   适用: 评估尚未启用的候选 IP (如 AWS EIP)。
@@ -36,6 +36,7 @@ except ImportError:  # Windows 等无 fcntl 的平台: 快捷键管理本就不�
     fcntl = None
 import gzip
 import hashlib
+import html
 import http.client
 import io
 import ipaddress
@@ -69,7 +70,7 @@ import atexit
 
 # stdio 编码初始化统一在 _init_console() 内进行 (仅主程序运行时), import 本文件不产生副作用。
 
-VERSION = "4.14.38"
+VERSION = "4.14.39"
 
 
 def _init_console():
@@ -198,6 +199,7 @@ STR = {
         "diag_speed_fail": "吞吐测速失败",
         "batch_tp_testing": "测最优节点吞吐中…",
         "batch_tp_ok": "★ 最优节点实测下载: %.1f Mbps (经代理 · %s)",
+        "batch_tp_fail": "最优节点吞吐测试失败",
         "batch_hint": "逐行粘贴节点 (host:port 或 socks5://[user:pass@]host:port)，空行开始测试，b 返回",
         "batch_best": "最优",
         "batch_dead": "不可用",
@@ -260,6 +262,7 @@ STR = {
         "risk_low": "低风险",
         "risk_medium": "中风险",
         "risk_high": "高风险",
+        "verdict": "综合结论",
         "verdict_clean": "● 未发现明确风险信号",
         "verdict_low": "● 轻微风险",
         "verdict_medium": "● 中等风险",
@@ -411,6 +414,7 @@ STR = {
         "diag_speed_fail": "Throughput test failed",
         "batch_tp_testing": "Testing best node throughput…",
         "batch_tp_ok": "★ Best node measured download: %.1f Mbps (via proxy · %s)",
+        "batch_tp_fail": "Best-node throughput test failed",
         "batch_hint": "Paste nodes line by line (host:port or socks5://[user:pass@]host:port), empty line to start, b back",
         "batch_best": "Best",
         "batch_dead": "unusable",
@@ -473,6 +477,7 @@ STR = {
         "risk_low": "Low",
         "risk_medium": "Medium",
         "risk_high": "High",
+        "verdict": "Verdict",
         "verdict_clean": "● No clear risk signals",
         "verdict_low": "● Minor risk",
         "verdict_medium": "● Moderate risk",
@@ -488,7 +493,7 @@ STR = {
         "platform_note": "※ A high platform compatibility score indicates data center/proxy traits; some platforms may require additional verification, but this does not indicate malicious activity",
         "success_query": "Succeeded",
         "failed_sources": "Failed",
-        "fail_note": "※ Failed sources treated as [Unverifiable], excluded from scoring — does not mean clean",
+        "fail_note": "※ Failed sources [Unverifiable], excluded from scoring — does not mean clean",
         "rate_limit_hint": "※ Several sources rate-limited at once — usually the current egress IP (proxy relay / shared egress) quota is exhausted; retry once via a direct connection or a residential egress",
         "confidence": "Confidence",
         "disclaimer": "Note: passive queries reflect OSINT only; no evidence ≠ no risk.\nDC IP platform policy risk needs separate assessment.",
@@ -624,6 +629,7 @@ STR = {
         "diag_speed_fail": "吞吐測速失敗",
         "batch_tp_testing": "測最優節點吞吐中…",
         "batch_tp_ok": "★ 最優節點實測下載: %.1f Mbps (經代理 · %s)",
+        "batch_tp_fail": "最優節點吞吐測試失敗",
         "batch_hint": "逐行貼上節點 (host:port 或 socks5://[user:pass@]host:port)，空行開始測試，b 返回",
         "batch_best": "最優",
         "batch_dead": "不可用",
@@ -686,6 +692,7 @@ STR = {
         "risk_low": "低風險",
         "risk_medium": "中風險",
         "risk_high": "高風險",
+        "verdict": "綜合結論",
         "verdict_clean": "● 未發現明確風險信號",
         "verdict_low": "● 輕微風險",
         "verdict_medium": "● 中等風險",
@@ -837,6 +844,7 @@ STR = {
         "diag_speed_fail": "スループット測定に失敗",
         "batch_tp_testing": "最速ノードのスループットを測定中…",
         "batch_tp_ok": "★ 最速ノード実測ダウンロード: %.1f Mbps (プロキシ経由 · %s)",
+        "batch_tp_fail": "最速ノードのスループット測定に失敗しました",
         "batch_hint": "ノードを1行ずつ貼り付け (host:port または socks5://[user:pass@]host:port)、空行で開始、b 戻る",
         "batch_best": "最速",
         "batch_dead": "利用不可",
@@ -899,6 +907,7 @@ STR = {
         "risk_low": "低リスク",
         "risk_medium": "中リスク",
         "risk_high": "高リスク",
+        "verdict": "総合判定",
         "verdict_clean": "● 明確なリスクシグナルなし",
         "verdict_low": "● 軽微なリスク",
         "verdict_medium": "● 中程度のリスク",
@@ -975,7 +984,7 @@ STR = {
         "back": "Назад",
         "current_egress6": "Текущий выход IPv6",
         "sec_ipv6": "IPv6 (двойной стек)",
-        "v6_leak_warn": "⚠ Риск утечки IPv6: выход IPv4 — AS{a4}, выход IPv6 — AS{a6}; сети разные, и IPv6-трафик, вероятно, идёт мимо прокси/VPN",
+        "v6_leak_warn": "⚠ Риск утечки IPv6: выход IPv4 — AS{a4}, выход IPv6 — AS{a6}; сети разные, и IPv6-трафик, вероятно, идёт мимо прокси/VPN; ваш IPv6-адрес напрямую раскрыт",
         "v6_same_exit": "IPv6 и IPv4 — одна сеть выхода (AS{a})",
         "stack_title": "Объём самопроверки",
         "stack_auto": "Авто (IPv4 + IPv6; если IPv6 нет — только IPv4)",
@@ -1050,6 +1059,7 @@ STR = {
         "diag_speed_fail": "Тест пропускной способности не удался",
         "batch_tp_testing": "Измерение пропускной способности лучшего узла…",
         "batch_tp_ok": "★ Лучший узел, измеренная загрузка: %.1f Mbps (через прокси · %s)",
+        "batch_tp_fail": "Не удалось измерить пропускную способность лучшего узла",
         "batch_hint": "Вставляйте узлы по одному (host:port или socks5://[user:pass@]host:port), пустая строка — старт, b назад",
         "batch_best": "Лучший",
         "batch_dead": "недоступен",
@@ -1112,6 +1122,7 @@ STR = {
         "risk_low": "Низкий риск",
         "risk_medium": "Средний риск",
         "risk_high": "Высокий риск",
+        "verdict": "Вердикт",
         "verdict_clean": "● Явных признаков риска нет",
         "verdict_low": "● Незначительный риск",
         "verdict_medium": "● Средний риск",
@@ -1127,7 +1138,7 @@ STR = {
         "platform_note": "※ Высокий балл по совместимости с платформами указывает на признаки ДЦ/прокси; некоторые платформы могут требовать усиленной проверки. Это не означает вредоносность.",
         "success_query": "Успешных запросов",
         "failed_sources": "Источники с ошибками",
-        "fail_note": "※ Источникам с ошибками присваивается статус [Невозможно проверить]; они не учитываются при расчёте риска — это не означает, что IP чистый.",
+        "fail_note": "※ Ошибки: [Невозможно проверить], в риск не входят — IP не обязательно чистый.",
         "rate_limit_hint": "※ Сразу несколько источников вернули ограничение частоты — обычно это означает, что квота текущего выходного IP (прокси-реле / общий выход) исчерпана; повторите проверку напрямую или через residential-выход",
         "confidence": "Достоверность",
         "disclaimer": "Примечание: пассивные запросы отражают только открытые данные, отсутствие доказательств ≠ отсутствие риска.\nРиски, связанные с правилами платформ для IP-адресов дата-центров, необходимо оценивать отдельно.",
@@ -1263,13 +1274,14 @@ STR = {
         "diag_speed_fail": "تست توان عملیاتی ناموفق بود",
         "batch_tp_testing": "در حال اندازه‌گیری توان عملیاتی بهترین گره…",
         "batch_tp_ok": "★ دانلود اندازه‌گیری‌شده بهترین گره: %.1f Mbps (از طریق پروکسی · %s)",
+        "batch_tp_fail": "آزمایش توان عملیاتی بهترین گره ناموفق بود",
         "batch_hint": "گره‌ها را خط به خط وارد کنید (host:port یا socks5://[user:pass@]host:port)، خط خالی شروع، b بازگشت",
         "batch_best": "بهترین",
         "batch_dead": "غیرقابل استفاده",
         "batch_col_node": "گره",
         "batch_col_avg": "میانگین",
         "batch_col_jitter": "جیتر",
-        "batch_col_loss": "اتلاف بسته",
+        "batch_col_loss": "اتلاف",
         "batch_col_proto": "HS",
         "bn_system": "سیستم",
         "bn_hardware": "سخت‌افزار",
@@ -1325,6 +1337,7 @@ STR = {
         "risk_low": "ریسک کم",
         "risk_medium": "ریسک متوسط",
         "risk_high": "ریسک بالا",
+        "verdict": "جمع‌بندی",
         "verdict_clean": "● سیگنال خطر مشخصی یافت نشد",
         "verdict_low": "● ریسک جزئی",
         "verdict_medium": "● ریسک متوسط",
@@ -1340,7 +1353,7 @@ STR = {
         "platform_note": "※ امتیاز بالای سازگاری با پلتفرم‌ها = ویژگی دیتاسنتر/پروکسی؛ ممکن است برخی پلتفرم‌ها بررسی‌های سخت‌گیرانه‌تری اعمال کنند؛ این به معنای مخرب بودن نیست",
         "success_query": "پرس‌وجوی موفق",
         "failed_sources": "منابع ناموفق",
-        "fail_note": "※ منابع ناموفق [غیرقابل تأیید] محسوب می‌شوند و در نمره ریسک لحاظ نمی‌شوند — به معنای پاک بودن نیست",
+        "fail_note": "※ منابع ناموفق [غیرقابل تأیید] هستند و در نمره نیستند — به معنای پاک بودن نیست",
         "rate_limit_hint": "※ چند منبع هم‌زمان با محدودیت نرخ مواجه شدند — معمولاً یعنی سهمیه IP خروجی فعلی (ریلی پروکسی / خروجی مشترک) تمام شده است؛ یک بار با اتصال مستقیم یا خروجی مسکونی دوباره امتحان کنید",
         "confidence": "اطمینان",
         "disclaimer": "توضیح: پرس‌وجوی غیرفعال فقط اطلاعات عمومی را نشان می‌دهد، نبود مدرک ≠ نبود ریسک.\nریسک ناشی از سیاست‌های پلتفرم‌ها برای IPهای دیتاسنتر باید جداگانه ارزیابی شود.",
@@ -1387,7 +1400,14 @@ def T(key, **kwargs):
         try:
             s = s.format(**kwargs)
         except Exception:
-            pass
+            # fix440g G-042：告警输出本身不得打断模板回退（stderr 已关闭
+            # 时 print 抛 ValueError，执行不到 return s）。
+            try:
+                print(f"[i18n] T({key!r}) format failed, returning template",
+                      file=sys.stderr)
+            except Exception:
+                pass
+            return s
     return s
 
 
@@ -1503,6 +1523,32 @@ def _clamp_score(v):
     return int(f) if f == int(f) else f
 
 
+def _coerce_score(v):
+    """L7/L8：打印层分值清洗——仅接受有限数值（bool 除外）；缺失/None/
+    字符串等非数值一律返 None（未知，印 "—"），不得把未知印成 0 或把
+    字符串原样印成数字（与 _clamp_score 拒收数字串的口径一致）。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    # fix440g G-039：整数不经浮点有限性检查（10**309 转 double 抛
+    # OverflowError）；只有 float 才查 math.isfinite。
+    if isinstance(v, int):
+        return v
+    if not math.isfinite(v):
+        return None
+    return v
+
+
+def _opt_score(v):
+    """fix440g G-021：归一化的可选分数——行显示、算术与脚注判断共用此
+    一口径：有限数值返原值，缺失/None/字符串/bool/非有限返 None（未知），
+    超大整数（如 10**400，math.isfinite 会抛 OverflowError）亦返 None
+    而不抛错，保证手造/残缺 res 永远打得出完整报告。"""
+    try:
+        return _coerce_score(v)
+    except Exception:
+        return None
+
+
 def _clean_coord(v, lo, hi):
     """经纬度清洗 (H-10)：仅接受有限 float 且在范围内；非法（NaN/Infinity/
     1e309→inf、越界、"Sign up to access" 等非数值串）一律置 None。
@@ -1514,6 +1560,63 @@ def _clean_coord(v, lo, hi):
     if not math.isfinite(f) or not (lo <= f <= hi):
         return None
     return f
+
+
+def _as_dict(v):
+    """fix440b F1：可选子对象只认 dict；真值非 dict（str/int/list/bool）
+    一律视为空对象，不让 `x or {}` 后的 `.get()` 抛错丢整源。"""
+    return v if isinstance(v, dict) else {}
+
+
+def _safe_nonneg_int(v):
+    """fix440b F2/F8a：严格转非负整数——int（不含 bool）、整数值 float、
+    纯数字串（含两侧空白）才接受；bool/负数/小数/非数字串/None 一律返 None
+    （未知），不得静默当计数或分值。"""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v if v >= 0 else None
+    if isinstance(v, float):
+        return int(v) if (math.isfinite(v) and v.is_integer() and v >= 0) else None
+    if isinstance(v, str):
+        s = v.strip()
+        if s.isdigit():
+            # fix440g G-040：保护实际 int() 转换——isdigit() 为真但 int()
+            # 拒绝的字符（如 "²"）与超 4300 位整数串上限时返 None 而非抛错。
+            try:
+                return int(s)
+            except ValueError:
+                return None
+        return None
+    return None
+
+
+def _resp_ip_ok(d, ip):
+    """fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致（按地址值比较，
+    展开式/压缩式 IPv6 等价）；无 ip 字段时不校验、不拒收。"""
+    # fix440g G-041：缺键才豁免；显式 ip: null（有字段但值不是地址）
+    # 不得与缺键同等豁免，须校验不通过。
+    if "ip" not in d:
+        return True
+    rip = d.get("ip")
+    if rip is None:
+        return False
+    try:
+        return ipaddress.ip_address(str(rip)) == ipaddress.ip_address(str(ip))
+    except ValueError:
+        return str(rip) == str(ip)
+
+
+def _valid_country(v):
+    """fix440b F3：国家字段只认去空白后非空的字符串；数字/空白串/None
+    一律无效（不得仅凭真值放行）。"""
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _lucene_escape(s):
+    """fix440b B2：Lucene 双引号值内转义——只须处理反斜杠与双引号，
+    其余字符在引号值内无特殊含义；URL 编码（_q_ip）管不到 Lucene 层。"""
+    return str(s).replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _json_safe(obj):
@@ -1647,7 +1750,8 @@ def _render_progress_locked(current, total, name="", json_mode=False):
     if json_mode:
         return
     bar_len = 28
-    filled = int(bar_len * current / max(total, 1))
+    # L10：filled 钳制到 [0, bar_len]——current>total 时条长不得超 bar_len。
+    filled = min(bar_len, max(0, int(bar_len * current / max(total, 1))))
     bar = "█" * filled + "░" * (bar_len - filled)
     msg = f"\r  {T('checking')} [{bar}] {current}/{total} {name}"
     _lim = max(10, min(74, shutil.get_terminal_size((80, 24)).columns - 2))
@@ -2710,10 +2814,30 @@ class Scamalytics(Provider):
         ok, raw = http_get(f"https://scamalytics.com/ip/{_q_ip(ip)}", use_cache=False)
         if not ok:
             return {"ok": False, "err": raw}
-        m = (
-            re.search(r'"score"\s*:\s*"(\d{1,3})"', raw)
-            or re.search(r"Fraud Score[^0-9]{1,40}?(\d{1,3})", raw, re.I | re.S)
-        )
+        # fix440b B1：两路正则均无锚点——说明文字里的数字（"100 signals"）、
+        # 标签内的数字（"</h1>" 里的 1）、无关 JSON 的 "score" 均可被误读成
+        # 分数，假 100 直接顶满欺诈分。修法：先去 HTML 标签再匹配，分数须
+        # 紧邻 "Fraud Score"（仅容冒号/等号/is 与空白）；JSON 分数另须在
+        # 500 字符内邻近 "fraud" 字样（本页即欺诈分页面，正常页恒满足）。
+        m = None
+        _fraud_pos = [mm.start() for mm in re.finditer(r"fraud", raw, re.I)]
+        # fix440g G-001：JSON 分数须闭引号（或词界）——"100th" 不得取 100。
+        # fix440g G-034：位置列表已有序，用二分查找邻近 fraud，不再对每个
+        # 分数从头扫描（O(n·m) -> O(n log m)）。
+        for _sm in re.finditer(r'"score"\s*:\s*"?(\d{1,3})(?:"|\b)', raw):
+            _sp = _sm.start()
+            _i = bisect.bisect_left(_fraud_pos, _sp)
+            if not ((_i < len(_fraud_pos) and _fraud_pos[_i] - _sp <= 500)
+                    or (_i > 0 and _sp - _fraud_pos[_i - 1] <= 500)):
+                continue
+            m = _sm
+            break
+        if not m:
+            # fix440g G-033：匹配前用 html.unescape 解码（"&nbsp;" 致
+            # \s* 无法消费、分数解析失败）。
+            _text = html.unescape(re.sub(r"<[^>]*>", " ", raw))
+            m = re.search(r"fraud\s+score\s*(?:is\s*[:=]?|[:=])?\s*(\d{1,3})\b",
+                          _text, re.I)
         if not m:
             return {"ok": False, "err": "score parse failed (CF challenge or layout changed)"}
         score = min(100, max(0, int(m.group(1))))
@@ -2737,10 +2861,29 @@ class StopForumSpam(Provider):
             ip_data = d.get("ip")
             if not isinstance(ip_data, dict) or "appears" not in ip_data:
                 return {"ok": False, "err": "missing ip/appears field"}
-            appears = int(ip_data.get("appears") or 0)
+            # fix440b r2a-A02：appears:null 不得抹成 0（null 是未知，不是
+            # “零举报”）；frequency:"" 与缺失同口径——阳性时频次未知填 None。
+            _app_raw = ip_data.get("appears")
+            if _app_raw is None or isinstance(_app_raw, bool):
+                return {"ok": False, "err": "invalid appears"}
+            # fix440g G-002：转换前验证类型——非整数 float（如 0.5）不得
+            # 经 int() 截断成有效值；整数值 float（1.0）与数字串仍走旧路。
+            if isinstance(_app_raw, float) and not _app_raw.is_integer():
+                return {"ok": False, "err": "invalid appears"}
+            try:
+                appears = int(_app_raw)
+            except (TypeError, ValueError, OverflowError):
+                return {"ok": False, "err": "invalid appears"}
             # 阳性但缺 frequency：频次未知，不填零（填零会把“已举报”抹成“零举报”）；
             # 消费者一律按 (frequency or 0) 取值，None 不得进比较。
-            freq = None if (appears and ip_data.get("frequency") is None) else int(ip_data.get("frequency") or 0)
+            _freq_raw = ip_data.get("frequency")
+            # fix440g G-002：frequency 同口径验证——非整数 float/bool 不得
+            # 截断成 0（0.9 -> 0 会把阳性频次抹掉）；缺失/"" 仍按旧路填 None。
+            if _freq_raw not in (None, "") and (
+                    isinstance(_freq_raw, bool)
+                    or (isinstance(_freq_raw, float) and not _freq_raw.is_integer())):
+                return {"ok": False, "err": "invalid frequency"}
+            freq = None if (appears and _freq_raw in (None, "")) else int(_freq_raw or 0)
             conf = float(ip_data.get("confidence") or 0.0)
             return {
                 "ok": True,
@@ -2762,8 +2905,11 @@ class Urlscan(Provider):
     def check(self, ip):
         # B-4-3：Lucene 值加引号——未加引号的 IPv6 冒号致 urlscan.io
         # HTTP 400（live 实测 2026-11-24）；加引号后 200。IPv4 同口径。
+        # fix440b B2：引号本身不是转义——ip 内含 " 或 \ 时仍可打破值边界
+        # 注入子句（URL 编码管不到 Lucene 层，_q_ip 同样无用）；值内先做
+        # Lucene 转义，再整体 URL 编码。
         q = urllib.parse.quote(
-            f"page.ip:\"{ip}\" AND (task.source:urlhaus OR task.source:openphish "
+            f"page.ip:\"{_lucene_escape(ip)}\" AND (task.source:urlhaus OR task.source:openphish "
             f"OR task.source:phishtank OR task.tags:phishing OR task.tags:malware)")
         ok, raw = http_get(f"https://urlscan.io/api/v1/search/?q={q}&size=10", use_cache=False)
         if not ok:
@@ -2774,10 +2920,54 @@ class Urlscan(Provider):
                 return {"ok": False, "err": d.get("message", "API error")}
             if "total" not in d:
                 return {"ok": False, "err": "missing total"}
-            total = int(d.get("total", 0))
+            # fix440b r2a-A08：total 只认非负整数；0.5/负数/数字串一律拒收
+            #（旧 int() 裸转把 0.5 截成 0、-1 当成功计数）。
+            _total = d.get("total")
+            if isinstance(_total, bool) or not isinstance(_total, int) or _total < 0:
+                return {"ok": False, "err": "invalid total"}
+            total = _total
             return {"ok": True, "total": total, "ts": now_iso()}
         except Exception as e:
             return {"ok": False, "err": str(e)[:80]}
+
+
+def _ripestat_date(st):
+    """fix440b B4/r2a-A04：RIPEstat starttime 归一化为 YYYY-MM-DD；
+    数值型 YYYYMMDD（如 20200101）按 %Y%m%d 解析，ISO 串取前 10 位并
+    校验，无效串/非法日期返 None（不得把 "not-a-date" 当 first_seen，
+    亦不得让 TypeError 吞掉整段路由历史）。"""
+    if isinstance(st, bool):
+        return None
+    if isinstance(st, (int, float)):
+        # fix440g G-037：带小数部分的数值拒绝（20200101.75 不得截成日期）。
+        if isinstance(st, float) and not st.is_integer():
+            return None
+        try:
+            s = str(int(st))
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if len(s) == 8 and s.isdigit():
+            try:
+                return datetime.strptime(s, "%Y%m%d").strftime("%Y-%m-%d")
+            except ValueError:
+                return None
+        return None
+    if not isinstance(st, str):
+        return None
+    s = st.strip()
+    if len(s) < 10:
+        return None
+    try:
+        datetime.strptime(s[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    if len(s) > 10:
+        # fix440g G-037：尾随文本须是完整合法的时间后缀（T/空格 + HH:MM
+        # [:SS[.fff]] + 可选 Z/时区），"2020-01-01not-a-time" 之类拒绝。
+        if not re.fullmatch(r"[T ]([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?"
+                            r"(?:[Zz]|[+-](?:[01]\d|2[0-3]):?[0-5]\d)?", s[10:]):
+            return None
+    return s[:10]
 
 
 @register
@@ -2791,62 +2981,120 @@ class RIPEstat(Provider):
         # 路径 prefix-overview 亦 200（服务在线）。prefix-overview 失败时仍
         # 试 routing-history：有历史则返部分 ok（asn/announced 为 None、
         # partial True）；两端点皆败才返失败，不崩溃、不误判。
+        # fix440b B3：空 data / 畸形 asns[0] 与 HTTP 失败同口径——不再直接
+        # return，同样落到路由历史兜底；历史无果时才以前缀错误收尾。
         ok, raw = http_get(
             f"https://stat.ripe.net/data/prefix-overview/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
         _pre_err = "" if ok else raw
         asn, announced = None, None
+        prefix_ok = ok
         if ok:
             try:
                 d = json.loads(raw).get("data", {})
-                if not d:
-                    return {"ok": False, "err": "empty data"}
-                asns = d.get("asns", [])
-                asn = asns[0].get("asn") if asns else None
-                announced = d.get("announced", False)
+                if not isinstance(d, dict) or not d:
+                    prefix_ok = False
+                    _pre_err = "empty data"
+                else:
+                    asns = d.get("asns", [])
+                    if not isinstance(asns, list):
+                        prefix_ok = False
+                        _pre_err = "invalid asns"
+                    else:
+                        if asns:
+                            _a0 = asns[0]
+                            if not isinstance(_a0, dict):
+                                prefix_ok = False
+                                _pre_err = "invalid asns[0]"
+                            else:
+                                asn = _a0.get("asn")
+                        # fix440b B5：announced 只认真布尔值；缺字段/字符串
+                        # 一律返 None（未知），不得报确定 False 或原样透传。
+                        announced = _strict_bool(d.get("announced"))
             except Exception as e:
-                return {"ok": False, "err": str(e)[:80]}
+                prefix_ok = False
+                _pre_err = str(e)[:80]
         age_years, first_seen, visibility = None, None, None
         ok2, raw2 = http_get(
             f"https://stat.ripe.net/data/routing-history/data.json?resource={_q_ip(ip)}",
             use_cache=False,
         )
+        _hist_ok = bool(ok2)
         if ok2:
             try:
                 h = json.loads(raw2).get("data", {})
+                if not isinstance(h, dict):
+                    raise ValueError("bad history data")
                 origins = h.get("by_origin", [])
+                # fix440g G-036：by_origin 错型（非列表）不是正常空历史，
+                # 置历史失败标记（与 by_origin=[] 可区分，末尾标 partial）。
+                if not isinstance(origins, list):
+                    _hist_ok = False
+                    origins = []
                 earliest = None
                 max_peers = 0
+                _seen_tl = False
+                _seen_fp = False
                 for o in origins:
-                    for pfx in o.get("prefixes", []):
-                        for tl in pfx.get("timelines", []):
-                            st = tl.get("starttime", "")
-                            if st and (earliest is None or st < earliest):
-                                earliest = st
-                            fp = tl.get("full_peers_seeing", 0) or 0
-                            # 字符串计数值先规范化：旧版直接比较，字符串
-                            # （如 "2"）致整段路由历史 try 被 TypeError 截断
-                            # （first_seen/visibility 全丢；F04）。
-                            try:
-                                fp = int(fp)
-                            except (TypeError, ValueError, OverflowError):
-                                fp = 0
-                            if fp > max_peers:
-                                max_peers = fp
+                    # fix440b r2a-A09b：单个坏项（null/非 dict）只跳过该项，
+                    # 不得丢弃此前已算出的有效历史。
+                    if not isinstance(o, dict):
+                        continue
+                    # fix440g G-004：先验证集合本身是列表，错型项跳过、保留
+                    # 已算出的 earliest/max_peers（不得让 for pfx in 1 抛
+                    # TypeError 丢整段历史）。
+                    _pfxs = o.get("prefixes", [])
+                    if not isinstance(_pfxs, list):
+                        continue
+                    for pfx in _pfxs:
+                        if not isinstance(pfx, dict):
+                            continue
+                        _tls = pfx.get("timelines", [])
+                        if not isinstance(_tls, list):
+                            continue
+                        for tl in _tls:
+                            if not isinstance(tl, dict):
+                                continue
+                            _seen_tl = True
+                            _ds = _ripestat_date(tl.get("starttime", ""))
+                            if _ds and (earliest is None or _ds < earliest):
+                                earliest = _ds
+                            # fix440g G-003：仅当 full_peers_seeing 字段真实
+                            # 出现（非 None）才算见过对端计数；缺字段的
+                            # timeline 不得把 visibility 抹成 "0"。
+                            if "full_peers_seeing" in tl and tl.get("full_peers_seeing") is not None:
+                                _seen_fp = True
+                                fp = tl.get("full_peers_seeing", 0) or 0
+                                # 字符串计数值先规范化：旧版直接比较，字符串
+                                # （如 "2"）致整段路由历史 try 被 TypeError 截断
+                                # （first_seen/visibility 全丢；F04）。
+                                try:
+                                    fp = int(fp)
+                                except (TypeError, ValueError, OverflowError):
+                                    fp = 0
+                                if fp > max_peers:
+                                    max_peers = fp
                 if earliest:
-                    first_seen = earliest[:10]
+                    first_seen = earliest
                     try:
                         dt0 = datetime.strptime(first_seen, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                         days = (datetime.now(timezone.utc) - dt0).days
                         age_years = round(max(0.0, days / 365.25), 1)
                     except Exception:
                         pass
-                if max_peers:
+                # fix440b r2a-A10：显式零对端是数据（"0"），不是缺失；
+                # 但零对端只有配有效 first_seen 时才算可用历史（r2a-A04：
+                # 无有效日期又零对端 = 无可用信号，不得仅凭一条空 timeline
+                # 构成部分成功）；正对端数本身即是可见度信号。
+                # fix440g G-003：可见度须以真实见过对端计数为准（_seen_fp），
+                # 仅见过 timeline 不算；显式零对端配有效 first_seen 时仍为 "0"。
+                if _seen_fp and (earliest is not None or max_peers > 0):
                     visibility = f"{max_peers}"
             except Exception:
-                pass
-        if not ok:
+                _hist_ok = False
+                first_seen, visibility = None, None
+        if not prefix_ok:
             if first_seen is None and not visibility:
                 return {"ok": False, "err": _pre_err}
             return {
@@ -2859,7 +3107,7 @@ class RIPEstat(Provider):
                 "partial": True,
                 "ts": now_iso(),
             }
-        return {
+        _res = {
             "ok": True,
             "asn": _parse_asn(asn),
             "announced": announced,
@@ -2868,6 +3116,16 @@ class RIPEstat(Provider):
             "visibility": visibility,
             "ts": now_iso(),
         }
+        # fix440b r2a-A09a：前缀成功但历史请求失败，须标 partial——否则
+        # 调用方把“无年龄/无可见度”当成查无历史。
+        if not _hist_ok:
+            _res["partial"] = True
+        # fix440g G-035：仅元数据前缀（无 ASN/宣告）＋历史失败时不得计
+        # 成功——无任何可用信号，返失败而非 ok=True/partial=True。
+        if (not _hist_ok and _res["asn"] is None and _res["announced"] is None
+                and first_seen is None and not visibility):
+            return {"ok": False, "err": "no usable RIPEstat signals"}
+        return _res
 
 
 # G4：PTR 正向校验全量遍历的单调总截止（秒）。见 PTRCheck.check 内注释。
@@ -2891,12 +3149,18 @@ class PTRCheck(Provider):
         _fwd_qtype = 28 if _ip_obj.version == 6 else 1
         sys_ns_list = _get_system_nameservers()
         ptrs = None
+        # fix440b r2a-A05：记下答出 PTR 的 NS——正向校验须先问它（分视图
+        # DNS 下各 NS 答案不同，从 NS A 重启会拿另一视图的答案否掉 FCrDNS）。
+        _ptr_ns = None
         for _ns in sys_ns_list:
             ptrs = _dns_query_udp(rev_ip, qtype=12, server=_ns, timeout=2.5)
             if ptrs is not None:
+                _ptr_ns = _ns
                 break
         if ptrs is None and "1.1.1.1" not in sys_ns_list:
             ptrs = _dns_query_udp(rev_ip, qtype=12, server="1.1.1.1", timeout=2.5)
+            if ptrs is not None:
+                _ptr_ns = "1.1.1.1"
         if ptrs is None:
             return {"ok": False, "err": "PTR query timeout"}
         if not ptrs:
@@ -2915,12 +3179,15 @@ class PTRCheck(Provider):
         # fcrdns False 的确定性否定。单次正查超时亦按剩余时间封顶。
         _fwd_deadline = time.monotonic() + _PTR_FWD_BUDGET
         _fwd_expired = False
+        # fix440b r2a-A05：正向校验先问答出 PTR 的 NS，再问其余系统 NS。
+        _fwd_ns_order = ([_ptr_ns] + [n for n in sys_ns_list if n != _ptr_ns]
+                         if _ptr_ns else list(sys_ns_list))
         for h in ptrs:
             if time.monotonic() >= _fwd_deadline:
                 _fwd_expired = True
                 break
             fwd_ips = None
-            for _ns in sys_ns_list:
+            for _ns in _fwd_ns_order:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server=_ns,
                                     timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is None:
@@ -2928,7 +3195,16 @@ class PTRCheck(Provider):
                 fwd_ips = _r
                 if _r:
                     break
-            if (fwd_ips is None or not fwd_ips) and "1.1.1.1" not in sys_ns_list:
+                # fix440g G-005：答出 PTR 的解析器的显式空正查 [] 是终局——
+                # 不得再由另一解析器的正答拼出 FCrDNS 成功（两视图各自无闭环）。
+                if _ns == _ptr_ns:
+                    break
+            # fix440b r2a-A06：系统 NS 返回 [] 是数据（无记录），不是失败——
+            # 只有全部系统 NS 均失败（None）时才回退 1.1.1.1；[] 不得把主机
+            # 名发往公共 DNS（内网主机名外泄），也不得被公共答案覆盖。
+            # fix440g G-038：兜底须检查 1.1.1.1 是否已在 _fwd_ns_order 中
+            # 问过（答出 PTR 的公共解析器已在首位），不得对同一主机正查两次。
+            if fwd_ips is None and "1.1.1.1" not in _fwd_ns_order:
                 _r = _dns_query_udp(h, qtype=_fwd_qtype, server="1.1.1.1",
                                     timeout=min(2.5, max(0.1, _fwd_deadline - time.monotonic())))
                 if _r is not None:
@@ -2972,9 +3248,65 @@ _CC_EN = {'united states': 'US', 'united states of america': 'US', 'canada': 'CA
 'ドイツ': 'DE', 'フランス': 'FR', 'イギリス': 'GB', 'アメリカ': 'US', 'カナダ': 'CA', 'オーストラリア': 'AU', 'ニュージーランド': 'NZ', 'オランダ': 'NL', 'イタリア': 'IT', 'スペイン': 'ES', 'ロシア': 'RU', 'スイス': 'CH', 'スウェーデン': 'SE', 'ノルウェー': 'NO', 'フィンランド': 'FI', 'デンマーク': 'DK', 'オーストリア': 'AT', 'ベルギー': 'BE', 'アイルランド': 'IE', 'ポーランド': 'PL', 'トルコ': 'TR', 'メキシコ': 'MX', 'ブラジル': 'BR', 'インド': 'IN', 'シンガポール': 'SG', 'タイ': 'TH', 'ベトナム': 'VN', 'インドネシア': 'ID', 'マレーシア': 'MY', 'フィリピン': 'PH', '韓国': 'KR', '中国': 'CN', '台湾': 'TW', '香港': 'HK', '南アフリカ': 'ZA', 'ギリシャ': 'GR', 'ポルトガル': 'PT', 'チェコ': 'CZ', 'ハンガリー': 'HU', 'ルーマニア': 'RO', 'ウクライナ': 'UA', 'エジプト': 'EG', 'ナイジェリア': 'NG', 'ケニア': 'KE', 'モロッコ': 'MA', 'イスラエル': 'IL', 'サウジアラビア': 'SA', 'カタール': 'QA', 'クウェート': 'KW', 'イラン': 'IR', 'イラク': 'IQ', 'パキスタン': 'PK', 'バングラデシュ': 'BD'}
 _COUNTRY_NAMES = {'zh': {'US': '美国', 'CA': '加拿大', 'DE': '德国', 'FR': '法国', 'JP': '日本', 'KR': '韩国', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄罗斯', 'GB': '英国', 'NL': '荷兰', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬兰', 'DK': '丹麦', 'AT': '奥地利', 'BE': '比利时', 'IE': '爱尔兰', 'PL': '波兰', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥伦比亚', 'PE': '秘鲁', 'EG': '埃及', 'NG': '尼日利亚', 'KE': '肯尼亚', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿联酋', 'SA': '沙特阿拉伯', 'QA': '卡塔尔', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉国', 'TH': '泰国', 'VN': '越南', 'ID': '印度尼西亚', 'MY': '马来西亚', 'PH': '菲律宾', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': '澳大利亚', 'NZ': '新西兰', 'ZA': '南非', 'GR': '希腊', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '罗马尼亚', 'UA': '乌克兰', 'IT': '意大利', 'ES': '西班牙'}, 'zh-TW': {'US': '美國', 'CA': '加拿大', 'DE': '德國', 'FR': '法國', 'JP': '日本', 'KR': '韓國', 'SG': '新加坡', 'IN': '印度', 'BR': '巴西', 'RU': '俄羅斯', 'GB': '英國', 'NL': '荷蘭', 'CH': '瑞士', 'SE': '瑞典', 'NO': '挪威', 'FI': '芬蘭', 'DK': '丹麥', 'AT': '奧地利', 'BE': '比利時', 'IE': '愛爾蘭', 'PL': '波蘭', 'TR': '土耳其', 'MX': '墨西哥', 'AR': '阿根廷', 'CL': '智利', 'CO': '哥倫比亞', 'PE': '秘魯', 'EG': '埃及', 'NG': '奈及利亞', 'KE': '肯亞', 'MA': '摩洛哥', 'IL': '以色列', 'AE': '阿聯酋', 'SA': '沙烏地阿拉伯', 'QA': '卡達', 'KW': '科威特', 'IR': '伊朗', 'IQ': '伊拉克', 'PK': '巴基斯坦', 'BD': '孟加拉國', 'TH': '泰國', 'VN': '越南', 'ID': '印度尼西亞', 'MY': '馬來西亞', 'PH': '菲律賓', 'TW': '台灣', 'HK': '香港', 'CN': '中國', 'AU': '澳大利亞', 'NZ': '紐西蘭', 'ZA': '南非', 'GR': '希臘', 'PT': '葡萄牙', 'CZ': '捷克', 'HU': '匈牙利', 'RO': '羅馬尼亞', 'UA': '烏克蘭', 'IT': '義大利', 'ES': '西班牙'}, 'ja': {'US': 'アメリカ', 'CA': 'カナダ', 'DE': 'ドイツ', 'FR': 'フランス', 'JP': '日本', 'KR': '韓国', 'SG': 'シンガポール', 'IN': 'インド', 'BR': 'ブラジル', 'RU': 'ロシア', 'GB': 'イギリス', 'NL': 'オランダ', 'CH': 'スイス', 'SE': 'スウェーデン', 'NO': 'ノルウェー', 'FI': 'フィンランド', 'DK': 'デンマーク', 'AT': 'オーストリア', 'BE': 'ベルギー', 'IE': 'アイルランド', 'PL': 'ポーランド', 'TR': 'トルコ', 'MX': 'メキシコ', 'AR': 'アルゼンチン', 'CL': 'チリ', 'CO': 'コロンビア', 'PE': 'ペルー', 'EG': 'エジプト', 'NG': 'ナイジェリア', 'KE': 'ケニア', 'MA': 'モロッコ', 'IL': 'イスラエル', 'AE': 'アラブ首長国連邦', 'SA': 'サウジアラビア', 'QA': 'カタール', 'KW': 'クウェート', 'IR': 'イラン', 'IQ': 'イラク', 'PK': 'パキスタン', 'BD': 'バングラデシュ', 'TH': 'タイ', 'VN': 'ベトナム', 'ID': 'インドネシア', 'MY': 'マレーシア', 'PH': 'フィリピン', 'TW': '台湾', 'HK': '香港', 'CN': '中国', 'AU': 'オーストラリア', 'NZ': 'ニュージーランド', 'ZA': '南アフリカ', 'GR': 'ギリシャ', 'PT': 'ポルトガル', 'CZ': 'チェコ', 'HU': 'ハンガリー', 'RO': 'ルーマニア', 'UA': 'ウクライナ', 'IT': 'イタリア', 'ES': 'スペイン'}, 'ru': {'US': 'США', 'CA': 'Канада', 'DE': 'Германия', 'FR': 'Франция', 'JP': 'Япония', 'KR': 'Южная Корея', 'SG': 'Сингапур', 'IN': 'Индия', 'BR': 'Бразилия', 'RU': 'Россия', 'GB': 'Великобритания', 'NL': 'Нидерланды', 'CH': 'Швейцария', 'SE': 'Швеция', 'NO': 'Норвегия', 'FI': 'Финляндия', 'DK': 'Дания', 'AT': 'Австрия', 'BE': 'Бельгия', 'IE': 'Ирландия', 'PL': 'Польша', 'TR': 'Турция', 'MX': 'Мексика', 'AR': 'Аргентина', 'CL': 'Чили', 'CO': 'Колумбия', 'PE': 'Перу', 'EG': 'Египет', 'NG': 'Нигерия', 'KE': 'Кения', 'MA': 'Марокко', 'IL': 'Израиль', 'AE': 'ОАЭ', 'SA': 'Саудовская Аравия', 'QA': 'Катар', 'KW': 'Кувейт', 'IR': 'Иран', 'IQ': 'Ирак', 'PK': 'Пакистан', 'BD': 'Бангладеш', 'TH': 'Таиланд', 'VN': 'Вьетнам', 'ID': 'Индонезия', 'MY': 'Малайзия', 'PH': 'Филиппины', 'TW': 'Тайвань', 'HK': 'Гонконг', 'CN': 'Китай', 'AU': 'Австралия', 'NZ': 'Новая Зеландия', 'ZA': 'ЮАР', 'GR': 'Греция', 'PT': 'Португалия', 'CZ': 'Чехия', 'HU': 'Венгрия', 'RO': 'Румыния', 'UA': 'Украина', 'IT': 'Италия', 'ES': 'Испания'}, 'fa': {'US': 'آمریکا', 'CA': 'کانادا', 'DE': 'آلمان', 'FR': 'فرانسه', 'JP': 'ژاپن', 'KR': 'کره جنوبی', 'SG': 'سنگاپور', 'IN': 'هند', 'BR': 'برزیل', 'RU': 'روسیه', 'GB': 'بریتانیا', 'NL': 'هلند', 'CH': 'سوئیس', 'SE': 'سوئد', 'NO': 'نروژ', 'FI': 'فنلاند', 'DK': 'دانمارک', 'AT': 'اتریش', 'BE': 'بلژیک', 'IE': 'ایرلند', 'PL': 'لهستان', 'TR': 'ترکیه', 'MX': 'مکزیک', 'AR': 'آرژانتین', 'CL': 'شیلی', 'CO': 'کلمبیا', 'PE': 'پرو', 'EG': 'مصر', 'NG': 'نیجریه', 'KE': 'کنیا', 'MA': 'مراکش', 'IL': 'اسرائیل', 'AE': 'امارات', 'SA': 'عربستان سعودی', 'QA': 'قطر', 'KW': 'کویت', 'IR': 'ایران', 'IQ': 'عراق', 'PK': 'پاکستان', 'BD': 'بنگلادش', 'TH': 'تایلند', 'VN': 'ویتنام', 'ID': 'اندونزی', 'MY': 'مالزی', 'PH': 'فیلیپین', 'TW': 'تایوان', 'HK': 'هنگ\u200cکنگ', 'CN': 'چین', 'AU': 'استرالیا', 'NZ': 'نیوزیلند', 'ZA': 'آفریقای جنوبی', 'GR': 'یونان', 'PT': 'پرتغال', 'CZ': 'چک', 'HU': 'مجارستان', 'RO': 'رومانی', 'UA': 'اوکراین', 'IT': 'ایتالیا', 'ES': 'اسپانیا'}}
 _CC_EN.update({'afghanistan': 'AF', 'albania': 'AL', 'algeria': 'DZ', 'american samoa': 'AS', 'andorra': 'AD', 'angola': 'AO', 'anguilla': 'AI', 'antarctica': 'AQ', 'antigua and barbuda': 'AG', 'armenia': 'AM', 'aruba': 'AW', 'azerbaijan': 'AZ', 'bahamas': 'BS', 'bahrain': 'BH', 'barbados': 'BB', 'belarus': 'BY', 'belize': 'BZ', 'benin': 'BJ', 'bermuda': 'BM', 'bhutan': 'BT', 'bolivia': 'BO', 'bosnia and herzegovina': 'BA', 'botswana': 'BW', 'brunei': 'BN', 'bulgaria': 'BG', 'burkina faso': 'BF', 'burundi': 'BI', 'cambodia': 'KH', 'cameroon': 'CM', 'cape verde': 'CV', 'cayman islands': 'KY', 'central african republic': 'CF', 'chad': 'TD', 'comoros': 'KM', 'congo': 'CG', 'congo (democratic republic)': 'CD', 'cook islands': 'CK', 'costa rica': 'CR', 'croatia': 'HR', 'cuba': 'CU', 'cyprus': 'CY', 'djibouti': 'DJ', 'dominica': 'DM', 'dominican republic': 'DO', 'ecuador': 'EC', 'el salvador': 'SV', 'equatorial guinea': 'GQ', 'eritrea': 'ER', 'estonia': 'EE', 'eswatini': 'SZ', 'ethiopia': 'ET', 'falkland islands': 'FK', 'faroe islands': 'FO', 'fiji': 'FJ', 'gabon': 'GA', 'gambia': 'GM', 'georgia': 'GE', 'ghana': 'GH', 'gibraltar': 'GI', 'greenland': 'GL', 'grenada': 'GD', 'guam': 'GU', 'guatemala': 'GT', 'guinea': 'GN', 'guinea-bissau': 'GW', 'guyana': 'GY', 'haiti': 'HT', 'honduras': 'HN', 'iceland': 'IS', 'jamaica': 'JM', 'jordan': 'JO', 'kazakhstan': 'KZ', 'kiribati': 'KI', 'kosovo': 'XK', 'kyrgyzstan': 'KG', 'laos': 'LA', 'latvia': 'LV', 'lebanon': 'LB', 'lesotho': 'LS', 'liberia': 'LR', 'libya': 'LY', 'liechtenstein': 'LI', 'lithuania': 'LT', 'luxembourg': 'LU', 'macau': 'MO', 'madagascar': 'MG', 'malawi': 'MW', 'maldives': 'MV', 'mali': 'ML', 'malta': 'MT', 'marshall islands': 'MH', 'mauritania': 'MR', 'mauritius': 'MU', 'micronesia': 'FM', 'moldova': 'MD', 'monaco': 'MC', 'mongolia': 'MN', 'montenegro': 'ME', 'mozambique': 'MZ', 'myanmar': 'MM', 'namibia': 'NA', 'nepal': 'NP', 'nicaragua': 'NI', 'niger': 'NE', 'north korea': 'KP', 'north macedonia': 'MK', 'northern mariana islands': 'MP', 'oman': 'OM', 'palau': 'PW', 'palestine': 'PS', 'panama': 'PA', 'papua new guinea': 'PG', 'paraguay': 'PY', 'puerto rico': 'PR', 'rwanda': 'RW', 'saint kitts and nevis': 'KN', 'saint lucia': 'LC', 'samoa': 'WS', 'san marino': 'SM', 'sao tome and principe': 'ST', 'senegal': 'SN', 'serbia': 'RS', 'seychelles': 'SC', 'sierra leone': 'SL', 'slovakia': 'SK', 'slovenia': 'SI', 'solomon islands': 'SB', 'somalia': 'SO', 'south sudan': 'SS', 'sri lanka': 'LK', 'sudan': 'SD', 'suriname': 'SR', 'syria': 'SY', 'tajikistan': 'TJ', 'tanzania': 'TZ', 'timor-leste': 'TL', 'togo': 'TG', 'tonga': 'TO', 'trinidad and tobago': 'TT', 'tunisia': 'TN', 'turkmenistan': 'TM', 'tuvalu': 'TV', 'uganda': 'UG', 'uruguay': 'UY', 'uzbekistan': 'UZ', 'vanuatu': 'VU', 'venezuela': 'VE', 'yemen': 'YE', 'zambia': 'ZM', 'zimbabwe': 'ZW', 'guernsey': 'GG', 'jersey': 'JE', 'isle of man': 'IM', 'aland': 'AX', 'curacao': 'CW', 'sint maarten': 'SX', 'bonaire': 'BQ', 'saint barthelemy': 'BL', 'saint martin': 'MF', 'mayotte': 'YT', 'reunion': 'RE', 'martinique': 'MQ', 'guadeloupe': 'GP', 'french guiana': 'GF', 'french polynesia': 'PF', 'new caledonia': 'NC', 'niue': 'NU', 'norfolk island': 'NF', 'christmas island': 'CX', 'pitcairn': 'PN', 'saint helena': 'SH', 'montserrat': 'MS', 'british virgin islands': 'VG', 'u.s. virgin islands': 'VI', 'turks and caicos': 'TC', 'cote d\'ivoire': 'CI', 'côte d\'ivoire': 'CI', 'ivory coast': 'CI', 'saint vincent and the grenadines': 'VC', 'czech republic': 'CZ'})
+# fix440a L-01/L-02：补英文国名/缩写（此前缺失致守卫失明）：'u.s.a.'（美国缩写）、
+# 梵蒂冈（vatican/vatican city/holy see）及 14 个缺失 ISO 码的英文名。
+_CC_EN.update({'u.s.a.': 'US', 'vatican': 'VA', 'vatican city': 'VA',
+               'holy see': 'VA', 'nauru': 'NR', 'western sahara': 'EH',
+               'bouvet island': 'BV', 'cocos (keeling) islands': 'CC',
+               'cocos islands': 'CC',
+               'south georgia and the south sandwich islands': 'GS',
+               # fix440g G-045：CLDR 英文显示名亦须查到（& 式全称）。
+               'south georgia & south sandwich islands': 'GS',
+               'heard island and mcdonald islands': 'HM',
+               'british indian ocean territory': 'IO',
+               'saint pierre and miquelon': 'PM',
+               'svalbard and jan mayen': 'SJ',
+               'french southern territories': 'TF', 'tokelau': 'TK',
+               'united states minor outlying islands': 'UM',
+               'u.s. outlying islands': 'UM',
+               'wallis and futuna': 'WF'})
 _EXTRA_CN = {'zh': {'AF': '阿富汗', 'AL': '阿尔巴尼亚', 'DZ': '阿尔及利亚', 'AS': '美属萨摩亚', 'AD': '安道尔', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南极洲', 'AG': '安提瓜和巴布达', 'AM': '亚美尼亚', 'AW': '阿鲁巴', 'AZ': '阿塞拜疆', 'BS': '巴哈马', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄罗斯', 'BZ': '伯利兹', 'BJ': '贝宁', 'BM': '百慕大', 'BT': '不丹', 'BO': '玻利维亚', 'BA': '波黑', 'BW': '博茨瓦纳', 'BN': '文莱', 'BG': '保加利亚', 'BF': '布基纳法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麦隆', 'CV': '佛得角', 'KY': '开曼群岛', 'CF': '中非共和国', 'TD': '乍得', 'KM': '科摩罗', 'CG': '刚果（布）', 'CD': '刚果（金）', 'CK': '库克群岛', 'CR': '哥斯达黎加', 'HR': '克罗地亚', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多米尼加', 'EC': '厄瓜多尔', 'SV': '萨尔瓦多', 'GQ': '赤道几内亚', 'ER': '厄立特里亚', 'EE': '爱沙尼亚', 'SZ': '斯威士兰', 'ET': '埃塞俄比亚', 'FK': '福克兰群岛', 'FO': '法罗群岛', 'FJ': '斐济', 'GA': '加蓬', 'GM': '冈比亚', 'GE': '格鲁吉亚', 'GH': '加纳', 'GI': '直布罗陀', 'GL': '格陵兰', 'GD': '格林纳达', 'GU': '关岛', 'GT': '危地马拉', 'GN': '几内亚', 'GW': '几内亚比绍', 'GY': '圭亚那', 'HT': '海地', 'HN': '洪都拉斯', 'IS': '冰岛', 'JM': '牙买加', 'JO': '约旦', 'KZ': '哈萨克斯坦', 'KI': '基里巴斯', 'XK': '科索沃', 'KG': '吉尔吉斯斯坦', 'LA': '老挝', 'LV': '拉脱维亚', 'LB': '黎巴嫩', 'LS': '莱索托', 'LR': '利比里亚', 'LY': '利比亚', 'LI': '列支敦士登', 'LT': '立陶宛', 'LU': '卢森堡', 'MO': '澳门', 'MG': '马达加斯加', 'MW': '马拉维', 'MV': '马尔代夫', 'ML': '马里', 'MT': '马耳他', 'MH': '马绍尔群岛', 'MR': '毛里塔尼亚', 'MU': '毛里求斯', 'FM': '密克罗尼西亚', 'MD': '摩尔多瓦', 'MC': '摩纳哥', 'MN': '蒙古', 'ME': '黑山', 'MZ': '莫桑比克', 'MM': '缅甸', 'NA': '纳米比亚', 'NP': '尼泊尔', 'NI': '尼加拉瓜', 'NE': '尼日尔', 'KP': '朝鲜', 'MK': '北马其顿', 'MP': '北马里亚纳群岛', 'OM': '阿曼', 'PW': '帕劳', 'PS': '巴勒斯坦', 'PA': '巴拿马', 'PG': '巴布亚新几内亚', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '卢旺达', 'KN': '圣基茨和尼维斯', 'LC': '圣卢西亚', 'WS': '萨摩亚', 'SM': '圣马力诺', 'ST': '圣多美和普林西比', 'SN': '塞内加尔', 'RS': '塞尔维亚', 'SC': '塞舌尔', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛文尼亚', 'SB': '所罗门群岛', 'SO': '索马里', 'SS': '南苏丹', 'LK': '斯里兰卡', 'SD': '苏丹', 'SR': '苏里南', 'SY': '叙利亚', 'TJ': '塔吉克斯坦', 'TZ': '坦桑尼亚', 'TL': '东帝汶', 'TG': '多哥', 'TO': '汤加', 'TT': '特立尼达和多巴哥', 'TN': '突尼斯', 'TM': '土库曼斯坦', 'TV': '图瓦卢', 'UG': '乌干达', 'UY': '乌拉圭', 'UZ': '乌兹别克斯坦', 'VU': '瓦努阿图', 'VE': '委内瑞拉', 'YE': '也门', 'ZM': '赞比亚', 'ZW': '津巴布韦', 'GG': '根西岛', 'JE': '泽西岛', 'IM': '马恩岛', 'AX': '奥兰群岛', 'CW': '库拉索', 'SX': '圣马丁（荷属）', 'BQ': '博奈尔、圣尤斯特歇斯和萨巴', 'BL': '圣巴泰勒米', 'MF': '圣马丁（法属）', 'YT': '马约特', 'RE': '留尼汪', 'MQ': '马提尼克', 'GP': '瓜德罗普', 'GF': '法属圭亚那', 'PF': '法属波利尼西亚', 'NC': '新喀里多尼亚', 'NU': '纽埃', 'NF': '诺福克岛', 'CX': '圣诞岛', 'PN': '皮特凯恩群岛', 'SH': '圣赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英属维尔京群岛', 'VI': '美属维尔京群岛', 'TC': '特克斯和凯科斯群岛', 'CI': '科特迪瓦', 'VC': '圣文森特和格林纳丁斯'}, 'zh-TW': {'AF': '阿富汗', 'AL': '阿爾巴尼亞', 'DZ': '阿爾及利亞', 'AS': '美屬薩摩亞', 'AD': '安道爾', 'AO': '安哥拉', 'AI': '安圭拉', 'AQ': '南極洲', 'AG': '安提瓜和巴布達', 'AM': '亞美尼亞', 'AW': '阿魯巴', 'AZ': '亞塞拜然', 'BS': '巴哈馬', 'BH': '巴林', 'BB': '巴巴多斯', 'BY': '白俄羅斯', 'BZ': '貝里斯', 'BJ': '貝南', 'BM': '百慕達', 'BT': '不丹', 'BO': '玻利維亞', 'BA': '波赫', 'BW': '波札那', 'BN': '汶萊', 'BG': '保加利亞', 'BF': '布基納法索', 'BI': '布隆迪', 'KH': '柬埔寨', 'CM': '喀麥隆', 'CV': '維德角', 'KY': '開曼群島', 'CF': '中非共和國', 'TD': '查德', 'KM': '葛摩', 'CG': '剛果（布）', 'CD': '剛果（金）', 'CK': '庫克群島', 'CR': '哥斯大黎加', 'HR': '克羅埃西亞', 'CU': '古巴', 'CY': '塞浦路斯', 'DJ': '吉布提', 'DM': '多米尼克', 'DO': '多明尼加', 'EC': '厄瓜多', 'SV': '薩爾瓦多', 'GQ': '赤道幾內亞', 'ER': '厄利垂亞', 'EE': '愛沙尼亞', 'SZ': '史瓦帝尼', 'ET': '衣索比亞', 'FK': '福克蘭群島', 'FO': '法羅群島', 'FJ': '斐濟', 'GA': '加彭', 'GM': '甘比亞', 'GE': '喬治亞', 'GH': '迦納', 'GI': '直布羅陀', 'GL': '格陵蘭', 'GD': '格瑞那達', 'GU': '關島', 'GT': '瓜地馬拉', 'GN': '幾內亞', 'GW': '幾內亞比索', 'GY': '蓋亞那', 'HT': '海地', 'HN': '宏都拉斯', 'IS': '冰島', 'JM': '牙買加', 'JO': '約旦', 'KZ': '哈薩克斯坦', 'KI': '吉里巴斯', 'XK': '科索沃', 'KG': '吉爾吉斯斯坦', 'LA': '寮國', 'LV': '拉脫維亞', 'LB': '黎巴嫩', 'LS': '賴索托', 'LR': '賴比瑞亞', 'LY': '利比亞', 'LI': '列支敦斯登', 'LT': '立陶宛', 'LU': '盧森堡', 'MO': '澳門', 'MG': '馬達加斯加', 'MW': '馬拉威', 'MV': '馬爾地夫', 'ML': '馬利', 'MT': '馬耳他', 'MH': '馬紹爾群島', 'MR': '茅利塔尼亞', 'MU': '模里西斯', 'FM': '密克羅尼西亞', 'MD': '摩爾多瓦', 'MC': '摩納哥', 'MN': '蒙古', 'ME': '蒙特內哥羅', 'MZ': '莫三比克', 'MM': '緬甸', 'NA': '納米比亞', 'NP': '尼泊爾', 'NI': '尼加拉瓜', 'NE': '尼日', 'KP': '北韓', 'MK': '北馬其頓', 'MP': '北馬里亞納群島', 'OM': '阿曼', 'PW': '帛琉', 'PS': '巴勒斯坦', 'PA': '巴拿馬', 'PG': '巴布亞紐幾內亞', 'PY': '巴拉圭', 'PR': '波多黎各', 'RW': '盧安達', 'KN': '聖基茨和尼維斯', 'LC': '聖露西亞', 'WS': '薩摩亞', 'SM': '聖馬利諾', 'ST': '聖多美和普林西比', 'SN': '塞內加爾', 'RS': '塞爾維亞', 'SC': '塞舌爾', 'SL': '塞拉利昂', 'SK': '斯洛伐克', 'SI': '斯洛維尼亞', 'SB': '所羅門群島', 'SO': '索馬利亞', 'SS': '南蘇丹', 'LK': '斯里蘭卡', 'SD': '蘇丹', 'SR': '蘇利南', 'SY': '敘利亞', 'TJ': '塔吉克斯坦', 'TZ': '坦尚尼亞', 'TL': '東帝汶', 'TG': '多哥', 'TO': '東加', 'TT': '特立尼達和多巴哥', 'TN': '突尼西亞', 'TM': '土庫曼斯坦', 'TV': '圖瓦盧', 'UG': '烏干達', 'UY': '烏拉圭', 'UZ': '烏茲別克斯坦', 'VU': '瓦努阿圖', 'VE': '委內瑞拉', 'YE': '葉門', 'ZM': '贊比亞', 'ZW': '津巴布韋', 'GG': '根西島', 'JE': '澤西島', 'IM': '馬恩島', 'AX': '奧蘭群島', 'CW': '庫拉索', 'SX': '聖馬丁（荷屬）', 'BQ': '博奈爾、聖尤斯特歇斯和薩巴', 'BL': '聖巴泰勒米', 'MF': '聖馬丁（法屬）', 'YT': '馬約特', 'RE': '留尼汪', 'MQ': '馬提尼克', 'GP': '瓜德羅普', 'GF': '法屬圭亞那', 'PF': '法屬波利尼西亞', 'NC': '新喀里多尼亞', 'NU': '紐埃', 'NF': '諾福克島', 'CX': '聖誕島', 'PN': '皮特凱恩群島', 'SH': '聖赫勒拿', 'MS': '蒙特塞拉特', 'VG': '英屬維爾京群島', 'VI': '美屬維爾京群島', 'TC': '特克斯和凱科斯群島', 'CI': '科特迪瓦', 'VC': '聖文森特和格林納丁斯'}, 'ja': {'AF': 'アフガニスタン', 'AL': 'アルバニア', 'DZ': 'アルジェリア', 'AS': '米領サモア', 'AD': 'アンドラ', 'AO': 'アンゴラ', 'AI': 'アンギラ', 'AQ': '南極', 'AG': 'アンティグア・バーブーダ', 'AM': 'アルメニア', 'AW': 'アルバ', 'AZ': 'アゼルバイジャン', 'BS': 'バハマ', 'BH': 'バーレーン', 'BB': 'バルバドス', 'BY': 'ベラルーシ', 'BZ': 'ベリーズ', 'BJ': 'ベナン', 'BM': 'バミューダ', 'BT': 'ブータン', 'BO': 'ボリビア', 'BA': 'ボスニア・ヘルツェゴビナ', 'BW': 'ボツワナ', 'BN': 'ブルネイ', 'BG': 'ブルガリア', 'BF': 'ブルキナファソ', 'BI': 'ブルンジ', 'KH': 'カンボジア', 'CM': 'カメルーン', 'CV': 'カーボベルデ', 'KY': 'ケイマン諸島', 'CF': '中央アフリカ', 'TD': 'チャド', 'KM': 'コモロ', 'CG': 'コンゴ共和国', 'CD': 'コンゴ民主共和国', 'CK': 'クック諸島', 'CR': 'コスタリカ', 'HR': 'クロアチア', 'CU': 'キューバ', 'CY': 'キプロス', 'DJ': 'ジブチ', 'DM': 'ドミニカ国', 'DO': 'ドミニカ共和国', 'EC': 'エクアドル', 'SV': 'エルサルバドル', 'GQ': '赤道ギニア', 'ER': 'エリトリア', 'EE': 'エストニア', 'SZ': 'エスワティニ', 'ET': 'エチオピア', 'FK': 'フォークランド諸島', 'FO': 'フェロー諸島', 'FJ': 'フィジー', 'GA': 'ガボン', 'GM': 'ガンビア', 'GE': 'ジョージア', 'GH': 'ガーナ', 'GI': 'ジブラルタル', 'GL': 'グリーンランド', 'GD': 'グレナダ', 'GU': 'グアム', 'GT': 'グアテマラ', 'GN': 'ギニア', 'GW': 'ギニアビサウ', 'GY': 'ガイアナ', 'HT': 'ハイチ', 'HN': 'ホンジュラス', 'IS': 'アイスランド', 'JM': 'ジャマイカ', 'JO': 'ヨルダン', 'KZ': 'カザフスタン', 'KI': 'キリバス', 'XK': 'コソボ', 'KG': 'キルギス', 'LA': 'ラオス', 'LV': 'ラトビア', 'LB': 'レバノン', 'LS': 'レソト', 'LR': 'リベリア', 'LY': 'リビア', 'LI': 'リヒテンシュタイン', 'LT': 'リトアニア', 'LU': 'ルクセンブルク', 'MO': 'マカオ', 'MG': 'マダガスカル', 'MW': 'マラウイ', 'MV': 'モルディブ', 'ML': 'マリ', 'MT': 'マルタ', 'MH': 'マーシャル諸島', 'MR': 'モーリタニア', 'MU': 'モーリシャス', 'FM': 'ミクロネシア', 'MD': 'モルドバ', 'MC': 'モナコ', 'MN': 'モンゴル', 'ME': 'モンテネグロ', 'MZ': 'モザンビーク', 'MM': 'ミャンマー', 'NA': 'ナミビア', 'NP': 'ネパール', 'NI': 'ニカラグア', 'NE': 'ニジェール', 'KP': '北朝鮮', 'MK': '北マケドニア', 'MP': '北マリアナ諸島', 'OM': 'オマーン', 'PW': 'パラオ', 'PS': 'パレスチナ', 'PA': 'パナマ', 'PG': 'パプアニューギニア', 'PY': 'パラグアイ', 'PR': 'プエルトリコ', 'RW': 'ルワンダ', 'KN': 'セントクリストファー・ネイビス', 'LC': 'セントルシア', 'WS': 'サモア', 'SM': 'サンマリノ', 'ST': 'サントメ・プリンシペ', 'SN': 'セネガル', 'RS': 'セルビア', 'SC': 'セーシェル', 'SL': 'シエラレオネ', 'SK': 'スロバキア', 'SI': 'スロベニア', 'SB': 'ソロモン諸島', 'SO': 'ソマリア', 'SS': '南スーダン', 'LK': 'スリランカ', 'SD': 'スーダン', 'SR': 'スリナム', 'SY': 'シリア', 'TJ': 'タジキスタン', 'TZ': 'タンザニア', 'TL': '東ティモール', 'TG': 'トーゴ', 'TO': 'トンガ', 'TT': 'トリニダード・トバゴ', 'TN': 'チュニジア', 'TM': 'トルクメニスタン', 'TV': 'ツバル', 'UG': 'ウガンダ', 'UY': 'ウルグアイ', 'UZ': 'ウズベキスタン', 'VU': 'バヌアツ', 'VE': 'ベネズエラ', 'YE': 'イエメン', 'ZM': 'ザンビア', 'ZW': 'ジンバブエ', 'GG': 'ガーンジー', 'JE': 'ジャージー', 'IM': 'マン島', 'AX': 'オーランド諸島', 'CW': 'キュラソー', 'SX': 'シント・マールテン', 'BQ': 'ボネール、シント・ユースタティウス、サバ', 'BL': 'サン・バルテルミー', 'MF': 'サン・マルタン', 'YT': 'マヨット', 'RE': 'レユニオン', 'MQ': 'マルティニーク', 'GP': 'グアドループ', 'GF': 'フランス領ギアナ', 'PF': 'フランス領ポリネシア', 'NC': 'ニューカレドニア', 'NU': 'ニウエ', 'NF': 'ノーフォーク島', 'CX': 'クリスマス島', 'PN': 'ピトケアン諸島', 'SH': 'セントヘレナ', 'MS': 'モントセラト', 'VG': '英領バージン諸島', 'VI': '米領バージン諸島', 'TC': 'タークス・カイコス諸島', 'CI': 'コートジボワール', 'VC': 'セントビンセント・グレナディーン'}, 'ru': {'AF': 'Афганистан', 'AL': 'Албания', 'DZ': 'Алжир', 'AS': 'Американское Самоа', 'AD': 'Андорра', 'AO': 'Ангола', 'AI': 'Ангилья', 'AQ': 'Антарктида', 'AG': 'Антигуа и Барбуда', 'AM': 'Армения', 'AW': 'Аруба', 'AZ': 'Азербайджан', 'BS': 'Багамы', 'BH': 'Бахрейн', 'BB': 'Барбадос', 'BY': 'Беларусь', 'BZ': 'Белиз', 'BJ': 'Бенин', 'BM': 'Бермуды', 'BT': 'Бутан', 'BO': 'Боливия', 'BA': 'Босния и Герцеговина', 'BW': 'Ботсвана', 'BN': 'Бруней', 'BG': 'Болгария', 'BF': 'Буркина-Фасо', 'BI': 'Бурунди', 'KH': 'Камбоджа', 'CM': 'Камерун', 'CV': 'Кабо-Верде', 'KY': 'Каймановы острова', 'CF': 'ЦАР', 'TD': 'Чад', 'KM': 'Коморы', 'CG': 'Конго', 'CD': 'ДР Конго', 'CK': 'Острова Кука', 'CR': 'Коста-Рика', 'HR': 'Хорватия', 'CU': 'Куба', 'CY': 'Кипр', 'DJ': 'Джибути', 'DM': 'Доминика', 'DO': 'Доминиканская Республика', 'EC': 'Эквадор', 'SV': 'Сальвадор', 'GQ': 'Экваториальная Гвинея', 'ER': 'Эритрея', 'EE': 'Эстония', 'SZ': 'Эсватини', 'ET': 'Эфиопия', 'FK': 'Фолклендские острова', 'FO': 'Фарерские острова', 'FJ': 'Фиджи', 'GA': 'Габон', 'GM': 'Гамбия', 'GE': 'Грузия', 'GH': 'Гана', 'GI': 'Гибралтар', 'GL': 'Гренландия', 'GD': 'Гренада', 'GU': 'Гуам', 'GT': 'Гватемала', 'GN': 'Гвинея', 'GW': 'Гвинея-Бисау', 'GY': 'Гайана', 'HT': 'Гаити', 'HN': 'Гондурас', 'IS': 'Исландия', 'JM': 'Ямайка', 'JO': 'Иордания', 'KZ': 'Казахстан', 'KI': 'Кирибати', 'XK': 'Косово', 'KG': 'Киргизия', 'LA': 'Лаос', 'LV': 'Латвия', 'LB': 'Ливан', 'LS': 'Лесото', 'LR': 'Либерия', 'LY': 'Ливия', 'LI': 'Лихтенштейн', 'LT': 'Литва', 'LU': 'Люксембург', 'MO': 'Макао', 'MG': 'Мадагаскар', 'MW': 'Малави', 'MV': 'Мальдивы', 'ML': 'Мали', 'MT': 'Мальта', 'MH': 'Маршалловы Острова', 'MR': 'Мавритания', 'MU': 'Маврикий', 'FM': 'Микронезия', 'MD': 'Молдова', 'MC': 'Монако', 'MN': 'Монголия', 'ME': 'Черногория', 'MZ': 'Мозамбик', 'MM': 'Мьянма', 'NA': 'Намибия', 'NP': 'Непал', 'NI': 'Никарагуа', 'NE': 'Нигер', 'KP': 'Северная Корея', 'MK': 'Северная Македония', 'MP': 'Северные Марианские острова', 'OM': 'Оман', 'PW': 'Палау', 'PS': 'Палестина', 'PA': 'Панама', 'PG': 'Папуа — Новая Гвинея', 'PY': 'Парагвай', 'PR': 'Пуэрто-Рико', 'RW': 'Руанда', 'KN': 'Сент-Китс и Невис', 'LC': 'Сент-Люсия', 'WS': 'Самоа', 'SM': 'Сан-Марино', 'ST': 'Сан-Томе и Принсипи', 'SN': 'Сенегал', 'RS': 'Сербия', 'SC': 'Сейшелы', 'SL': 'Сьерра-Леоне', 'SK': 'Словакия', 'SI': 'Словения', 'SB': 'Соломоновы Острова', 'SO': 'Сомали', 'SS': 'Южный Судан', 'LK': 'Шри-Ланка', 'SD': 'Судан', 'SR': 'Суринам', 'SY': 'Сирия', 'TJ': 'Таджикистан', 'TZ': 'Танзания', 'TL': 'Восточный Тимор', 'TG': 'Того', 'TO': 'Тонга', 'TT': 'Тринидад и Тобаго', 'TN': 'Тунис', 'TM': 'Туркменистан', 'TV': 'Тувалу', 'UG': 'Уганда', 'UY': 'Уругвай', 'UZ': 'Узбекистан', 'VU': 'Вануату', 'VE': 'Венесуэла', 'YE': 'Йемен', 'ZM': 'Замбия', 'ZW': 'Зимбабве', 'GG': 'Гернси', 'JE': 'Джерси', 'IM': 'Остров Мэн', 'AX': 'Аландские острова', 'CW': 'Кюрасао', 'SX': 'Синт-Мартен', 'BQ': 'Бонайре, Синт-Эстатиус и Саба', 'BL': 'Сен-Бартелеми', 'MF': 'Сен-Мартен', 'YT': 'Майотта', 'RE': 'Реюньон', 'MQ': 'Мартиника', 'GP': 'Гваделупа', 'GF': 'Французская Гвиана', 'PF': 'Французская Полинезия', 'NC': 'Новая Каледония', 'NU': 'Ниуэ', 'NF': 'Остров Норфолк', 'CX': 'Остров Рождества', 'PN': 'Питкэрн', 'SH': 'Остров Святой Елены', 'MS': 'Монтсеррат', 'VG': 'Британские Виргинские острова', 'VI': 'Американские Виргинские острова', 'TC': 'Теркс и Кайкос', 'CI': 'Кот-д’Ивуар', 'VC': 'Сент-Винсент и Гренадины'}, 'fa': {'AF': 'افغانستان', 'AL': 'آلبانی', 'DZ': 'الجزایر', 'AS': 'ساموآی آمریکا', 'AD': 'آندورا', 'AO': 'آنگولا', 'AI': 'آنگویلا', 'AQ': 'جنوبگان', 'AG': 'آنتیگوا و باربودا', 'AM': 'ارمنستان', 'AW': 'آروبا', 'AZ': 'آذربایجان', 'BS': 'باهاما', 'BH': 'بحرین', 'BB': 'باربادوس', 'BY': 'بلاروس', 'BZ': 'بلیز', 'BJ': 'بنین', 'BM': 'برمودا', 'BT': 'بوتان', 'BO': 'بولیوی', 'BA': 'بوسنی و هرزگوین', 'BW': 'بوتسوانا', 'BN': 'برونئی', 'BG': 'بلغارستان', 'BF': 'بورکینافاسو', 'BI': 'بوروندی', 'KH': 'کامبوج', 'CM': 'کامرون', 'CV': 'کیپ ورد', 'KY': 'جزایر کیمن', 'CF': 'جمهوری آفریقای مرکزی', 'TD': 'چاد', 'KM': 'کومور', 'CG': 'کنگو', 'CD': 'جمهوری دموکراتیک کنگو', 'CK': 'جزایر کوک', 'CR': 'کاستاریکا', 'HR': 'کرواسی', 'CU': 'کوبا', 'CY': 'قبرس', 'DJ': 'جیبوتی', 'DM': 'دومینیکا', 'DO': 'جمهوری دومینیکن', 'EC': 'اکوادور', 'SV': 'السالوادور', 'GQ': 'گینه استوایی', 'ER': 'اریتره', 'EE': 'استونی', 'SZ': 'اسواتینی', 'ET': 'اتیوپی', 'FK': 'جزایر فالکلند', 'FO': 'جزایر فارو', 'FJ': 'فیجی', 'GA': 'گابن', 'GM': 'گامبیا', 'GE': 'گرجستان', 'GH': 'غنا', 'GI': 'جبل\u200cالطارق', 'GL': 'گرینلند', 'GD': 'گرنادا', 'GU': 'گوام', 'GT': 'گواتمالا', 'GN': 'گینه', 'GW': 'گینه بیسائو', 'GY': 'گویان', 'HT': 'هائیتی', 'HN': 'هندوراس', 'IS': 'ایسلند', 'JM': 'جامائیکا', 'JO': 'اردن', 'KZ': 'قزاقستان', 'KI': 'کیریباتی', 'XK': 'کوزوو', 'KG': 'قرقیزستان', 'LA': 'لائوس', 'LV': 'لتونی', 'LB': 'لبنان', 'LS': 'لسوتو', 'LR': 'لیبریا', 'LY': 'لیبی', 'LI': 'لیختن\u200cاشتاین', 'LT': 'لیتوانی', 'LU': 'لوکزامبورگ', 'MO': 'ماکائو', 'MG': 'ماداگاسکار', 'MW': 'مالاوی', 'MV': 'مالدیو', 'ML': 'مالی', 'MT': 'مالت', 'MH': 'جزایر مارشال', 'MR': 'موریتانی', 'MU': 'موریس', 'FM': 'میکرونزی', 'MD': 'مولداوی', 'MC': 'موناکو', 'MN': 'مغولستان', 'ME': 'مونته\u200cنگرو', 'MZ': 'موزامبیک', 'MM': 'میانمار', 'NA': 'نامیبیا', 'NP': 'نپال', 'NI': 'نیکاراگوئه', 'NE': 'نیجر', 'KP': 'کره شمالی', 'MK': 'مقدونیه شمالی', 'MP': 'جزایر ماریانای شمالی', 'OM': 'عمان', 'PW': 'پالائو', 'PS': 'فلسطین', 'PA': 'پاناما', 'PG': 'پاپوا گینه نو', 'PY': 'پاراگوئه', 'PR': 'پورتوریکو', 'RW': 'رواندا', 'KN': 'سنت کیتس و نویس', 'LC': 'سنت لوسیا', 'WS': 'ساموآ', 'SM': 'سن مارینو', 'ST': 'سائوتومه و پرنسیپ', 'SN': 'سنگال', 'RS': 'صربستان', 'SC': 'سیشل', 'SL': 'سیرالئون', 'SK': 'اسلواکی', 'SI': 'اسلوونی', 'SB': 'جزایر سلیمان', 'SO': 'سومالی', 'SS': 'سودان جنوبی', 'LK': 'سری\u200cلانکا', 'SD': 'سودان', 'SR': 'سورینام', 'SY': 'سوریه', 'TJ': 'تاجیکستان', 'TZ': 'تانزانیا', 'TL': 'تیمور شرقی', 'TG': 'توگو', 'TO': 'تونگا', 'TT': 'ترینیداد و توباگو', 'TN': 'تونس', 'TM': 'ترکمنستان', 'TV': 'تووالو', 'UG': 'اوگاندا', 'UY': 'اروگوئه', 'UZ': 'ازبکستان', 'VU': 'وانواتو', 'VE': 'ونزوئلا', 'YE': 'یمن', 'ZM': 'زامبیا', 'ZW': 'زیمبابوه', 'GG': 'گرنزی', 'JE': 'جرزی', 'IM': 'جزیره من', 'AX': 'جزایر الند', 'CW': 'کوراسائو', 'SX': 'سینت مارتن', 'BQ': 'بونیر، سینت یوستاتیوس و سابا', 'BL': 'سن بارتلمی', 'MF': 'سن مارتن', 'YT': 'مایوت', 'RE': 'رئونیون', 'MQ': 'مارتینیک', 'GP': 'گوادلوپ', 'GF': 'گویان فرانسه', 'PF': 'پلی\u200cنزی فرانسه', 'NC': 'کالدونیای جدید', 'NU': 'نیوئه', 'NF': 'جزیره نورفک', 'CX': 'جزیره کریسمس', 'PN': 'پیتکرن', 'SH': 'سنت هلنا', 'MS': 'مونتسرات', 'VG': 'جزایر ویرجین بریتانیا', 'VI': 'جزایر ویرجین آمریکا', 'TC': 'جزایر تورکس و کایکوس', 'CI': 'ساحل عاج', 'VC': 'سنت وینسنت و گرنادین‌ها'}}
 for _lg in ("zh", "zh-TW", "ja", "ru", "fa"):
     _COUNTRY_NAMES[_lg].update(_EXTRA_CN[_lg])
+# fix440a L-02：补 14 个此前缺失的 ISO 码（BV CC EH GS HM IO NR PM SJ TF TK UM VA WF；
+# 其中有人居住的为 VA/NR/PM/EH，其余为无人居住地；冷门领地译名为标准译名，见 REPORT）。
+_EXTRA_CN2 = {'zh': {'BV': '布韦岛', 'CC': '科科斯群岛', 'EH': '西撒哈拉',
+                    'GS': '南乔治亚和南桑威奇群岛', 'HM': '赫德岛和麦克唐纳群岛',
+                    'IO': '英属印度洋领地', 'NR': '瑙鲁', 'PM': '圣皮埃尔和密克隆',
+                    'SJ': '斯瓦尔巴和扬马延', 'TF': '法属南部领地', 'TK': '托克劳',
+                    'UM': '美国本土外小岛屿', 'VA': '梵蒂冈', 'WF': '瓦利斯和富图纳'},
+              'zh-TW': {'BV': '布威島', 'CC': '科科斯群島', 'EH': '西撒哈拉',
+                    'GS': '南喬治亞和南三明治群島', 'HM': '赫德島和麥克唐納群島',
+                    'IO': '英屬印度洋領地', 'NR': '諾魯', 'PM': '聖皮埃爾和密克隆',
+                    'SJ': '斯瓦巴和揚馬延', 'TF': '法屬南部領地', 'TK': '托克勞',
+                    'UM': '美國本土外小島嶼', 'VA': '梵蒂岡', 'WF': '瓦利斯和富圖納'},
+              'ja': {'BV': 'ブーベ島', 'CC': 'ココス諸島', 'EH': '西サハラ',
+                    'GS': 'サウスジョージア・サウスサンドウィッチ諸島',
+                    'HM': 'ハード島・マクドナルド諸島', 'IO': 'イギリス領インド洋地域',
+                    'NR': 'ナウル', 'PM': 'サンピエール・ミクロン',
+                    'SJ': 'スヴァールバル諸島・ヤンマイエン島',
+                    'TF': 'フランス領南方・南極地域', 'TK': 'トケラウ',
+                    'UM': '合衆国領有小離島', 'VA': 'バチカン', 'WF': 'ウォリス・フツナ'},
+              'ru': {'BV': 'Остров Буве', 'CC': 'Кокосовые острова',
+                    'EH': 'Западная Сахара',
+                    'GS': 'Южная Георгия и Южные Сандвичевы острова',
+                    'HM': 'Остров Херд и острова Макдональд',
+                    'IO': 'Британская территория в Индийском океане',
+                    'NR': 'Науру', 'PM': 'Сен-Пьер и Микелон',
+                    'SJ': 'Шпицберген и Ян-Майен',
+                    'TF': 'Французские Южные и Антарктические территории',
+                    'TK': 'Токелау', 'UM': 'Внешние малые острова США',
+                    'VA': 'Ватикан', 'WF': 'Уоллис и Футуна'},
+              'fa': {'BV': 'جزیره بووه', 'CC': 'جزایر کوکوس', 'EH': 'صحرای غربی',
+                    'GS': 'جورجیای جنوبی و جزایر ساندویچ جنوبی',
+                    'HM': 'جزیره هرد و جزایر مک\u200cدونالد',
+                    'IO': 'قلمرو اقیانوس هند بریتانیا', 'NR': 'نائورو',
+                    'PM': 'سن پیر و میکلون', 'SJ': 'سوالبارد و یان ماین',
+                    'TF': 'سرزمین\u200cهای جنوبی و جنوبگانی فرانسه',
+                    'TK': 'توکلائو', 'UM': 'جزایر کوچک دورافتاده ایالات متحده',
+                    'VA': 'واتیکان', 'WF': 'والیس و فوتونا'}}
+for _lg in ("zh", "zh-TW", "ja", "ru", "fa"):
+    _COUNTRY_NAMES[_lg].update(_EXTRA_CN2[_lg])
 
 _TZ_CONT = {'zh': {'Africa': '非洲', 'America': '美洲', 'Antarctica': '南极洲', 'Asia': '亚洲', 'Atlantic': '大西洋', 'Australia': '澳大利亚', 'Europe': '欧洲', 'Indian': '印度洋', 'Pacific': '太平洋'}, 'zh-TW': {'Africa': '非洲', 'America': '美洲', 'Antarctica': '南極洲', 'Asia': '亞洲', 'Atlantic': '大西洋', 'Australia': '澳大利亞', 'Europe': '歐洲', 'Indian': '印度洋', 'Pacific': '太平洋'}, 'ja': {'Africa': 'アフリカ', 'America': 'アメリカ', 'Antarctica': '南極', 'Asia': 'アジア', 'Atlantic': '大西洋', 'Australia': 'オーストラリア', 'Europe': 'ヨーロッパ', 'Indian': 'インド洋', 'Pacific': '太平洋'}, 'ru': {'Africa': 'Африка', 'America': 'Америка', 'Antarctica': 'Антарктида', 'Asia': 'Азия', 'Atlantic': 'Атлантика', 'Australia': 'Австралия', 'Europe': 'Европа', 'Indian': 'Индийский океан', 'Pacific': 'Тихий океан'}, 'fa': {'Africa': 'آفریقا', 'America': 'آمریکا', 'Antarctica': 'جنوبگان', 'Asia': 'آسیا', 'Atlantic': 'اقیانوس اطلس', 'Australia': 'استرالیا', 'Europe': 'اروپا', 'Indian': 'اقیانوس هند', 'Pacific': 'اقیانوس آرام'}}
 _TZ_CITY = {'zh': {'Cairo': '开罗', 'Johannesburg': '约翰内斯堡', 'Lagos': '拉各斯', 'Anchorage': '安克雷奇', 'Bogota': '波哥大', 'Chicago': '芝加哥', 'Denver': '丹佛', 'Halifax': '哈利法克斯', 'Lima': '利马', 'Los_Angeles': '洛杉矶', 'Mexico_City': '墨西哥城', 'New_York': '纽约', 'Phoenix': '菲尼克斯', 'Santiago': '圣地亚哥', 'Sao_Paulo': '圣保罗', 'St_Johns': '圣约翰斯', 'Toronto': '多伦多', 'Vancouver': '温哥华', 'Winnipeg': '温尼伯', 'Almaty': '阿拉木图', 'Bangkok': '曼谷', 'Colombo': '科伦坡', 'Dhaka': '达卡', 'Dubai': '迪拜', 'Ho_Chi_Minh': '胡志明市', 'Hong_Kong': '香港', 'Jakarta': '雅加达', 'Jerusalem': '耶路撒冷', 'Kabul': '喀布尔', 'Karachi': '卡拉奇', 'Kathmandu': '加德满都', 'Kolkata': '加尔各答', 'Kuala_Lumpur': '吉隆坡', 'Manila': '马尼拉', 'Riyadh': '利雅得', 'Seoul': '首尔', 'Shanghai': '上海', 'Singapore': '新加坡', 'Taipei': '台北', 'Tehran': '德黑兰', 'Tokyo': '东京', 'Reykjavik': '雷克雅未克', 'Adelaide': '阿德莱德', 'Brisbane': '布里斯班', 'Melbourne': '墨尔本', 'Perth': '珀斯', 'Sydney': '悉尼', 'Amsterdam': '阿姆斯特丹', 'Berlin': '柏林', 'Istanbul': '伊斯坦布尔', 'London': '伦敦', 'Madrid': '马德里', 'Moscow': '莫斯科', 'Paris': '巴黎', 'Rome': '罗马', 'Stockholm': '斯德哥尔摩', 'Vienna': '维也纳', 'Warsaw': '华沙', 'Auckland': '奥克兰', 'Chatham': '查塔姆', 'Buenos_Aires': '布宜诺斯艾利斯', 'Ulaanbaatar': '乌兰巴托', 'Honolulu': '檀香山', 'Zurich': '苏黎世', 'Lisbon': '里斯本', 'Dublin': '都柏林', 'Helsinki': '赫尔辛基', 'Oslo': '奥斯陆', 'Copenhagen': '哥本哈根', 'Prague': '布拉格', 'Budapest': '布达佩斯', 'Athens': '雅典', 'Kyiv': '基辅'}, 'zh-TW': {'Cairo': '開羅', 'Johannesburg': '約翰內斯堡', 'Lagos': '拉各斯', 'Anchorage': '安克雷奇', 'Bogota': '波哥大', 'Chicago': '芝加哥', 'Denver': '丹佛', 'Halifax': '哈利法克斯', 'Lima': '利馬', 'Los_Angeles': '洛杉磯', 'Mexico_City': '墨西哥城', 'New_York': '紐約', 'Phoenix': '菲尼克斯', 'Santiago': '聖地亞哥', 'Sao_Paulo': '聖保羅', 'St_Johns': '聖約翰斯', 'Toronto': '多倫多', 'Vancouver': '溫哥華', 'Winnipeg': '溫尼伯', 'Almaty': '阿拉木圖', 'Bangkok': '曼谷', 'Colombo': '科倫坡', 'Dhaka': '達卡', 'Dubai': '杜拜', 'Ho_Chi_Minh': '胡志明市', 'Hong_Kong': '香港', 'Jakarta': '雅加達', 'Jerusalem': '耶路撒冷', 'Kabul': '喀布爾', 'Karachi': '卡拉奇', 'Kathmandu': '加德滿都', 'Kolkata': '加爾各答', 'Kuala_Lumpur': '吉隆坡', 'Manila': '馬尼拉', 'Riyadh': '利雅得', 'Seoul': '首爾', 'Shanghai': '上海', 'Singapore': '新加坡', 'Taipei': '台北', 'Tehran': '德黑蘭', 'Tokyo': '東京', 'Reykjavik': '雷克雅未克', 'Adelaide': '阿德萊德', 'Brisbane': '布里斯班', 'Melbourne': '墨爾本', 'Perth': '珀斯', 'Sydney': '悉尼', 'Amsterdam': '阿姆斯特丹', 'Berlin': '柏林', 'Istanbul': '伊斯坦布爾', 'London': '倫敦', 'Madrid': '馬德里', 'Moscow': '莫斯科', 'Paris': '巴黎', 'Rome': '羅馬', 'Stockholm': '斯德哥爾摩', 'Vienna': '維也納', 'Warsaw': '華沙', 'Auckland': '奧克蘭', 'Chatham': '查塔姆', 'Buenos_Aires': '布宜諾斯艾利斯', 'Ulaanbaatar': '烏蘭巴托', 'Honolulu': '檀香山', 'Zurich': '蘇黎世', 'Lisbon': '里斯本', 'Dublin': '都柏林', 'Helsinki': '赫爾辛基', 'Oslo': '奧斯陸', 'Copenhagen': '哥本哈根', 'Prague': '布拉格', 'Budapest': '布達佩斯', 'Athens': '雅典', 'Kyiv': '基輔'}, 'ja': {'Cairo': 'カイロ', 'Johannesburg': 'ヨハネスブルグ', 'Lagos': 'ラゴス', 'Anchorage': 'アンカレッジ', 'Bogota': 'ボゴタ', 'Chicago': 'シカゴ', 'Denver': 'デンバー', 'Halifax': 'ハリファックス', 'Lima': 'リマ', 'Los_Angeles': 'ロサンゼルス', 'Mexico_City': 'メキシコシティ', 'New_York': 'ニューヨーク', 'Phoenix': 'フェニックス', 'Santiago': 'サンティアゴ', 'Sao_Paulo': 'サンパウロ', 'St_Johns': 'セントジョンズ', 'Toronto': 'トロント', 'Vancouver': 'バンクーバー', 'Winnipeg': 'ウィニペグ', 'Almaty': 'アルマトイ', 'Bangkok': 'バンコク', 'Colombo': 'コロンボ', 'Dhaka': 'ダッカ', 'Dubai': 'ドバイ', 'Ho_Chi_Minh': 'ホーチミン', 'Hong_Kong': '香港', 'Jakarta': 'ジャカルタ', 'Jerusalem': 'エルサレム', 'Kabul': 'カブール', 'Karachi': 'カラチ', 'Kathmandu': 'カトマンズ', 'Kolkata': 'コルカタ', 'Kuala_Lumpur': 'クアラルンプール', 'Manila': 'マニラ', 'Riyadh': 'リヤド', 'Seoul': 'ソウル', 'Shanghai': '上海', 'Singapore': 'シンガポール', 'Taipei': '台北', 'Tehran': 'テヘラン', 'Tokyo': '東京', 'Reykjavik': 'レイキャビク', 'Adelaide': 'アデレード', 'Brisbane': 'ブリスベン', 'Melbourne': 'メルボルン', 'Perth': 'パース', 'Sydney': 'シドニー', 'Amsterdam': 'アムステルダム', 'Berlin': 'ベルリン', 'Istanbul': 'イスタンブール', 'London': 'ロンドン', 'Madrid': 'マドリード', 'Moscow': 'モスクワ', 'Paris': 'パリ', 'Rome': 'ローマ', 'Stockholm': 'ストックホルム', 'Vienna': 'ウィーン', 'Warsaw': 'ワルシャワ', 'Auckland': 'オークランド', 'Chatham': 'チャタム', 'Buenos_Aires': 'ブエノスアイレス', 'Ulaanbaatar': 'ウランバートル', 'Honolulu': 'ホノルル', 'Zurich': 'チューリッヒ', 'Lisbon': 'リスボン', 'Dublin': 'ダブリン', 'Helsinki': 'ヘルシンキ', 'Oslo': 'オスロ', 'Copenhagen': 'コペンハーゲン', 'Prague': 'プラハ', 'Budapest': 'ブダペスト', 'Athens': 'アテネ', 'Kyiv': 'キーウ'}, 'ru': {'Cairo': 'Каир', 'Johannesburg': 'Йоханнесбург', 'Lagos': 'Лагос', 'Anchorage': 'Анкоридж', 'Bogota': 'Богота', 'Chicago': 'Чикаго', 'Denver': 'Денвер', 'Halifax': 'Галифакс', 'Lima': 'Лима', 'Los_Angeles': 'Лос-Анджелес', 'Mexico_City': 'Мехико', 'New_York': 'Нью-Йорк', 'Phoenix': 'Финикс', 'Santiago': 'Сантьяго', 'Sao_Paulo': 'Сан-Паулу', 'St_Johns': 'Сент-Джонс', 'Toronto': 'Торонто', 'Vancouver': 'Ванкувер', 'Winnipeg': 'Виннипег', 'Almaty': 'Алматы', 'Bangkok': 'Бангкок', 'Colombo': 'Коломбо', 'Dhaka': 'Дакка', 'Dubai': 'Дубай', 'Ho_Chi_Minh': 'Хошимин', 'Hong_Kong': 'Гонконг', 'Jakarta': 'Джакарта', 'Jerusalem': 'Иерусалим', 'Kabul': 'Кабул', 'Karachi': 'Карачи', 'Kathmandu': 'Катманду', 'Kolkata': 'Калькутта', 'Kuala_Lumpur': 'Куала-Лумпур', 'Manila': 'Манила', 'Riyadh': 'Эр-Рияд', 'Seoul': 'Сеул', 'Shanghai': 'Шанхай', 'Singapore': 'Сингапур', 'Taipei': 'Тайбэй', 'Tehran': 'Тегеран', 'Tokyo': 'Токио', 'Reykjavik': 'Рейкьявик', 'Adelaide': 'Аделаида', 'Brisbane': 'Брисбен', 'Melbourne': 'Мельбурн', 'Perth': 'Перт', 'Sydney': 'Сидней', 'Amsterdam': 'Амстердам', 'Berlin': 'Берлин', 'Istanbul': 'Стамбул', 'London': 'Лондон', 'Madrid': 'Мадрид', 'Moscow': 'Москва', 'Paris': 'Париж', 'Rome': 'Рим', 'Stockholm': 'Стокгольм', 'Vienna': 'Вена', 'Warsaw': 'Варшава', 'Auckland': 'Окленд', 'Chatham': 'Чатем', 'Buenos_Aires': 'Буэнос-Айрес', 'Ulaanbaatar': 'Улан-Батор', 'Honolulu': 'Гонолулу', 'Zurich': 'Цюрих', 'Lisbon': 'Лиссабон', 'Dublin': 'Дублин', 'Helsinki': 'Хельсинки', 'Oslo': 'Осло', 'Copenhagen': 'Копенгаген', 'Prague': 'Прага', 'Budapest': 'Будапешт', 'Athens': 'Афины', 'Kyiv': 'Киев'}, 'fa': {'Cairo': 'قاهره', 'Johannesburg': 'ژوهانسبورگ', 'Lagos': 'لاگوس', 'Anchorage': 'انکوریج', 'Bogota': 'بوگوتا', 'Chicago': 'شیکاگو', 'Denver': 'دنور', 'Halifax': 'هالیفاکس', 'Lima': 'لیما', 'Los_Angeles': 'لس\u200cآنجلس', 'Mexico_City': 'مکزیکوسیتی', 'New_York': 'نیویورک', 'Phoenix': 'فینیکس', 'Santiago': 'سانتیاگو', 'Sao_Paulo': 'سائوپائولو', 'St_Johns': 'سنت جانز', 'Toronto': 'تورنتو', 'Vancouver': 'ونکوور', 'Winnipeg': 'وینیپگ', 'Almaty': 'آلماتی', 'Bangkok': 'بانکوک', 'Colombo': 'کلمبو', 'Dhaka': 'داکا', 'Dubai': 'دبی', 'Ho_Chi_Minh': 'هوشی\u200cمین', 'Hong_Kong': 'هنگ\u200cکنگ', 'Jakarta': 'جاکارتا', 'Jerusalem': 'اورشلیم', 'Kabul': 'کابل', 'Karachi': 'کراچی', 'Kathmandu': 'کاتماندو', 'Kolkata': 'کلکته', 'Kuala_Lumpur': 'کوالالامپور', 'Manila': 'مانیل', 'Riyadh': 'ریاض', 'Seoul': 'سئول', 'Shanghai': 'شانگهای', 'Singapore': 'سنگاپور', 'Taipei': 'تایپه', 'Tehran': 'تهران', 'Tokyo': 'توکیو', 'Reykjavik': 'ریکیاویک', 'Adelaide': 'آدلاید', 'Brisbane': 'بریزبن', 'Melbourne': 'ملبورن', 'Perth': 'پرت', 'Sydney': 'سیدنی', 'Amsterdam': 'آمستردام', 'Berlin': 'برلین', 'Istanbul': 'استانبول', 'London': 'لندن', 'Madrid': 'مادرید', 'Moscow': 'مسکو', 'Paris': 'پاریس', 'Rome': 'رم', 'Stockholm': 'استکهلم', 'Vienna': 'وین', 'Warsaw': 'ورشو', 'Auckland': 'اوکلند', 'Chatham': 'چتم', 'Buenos_Aires': 'بوئنوس آیرس', 'Ulaanbaatar': 'اولان\u200cباتور', 'Honolulu': 'هونولولو', 'Zurich': 'زوریخ', 'Lisbon': 'لیسبون', 'Dublin': 'دوبلین', 'Helsinki': 'هلسینکی', 'Oslo': 'اسلو', 'Copenhagen': 'کپنهاگ', 'Prague': 'پراگ', 'Budapest': 'بوداپست', 'Athens': 'آتن', 'Kyiv': 'کی\u200cیف'}}
@@ -2983,6 +3315,33 @@ _UTC_NAMES = {"zh": "协调世界时", "zh-TW": "協調世界時", "ja": "協定
 
 
 _ZH_NAME2CODE = {v: k for k, v in _COUNTRY_NAMES["zh"].items()}
+
+
+def _build_cc_local():
+    """本地化国名 -> ISO 码（fix440a H-01）：由 _COUNTRY_NAMES 五语显示表反向导出，
+    与显示表同源、永不脱节；同名异码时丢弃（不静默取其一，与 _any2en 同口径）。
+    另补显示表未收的口语全称（波斯语 ایالات متحده/ایالات متحده آمریکا = 美国）。"""
+    _m = {}
+    _owner = {}
+    for _tab in _COUNTRY_NAMES.values():
+        for _code, _name in _tab.items():
+            _low = _name.lower()
+            if _low not in _owner:
+                _owner[_low] = _code
+                _m[_low] = _code
+            elif _owner[_low] != _code:
+                _owner[_low] = None
+                _m.pop(_low, None)
+    for _alias, _code in (("ایالات متحده", "US"),
+                          ("ایالات متحده آمریکا", "US"),
+                          # fix440g G-044：港式繁体格鲁吉亚与日语旧称亦须查到 GE。
+                          ("格魯吉亞", "GE"),
+                          ("グルジア", "GE")):
+        _m.setdefault(_alias, _code)
+    return _m
+
+
+_CC_LOCAL = _build_cc_local()
 
 
 def _loc_country_name(text):
@@ -2997,8 +3356,14 @@ def _loc_country_name(text):
         return _COUNTRY_NAMES["zh-TW"][_ZH_NAME2CODE[t]]
     # 别名优先：双字母输入先查别名表（防 '中國' 这类双字别名被代码捷径截获），
     # 查不到再按 ISO 代码处理（真代码不在别名表键中，不受影响）
+    # fix440a L-04：亦查口语别名表（USA/America/U.S./U.S.A.）与本地化国名表
+    # （格鲁吉亚/Грузия/مصر 等），否则原文返回。
     code = _CC_EN.get(t.lower())
-    if code is None and len(t) == 2 and t.isalpha():
+    if code is None:
+        code = _CITY_CTX_COUNTRY_ALIASES.get(t.lower()) or _CC_LOCAL.get(t.lower())
+    if code is None and len(t) == 2 and t.isascii() and t.isalpha():
+        # fix440g G-046：国家码捷径须限定为两个 ASCII 字母；"ıo".upper()
+        # == "IO" 之类非 ASCII 输入不得命中真实国家码。
         code = t.upper()
     if code == "UK":
         code = "GB"
@@ -3008,7 +3373,7 @@ def _loc_country_name(text):
 
 
 _REGION_L10N = {'zh': {'Alabama': '阿拉巴马州', 'Alaska': '阿拉斯加州', 'Arizona': '亚利桑那州', 'Arkansas': '阿肯色州', 'California': '加利福尼亚州', 'Colorado': '科罗拉多州', 'Connecticut': '康涅狄格州', 'Delaware': '特拉华州', 'Florida': '佛罗里达州', 'Georgia': '佐治亚州', 'Hawaii': '夏威夷州', 'Idaho': '爱达荷州', 'Illinois': '伊利诺伊州', 'Indiana': '印第安纳州', 'Iowa': '艾奥瓦州', 'Kansas': '堪萨斯州', 'Kentucky': '肯塔基州', 'Louisiana': '路易斯安那州', 'Maine': '缅因州', 'Maryland': '马里兰州', 'Massachusetts': '马萨诸塞州', 'Michigan': '密歇根州', 'Minnesota': '明尼苏达州', 'Mississippi': '密西西比州', 'Missouri': '密苏里州', 'Montana': '蒙大拿州', 'Nebraska': '内布拉斯加州', 'Nevada': '内华达州', 'New Hampshire': '新罕布什尔州', 'New Jersey': '新泽西州', 'New Mexico': '新墨西哥州', 'New York': '纽约州', 'North Carolina': '北卡罗来纳州', 'North Dakota': '北达科他州', 'Ohio': '俄亥俄州', 'Oklahoma': '俄克拉荷马州', 'Oregon': '俄勒冈州', 'Pennsylvania': '宾夕法尼亚州', 'Rhode Island': '罗得岛州', 'South Carolina': '南卡罗来纳州', 'South Dakota': '南达科他州', 'Tennessee': '田纳西州', 'Texas': '得克萨斯州', 'Utah': '犹他州', 'Vermont': '佛蒙特州', 'Virginia': '弗吉尼亚州', 'Washington': '华盛顿州', 'West Virginia': '西弗吉尼亚州', 'Wisconsin': '威斯康星州', 'Wyoming': '怀俄明州', 'District of Columbia': '哥伦比亚特区', 'New South Wales': '新南威尔士州', 'Victoria': '维多利亚州', 'Queensland': '昆士兰州', 'Western Australia': '西澳大利亚州', 'South Australia': '南澳大利亚州', 'Tasmania': '塔斯马尼亚州', 'Northern Territory': '北领地', 'Australian Capital Territory': '首都领地', 'Ontario': '安大略省', 'Quebec': '魁北克省', 'British Columbia': '不列颠哥伦比亚省', 'Alberta': '艾伯塔省', 'Manitoba': '曼尼托巴省', 'Saskatchewan': '萨斯喀彻温省', 'Nova Scotia': '新斯科舍省', 'New Brunswick': '新不伦瑞克省', 'Newfoundland and Labrador': '纽芬兰与拉布拉多省', 'Prince Edward Island': '爱德华王子岛省', 'England': '英格兰', 'Scotland': '苏格兰', 'Wales': '威尔士', 'Bavaria': '巴伐利亚州'}, 'zh-TW': {'Alabama': '阿拉巴馬州', 'Alaska': '阿拉斯加州', 'Arizona': '亞利桑那州', 'Arkansas': '阿肯色州', 'California': '加利福尼亞州', 'Colorado': '科羅拉多州', 'Connecticut': '康涅狄格州', 'Delaware': '德拉瓦州', 'Florida': '佛羅里達州', 'Georgia': '喬治亞州', 'Hawaii': '夏威夷州', 'Idaho': '愛達荷州', 'Illinois': '伊利諾州', 'Indiana': '印第安納州', 'Iowa': '愛荷華州', 'Kansas': '堪薩斯州', 'Kentucky': '肯塔基州', 'Louisiana': '路易斯安那州', 'Maine': '緬因州', 'Maryland': '馬里蘭州', 'Massachusetts': '麻薩諸塞州', 'Michigan': '密西根州', 'Minnesota': '明尼蘇達州', 'Mississippi': '密西西比州', 'Missouri': '密蘇里州', 'Montana': '蒙大拿州', 'Nebraska': '內布拉斯加州', 'Nevada': '內華達州', 'New Hampshire': '新罕布夏州', 'New Jersey': '紐澤西州', 'New Mexico': '新墨西哥州', 'New York': '紐約州', 'North Carolina': '北卡羅來納州', 'North Dakota': '北達科他州', 'Ohio': '俄亥俄州', 'Oklahoma': '奧克拉荷馬州', 'Oregon': '俄勒岡州', 'Pennsylvania': '賓夕法尼亞州', 'Rhode Island': '羅得島州', 'South Carolina': '南卡羅來納州', 'South Dakota': '南達科他州', 'Tennessee': '田納西州', 'Texas': '德克薩斯州', 'Utah': '猶他州', 'Vermont': '佛蒙特州', 'Virginia': '維吉尼亞州', 'Washington': '華盛頓州', 'West Virginia': '西維吉尼亞州', 'Wisconsin': '威斯康辛州', 'Wyoming': '懷俄明州', 'District of Columbia': '哥倫比亞特區', 'New South Wales': '新南威爾士州', 'Victoria': '維多利亞州', 'Queensland': '昆士蘭州', 'Western Australia': '西澳大利亞州', 'South Australia': '南澳大利亞州', 'Tasmania': '塔斯馬尼亞州', 'Northern Territory': '北領地', 'Australian Capital Territory': '首都領地', 'Ontario': '安大略省', 'Quebec': '魁北克省', 'British Columbia': '卑詩省', 'Alberta': '亞伯達省', 'Manitoba': '曼尼托巴省', 'Saskatchewan': '薩斯喀徹溫省', 'Nova Scotia': '新斯科細亞省', 'New Brunswick': '新布藍茲維省', 'Newfoundland and Labrador': '紐芬蘭與拉布拉多省', 'Prince Edward Island': '愛德華王子島省', 'England': '英格蘭', 'Scotland': '蘇格蘭', 'Wales': '威爾斯', 'Bavaria': '巴伐利亞州'}, 'ja': {'Alabama': 'アラバマ州', 'Alaska': 'アラスカ州', 'Arizona': 'アリゾナ州', 'Arkansas': 'アーカンソー州', 'California': 'カリフォルニア州', 'Colorado': 'コロラド州', 'Connecticut': 'コネチカット州', 'Delaware': 'デラウェア州', 'Florida': 'フロリダ州', 'Georgia': 'ジョージア州', 'Hawaii': 'ハワイ州', 'Idaho': 'アイダホ州', 'Illinois': 'イリノイ州', 'Indiana': 'インディアナ州', 'Iowa': 'アイオワ州', 'Kansas': 'カンザス州', 'Kentucky': 'ケンタッキー州', 'Louisiana': 'ルイジアナ州', 'Maine': 'メイン州', 'Maryland': 'メリーランド州', 'Massachusetts': 'マサチューセッツ州', 'Michigan': 'ミシガン州', 'Minnesota': 'ミネソタ州', 'Mississippi': 'ミシシッピ州', 'Missouri': 'ミズーリ州', 'Montana': 'モンタナ州', 'Nebraska': 'ネブラスカ州', 'Nevada': 'ネバダ州', 'New Hampshire': 'ニューハンプシャー州', 'New Jersey': 'ニュージャージー州', 'New Mexico': 'ニューメキシコ州', 'New York': 'ニューヨーク州', 'North Carolina': 'ノースカロライナ州', 'North Dakota': 'ノースダコタ州', 'Ohio': 'オハイオ州', 'Oklahoma': 'オクラホマ州', 'Oregon': 'オレゴン州', 'Pennsylvania': 'ペンシルベニア州', 'Rhode Island': 'ロードアイランド州', 'South Carolina': 'サウスカロライナ州', 'South Dakota': 'サウスダコタ州', 'Tennessee': 'テネシー州', 'Texas': 'テキサス州', 'Utah': 'ユタ州', 'Vermont': 'バーモント州', 'Virginia': 'バージニア州', 'Washington': 'ワシントン州', 'West Virginia': 'ウェストバージニア州', 'Wisconsin': 'ウィスコンシン州', 'Wyoming': 'ワイオミング州', 'District of Columbia': 'コロンビア特別区', 'New South Wales': 'ニューサウスウェールズ州', 'Victoria': 'ビクトリア州', 'Queensland': 'クイーンズランド州', 'Western Australia': '西オーストラリア州', 'South Australia': '南オーストラリア州', 'Tasmania': 'タスマニア州', 'Northern Territory': 'ノーザンテリトリー', 'Australian Capital Territory': '首都特別地域', 'Ontario': 'オンタリオ州', 'Quebec': 'ケベック州', 'British Columbia': 'ブリティッシュコロンビア州', 'Alberta': 'アルバータ州', 'Manitoba': 'マニトバ州', 'Saskatchewan': 'サスカチュワン州', 'Nova Scotia': 'ノバスコシア州', 'New Brunswick': 'ニューブランズウィック州', 'Newfoundland and Labrador': 'ニューファンドランド・ラブラドール州', 'Prince Edward Island': 'プリンスエドワード島州', 'England': 'イングランド', 'Scotland': 'スコットランド', 'Wales': 'ウェールズ', 'Bavaria': 'バイエルン州'}, 'ru': {'Alabama': 'Алабама', 'Alaska': 'Аляска', 'Arizona': 'Аризона', 'Arkansas': 'Арканзас', 'California': 'Калифорния', 'Colorado': 'Колорадо', 'Connecticut': 'Коннектикут', 'Delaware': 'Делавэр', 'Florida': 'Флорида', 'Georgia': 'Джорджия', 'Hawaii': 'Гавайи', 'Idaho': 'Айдахо', 'Illinois': 'Иллинойс', 'Indiana': 'Индиана', 'Iowa': 'Айова', 'Kansas': 'Канзас', 'Kentucky': 'Кентукки', 'Louisiana': 'Луизиана', 'Maine': 'Мэн', 'Maryland': 'Мэриленд', 'Massachusetts': 'Массачусетс', 'Michigan': 'Мичиган', 'Minnesota': 'Миннесота', 'Mississippi': 'Миссисипи', 'Missouri': 'Миссури', 'Montana': 'Монтана', 'Nebraska': 'Небраска', 'Nevada': 'Невада', 'New Hampshire': 'Нью-Гэмпшир', 'New Jersey': 'Нью-Джерси', 'New Mexico': 'Нью-Мексико', 'New York': 'штат Нью-Йорк', 'North Carolina': 'Северная Каролина', 'North Dakota': 'Северная Дакота', 'Ohio': 'Огайо', 'Oklahoma': 'Оклахома', 'Oregon': 'Орегон', 'Pennsylvania': 'Пенсильвания', 'Rhode Island': 'Род-Айленд', 'South Carolina': 'Южная Каролина', 'South Dakota': 'Южная Дакота', 'Tennessee': 'Теннесси', 'Texas': 'Техас', 'Utah': 'Юта', 'Vermont': 'Вермонт', 'Virginia': 'Вирджиния', 'Washington': 'штат Вашингтон', 'West Virginia': 'Западная Вирджиния', 'Wisconsin': 'Висконсин', 'Wyoming': 'Вайоминг', 'District of Columbia': 'Округ Колумбия', 'New South Wales': 'Новый Южный Уэльс', 'Victoria': 'Виктория', 'Queensland': 'Квинсленд', 'Western Australia': 'Западная Австралия', 'South Australia': 'Южная Австралия', 'Tasmania': 'Тасмания', 'Northern Territory': 'Северная территория', 'Australian Capital Territory': 'Столичная территория', 'Ontario': 'Онтарио', 'Quebec': 'Квебек', 'British Columbia': 'Британская Колумбия', 'Alberta': 'Альберта', 'Manitoba': 'Манитоба', 'Saskatchewan': 'Саскачеван', 'Nova Scotia': 'Новая Шотландия', 'New Brunswick': 'Нью-Брансуик', 'Newfoundland and Labrador': 'Ньюфаундленд и Лабрадор', 'Prince Edward Island': 'Остров Принца Эдуарда', 'England': 'Англия', 'Scotland': 'Шотландия', 'Wales': 'Уэльс', 'Bavaria': 'Бавария'}, 'fa': {'Alabama': 'آلاباما', 'Alaska': 'آلاسکا', 'Arizona': 'آریزونا', 'Arkansas': 'آرکانزاس', 'California': 'کالیفرنیا', 'Colorado': 'کلرادو', 'Connecticut': 'کنتیکت', 'Delaware': 'دلاویر', 'Florida': 'فلوریدا', 'Georgia': 'جورجیا', 'Hawaii': 'هاوایی', 'Idaho': 'آیداهو', 'Illinois': 'ایلینوی', 'Indiana': 'ایندیانا', 'Iowa': 'آیووا', 'Kansas': 'کانزاس', 'Kentucky': 'کنتاکی', 'Louisiana': 'لوئیزیانا', 'Maine': 'مین', 'Maryland': 'مریلند', 'Massachusetts': 'ماساچوست', 'Michigan': 'میشیگان', 'Minnesota': 'مینه\u200cسوتا', 'Mississippi': 'میسیسیپی', 'Missouri': 'میسوری', 'Montana': 'مونتانا', 'Nebraska': 'نبراسکا', 'Nevada': 'نوادا', 'New Hampshire': 'نیوهمپشایر', 'New Jersey': 'نیوجرسی', 'New Mexico': 'نیومکزیکو', 'New York': 'ایالت نیویورک', 'North Carolina': 'کارولینای شمالی', 'North Dakota': 'داکوتای شمالی', 'Ohio': 'اوهایو', 'Oklahoma': 'اکلاهما', 'Oregon': 'اورگن', 'Pennsylvania': 'پنسیلوانیا', 'Rhode Island': 'رود آیلند', 'South Carolina': 'کارولینای جنوبی', 'South Dakota': 'داکوتای جنوبی', 'Tennessee': 'تنسی', 'Texas': 'تگزاس', 'Utah': 'یوتا', 'Vermont': 'ورمانت', 'Virginia': 'ویرجینیا', 'Washington': 'ایالت واشینگتن', 'West Virginia': 'ویرجینیای غربی', 'Wisconsin': 'ویسکانسین', 'Wyoming': 'وایومینگ', 'District of Columbia': 'ناحیه کلمبیا', 'New South Wales': 'نیو ساوت ولز', 'Victoria': 'ویکتوریا', 'Queensland': 'کوئینزلند', 'Western Australia': 'استرالیای غربی', 'South Australia': 'استرالیای جنوبی', 'Tasmania': 'تاسمانی', 'Northern Territory': 'قلمرو شمالی', 'Australian Capital Territory': 'قلمرو پایتختی', 'Ontario': 'انتاریو', 'Quebec': 'کبک', 'British Columbia': 'بریتیش کلمبیا', 'Alberta': 'آلبرتا', 'Manitoba': 'مانیتوبا', 'Saskatchewan': 'ساسکاچوان', 'Nova Scotia': 'نوا اسکوشیا', 'New Brunswick': 'نیوبرانزویک', 'Newfoundland and Labrador': 'نیوفاندلند و لابرادور', 'Prince Edward Island': 'جزیره پرنس ادوارد', 'England': 'انگلستان', 'Scotland': 'اسکاتلند', 'Wales': 'ولز', 'Bavaria': 'باواریا'}}
-_CITY_L10N = {'zh': {'New York': '纽约', 'Los Angeles': '洛杉矶', 'Chicago': '芝加哥', 'Houston': '休斯顿', 'Phoenix': '菲尼克斯', 'Philadelphia': '费城', 'San Antonio': '圣安东尼奥', 'San Diego': '圣迭戈', 'Dallas': '达拉斯', 'San Jose': '圣何塞', 'Austin': '奥斯汀', 'Jacksonville': '杰克逊维尔', 'Columbus': '哥伦布', 'Charlotte': '夏洛特', 'San Francisco': '旧金山', 'Indianapolis': '印第安纳波利斯', 'Seattle': '西雅图', 'Denver': '丹佛', 'Washington': '华盛顿', 'Boston': '波士顿', 'Nashville': '纳什维尔', 'Las Vegas': '拉斯维加斯', 'Portland': '波特兰', 'Louisville': '路易斯维尔', 'Milwaukee': '密尔沃基', 'Atlanta': '亚特兰大', 'Kansas City': '堪萨斯城', 'Miami': '迈阿密', 'Minneapolis': '明尼阿波利斯', 'Tampa': '坦帕', 'New Orleans': '新奥尔良', 'Pittsburgh': '匹兹堡', 'Cincinnati': '辛辛那提', 'Sacramento': '萨克拉门托', 'Orlando': '奥兰多', 'Salt Lake City': '盐湖城', 'Honolulu': '檀香山', 'Oakland': '奥克兰', 'Santa Clara': '圣克拉拉', 'Buffalo': '布法罗', 'Sydney': '悉尼', 'Melbourne': '墨尔本', 'Brisbane': '布里斯班', 'Perth': '珀斯', 'Adelaide': '阿德莱德', 'Canberra': '堪培拉', 'Hobart': '霍巴特', 'Darwin': '达尔文', 'Auckland': '奥克兰', 'Wellington': '惠灵顿', 'London': '伦敦', 'Paris': '巴黎', 'Berlin': '柏林', 'Frankfurt': '法兰克福', 'Munich': '慕尼黑', 'Hamburg': '汉堡', 'Madrid': '马德里', 'Barcelona': '巴塞罗那', 'Rome': '罗马', 'Milan': '米兰', 'Amsterdam': '阿姆斯特丹', 'Rotterdam': '鹿特丹', 'Brussels': '布鲁塞尔', 'Vienna': '维也纳', 'Zurich': '苏黎世', 'Geneva': '日内瓦', 'Stockholm': '斯德哥尔摩', 'Oslo': '奥斯陆', 'Copenhagen': '哥本哈根', 'Helsinki': '赫尔辛基', 'Dublin': '都柏林', 'Lisbon': '里斯本', 'Athens': '雅典', 'Warsaw': '华沙', 'Krakow': '克拉科夫', 'Prague': '布拉格', 'Budapest': '布达佩斯', 'Bucharest': '布加勒斯特', 'Sofia': '索菲亚', 'Moscow': '莫斯科', 'Saint Petersburg': '圣彼得堡', 'Kyiv': '基辅', 'Minsk': '明斯克', 'Istanbul': '伊斯坦布尔', 'Ankara': '安卡拉', 'Reykjavik': '雷克雅未克', 'Tallinn': '塔林', 'Riga': '里加', 'Vilnius': '维尔纽斯', 'Tokyo': '东京', 'Osaka': '大阪', 'Seoul': '首尔', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '广州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武汉', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': '新加坡', 'Bangkok': '曼谷', 'Jakarta': '雅加达', 'Manila': '马尼拉', 'Kuala Lumpur': '吉隆坡', 'Hanoi': '河内', 'Ho Chi Minh City': '胡志明市', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': '孟买', 'Delhi': '德里', 'New Delhi': '新德里', 'Bangalore': '班加罗尔', 'Hyderabad': '海得拉巴', 'Chennai': '金奈', 'Kolkata': '加尔各答', 'Pune': '浦那', 'Ahmedabad': '艾哈迈达巴德', 'Karachi': '卡拉奇', 'Lahore': '拉合尔', 'Islamabad': '伊斯兰堡', 'Dhaka': '达卡', 'Colombo': '科伦坡', 'Kathmandu': '加德满都', 'Dubai': '迪拜', 'Abu Dhabi': '阿布扎比', 'Riyadh': '利雅得', 'Jeddah': '吉达', 'Doha': '多哈', 'Kuwait City': '科威特城', 'Jerusalem': '耶路撒冷', 'Tel Aviv': '特拉维夫', 'Tehran': '德黑兰', 'Mashhad': '马什哈德', 'Isfahan': '伊斯法罕', 'Shiraz': '设拉子', 'Baghdad': '巴格达', 'Cairo': '开罗', 'Alexandria': '亚历山大', 'Lagos': '拉各斯', 'Nairobi': '内罗毕', 'Johannesburg': '约翰内斯堡', 'Cape Town': '开普敦', 'Toronto': '多伦多', 'Vancouver': '温哥华', 'Montreal': '蒙特利尔', 'Ottawa': '渥太华', 'Calgary': '卡尔加里', 'Edmonton': '埃德蒙顿', 'Winnipeg': '温尼伯', 'Quebec City': '魁北克市', 'Hamilton': '汉密尔顿', 'Mexico City': '墨西哥城', 'Guadalajara': '瓜达拉哈拉', 'Monterrey': '蒙特雷', 'Sao Paulo': '圣保罗', 'Rio de Janeiro': '里约热内卢', 'Buenos Aires': '布宜诺斯艾利斯', 'Santiago': '圣地亚哥', 'Lima': '利马', 'Bogota': '波哥大', 'Quito': '基多', 'Montevideo': '蒙得维的亚'}, 'zh-TW': {'New York': '紐約', 'Los Angeles': '洛杉磯', 'Chicago': '芝加哥', 'Houston': '休士頓', 'Phoenix': '菲尼克斯', 'Philadelphia': '費城', 'San Antonio': '聖安東尼奧', 'San Diego': '聖迭戈', 'Dallas': '達拉斯', 'San Jose': '聖荷西', 'Austin': '奧斯汀', 'Jacksonville': '傑克遜維爾', 'Columbus': '哥倫布', 'Charlotte': '夏洛特', 'San Francisco': '舊金山', 'Indianapolis': '印第安納波利斯', 'Seattle': '西雅圖', 'Denver': '丹佛', 'Washington': '華盛頓', 'Boston': '波士頓', 'Nashville': '納什維爾', 'Las Vegas': '拉斯維加斯', 'Portland': '波特蘭', 'Louisville': '路易斯維爾', 'Milwaukee': '密爾沃基', 'Atlanta': '亞特蘭大', 'Kansas City': '堪薩斯城', 'Miami': '邁阿密', 'Minneapolis': '明尼阿波利斯', 'Tampa': '坦帕', 'New Orleans': '新奧爾良', 'Pittsburgh': '匹茲堡', 'Cincinnati': '辛辛那提', 'Sacramento': '薩克拉門托', 'Orlando': '奧蘭多', 'Salt Lake City': '鹽湖城', 'Honolulu': '檀香山', 'Oakland': '奧克蘭', 'Santa Clara': '聖克拉拉', 'Buffalo': '水牛城', 'Sydney': '悉尼', 'Melbourne': '墨爾本', 'Brisbane': '布里斯班', 'Perth': '珀斯', 'Adelaide': '阿德萊德', 'Canberra': '坎培拉', 'Hobart': '霍巴特', 'Darwin': '達爾文', 'Auckland': '奧克蘭', 'Wellington': '惠靈頓', 'London': '倫敦', 'Paris': '巴黎', 'Berlin': '柏林', 'Frankfurt': '法蘭克福', 'Munich': '慕尼黑', 'Hamburg': '漢堡', 'Madrid': '馬德里', 'Barcelona': '巴塞隆那', 'Rome': '羅馬', 'Milan': '米蘭', 'Amsterdam': '阿姆斯特丹', 'Rotterdam': '鹿特丹', 'Brussels': '布魯塞爾', 'Vienna': '維也納', 'Zurich': '蘇黎世', 'Geneva': '日內瓦', 'Stockholm': '斯德哥爾摩', 'Oslo': '奧斯陸', 'Copenhagen': '哥本哈根', 'Helsinki': '赫爾辛基', 'Dublin': '都柏林', 'Lisbon': '里斯本', 'Athens': '雅典', 'Warsaw': '華沙', 'Krakow': '克拉科夫', 'Prague': '布拉格', 'Budapest': '布達佩斯', 'Bucharest': '布加勒斯特', 'Sofia': '索菲亞', 'Moscow': '莫斯科', 'Saint Petersburg': '聖彼得堡', 'Kyiv': '基輔', 'Minsk': '明斯克', 'Istanbul': '伊斯坦布爾', 'Ankara': '安卡拉', 'Reykjavik': '雷克雅未克', 'Tallinn': '塔林', 'Riga': '里加', 'Vilnius': '維爾紐斯', 'Tokyo': '東京', 'Osaka': '大阪', 'Seoul': '首爾', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '廣州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武漢', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': '新加坡', 'Bangkok': '曼谷', 'Jakarta': '雅加達', 'Manila': '馬尼拉', 'Kuala Lumpur': '吉隆坡', 'Hanoi': '河內', 'Ho Chi Minh City': '胡志明市', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': '孟買', 'Delhi': '德里', 'New Delhi': '新德里', 'Bangalore': '班加羅爾', 'Hyderabad': '海得拉巴', 'Chennai': '金奈', 'Kolkata': '加爾各答', 'Pune': '浦那', 'Ahmedabad': '艾哈邁達巴德', 'Karachi': '卡拉奇', 'Lahore': '拉合爾', 'Islamabad': '伊斯蘭堡', 'Dhaka': '達卡', 'Colombo': '科倫坡', 'Kathmandu': '加德滿都', 'Dubai': '杜拜', 'Abu Dhabi': '阿布達比', 'Riyadh': '利雅得', 'Jeddah': '吉達', 'Doha': '多哈', 'Kuwait City': '科威特城', 'Jerusalem': '耶路撒冷', 'Tel Aviv': '特拉維夫', 'Tehran': '德黑蘭', 'Mashhad': '馬什哈德', 'Isfahan': '伊斯法罕', 'Shiraz': '設拉子', 'Baghdad': '巴格達', 'Cairo': '開羅', 'Alexandria': '亞歷山大', 'Lagos': '拉各斯', 'Nairobi': '奈洛比', 'Johannesburg': '約翰內斯堡', 'Cape Town': '開普敦', 'Toronto': '多倫多', 'Vancouver': '溫哥華', 'Montreal': '蒙特利爾', 'Ottawa': '渥太華', 'Calgary': '卡爾加里', 'Edmonton': '埃德蒙頓', 'Winnipeg': '溫尼伯', 'Quebec City': '魁北克市', 'Hamilton': '漢密爾頓', 'Mexico City': '墨西哥城', 'Guadalajara': '瓜達拉哈拉', 'Monterrey': '蒙特雷', 'Sao Paulo': '聖保羅', 'Rio de Janeiro': '里約熱內盧', 'Buenos Aires': '布宜諾斯艾利斯', 'Santiago': '聖地亞哥', 'Lima': '利馬', 'Bogota': '波哥大', 'Quito': '基多', 'Montevideo': '蒙特維多'}, 'ja': {'New York': 'ニューヨーク', 'Los Angeles': 'ロサンゼルス', 'Chicago': 'シカゴ', 'Houston': 'ヒューストン', 'Phoenix': 'フェニックス', 'Philadelphia': 'フィラデルフィア', 'San Antonio': 'サンアントニオ', 'San Diego': 'サンディエゴ', 'Dallas': 'ダラス', 'San Jose': 'サンノゼ', 'Austin': 'オースティン', 'Jacksonville': 'ジャクソンビル', 'Columbus': 'コロンバス', 'Charlotte': 'シャーロット', 'San Francisco': 'サンフランシスコ', 'Indianapolis': 'インディアナポリス', 'Seattle': 'シアトル', 'Denver': 'デンバー', 'Washington': 'ワシントン', 'Boston': 'ボストン', 'Nashville': 'ナッシュビル', 'Las Vegas': 'ラスベガス', 'Portland': 'ポートランド', 'Louisville': 'ルイビル', 'Milwaukee': 'ミルウォーキー', 'Atlanta': 'アトランタ', 'Kansas City': 'カンザスシティ', 'Miami': 'マイアミ', 'Minneapolis': 'ミネアポリス', 'Tampa': 'タンパ', 'New Orleans': 'ニューオーリンズ', 'Pittsburgh': 'ピッツバーグ', 'Cincinnati': 'シンシナティ', 'Sacramento': 'サクラメント', 'Orlando': 'オーランド', 'Salt Lake City': 'ソルトレイクシティ', 'Honolulu': 'ホノルル', 'Oakland': 'オークランド', 'Santa Clara': 'サンタクララ', 'Buffalo': 'バッファロー', 'Sydney': 'シドニー', 'Melbourne': 'メルボルン', 'Brisbane': 'ブリスベン', 'Perth': 'パース', 'Adelaide': 'アデレード', 'Canberra': 'キャンベラ', 'Hobart': 'ホバート', 'Darwin': 'ダーウィン', 'Auckland': 'オークランド', 'Wellington': 'ウェリントン', 'London': 'ロンドン', 'Paris': 'パリ', 'Berlin': 'ベルリン', 'Frankfurt': 'フランクフルト', 'Munich': 'ミュンヘン', 'Hamburg': 'ハンブルク', 'Madrid': 'マドリード', 'Barcelona': 'バルセロナ', 'Rome': 'ローマ', 'Milan': 'ミラノ', 'Amsterdam': 'アムステルダム', 'Rotterdam': 'ロッテルダム', 'Brussels': 'ブリュッセル', 'Vienna': 'ウィーン', 'Zurich': 'チューリッヒ', 'Geneva': 'ジュネーブ', 'Stockholm': 'ストックホルム', 'Oslo': 'オスロ', 'Copenhagen': 'コペンハーゲン', 'Helsinki': 'ヘルシンキ', 'Dublin': 'ダブリン', 'Lisbon': 'リスボン', 'Athens': 'アテネ', 'Warsaw': 'ワルシャワ', 'Krakow': 'クラクフ', 'Prague': 'プラハ', 'Budapest': 'ブダペスト', 'Bucharest': 'ブカレスト', 'Sofia': 'ソフィア', 'Moscow': 'モスクワ', 'Saint Petersburg': 'サンクトペテルブルク', 'Kyiv': 'キーウ', 'Minsk': 'ミンスク', 'Istanbul': 'イスタンブール', 'Ankara': 'アンカラ', 'Reykjavik': 'レイキャビク', 'Tallinn': 'タリン', 'Riga': 'リガ', 'Vilnius': 'ビリニュス', 'Tokyo': '東京', 'Osaka': '大阪', 'Seoul': 'ソウル', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '広州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武漢', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': 'シンガポール', 'Bangkok': 'バンコク', 'Jakarta': 'ジャカルタ', 'Manila': 'マニラ', 'Kuala Lumpur': 'クアラルンプール', 'Hanoi': 'ハノイ', 'Ho Chi Minh City': 'ホーチミン', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': 'ムンバイ', 'Delhi': 'デリー', 'New Delhi': 'ニューデリー', 'Bangalore': 'バンガロール', 'Hyderabad': 'ハイデラバード', 'Chennai': 'チェンナイ', 'Kolkata': 'コルカタ', 'Pune': 'プネー', 'Ahmedabad': 'アフマダーバード', 'Karachi': 'カラチ', 'Lahore': 'ラホール', 'Islamabad': 'イスラマバード', 'Dhaka': 'ダッカ', 'Colombo': 'コロンボ', 'Kathmandu': 'カトマンズ', 'Dubai': 'ドバイ', 'Abu Dhabi': 'アブダビ', 'Riyadh': 'リヤド', 'Jeddah': 'ジッダ', 'Doha': 'ドーハ', 'Kuwait City': 'クウェートシティ', 'Jerusalem': 'エルサレム', 'Tel Aviv': 'テルアビブ', 'Tehran': 'テヘラン', 'Mashhad': 'マシュハド', 'Isfahan': 'エスファハーン', 'Shiraz': 'シーラーズ', 'Baghdad': 'バグダッド', 'Cairo': 'カイロ', 'Alexandria': 'アレクサンドリア', 'Lagos': 'ラゴス', 'Nairobi': 'ナイロビ', 'Johannesburg': 'ヨハネスブルグ', 'Cape Town': 'ケープタウン', 'Toronto': 'トロント', 'Vancouver': 'バンクーバー', 'Montreal': 'モントリオール', 'Ottawa': 'オタワ', 'Calgary': 'カルガリー', 'Edmonton': 'エドモントン', 'Winnipeg': 'ウィニペグ', 'Quebec City': 'ケベックシティ', 'Hamilton': 'ハミルトン', 'Mexico City': 'メキシコシティ', 'Guadalajara': 'グアダラハラ', 'Monterrey': 'モンテレイ', 'Sao Paulo': 'サンパウロ', 'Rio de Janeiro': 'リオデジャネイロ', 'Buenos Aires': 'ブエノスアイレス', 'Santiago': 'サンティアゴ', 'Lima': 'リマ', 'Bogota': 'ボゴタ', 'Quito': 'キト', 'Montevideo': 'モンテビデオ'}, 'ru': {'New York': 'Нью-Йорк', 'Los Angeles': 'Лос-Анджелес', 'Chicago': 'Чикаго', 'Houston': 'Хьюстон', 'Phoenix': 'Финикс', 'Philadelphia': 'Филадельфия', 'San Antonio': 'Сан-Антонио', 'San Diego': 'Сан-Диего', 'Dallas': 'Даллас', 'San Jose': 'Сан-Хосе', 'Austin': 'Остин', 'Jacksonville': 'Джэксонвилл', 'Columbus': 'Колумбус', 'Charlotte': 'Шарлотт', 'San Francisco': 'Сан-Франциско', 'Indianapolis': 'Индианаполис', 'Seattle': 'Сиэтл', 'Denver': 'Денвер', 'Washington': 'Вашингтон', 'Boston': 'Бостон', 'Nashville': 'Нэшвилл', 'Las Vegas': 'Лас-Вегас', 'Portland': 'Портленд', 'Louisville': 'Луисвилл', 'Milwaukee': 'Милуоки', 'Atlanta': 'Атланта', 'Kansas City': 'Канзас-Сити', 'Miami': 'Майами', 'Minneapolis': 'Миннеаполис', 'Tampa': 'Тампа', 'New Orleans': 'Новый Орлеан', 'Pittsburgh': 'Питтсбург', 'Cincinnati': 'Цинциннати', 'Sacramento': 'Сакраменто', 'Orlando': 'Орландо', 'Salt Lake City': 'Солт-Лейк-Сити', 'Honolulu': 'Гонолулу', 'Oakland': 'Окленд', 'Santa Clara': 'Санта-Клара', 'Buffalo': 'Буффало', 'Sydney': 'Сидней', 'Melbourne': 'Мельбурн', 'Brisbane': 'Брисбен', 'Perth': 'Перт', 'Adelaide': 'Аделаида', 'Canberra': 'Канберра', 'Hobart': 'Хобарт', 'Darwin': 'Дарвин', 'Auckland': 'Окленд', 'Wellington': 'Веллингтон', 'London': 'Лондон', 'Paris': 'Париж', 'Berlin': 'Берлин', 'Frankfurt': 'Франкфурт', 'Munich': 'Мюнхен', 'Hamburg': 'Гамбург', 'Madrid': 'Мадрид', 'Barcelona': 'Барселона', 'Rome': 'Рим', 'Milan': 'Милан', 'Amsterdam': 'Амстердам', 'Rotterdam': 'Роттердам', 'Brussels': 'Брюссель', 'Vienna': 'Вена', 'Zurich': 'Цюрих', 'Geneva': 'Женева', 'Stockholm': 'Стокгольм', 'Oslo': 'Осло', 'Copenhagen': 'Копенгаген', 'Helsinki': 'Хельсинки', 'Dublin': 'Дублин', 'Lisbon': 'Лиссабон', 'Athens': 'Афины', 'Warsaw': 'Варшава', 'Krakow': 'Краков', 'Prague': 'Прага', 'Budapest': 'Будапешт', 'Bucharest': 'Бухарест', 'Sofia': 'София', 'Moscow': 'Москва', 'Saint Petersburg': 'Санкт-Петербург', 'Kyiv': 'Киев', 'Minsk': 'Минск', 'Istanbul': 'Стамбул', 'Ankara': 'Анкара', 'Reykjavik': 'Рейкьявик', 'Tallinn': 'Таллин', 'Riga': 'Рига', 'Vilnius': 'Вильнюс', 'Tokyo': 'Токио', 'Osaka': 'Осака', 'Seoul': 'Сеул', 'Busan': 'Пусан', 'Beijing': 'Пекин', 'Shanghai': 'Шанхай', 'Guangzhou': 'Гуанчжоу', 'Shenzhen': 'Шэньчжэнь', 'Chengdu': 'Чэнду', 'Wuhan': 'Ухань', "Xi'an": 'Сиань', 'Nanjing': 'Нанкин', 'Hangzhou': 'Ханчжоу', 'Singapore': 'Сингапур', 'Bangkok': 'Бангкок', 'Jakarta': 'Джакарта', 'Manila': 'Манила', 'Kuala Lumpur': 'Куала-Лумпур', 'Hanoi': 'Ханой', 'Ho Chi Minh City': 'Хошимин', 'Taipei': 'Тайбэй', 'Hong Kong': 'Гонконг', 'Mumbai': 'Мумбаи', 'Delhi': 'Дели', 'New Delhi': 'Нью-Дели', 'Bangalore': 'Бангалор', 'Hyderabad': 'Хайдарабад', 'Chennai': 'Ченнаи', 'Kolkata': 'Калькутта', 'Pune': 'Пуна', 'Ahmedabad': 'Ахмадабад', 'Karachi': 'Карачи', 'Lahore': 'Лахор', 'Islamabad': 'Исламабад', 'Dhaka': 'Дакка', 'Colombo': 'Коломбо', 'Kathmandu': 'Катманду', 'Dubai': 'Дубай', 'Abu Dhabi': 'Абу-Даби', 'Riyadh': 'Эр-Рияд', 'Jeddah': 'Джидда', 'Doha': 'Доха', 'Kuwait City': 'Эль-Кувейт', 'Jerusalem': 'Иерусалим', 'Tel Aviv': 'Тель-Авив', 'Tehran': 'Тегеран', 'Mashhad': 'Мешхед', 'Isfahan': 'Исфахан', 'Shiraz': 'Шираз', 'Baghdad': 'Багдад', 'Cairo': 'Каир', 'Alexandria': 'Александрия', 'Lagos': 'Лагос', 'Nairobi': 'Найроби', 'Johannesburg': 'Йоханнесбург', 'Cape Town': 'Кейптаун', 'Toronto': 'Торонто', 'Vancouver': 'Ванкувер', 'Montreal': 'Монреаль', 'Ottawa': 'Оттава', 'Calgary': 'Калгари', 'Edmonton': 'Эдмонтон', 'Winnipeg': 'Виннипег', 'Quebec City': 'Квебек', 'Hamilton': 'Гамильтон', 'Mexico City': 'Мехико', 'Guadalajara': 'Гвадалахара', 'Monterrey': 'Монтеррей', 'Sao Paulo': 'Сан-Паулу', 'Rio de Janeiro': 'Рио-де-Жанейро', 'Buenos Aires': 'Буэнос-Айрес', 'Santiago': 'Сантьяго', 'Lima': 'Лима', 'Bogota': 'Богота', 'Quito': 'Кито', 'Montevideo': 'Монтевидео'}, 'fa': {'New York': 'نیویورک', 'Los Angeles': 'لس\u200cآنجلس', 'Chicago': 'شیکاگو', 'Houston': 'هیوستون', 'Phoenix': 'فینیکس', 'Philadelphia': 'فیلادلفیا', 'San Antonio': 'سن آنتونیو', 'San Diego': 'سن دیگو', 'Dallas': 'دالاس', 'San Jose': 'سن خوزه', 'Austin': 'آستین', 'Jacksonville': 'جکسون\u200cویل', 'Columbus': 'کلمبوس', 'Charlotte': 'شارلوت', 'San Francisco': 'سان\u200cفرانسیسکو', 'Indianapolis': 'ایندیاناپولیس', 'Seattle': 'سیاتل', 'Denver': 'دنور', 'Washington': 'واشینگتن', 'Boston': 'بوستون', 'Nashville': 'نشویل', 'Las Vegas': 'لاس وگاس', 'Portland': 'پورتلند', 'Louisville': 'لویی\u200cویل', 'Milwaukee': 'میلواکی', 'Atlanta': 'آتلانتا', 'Kansas City': 'کانزاس\u200cسیتی', 'Miami': 'میامی', 'Minneapolis': 'مینیاپولیس', 'Tampa': 'تامپا', 'New Orleans': 'نیواورلئان', 'Pittsburgh': 'پیتسبرگ', 'Cincinnati': 'سینسیناتی', 'Sacramento': 'ساکرامنتو', 'Orlando': 'اورلاندو', 'Salt Lake City': 'سالت\u200cلیک\u200cسیتی', 'Honolulu': 'هونولولو', 'Oakland': 'اوکلند', 'Santa Clara': 'سانتا کلارا', 'Buffalo': 'بوفالو', 'Sydney': 'سیدنی', 'Melbourne': 'ملبورن', 'Brisbane': 'بریزبن', 'Perth': 'پرت', 'Adelaide': 'آدلاید', 'Canberra': 'کانبرا', 'Hobart': 'هوبارت', 'Darwin': 'داروین', 'Auckland': 'اوکلند', 'Wellington': 'ولینگتون', 'London': 'لندن', 'Paris': 'پاریس', 'Berlin': 'برلین', 'Frankfurt': 'فرانکفورت', 'Munich': 'مونیخ', 'Hamburg': 'هامبورگ', 'Madrid': 'مادرید', 'Barcelona': 'بارسلونا', 'Rome': 'رم', 'Milan': 'میلان', 'Amsterdam': 'آمستردام', 'Rotterdam': 'روتردام', 'Brussels': 'بروکسل', 'Vienna': 'وین', 'Zurich': 'زوریخ', 'Geneva': 'ژنو', 'Stockholm': 'استکهلم', 'Oslo': 'اسلو', 'Copenhagen': 'کپنهاگ', 'Helsinki': 'هلسینکی', 'Dublin': 'دوبلین', 'Lisbon': 'لیسبون', 'Athens': 'آتن', 'Warsaw': 'ورشو', 'Krakow': 'کراکوف', 'Prague': 'پراگ', 'Budapest': 'بوداپست', 'Bucharest': 'بخارست', 'Sofia': 'صوفیه', 'Moscow': 'مسکو', 'Saint Petersburg': 'سن\u200cپترزبورگ', 'Kyiv': 'کی\u200cیف', 'Minsk': 'مینسک', 'Istanbul': 'استانبول', 'Ankara': 'آنکارا', 'Reykjavik': 'ریکیاویک', 'Tallinn': 'تالین', 'Riga': 'ریگا', 'Vilnius': 'ویلنیوس', 'Tokyo': 'توکیو', 'Osaka': 'اوزاکا', 'Seoul': 'سئول', 'Busan': 'بوسان', 'Beijing': 'پکن', 'Shanghai': 'شانگهای', 'Guangzhou': 'گوانگژو', 'Shenzhen': 'شنژن', 'Chengdu': 'چنگدو', 'Wuhan': 'ووهان', "Xi'an": 'شی\u200cآن', 'Nanjing': 'نانجینگ', 'Hangzhou': 'هانگژو', 'Singapore': 'سنگاپور', 'Bangkok': 'بانکوک', 'Jakarta': 'جاکارتا', 'Manila': 'مانیل', 'Kuala Lumpur': 'کوالالامپور', 'Hanoi': 'هانوی', 'Ho Chi Minh City': 'هوشی\u200cمین', 'Taipei': 'تایپه', 'Hong Kong': 'هنگ\u200cکنگ', 'Mumbai': 'بمبئی', 'Delhi': 'دهلی', 'New Delhi': 'دهلی نو', 'Bangalore': 'بنگلور', 'Hyderabad': 'حیدرآباد', 'Chennai': 'چنای', 'Kolkata': 'کلکته', 'Pune': 'پونا', 'Ahmedabad': 'احمدآباد', 'Karachi': 'کراچی', 'Lahore': 'لاهور', 'Islamabad': 'اسلام\u200cآباد', 'Dhaka': 'داکا', 'Colombo': 'کلمبو', 'Kathmandu': 'کاتماندو', 'Dubai': 'دبی', 'Abu Dhabi': 'ابوظبی', 'Riyadh': 'ریاض', 'Jeddah': 'جده', 'Doha': 'دوحه', 'Kuwait City': 'شهر کویت', 'Jerusalem': 'اورشلیم', 'Tel Aviv': 'تل\u200cآویو', 'Tehran': 'تهران', 'Mashhad': 'مشهد', 'Isfahan': 'اصفهان', 'Shiraz': 'شیراز', 'Baghdad': 'بغداد', 'Cairo': 'قاهره', 'Alexandria': 'اسکندریه', 'Lagos': 'لاگوس', 'Nairobi': 'نایروبی', 'Johannesburg': 'ژوهانسبورگ', 'Cape Town': 'کیپ\u200cتاون', 'Toronto': 'تورنتو', 'Vancouver': 'ونکوور', 'Montreal': 'مونترال', 'Ottawa': 'اتاوا', 'Calgary': 'کلگری', 'Edmonton': 'ادمونتون', 'Winnipeg': 'وینیپگ', 'Quebec City': 'کبک', 'Hamilton': 'همیلتون', 'Mexico City': 'مکزیکوسیتی', 'Guadalajara': 'گوادالاخارا', 'Monterrey': 'مونتری', 'Sao Paulo': 'سائوپائولو', 'Rio de Janeiro': 'ریودوژانیرو', 'Buenos Aires': 'بوئنوس آیرس', 'Santiago': 'سانتیاگو', 'Lima': 'لیما', 'Bogota': 'بوگوتا', 'Quito': 'کیتو', 'Montevideo': 'مونته\u200cویدئو'}}
+_CITY_L10N = {'zh': {'New York': '纽约', 'Los Angeles': '洛杉矶', 'Chicago': '芝加哥', 'Houston': '休斯顿', 'Phoenix': '菲尼克斯', 'Philadelphia': '费城', 'San Antonio': '圣安东尼奥', 'San Diego': '圣迭戈', 'Dallas': '达拉斯', 'San Jose': '圣何塞', 'Austin': '奥斯汀', 'Jacksonville': '杰克逊维尔', 'Columbus': '哥伦布', 'Charlotte': '夏洛特', 'San Francisco': '旧金山', 'Indianapolis': '印第安纳波利斯', 'Seattle': '西雅图', 'Denver': '丹佛', 'Washington': '华盛顿', 'Boston': '波士顿', 'Nashville': '纳什维尔', 'Las Vegas': '拉斯维加斯', 'Portland': '波特兰', 'Louisville': '路易斯维尔', 'Milwaukee': '密尔沃基', 'Atlanta': '亚特兰大', 'Kansas City': '堪萨斯城', 'Miami': '迈阿密', 'Minneapolis': '明尼阿波利斯', 'Tampa': '坦帕', 'New Orleans': '新奥尔良', 'Pittsburgh': '匹兹堡', 'Cincinnati': '辛辛那提', 'Sacramento': '萨克拉门托', 'Orlando': '奥兰多', 'Salt Lake City': '盐湖城', 'Honolulu': '檀香山', 'Oakland': '奥克兰', 'Santa Clara': '圣克拉拉', 'Buffalo': '布法罗', 'Sydney': '悉尼', 'Melbourne': '墨尔本', 'Brisbane': '布里斯班', 'Perth': '珀斯', 'Adelaide': '阿德莱德', 'Canberra': '堪培拉', 'Hobart': '霍巴特', 'Darwin': '达尔文', 'Auckland': '奥克兰', 'Wellington': '惠灵顿', 'London': '伦敦', 'Paris': '巴黎', 'Berlin': '柏林', 'Frankfurt': '法兰克福', 'Munich': '慕尼黑', 'Hamburg': '汉堡', 'Madrid': '马德里', 'Barcelona': '巴塞罗那', 'Rome': '罗马', 'Milan': '米兰', 'Amsterdam': '阿姆斯特丹', 'Rotterdam': '鹿特丹', 'Brussels': '布鲁塞尔', 'Vienna': '维也纳', 'Zurich': '苏黎世', 'Geneva': '日内瓦', 'Stockholm': '斯德哥尔摩', 'Oslo': '奥斯陆', 'Copenhagen': '哥本哈根', 'Helsinki': '赫尔辛基', 'Dublin': '都柏林', 'Lisbon': '里斯本', 'Athens': '雅典', 'Warsaw': '华沙', 'Krakow': '克拉科夫', 'Prague': '布拉格', 'Budapest': '布达佩斯', 'Bucharest': '布加勒斯特', 'Sofia': '索菲亚', 'Moscow': '莫斯科', 'Saint Petersburg': '圣彼得堡', 'Kyiv': '基辅', 'Minsk': '明斯克', 'Istanbul': '伊斯坦布尔', 'Ankara': '安卡拉', 'Reykjavik': '雷克雅未克', 'Tallinn': '塔林', 'Riga': '里加', 'Vilnius': '维尔纽斯', 'Tokyo': '东京', 'Osaka': '大阪', 'Seoul': '首尔', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '广州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武汉', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': '新加坡', 'Bangkok': '曼谷', 'Jakarta': '雅加达', 'Manila': '马尼拉', 'Kuala Lumpur': '吉隆坡', 'Hanoi': '河内', 'Ho Chi Minh City': '胡志明市', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': '孟买', 'Delhi': '德里', 'New Delhi': '新德里', 'Bangalore': '班加罗尔', 'Hyderabad': '海得拉巴', 'Chennai': '金奈', 'Kolkata': '加尔各答', 'Pune': '浦那', 'Ahmedabad': '艾哈迈达巴德', 'Karachi': '卡拉奇', 'Lahore': '拉合尔', 'Islamabad': '伊斯兰堡', 'Dhaka': '达卡', 'Colombo': '科伦坡', 'Kathmandu': '加德满都', 'Dubai': '迪拜', 'Abu Dhabi': '阿布扎比', 'Riyadh': '利雅得', 'Jeddah': '吉达', 'Doha': '多哈', 'Kuwait City': '科威特城', 'Jerusalem': '耶路撒冷', 'Tel Aviv': '特拉维夫', 'Tehran': '德黑兰', 'Mashhad': '马什哈德', 'Isfahan': '伊斯法罕', 'Shiraz': '设拉子', 'Baghdad': '巴格达', 'Cairo': '开罗', 'Alexandria': '亚历山大', 'Lagos': '拉各斯', 'Nairobi': '内罗毕', 'Johannesburg': '约翰内斯堡', 'Cape Town': '开普敦', 'Toronto': '多伦多', 'Vancouver': '温哥华', 'Montreal': '蒙特利尔', 'Ottawa': '渥太华', 'Calgary': '卡尔加里', 'Edmonton': '埃德蒙顿', 'Winnipeg': '温尼伯', 'Quebec City': '魁北克市', 'Hamilton': '汉密尔顿', 'Mexico City': '墨西哥城', 'Guadalajara': '瓜达拉哈拉', 'Monterrey': '蒙特雷', 'Sao Paulo': '圣保罗', 'Rio de Janeiro': '里约热内卢', 'Buenos Aires': '布宜诺斯艾利斯', 'Santiago': '圣地亚哥', 'Lima': '利马', 'Bogota': '波哥大', 'Quito': '基多', 'Montevideo': '蒙得维的亚'}, 'zh-TW': {'New York': '紐約', 'Los Angeles': '洛杉磯', 'Chicago': '芝加哥', 'Houston': '休士頓', 'Phoenix': '菲尼克斯', 'Philadelphia': '費城', 'San Antonio': '聖安東尼奧', 'San Diego': '聖迭戈', 'Dallas': '達拉斯', 'San Jose': '聖荷西', 'Austin': '奧斯汀', 'Jacksonville': '傑克遜維爾', 'Columbus': '哥倫布', 'Charlotte': '夏洛特', 'San Francisco': '舊金山', 'Indianapolis': '印第安納波利斯', 'Seattle': '西雅圖', 'Denver': '丹佛', 'Washington': '華盛頓', 'Boston': '波士頓', 'Nashville': '納什維爾', 'Las Vegas': '拉斯維加斯', 'Portland': '波特蘭', 'Louisville': '路易斯維爾', 'Milwaukee': '密爾沃基', 'Atlanta': '亞特蘭大', 'Kansas City': '堪薩斯城', 'Miami': '邁阿密', 'Minneapolis': '明尼阿波利斯', 'Tampa': '坦帕', 'New Orleans': '新奧爾良', 'Pittsburgh': '匹茲堡', 'Cincinnati': '辛辛那提', 'Sacramento': '薩克拉門托', 'Orlando': '奧蘭多', 'Salt Lake City': '鹽湖城', 'Honolulu': '檀香山', 'Oakland': '奧克蘭', 'Santa Clara': '聖克拉拉', 'Buffalo': '水牛城', 'Sydney': '悉尼', 'Melbourne': '墨爾本', 'Brisbane': '布里斯班', 'Perth': '珀斯', 'Adelaide': '阿德萊德', 'Canberra': '坎培拉', 'Hobart': '霍巴特', 'Darwin': '達爾文', 'Auckland': '奧克蘭', 'Wellington': '惠靈頓', 'London': '倫敦', 'Paris': '巴黎', 'Berlin': '柏林', 'Frankfurt': '法蘭克福', 'Munich': '慕尼黑', 'Hamburg': '漢堡', 'Madrid': '馬德里', 'Barcelona': '巴塞隆那', 'Rome': '羅馬', 'Milan': '米蘭', 'Amsterdam': '阿姆斯特丹', 'Rotterdam': '鹿特丹', 'Brussels': '布魯塞爾', 'Vienna': '維也納', 'Zurich': '蘇黎世', 'Geneva': '日內瓦', 'Stockholm': '斯德哥爾摩', 'Oslo': '奧斯陸', 'Copenhagen': '哥本哈根', 'Helsinki': '赫爾辛基', 'Dublin': '都柏林', 'Lisbon': '里斯本', 'Athens': '雅典', 'Warsaw': '華沙', 'Krakow': '克拉科夫', 'Prague': '布拉格', 'Budapest': '布達佩斯', 'Bucharest': '布加勒斯特', 'Sofia': '索菲亞', 'Moscow': '莫斯科', 'Saint Petersburg': '聖彼得堡', 'Kyiv': '基輔', 'Minsk': '明斯克', 'Istanbul': '伊斯坦布爾', 'Ankara': '安卡拉', 'Reykjavik': '雷克雅未克', 'Tallinn': '塔林', 'Riga': '里加', 'Vilnius': '維爾紐斯', 'Tokyo': '東京', 'Osaka': '大阪', 'Seoul': '首爾', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '廣州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武漢', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': '新加坡', 'Bangkok': '曼谷', 'Jakarta': '雅加達', 'Manila': '馬尼拉', 'Kuala Lumpur': '吉隆坡', 'Hanoi': '河內', 'Ho Chi Minh City': '胡志明市', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': '孟買', 'Delhi': '德里', 'New Delhi': '新德里', 'Bangalore': '班加羅爾', 'Hyderabad': '海得拉巴', 'Chennai': '金奈', 'Kolkata': '加爾各答', 'Pune': '浦那', 'Ahmedabad': '艾哈邁達巴德', 'Karachi': '卡拉奇', 'Lahore': '拉合爾', 'Islamabad': '伊斯蘭堡', 'Dhaka': '達卡', 'Colombo': '科倫坡', 'Kathmandu': '加德滿都', 'Dubai': '杜拜', 'Abu Dhabi': '阿布達比', 'Riyadh': '利雅得', 'Jeddah': '吉達', 'Doha': '多哈', 'Kuwait City': '科威特城', 'Jerusalem': '耶路撒冷', 'Tel Aviv': '特拉維夫', 'Tehran': '德黑蘭', 'Mashhad': '馬什哈德', 'Isfahan': '伊斯法罕', 'Shiraz': '設拉子', 'Baghdad': '巴格達', 'Cairo': '開羅', 'Alexandria': '亞歷山大', 'Lagos': '拉各斯', 'Nairobi': '奈洛比', 'Johannesburg': '約翰內斯堡', 'Cape Town': '開普敦', 'Toronto': '多倫多', 'Vancouver': '溫哥華', 'Montreal': '蒙特利爾', 'Ottawa': '渥太華', 'Calgary': '卡爾加里', 'Edmonton': '埃德蒙頓', 'Winnipeg': '溫尼伯', 'Quebec City': '魁北克市', 'Hamilton': '漢密爾頓', 'Mexico City': '墨西哥城', 'Guadalajara': '瓜達拉哈拉', 'Monterrey': '蒙特雷', 'Sao Paulo': '聖保羅', 'Rio de Janeiro': '里約熱內盧', 'Buenos Aires': '布宜諾斯艾利斯', 'Santiago': '聖地亞哥', 'Lima': '利馬', 'Bogota': '波哥大', 'Quito': '基多', 'Montevideo': '蒙特維多'}, 'ja': {'New York': 'ニューヨーク', 'Los Angeles': 'ロサンゼルス', 'Chicago': 'シカゴ', 'Houston': 'ヒューストン', 'Phoenix': 'フェニックス', 'Philadelphia': 'フィラデルフィア', 'San Antonio': 'サンアントニオ', 'San Diego': 'サンディエゴ', 'Dallas': 'ダラス', 'San Jose': 'サンノゼ', 'Austin': 'オースティン', 'Jacksonville': 'ジャクソンビル', 'Columbus': 'コロンバス', 'Charlotte': 'シャーロット', 'San Francisco': 'サンフランシスコ', 'Indianapolis': 'インディアナポリス', 'Seattle': 'シアトル', 'Denver': 'デンバー', 'Washington': 'ワシントン', 'Boston': 'ボストン', 'Nashville': 'ナッシュビル', 'Las Vegas': 'ラスベガス', 'Portland': 'ポートランド', 'Louisville': 'ルイビル', 'Milwaukee': 'ミルウォーキー', 'Atlanta': 'アトランタ', 'Kansas City': 'カンザスシティ', 'Miami': 'マイアミ', 'Minneapolis': 'ミネアポリス', 'Tampa': 'タンパ', 'New Orleans': 'ニューオーリンズ', 'Pittsburgh': 'ピッツバーグ', 'Cincinnati': 'シンシナティ', 'Sacramento': 'サクラメント', 'Orlando': 'オーランド', 'Salt Lake City': 'ソルトレイクシティ', 'Honolulu': 'ホノルル', 'Oakland': 'オークランド', 'Santa Clara': 'サンタクララ', 'Buffalo': 'バッファロー', 'Sydney': 'シドニー', 'Melbourne': 'メルボルン', 'Brisbane': 'ブリスベン', 'Perth': 'パース', 'Adelaide': 'アデレード', 'Canberra': 'キャンベラ', 'Hobart': 'ホバート', 'Darwin': 'ダーウィン', 'Auckland': 'オークランド', 'Wellington': 'ウェリントン', 'London': 'ロンドン', 'Paris': 'パリ', 'Berlin': 'ベルリン', 'Frankfurt': 'フランクフルト', 'Munich': 'ミュンヘン', 'Hamburg': 'ハンブルク', 'Madrid': 'マドリード', 'Barcelona': 'バルセロナ', 'Rome': 'ローマ', 'Milan': 'ミラノ', 'Amsterdam': 'アムステルダム', 'Rotterdam': 'ロッテルダム', 'Brussels': 'ブリュッセル', 'Vienna': 'ウィーン', 'Zurich': 'チューリッヒ', 'Geneva': 'ジュネーブ', 'Stockholm': 'ストックホルム', 'Oslo': 'オスロ', 'Copenhagen': 'コペンハーゲン', 'Helsinki': 'ヘルシンキ', 'Dublin': 'ダブリン', 'Lisbon': 'リスボン', 'Athens': 'アテネ', 'Warsaw': 'ワルシャワ', 'Krakow': 'クラクフ', 'Prague': 'プラハ', 'Budapest': 'ブダペスト', 'Bucharest': 'ブカレスト', 'Sofia': 'ソフィア', 'Moscow': 'モスクワ', 'Saint Petersburg': 'サンクトペテルブルク', 'Kyiv': 'キーウ', 'Minsk': 'ミンスク', 'Istanbul': 'イスタンブール', 'Ankara': 'アンカラ', 'Reykjavik': 'レイキャビク', 'Tallinn': 'タリン', 'Riga': 'リガ', 'Vilnius': 'ビリニュス', 'Tokyo': '東京', 'Osaka': '大阪', 'Seoul': 'ソウル', 'Busan': '釜山', 'Beijing': '北京', 'Shanghai': '上海', 'Guangzhou': '広州', 'Shenzhen': '深圳', 'Chengdu': '成都', 'Wuhan': '武漢', "Xi'an": '西安', 'Nanjing': '南京', 'Hangzhou': '杭州', 'Singapore': 'シンガポール', 'Bangkok': 'バンコク', 'Jakarta': 'ジャカルタ', 'Manila': 'マニラ', 'Kuala Lumpur': 'クアラルンプール', 'Hanoi': 'ハノイ', 'Ho Chi Minh City': 'ホーチミン', 'Taipei': '台北', 'Hong Kong': '香港', 'Mumbai': 'ムンバイ', 'Delhi': 'デリー', 'New Delhi': 'ニューデリー', 'Bangalore': 'バンガロール', 'Hyderabad': 'ハイデラバード', 'Chennai': 'チェンナイ', 'Kolkata': 'コルカタ', 'Pune': 'プネー', 'Ahmedabad': 'アフマダーバード', 'Karachi': 'カラチ', 'Lahore': 'ラホール', 'Islamabad': 'イスラマバード', 'Dhaka': 'ダッカ', 'Colombo': 'コロンボ', 'Kathmandu': 'カトマンズ', 'Dubai': 'ドバイ', 'Abu Dhabi': 'アブダビ', 'Riyadh': 'リヤド', 'Jeddah': 'ジッダ', 'Doha': 'ドーハ', 'Kuwait City': 'クウェートシティ', 'Jerusalem': 'エルサレム', 'Tel Aviv': 'テルアビブ', 'Tehran': 'テヘラン', 'Mashhad': 'マシュハド', 'Isfahan': 'エスファハーン', 'Shiraz': 'シーラーズ', 'Baghdad': 'バグダッド', 'Cairo': 'カイロ', 'Alexandria': 'アレクサンドリア', 'Lagos': 'ラゴス', 'Nairobi': 'ナイロビ', 'Johannesburg': 'ヨハネスブルグ', 'Cape Town': 'ケープタウン', 'Toronto': 'トロント', 'Vancouver': 'バンクーバー', 'Montreal': 'モントリオール', 'Ottawa': 'オタワ', 'Calgary': 'カルガリー', 'Edmonton': 'エドモントン', 'Winnipeg': 'ウィニペグ', 'Quebec City': 'ケベックシティ', 'Hamilton': 'ハミルトン', 'Mexico City': 'メキシコシティ', 'Guadalajara': 'グアダラハラ', 'Monterrey': 'モンテレイ', 'Sao Paulo': 'サンパウロ', 'Rio de Janeiro': 'リオデジャネイロ', 'Buenos Aires': 'ブエノスアイレス', 'Santiago': 'サンティアゴ', 'Lima': 'リマ', 'Bogota': 'ボゴタ', 'Quito': 'キト', 'Montevideo': 'モンテビデオ'}, 'ru': {'New York': 'Нью-Йорк', 'Los Angeles': 'Лос-Анджелес', 'Chicago': 'Чикаго', 'Houston': 'Хьюстон', 'Phoenix': 'Финикс', 'Philadelphia': 'Филадельфия', 'San Antonio': 'Сан-Антонио', 'San Diego': 'Сан-Диего', 'Dallas': 'Даллас', 'San Jose': 'Сан-Хосе', 'Austin': 'Остин', 'Jacksonville': 'Джэксонвилл', 'Columbus': 'Колумбус', 'Charlotte': 'Шарлотт', 'San Francisco': 'Сан-Франциско', 'Indianapolis': 'Индианаполис', 'Seattle': 'Сиэтл', 'Denver': 'Денвер', 'Washington': 'Вашингтон', 'Boston': 'Бостон', 'Nashville': 'Нэшвилл', 'Las Vegas': 'Лас-Вегас', 'Portland': 'Портленд', 'Louisville': 'Луисвилл', 'Milwaukee': 'Милуоки', 'Atlanta': 'Атланта', 'Kansas City': 'Канзас-Сити', 'Miami': 'Майами', 'Minneapolis': 'Миннеаполис', 'Tampa': 'Тампа', 'New Orleans': 'Новый Орлеан', 'Pittsburgh': 'Питтсбург', 'Cincinnati': 'Цинциннати', 'Sacramento': 'Сакраменто', 'Orlando': 'Орландо', 'Salt Lake City': 'Солт-Лейк-Сити', 'Honolulu': 'Гонолулу', 'Oakland': 'Окленд', 'Santa Clara': 'Санта-Клара', 'Buffalo': 'Буффало', 'Sydney': 'Сидней', 'Melbourne': 'Мельбурн', 'Brisbane': 'Брисбен', 'Perth': 'Перт', 'Adelaide': 'Аделаида', 'Canberra': 'Канберра', 'Hobart': 'Хобарт', 'Darwin': 'Дарвин', 'Auckland': 'Окленд', 'Wellington': 'Веллингтон', 'London': 'Лондон', 'Paris': 'Париж', 'Berlin': 'Берлин', 'Frankfurt': 'Франкфурт', 'Munich': 'Мюнхен', 'Hamburg': 'Гамбург', 'Madrid': 'Мадрид', 'Barcelona': 'Барселона', 'Rome': 'Рим', 'Milan': 'Милан', 'Amsterdam': 'Амстердам', 'Rotterdam': 'Роттердам', 'Brussels': 'Брюссель', 'Vienna': 'Вена', 'Zurich': 'Цюрих', 'Geneva': 'Женева', 'Stockholm': 'Стокгольм', 'Oslo': 'Осло', 'Copenhagen': 'Копенгаген', 'Helsinki': 'Хельсинки', 'Dublin': 'Дублин', 'Lisbon': 'Лиссабон', 'Athens': 'Афины', 'Warsaw': 'Варшава', 'Krakow': 'Краков', 'Prague': 'Прага', 'Budapest': 'Будапешт', 'Bucharest': 'Бухарест', 'Sofia': 'София', 'Moscow': 'Москва', 'Saint Petersburg': 'Санкт-Петербург', 'Kyiv': 'Киев', 'Minsk': 'Минск', 'Istanbul': 'Стамбул', 'Ankara': 'Анкара', 'Reykjavik': 'Рейкьявик', 'Tallinn': 'Таллин', 'Riga': 'Рига', 'Vilnius': 'Вильнюс', 'Tokyo': 'Токио', 'Osaka': 'Осака', 'Seoul': 'Сеул', 'Busan': 'Пусан', 'Beijing': 'Пекин', 'Shanghai': 'Шанхай', 'Guangzhou': 'Гуанчжоу', 'Shenzhen': 'Шэньчжэнь', 'Chengdu': 'Чэнду', 'Wuhan': 'Ухань', "Xi'an": 'Сиань', 'Nanjing': 'Нанкин', 'Hangzhou': 'Ханчжоу', 'Singapore': 'Сингапур', 'Bangkok': 'Бангкок', 'Jakarta': 'Джакарта', 'Manila': 'Манила', 'Kuala Lumpur': 'Куала-Лумпур', 'Hanoi': 'Ханой', 'Ho Chi Minh City': 'Хошимин', 'Taipei': 'Тайбэй', 'Hong Kong': 'Гонконг', 'Mumbai': 'Мумбаи', 'Delhi': 'Дели', 'New Delhi': 'Нью-Дели', 'Bangalore': 'Бангалор', 'Hyderabad': 'Хайдарабад', 'Chennai': 'Ченнаи', 'Kolkata': 'Калькутта', 'Pune': 'Пуна', 'Ahmedabad': 'Ахмадабад', 'Karachi': 'Карачи', 'Lahore': 'Лахор', 'Islamabad': 'Исламабад', 'Dhaka': 'Дакка', 'Colombo': 'Коломбо', 'Kathmandu': 'Катманду', 'Dubai': 'Дубай', 'Abu Dhabi': 'Абу-Даби', 'Riyadh': 'Эр-Рияд', 'Jeddah': 'Джидда', 'Doha': 'Доха', 'Kuwait City': 'Эль-Кувейт', 'Jerusalem': 'Иерусалим', 'Tel Aviv': 'Тель-Авив', 'Tehran': 'Тегеран', 'Mashhad': 'Мешхед', 'Isfahan': 'Исфахан', 'Shiraz': 'Шираз', 'Baghdad': 'Багдад', 'Cairo': 'Каир', 'Alexandria': 'Александрия', 'Lagos': 'Лагос', 'Nairobi': 'Найроби', 'Johannesburg': 'Йоханнесбург', 'Cape Town': 'Кейптаун', 'Toronto': 'Торонто', 'Vancouver': 'Ванкувер', 'Montreal': 'Монреаль', 'Ottawa': 'Оттава', 'Calgary': 'Калгари', 'Edmonton': 'Эдмонтон', 'Winnipeg': 'Виннипег', 'Quebec City': 'Квебек', 'Hamilton': 'Гамильтон', 'Mexico City': 'Мехико', 'Guadalajara': 'Гвадалахара', 'Monterrey': 'Монтеррей', 'Sao Paulo': 'Сан-Паулу', 'Rio de Janeiro': 'Рио-де-Жанейро', 'Buenos Aires': 'Буэнос-Айрес', 'Santiago': 'Сантьяго', 'Lima': 'Лима', 'Bogota': 'Богота', 'Quito': 'Кито', 'Montevideo': 'Монтевидео'}, 'fa': {'New York': 'نیویورک', 'Los Angeles': 'لس\u200cآنجلس', 'Chicago': 'شیکاگو', 'Houston': 'هیوستون', 'Phoenix': 'فینیکس', 'Philadelphia': 'فیلادلفیا', 'San Antonio': 'سن آنتونیو', 'San Diego': 'سن دیگو', 'Dallas': 'دالاس', 'San Jose': 'سن خوزه', 'Austin': 'آستین', 'Jacksonville': 'جکسون\u200cویل', 'Columbus': 'کلمبوس', 'Charlotte': 'شارلوت', 'San Francisco': 'سان\u200cفرانسیسکو', 'Indianapolis': 'ایندیاناپولیس', 'Seattle': 'سیاتل', 'Denver': 'دنور', 'Washington': 'واشینگتن', 'Boston': 'بوستون', 'Nashville': 'نشویل', 'Las Vegas': 'لاس وگاس', 'Portland': 'پورتلند', 'Louisville': 'لویی\u200cویل', 'Milwaukee': 'میلواکی', 'Atlanta': 'آتلانتا', 'Kansas City': 'کانزاس\u200cسیتی', 'Miami': 'میامی', 'Minneapolis': 'مینیاپولیس', 'Tampa': 'تامپا', 'New Orleans': 'نیواورلئان', 'Pittsburgh': 'پیتسبرگ', 'Cincinnati': 'سینسیناتی', 'Sacramento': 'ساکرامنتو', 'Orlando': 'اورلاندو', 'Salt Lake City': 'سالت\u200cلیک\u200cسیتی', 'Honolulu': 'هونولولو', 'Oakland': 'اوکلند', 'Santa Clara': 'سانتا کلارا', 'Buffalo': 'بوفالو', 'Sydney': 'سیدنی', 'Melbourne': 'ملبورن', 'Brisbane': 'بریزبن', 'Perth': 'پرت', 'Adelaide': 'آدلاید', 'Canberra': 'کانبرا', 'Hobart': 'هوبارت', 'Darwin': 'داروین', 'Auckland': 'اوکلند', 'Wellington': 'ولینگتون', 'London': 'لندن', 'Paris': 'پاریس', 'Berlin': 'برلین', 'Frankfurt': 'فرانکفورت', 'Munich': 'مونیخ', 'Hamburg': 'هامبورگ', 'Madrid': 'مادرید', 'Barcelona': 'بارسلونا', 'Rome': 'رم', 'Milan': 'میلان', 'Amsterdam': 'آمستردام', 'Rotterdam': 'روتردام', 'Brussels': 'بروکسل', 'Vienna': 'وین', 'Zurich': 'زوریخ', 'Geneva': 'ژنو', 'Stockholm': 'استکهلم', 'Oslo': 'اسلو', 'Copenhagen': 'کپنهاگ', 'Helsinki': 'هلسینکی', 'Dublin': 'دوبلین', 'Lisbon': 'لیسبون', 'Athens': 'آتن', 'Warsaw': 'ورشو', 'Krakow': 'کراکوف', 'Prague': 'پراگ', 'Budapest': 'بوداپست', 'Bucharest': 'بخارست', 'Sofia': 'صوفیه', 'Moscow': 'مسکو', 'Saint Petersburg': 'سن\u200cپترزبورگ', 'Kyiv': 'کی\u200cیف', 'Minsk': 'مینسک', 'Istanbul': 'استانبول', 'Ankara': 'آنکارا', 'Reykjavik': 'ریکیاویک', 'Tallinn': 'تالین', 'Riga': 'ریگا', 'Vilnius': 'ویلنیوس', 'Tokyo': 'توکیو', 'Osaka': 'اوزاکا', 'Seoul': 'سئول', 'Busan': 'بوسان', 'Beijing': 'پکن', 'Shanghai': 'شانگهای', 'Guangzhou': 'گوانگژو', 'Shenzhen': 'شنژن', 'Chengdu': 'چنگدو', 'Wuhan': 'ووهان', "Xi'an": 'شی\u200cآن', 'Nanjing': 'نانجینگ', 'Hangzhou': 'هانگژو', 'Singapore': 'سنگاپور', 'Bangkok': 'بانکوک', 'Jakarta': 'جاکارتا', 'Manila': 'مانیل', 'Kuala Lumpur': 'کوالالامپور', 'Hanoi': 'هانوی', 'Ho Chi Minh City': 'هوشی\u200cمین', 'Taipei': 'تایپه', 'Hong Kong': 'هنگ\u200cکنگ', 'Mumbai': 'بمبئی', 'Delhi': 'دهلی', 'New Delhi': 'دهلی نو', 'Bangalore': 'بنگلور', 'Hyderabad': 'حیدرآباد', 'Chennai': 'چنای', 'Kolkata': 'کلکته', 'Pune': 'پونا', 'Ahmedabad': 'احمدآباد', 'Karachi': 'کراچی', 'Lahore': 'لاهور', 'Islamabad': 'اسلام\u200cآباد', 'Dhaka': 'داکا', 'Colombo': 'کلمبو', 'Kathmandu': 'کاتماندو', 'Dubai': 'دبی', 'Abu Dhabi': 'ابوظبی', 'Riyadh': 'ریاض', 'Jeddah': 'جده', 'Doha': 'دوحه', 'Kuwait City': 'شهر کویت', 'Jerusalem': 'اورشلیم', 'Tel Aviv': 'تل\u200cآویو', 'Tehran': 'تهران', 'Mashhad': 'مشهد', 'Isfahan': 'اصفهان', 'Shiraz': 'شیراز', 'Baghdad': 'بغداد', 'Cairo': 'قاهره', 'Alexandria': 'اسکندریه', 'Lagos': 'لاگوس', 'Nairobi': 'نایروبی', 'Johannesburg': 'ژوهانسبورگ', 'Cape Town': 'کیپ\u200cتاون', 'Toronto': 'تورنتو', 'Vancouver': 'ونکوور', 'Montreal': 'مونترال', 'Ottawa': 'اتاوا', 'Calgary': 'کلگری', 'Edmonton': 'ادمونتون', 'Winnipeg': 'وینیپگ', 'Quebec City': 'کبک', 'Hamilton': 'همیلتون', 'Mexico City': 'مکزیکو\u200cسیتی', 'Guadalajara': 'گوادالاخارا', 'Monterrey': 'مونتری', 'Sao Paulo': 'سائوپائولو', 'Rio de Janeiro': 'ریودوژانیرو', 'Buenos Aires': 'بوئنوس آیرس', 'Santiago': 'سانتیاگو', 'Lima': 'لیما', 'Bogota': 'بوگوتا', 'Quito': 'کیتو', 'Montevideo': 'مونته\u200cویدئو'}}
 
 
 def _any2en(table):
@@ -3024,25 +3389,79 @@ def _any2en(table):
                 _owner[name] = en
                 m[name] = en
             elif _owner[name] != en:
-                # 歧义名: 已有另一英文键占用, 撤出反查表并标记为歧义
-                _owner[name] = None
-                m.pop(name, None)
+                # fix440a r1b-12/OBS-03：同名仅差 " City" 后缀时（如 ru/fa 的
+                # "New York" 与 "New York City" 同译 Нью-Йорк/نیویورک），
+                # 两者实为同一座城，取较短者（New York）而非丢弃；真正的
+                # 跨城歧义（如 Oakland/Auckland 同译“奥克兰”）仍丢弃。
+                _prev = _owner[name]
+                if _prev is not None and (
+                        en == _prev + " City" or _prev == en + " City"):
+                    _keep = _prev if len(_prev) <= len(en) else en
+                    _owner[name] = _keep
+                    m[name] = _keep
+                else:
+                    # 歧义名: 已有另一英文键占用, 撤出反查表并标记为歧义
+                    _owner[name] = None
+                    m.pop(name, None)
             # _owner[name] is None: 已是歧义名, 不再收录
+    # fix440g G-043：fa 城市新拼写含 U+200C，旧拼写（无 ZWNJ）仍须能反查；
+    # 显示名保留新拼写，仅反查表补两个旧键（_TZ_CITY["fa"] 仍用旧拼写，
+    # 补键后时区表与反查表可往返）。
+    for _old, _en in (("مکزیکوسیتی", "Mexico City"),
+                      ("اکلاهماسیتی", "Oklahoma City")):
+        m.setdefault(_old, _en)
     return m
+
+
+def _geo_static_ambig_names(table):
+    """静态表内真正的跨实体歧义名集合（与 _any2en 同款归属逻辑）：
+    同一本地化名被多个英文键共享且非仅差 " City" 后缀时为歧义名
+    （如五语同译“奥克兰”的 Oakland/Auckland）。供 _resolve_geo_online
+    判断在线标签能否写反向映射（fix440a r2b-16）。"""
+    _owner = {}
+    _ambig = set()
+    for per_lang in table.values():
+        for en, name in per_lang.items():
+            if name not in _owner:
+                _owner[name] = en
+            elif _owner[name] != en:
+                _prev = _owner[name]
+                if _prev is not None and (
+                        en == _prev + " City" or _prev == en + " City"):
+                    _keep = _prev if len(_prev) <= len(en) else en
+                    _owner[name] = _keep
+                else:
+                    _owner[name] = None
+                    _ambig.add(name)
+    return _ambig
+
+
+_GEO_STATIC_AMBIG = {}
+
+
+def _geo_static_ambig(kind):
+    """kind（city/region）的静态歧义名集合（首次使用时由静态表算出并缓存；
+    静态表只在导入时改动，运行时不变，故缓存安全）。"""
+    if kind not in _GEO_STATIC_AMBIG:
+        _GEO_STATIC_AMBIG[kind] = _geo_static_ambig_names(
+            _CITY_L10N if kind == "city" else _REGION_L10N)
+    return _GEO_STATIC_AMBIG[kind]
 
 
 _CITY_L10N["zh"].update({"New York City": "纽约市", "Oklahoma City": "俄克拉荷马城", "Mountain View": "山景城", "Palo Alto": "帕洛阿尔托"})
 _CITY_L10N["zh-TW"].update({"New York City": "紐約市", "Oklahoma City": "奧克拉荷馬城", "Mountain View": "山景城", "Palo Alto": "帕羅奧圖"})
 _CITY_L10N["ja"].update({"New York City": "ニューヨーク市", "Oklahoma City": "オクラホマシティ", "Mountain View": "マウンテンビュー", "Palo Alto": "パロアルト"})
 _CITY_L10N["ru"].update({"New York City": "Нью-Йорк", "Oklahoma City": "Оклахома-Сити", "Mountain View": "Маунтин-Вью", "Palo Alto": "Пало-Альто"})
-_CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهماسیتی", "Mountain View": "ماونتین ویو", "Palo Alto": "پالو آلتو"})
+_CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "اکلاهما\u200cسیتی", "Mountain View": "ماونتین ویو", "Palo Alto": "پالو آلتو"})
 
 # B-06a-3：静态城市表译文的归属国家（仅收录译文随国家而异的歧义名）。
 # Alexandria 的静态译文（zh 亚历山大 / zh-TW 亞歷山大 / ja アレクサンドリア
 # / ru Александрия / fa اسکندریه）取自埃及亚历山大；美国弗吉尼亚的
 # Alexandria 不是同一座城，上下文指明他国时不得取该译文，退回原文
 # （与 B-06a-2 单候选上下文不符时留原文的口径一致）。
-_CITY_L10N_HOME = {"Alexandria": "EG"}
+# fix440 GPT G-009：Berlin 的静态译文取自德国柏林；湖北柏林镇等同名
+# 地点上下文指明中国时，英文分支亦不得反查回 Berlin，退回原文。
+_CITY_L10N_HOME = {"Alexandria": "EG", "Berlin": "DE"}
 
 # C-01：静态州/省表译文的归属国家（同款，仅收录译文随国家而异的歧义名）。
 # Georgia 的静态译文（zh 佐治亚州 / zh-TW 喬治亞州 / ja ジョージア州
@@ -3084,35 +3503,111 @@ _WD_PLACE_QIDS = frozenset({"Q515", "Q486972", "Q3957", "Q532", "Q15284",
                             "Q51929311", "Q1093829", "Q2264924", "Q15063611"})
 _WD_PLACE_ROOT_QIDS = frozenset()
 # S6-N2：context 国家/行政区简称 -> 国家 QID（裸名回退校验用）：
-# 英格兰/苏格兰/威尔士/北爱尔兰的 P17 均为英国 Q145；America/USA/US
-# 的 P17 均为美国 Q30。仅作国家级等价，不含行政区级映射。
+# 美国 America/USA/US 的 P17 均为美国 Q30；英国构成国各有自己的 QID
+# （英格兰 Q21、苏格兰 Q22、威尔士 Q25、北爱尔兰 Q26），其 P17 亦为
+# 各自 QID，不得再全映射到英国 Q145（fix440a r2b-10：Wales 须解 Q25，
+# 否则 York, Wales 的实体校验误认英格兰）。uk/great britain/britain
+# 仍为英国 Q145。仅作国家/构成国级等价，不含行政区级映射。
 _WD_COUNTRY_ALIASES = {"us": "Q30", "usa": "Q30", "u.s.": "Q30",
                        "u.s.a.": "Q30", "america": "Q30",
                        "uk": "Q145", "great britain": "Q145",
-                       "britain": "Q145", "england": "Q145",
-                       "scotland": "Q145", "wales": "Q145",
-                       "northern ireland": "Q145"}
+                       "britain": "Q145", "england": "Q21",
+                       "scotland": "Q22", "wales": "Q25",
+                       "northern ireland": "Q26"}
 
 
 def _wd_claim_ids(ent, prop):
     """取实体某声明属性的 QID 列表 (缺失/畸形时为空表, 即类型无法确认)。"""
     out = []
-    for st in (ent.get("claims") or {}).get(prop, []):
-        v = (st.get("mainsnak") or {}).get("datavalue", {}).get("value")
+    if not isinstance(ent, dict):
+        return out
+    claims = ent.get("claims")
+    if not isinstance(claims, dict):
+        return out
+    # fix440 GPT G-050：claims[prop] 本身错型（非列表，如整数）时返空表，
+    # 不得 for 循环抛 TypeError 中止整批候选。
+    _stmts = claims.get(prop, [])
+    if not isinstance(_stmts, (list, tuple)):
+        return out
+    for st in _stmts:
+        # fix440a r2b-14：非 dict 声明跳过，不致全部候选作废；
+        # r2b-11：deprecated 等级声明不作类型/归属证据。
+        if not isinstance(st, dict) or st.get("rank") == "deprecated":
+            continue
+        # fix440 GPT G-051：带结束日期限定符（P582）的 P31 声明是历史
+        # 类型，不得作为实体当前城市的类型证据。
+        if prop == "P31":
+            _quals = st.get("qualifiers")
+            if isinstance(_quals, dict) and _quals.get("P582"):
+                continue
+        ms = st.get("mainsnak")
+        if not isinstance(ms, dict):
+            continue
+        dv = ms.get("datavalue")
+        if not isinstance(dv, dict):
+            continue
+        v = dv.get("value")
         if isinstance(v, dict) and v.get("id"):
             out.append(v["id"])
     return out
 
 
+# fix440 GPT G-053：去消歧括号只去掉 Wikidata 注释形态（city／
+# disambiguation 等通用标注）；正式地名的一部分（如 Frankfurt (Oder)
+# 的 (Oder)）须保留——无法区分时宁可保留原文。
+# fix440-merge：括号内容为已知行政区/国家名时亦剥离（见 _wd_pick_label
+# 内 _ANY_REGION2EN/_CC_EN/_CC_LOCAL 三表判定，如 (俄勒岡州) 是州名
+# 消歧后缀、(Oder) 不是行政区名故保留；430e boardman 例为凭据）。
+_WD_PAREN_ANNOTATION = frozenset({
+    "city", "town", "village", "municipality", "settlement", "commune",
+    "borough", "district", "county", "locality", "disambiguation",
+    "消歧", "消歧义",
+})
+
+
 def _wd_pick_label(ent, langs):
     """按界面语言优先级取条目标签 (去消歧后缀); 无则 None。"""
+    if not isinstance(ent, dict):
+        return None
     labels = ent.get("labels", {})
+    if not isinstance(labels, dict):
+        return None
     for lg in langs:
         if lg in labels:
-            v = re.sub(r"\s*[\(\（][^\\)\）]*[\\)\）]\s*$", "",
-                       labels[lg]["value"]).strip()
-            return v or None
+            _lv = labels[lg]
+            if not isinstance(_lv, dict):
+                continue
+            # fix440 GPT G-052：value 错型（非字符串，如 123）时跳过该
+            # 语言继续下一候选，不得 str() 强制转成假成功。
+            _raw = _lv.get("value")
+            if not isinstance(_raw, str):
+                continue
+            _m = re.search(r"\s*[\(\（]([^)\）]*)[\)\）]\s*$", _raw)
+            # fix440-merge：G-053 的白名单之外，括号内容若为已知行政区/
+            # 国家名（如 (俄勒岡州)、(Oregon)、(Illinois)）同样是消歧
+            # 后缀——Wikidata 以包含性行政区名消歧同名地；(Oder) 等非
+            # 行政区名仍保留（无法区分时宁可保留原文）。行政区名查
+            # _ANY_REGION2EN（六语州/省名反查表，英文键自查），国名查
+            # _CC_EN/_CC_LOCAL（小写键）。
+            _inner = _m.group(1).strip() if _m else ""
+            if _m and (_inner.lower() in _WD_PAREN_ANNOTATION
+                       or _inner in _ANY_REGION2EN
+                       or _inner.lower() in _CC_EN
+                       or _inner.lower() in _CC_LOCAL):
+                v = _raw[:_m.start()].strip()
+            else:
+                v = _raw.strip()
+            # fix440a r2b-22：标签过 _clean_str（剥离控制字符）；
+            # r2b-13c：剥离为空后继续试下一优先级，而非直接返 None。
+            v = _clean_str(v)
+            if v:
+                return v
     return None
+
+
+# fix440b r2b-6：_wd_label 整项调用预算——展示级查找不得对每个候选
+# 发数十次串行请求；20 次是单次查找的合理上限（正常查找 ≤6 次）。
+_WD_LABEL_MAX_CALLS = 20
 
 
 def _wd_label(name, kind, context):
@@ -3126,42 +3621,79 @@ def _wd_label(name, kind, context):
     得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
     (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
+        # fix440b r2b-6：整项调用预算——_search/_resolve_qid/批量取实体/
+        # P279/P131 跳链的全部请求共享 _WD_LABEL_MAX_CALLS 次上限，超限
+        # 即停（返回失败、不再发请求）；须动态解析模块全局 http_get 以
+        # 兼容夹具 stub。
+        _calls = {"n": 0}
+
+        def _wd_get(*a, **kw):
+            if _calls["n"] >= _WD_LABEL_MAX_CALLS:
+                return False, ""
+            _calls["n"] += 1
+            return http_get(*a, **kw)
+
         def _search(term):
             q = urllib.parse.quote(term)
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+            ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
                                f"&search={q}&language=en&format=json&limit=5&type=item",
                                timeout=5, retries=1, use_cache=False)
             if not ok:
                 return None
             return [c for c in json.loads(raw).get("search", [])
-                    if (c.get("label") or "").lower() == name.lower()
-                    and c.get("id")]
+                    if c.get("id") and (
+                        (c.get("label") or "").lower() == name.lower()
+                        # fix440 GPT G-049：候选英文 label 与完整查询
+                        # （term，如 "Riverside, Ohio"）精确相等即收，
+                        # 不得只与裸名比较。
+                        or (c.get("label") or "").lower() == term.lower()
+                        # fix440a r2b-15：label 或任一 alias 精确匹配即收，
+                        # 不得只认 label（Bombay 别名 Mumbai 会被丢）。
+                        or any(isinstance(al, str) and al.lower() == name.lower()
+                               for al in (c.get("aliases") or []))
+                        # fix440 GPT G-048：对象型 alias 的 value 与字符
+                        # 串元素同等接受（与 _resolve_qids 的处理对齐）。
+                        or any(isinstance(al, dict)
+                               and isinstance(al.get("value"), str)
+                               and al["value"].lower() == name.lower()
+                               for al in (c.get("aliases") or [])))]
 
-        def _resolve_qid(term):
-            """context 成分 (国家/州名) -> QID：简称查表，余者按 label/
-            alias 精确匹配检索；解不出时返 None（即无法确认）。"""
+        def _resolve_qids(term):
+            """context 成分 (国家/州名) -> QID 列表：简称查表，余者按 label/
+            alias 精确匹配检索；解不出时为空表（即无法确认）。同一名多
+            实体时全保留（fix440a r2b-10：Georgia 国家 Q625 不得遮住
+            州 Q1428，上下文校验须取并集）。"""
             low = (term or "").strip().lower()
             if not low:
-                return None
+                return []
             if low in _WD_COUNTRY_ALIASES:
-                return _WD_COUNTRY_ALIASES[low]
+                return [_WD_COUNTRY_ALIASES[low]]
             q = urllib.parse.quote(term.strip())
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+            ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
                                f"&search={q}&language=en&format=json&limit=5&type=item",
                                timeout=5, retries=1, use_cache=False)
             if not ok:
-                return None
+                return []
             try:
                 items = json.loads(raw).get("search", [])
             except Exception:
-                return None
+                return []
+            out = []
             for c in items:
                 if (c.get("label") or "").lower() == low:
-                    return c.get("id")
+                    if c.get("id"):
+                        out.append(c["id"])
+                    continue
                 for al in c.get("aliases") or []:
-                    if isinstance(al, str) and al.lower() == low:
-                        return c.get("id")
-            return None
+                    # fix440b G1：wbsearchentities 的 aliases 元素是 dict
+                    # {"language": ..., "value": ...}，不是字符串——旧分支
+                    # isinstance(al, str) 永不命中，"Mass." 等简称解不出。
+                    _al = al.get("value") if isinstance(al, dict) else al
+                    if isinstance(_al, str) and _al.lower() == low:
+                        if c.get("id"):
+                            out.append(c["id"])
+                        break
+            return out
 
         _fallback = False
         cands = _search(context or name)
@@ -3181,7 +3713,7 @@ def _wd_label(name, kind, context):
         if not langs:
             return None
         # 一次批量取全部候选的标签 + P31 声明
-        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+        ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                            f"&ids={'|'.join(c['id'] for c in cands)}"
                            "&props=labels|claims"
                            f"&languages={'|'.join(langs)}&format=json",
@@ -3194,9 +3726,15 @@ def _wd_label(name, kind, context):
         def _context_ok(eid):
             """裸名回退校验：实体 P17 国家 / P131 行政归属（沿链多级
             上溯，上限 8 跳防循环）须与 context 某一成分的 QID 相符；
-            非回退路径恒真；实体无 P17/P131 或 context 成分全解不出
-            时返 False（无法确认）。"""
-            if not _fallback:
+            context 给出且与名不同时亦须校验（fix440a r2b-9：上下文
+            命中不得绕过实体校验——"Springfield, Illinois" 的
+            Massachusetts 实体须被拒）；context 缺失或等于名时恒真；
+            实体无 P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
+            # fix440a r2b-9：context 命中亦须校验——context 给出且与名不同时，
+            # 实体 P17/P131 须与 context 成分相符；context 缺失或等于名时恒真。
+            # fix440 GPT G-047：等于名的比较须大小写不敏感（"PARIS" 不得
+            # 因此丢 token 致 qids 为空）。
+            if not context or (context or "").strip().lower() == (name or "").lower():
                 return True
             ent = entities.get(eid, {})
             countries = set(_wd_claim_ids(ent, "P17"))
@@ -3209,7 +3747,7 @@ def _wd_label(name, kind, context):
                 for _hop in range(8):
                     if not frontier:
                         break
-                    ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                    ok2, raw2 = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                                          f"&ids={'|'.join(frontier)}&props=claims&format=json",
                                          timeout=5, retries=1, use_cache=False)
                     if not ok2:
@@ -3231,11 +3769,17 @@ def _wd_label(name, kind, context):
             toks = [t.strip() for t in (context or "").split(",")]
             toks = [t for t in toks if t and t.lower() != name.lower()]
             qids = []
+            _unresolved = False
             for tok in toks:
-                qid = _resolve_qid(tok)
-                if qid:
-                    qids.append(qid)
+                _qs = _resolve_qids(tok)
+                if not _qs:
+                    _unresolved = True
+                qids.extend(_qs)
             if not qids:
+                return False
+            # fix440 GPT G-006：调用预算耗尽且仍有上下文成分未解出时，
+            # 州级证据未经验证，不得仅凭国家 QID 通过候选（返回未确认）。
+            if _unresolved and _calls["n"] >= _WD_LABEL_MAX_CALLS:
                 return False
             # B-06a-1: 须命中最具体的可解析上下文成分——任一成分命中
             # P131 链（州/省级）即确认；否则任一可解析成分若既非国家亦
@@ -3249,37 +3793,77 @@ def _wd_label(name, kind, context):
                 return False
             return any(q in countries for q in qids)
 
-        p31_map = {}
-        for c in cands:
-            p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
-            p31_map[c["id"]] = p31s
-            if any(p in want for p in p31s) and _context_ok(c["id"]):
-                return _wd_pick_label(entities.get(c["id"], {}), langs)
-        # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
-        all_p31 = sorted({p for ps in p31_map.values() for p in ps})
-        parents = {}
-        if all_p31:
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                               f"&ids={'|'.join(all_p31)}&props=claims&format=json",
-                               timeout=5, retries=1, use_cache=False)
-            if ok:
-                for tid, tent in json.loads(raw).get("entities", {}).items():
-                    parents[tid] = _wd_claim_ids(tent, "P279")
+
         roots = _WD_ADMIN_ROOT_QIDS if kind == "region" else _WD_PLACE_ROOT_QIDS
-        for c in cands:
-            ps = []
-            for p in p31_map.get(c["id"], []):
-                ps.extend(parents.get(p, []))
-            if any(p in want or p in roots for p in ps) \
-                    and _context_ok(c["id"]):
-                return _wd_pick_label(entities.get(c["id"], {}), langs)
+
+        def _eval(cands):
+            """对一批候选做类型 + 上下文校验，返回首个通过者的标签；无则 None。
+            直接 P31 检查亦接受行政根 QID（fix440a r2b-12：根 QID 是
+            类型族本身，不得只在 P279 上溯时接受）；标签取不到时继续
+            下一候选（r2b-13b），不提前返 None。"""
+            p31_map = {}
+            for c in cands:
+                p31s = _wd_claim_ids(entities.get(c["id"], {}), "P31")
+                p31_map[c["id"]] = p31s
+                if any(p in want or p in roots for p in p31s) \
+                        and _context_ok(c["id"]):
+                    v = _wd_pick_label(entities.get(c["id"], {}), langs)
+                    if v:
+                        return v
+            # 无直接命中: 沿 P279 上溯一级再判 (如省/州的子类)
+            # fix440b r2b-6：经 _wd_get 走整项调用预算，不直接 http_get。
+            all_p31 = sorted({p for ps in p31_map.values() for p in ps})
+            parents = {}
+            if all_p31:
+                # fix440 GPT G-055：wbgetentities 每次最多 50 个 ID，分批
+                # 查询，沿用同一调用预算。
+                for _i in range(0, len(all_p31), 50):
+                    ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                       f"&ids={'|'.join(all_p31[_i:_i + 50])}&props=claims&format=json",
+                                       timeout=5, retries=1, use_cache=False)
+                    if ok:
+                        for tid, tent in json.loads(raw).get("entities", {}).items():
+                            parents[tid] = _wd_claim_ids(tent, "P279")
+            for c in cands:
+                ps = []
+                for p in p31_map.get(c["id"], []):
+                    ps.extend(parents.get(p, []))
+                if any(p in want or p in roots for p in ps) \
+                        and _context_ok(c["id"]):
+                    v = _wd_pick_label(entities.get(c["id"], {}), langs)
+                    if v:
+                        return v
+            return None
+
+        r = _eval(cands)
+        if r is not None:
+            return r
+        # fix440a r2b-13a：context 命中全错类型时，亦以裸名重查一次
+        # （原先只在 context 检索返空时重查，全错类型即提前停止）。
+        if context and context != name and not _fallback:
+            cands2 = _search(name)
+            if cands2:
+                # fix440 GPT G-054：第二轮裸名回退亦须走 _wd_get 预算，
+                # 不得直接 http_get 绕过上限。
+                ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                   f"&ids={'|'.join(c['id'] for c in cands2)}"
+                                   "&props=labels|claims"
+                                   f"&languages={'|'.join(langs)}&format=json",
+                                   timeout=5, retries=1, use_cache=False)
+                if ok:
+                    entities.update(json.loads(raw).get("entities", {}))
+                    return _eval(cands2)
         return None
     except Exception:
         return None
 
 def _join_nonempty(*parts, sep=" "):
-    """拼接地名/上下文：只取非空字段，缺失字段不留字面 'None'（R2-8.2）。"""
-    return sep.join(str(p).strip() for p in parts if p and str(p).strip())
+    """拼接地名/上下文：只取非空字段，缺失字段不留字面 'None'（R2-8.2）。
+    fix440b F4/r2b-5：只拼接字符串部分——非字符串（dict/list/bool/数值）
+    不再 str() 化拼进上下文串（否则 dict 会拼成 "{'country': ...}" 进
+    Wikidata 查询串，数值会拼成 "123" 当地名）。"""
+    return sep.join(p.strip() for p in parts
+                    if isinstance(p, str) and p.strip())
 
 
 def _resolve_geo_online(jobs):
@@ -3318,70 +3902,308 @@ def _resolve_geo_online(jobs):
         if v:
             _GEO_EXTRA[kind][(name, ctx or "")] = v
             any2en = _ANY_CITY2EN if kind == "city" else _ANY_REGION2EN
-            any2en[v] = any2en.get(name, name)
+            # fix440a r2b-16：在线标签不得覆盖静态反向映射——译文已在
+            # 反向映射中（静态收录）或属静态歧义名（如奥克兰，_any2en
+            # 刻意丢弃）时，写回会覆盖静态归属（且与线程顺序有关、跨
+            # 语言切换残留）；只在两者皆不沾时才写。
+            if v not in any2en and v not in _geo_static_ambig(kind):
+                any2en[v] = any2en.get(name, name)
 
     if todo:
         with ThreadPoolExecutor(max_workers=4) as ex:
             list(ex.map(_one, todo))
 
 
-def _geo_ctx_ok(stored_ctx, name, ctx_words):
-    """单候选缓存条目上下文检查（B-06a-2）：缓存条目上下文词（去变体
-    本身）须为当前上下文词集的子集；条目无上下文信息时无法核对，
-    沿用旧行为（视为通过）。"""
-    _stored = set(re.findall(r"[A-Za-z0-9]+", str(stored_ctx or "").lower())) \
-        - set(re.findall(r"[A-Za-z0-9]+", str(name or "").lower()))
+_GEO_INDEX = {"city": {}, "region": {}}
+_GEO_INDEX_SIG = {}
+
+
+def _geo_index(kind):
+    """_GEO_EXTRA 按名索引（fix440a r1b-13）：名 -> [(ctx, loc)]；索引随
+    _GEO_EXTRA 内容失效（lang/对象 id/长度任一变化即重建），每次查找
+    不再全表扫描。"""
+    d = _GEO_EXTRA[kind]
+    sig = (_GEO_EXTRA.get("lang"), id(d), len(d))
+    if _GEO_INDEX_SIG.get(kind) != sig:
+        idx = {}
+        for (name, ctx), loc in d.items():
+            idx.setdefault(name, []).append((ctx, loc))
+        _GEO_INDEX[kind] = idx
+        _GEO_INDEX_SIG[kind] = sig
+    return _GEO_INDEX[kind]
+
+
+def _geo_seg_norm(seg):
+    """单条上下文分段归一化（fix440a）：国家名（任意语言/口语别名）-> ISO 码；
+    州/省/城市名（任意语言，含重音折叠形）-> 英文名；其余 -> 小写去空白。
+    供 _geo_ctx_ok 的分段级比较用：同一地点不同语言/写法归一为同一键。"""
+    s = str(seg or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low) \
+        or _CC_LOCAL.get(low)
+    if code:
+        return code
+    en = _ANY_REGION2EN.get(s) or _ANY_CITY2EN.get(s)
+    if en:
+        # fix440 GPT G-056：本地化州/省名反查出的英文名若恰好也是国家名
+        # （佐治亚州 -> Georgia），须与该英文名本身一样走国家表归一
+        # 为国家码——否则写入端（佐治亚州 -> Georgia）与读取端
+        # （Georgia -> GE）得到不同比较键。
+        _c2 = _CITY_CTX_COUNTRY_ALIASES.get(en.lower()) \
+            or _CC_EN.get(en.lower()) or _CC_LOCAL.get(en.lower())
+        if _c2:
+            return _c2
+        return en
+    folded = "".join(c for c in unicodedata.normalize("NFKD", s)
+                     if not unicodedata.combining(c))
+    if folded != s:
+        en = _ANY_REGION2EN.get(folded) or _ANY_CITY2EN.get(folded)
+        if en:
+            _c2 = _CITY_CTX_COUNTRY_ALIASES.get(en.lower()) \
+                or _CC_EN.get(en.lower()) or _CC_LOCAL.get(en.lower())
+            if _c2:
+                return _c2
+            return en
+    return " ".join(low.split())
+
+
+def _geo_ctx_ok(stored_ctx, name, ctx):
+    """单候选缓存条目上下文检查（B-06a-2；fix440a 改为分段级比较）：
+    缓存条目上下文分段（去条目名本身）须为当前上下文分段的子集；条目无
+    上下文信息时无法核对，沿用旧行为（视为通过）。
+    ctx：当前上下文原始串（逗号分隔；此前为 ASCII 词集）。分段先经
+    _geo_seg_norm 归一（本地化名/口语别名归一为同一键），再按分段比较——
+    词集比较会丢行政区边界（Virginia 通过 West Virginia 检查；Kansas
+    州名被当城市名减去），且 ASCII 正则会把非 ASCII 上下文清空为“通过”。
+    fix440 GPT G-007：条目名只减去一次（记重数）——同名 region 与
+    country 分段（如 "Georgia, Georgia"）不得一起删光，删后仍有
+    约束即继续校验。"""
+    _stored = [_geo_seg_norm(p) for p in str(stored_ctx or "").split(",")]
+    _stored = [s for s in _stored if s]
+    _name_norm = _geo_seg_norm(name)
+    if _name_norm:
+        try:
+            _stored.remove(_name_norm)
+        except ValueError:
+            pass
     if not _stored:
         return True
-    return _stored <= set(ctx_words)
+    _ctx = {_geo_seg_norm(p) for p in str(ctx or "").split(",")}
+    _ctx.discard("")
+    return set(_stored) <= _ctx
 
 
 def _extra_sub(disp, kind, ctx_text=None):
     """把在线兜底命中的地名替换进对比行整串（disp 为待替换串）。
     同一变体有多个上下文候选时，只采用上下文成分出现在整串中的唯一候选；
     无法消歧时不任意采用首项（该变体原样保留）。单候选亦须过上下文检查
-    （B-06a-2）：缓存条目上下文词不在整串词集中且整串带逗号分隔的结构化
+    （B-06a-2）：缓存条目上下文分段不在整串分段中且整串带逗号分隔的结构化
     上下文成分时不取译文；整串无结构化上下文成分时（如 "Zork City"）
     无可核成分，沿用旧行为直取。
     ctx_text：消歧上下文来源，默认 disp；调用方可传整串以保留跨字段上下文
-    （CONF-FIXES-2.1），同时把替换限定在本字段内。"""
+    （CONF-FIXES-2.1），同时把替换限定在本字段内。
+    fix440a：替换一律按原始串坐标落点、最后一次性拼接——已写好的译文
+    不再被后序变体重扫（r1b-7）；被跳过的变体占位受保护，短变体不得
+    改写其内部（r1b-6）；多候选按不同译文数判歧义（r2b-19）；分段相等
+    才算“含该变体”，子串不算（r1b-5）——"New York" 不含 "York"；
+    命中处若是更长地名的后半段（如 "East York" 中的 "York"，且该长名
+    出现在上下文整串中），不替换（r1b-6/r2b-20）。"""
     if _GEO_EXTRA.get("lang") != LANG:
         return disp
-    _by_variant = {}
-    for (variant, _ctx), loc in _GEO_EXTRA[kind].items():
-        _by_variant.setdefault(variant, []).append((_ctx, loc))
-    # CONF-FIXES-2.1：上下文词集须取自原始整串；取自不断被替换的当前 disp 时，
-    # 前序替换会抹掉后序变体的上下文词（如 New York 先被译走，York 的 {new} 消失）。
-    _orig_words = set(re.findall(r"[A-Za-z0-9]+", (ctx_text if ctx_text is not None else disp).lower()))
+    _by_variant = _geo_index(kind)
+    # CONF-FIXES-2.1：上下文分段须取自原始整串；取自不断被替换的当前 disp 时，
+    # 前序替换会抹掉后序变体的上下文分段（如 New York 先被译走，York 的分段消失）。
+    _src = ctx_text if ctx_text is not None else disp
+    _disp_segs = {_geo_seg_norm(p) for p in str(_src).split(",")}
+    _disp_segs.discard("")
+    _orig = disp
+    _repl = []     # (start, end, loc)：已确定的替换（原始串坐标）
+    _blocked = []  # (start, end)：受保护的跨度（被跳过的变体占位）
     # 最长变体优先：短名称先替换会破坏完整长名称（如 York 抢先于 East York）。
     for variant, cands in sorted(_by_variant.items(), key=lambda kv: -len(kv[0])):
         if not variant:
             continue
+        loc = None
+        _win_ctx = None
         if len(cands) == 1:
             _sctx, loc = cands[0]
-            if not _geo_ctx_ok(_sctx, variant, _orig_words):
-                _src = ctx_text if ctx_text is not None else disp
-                _parts = [p.strip() for p in _src.split(",")]
-                if any(p and variant.lower() not in p.lower() for p in _parts):
-                    continue
+            if not _geo_ctx_ok(_sctx, variant, _src):
+                # fix440-merge：仅当整串带逗号分隔的结构化上下文（>=2 分段）
+                # 时才以“分段 != 变体”拒收；单分段无结构化上下文时沿用
+                # 旧行为直取（B-06a-2），否则 "Paris and Paris" 之类无逗
+                # 号复现串会被误拒（fix440b G2）。
+                _parts = [p.strip() for p in _src.split(",") if p.strip()]
+                if len(_parts) > 1 and any(
+                        _geo_seg_norm(p) != _geo_seg_norm(variant)
+                        for p in _parts):
+                    loc = None
+            if loc is not None:
+                _win_ctx = _sctx
         else:
-            _disp_words = _orig_words
-            _variant_words = set(re.findall(r"[A-Za-z0-9]+", variant.lower()))
+            _variant_seg = _geo_seg_norm(variant)
             _winners = []
+            _win_ctxs = []
             for _ctx, _loc in cands:
-                _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(_ctx or "").lower())) - _variant_words
-                if _ctx_words and _ctx_words <= _disp_words:
+                _ctx_segs = {_geo_seg_norm(p) for p in str(_ctx or "").split(",")}
+                _ctx_segs.discard("")
+                _ctx_segs.discard(_variant_seg)
+                if _ctx_segs and _ctx_segs <= _disp_segs:
                     _winners.append(_loc)
-            if len(_winners) != 1:
-                continue
-            loc = _winners[0]
+                    _win_ctxs.append(_ctx)
+            _uniq = list(dict.fromkeys(_winners))
+            if len(_uniq) == 1:
+                loc = _uniq[0]
+                _win_ctx = _win_ctxs[_winners.index(_uniq[0])]
+            elif not _winners and len(_disp_segs) == 1:
+                # fix440-merge：无逗号的整串（生产 _join_nonempty 以空格
+                # 拼的 "Country B Example"）只有一个分段，分段子集永不
+                # 命中，多候选恒无法消歧（r4b3 回归：城市不译）。退到短
+                # 语包含：上下文词串须以词界出现在整串中，且位于串首或
+                # 紧贴变体之后——"X West Virginia" 的 Virginia 前有
+                # West（非变体），不得匹配，防单字边界误判（r1b-3 同款
+                # Virginia/West Virginia 危险）；"Country B"／
+                # "Illinois"（紧贴变体）与串首上下文均可匹配。
+                # fix440 GPT G-010/G-011/G-058：短语回退改为 Unicode
+                # 词表上的两段式。第一段沿用旧的连续短语匹配，但要求
+                # 短语除变体本身外至少含一个信号词（G-010：非 ASCII
+                # 国家名被 ASCII 抽词删光后，不得把“双方国家信息都被
+                # 删掉”当成肯定证据），且短语后紧跟的词须是变体词或
+                # 无后词（G-011："Loma Guinea" 不得匹配 "Loma
+                # Guinea-Bissau" 内的前缀）。第二段（第一段无胜出者
+                # 时）为词序无关匹配：候选的每个信号词都须以整词出现，
+                # 且其相邻词只能是变体词或同候选上下文词（G-058：
+                # "Spain Toledo" 可匹配 "Toledo, Spain"；相邻词规则
+                # 同时守住 F4 的 "West Virginia" 与 G-011 的
+                # "Guinea-Bissau" 两例）。
+                _disp_words = re.findall(r"[^\W_]+", str(_src).lower())
+                _disp_w = " ".join(_disp_words)
+                _var_words = set(re.findall(r"[^\W_]+", variant.lower()))
+                _var_w = " ".join(re.findall(r"[^\W_]+", variant.lower()))
+                for _ctx, _loc in cands:
+                    _ctx_words = re.findall(r"[^\W_]+", str(_ctx or "").lower())
+                    if not _ctx_words:
+                        continue
+                    # G-010：除变体本身外无信号词的候选不得胜出。
+                    if not (set(_ctx_words) - _var_words):
+                        continue
+                    _ctx_w = " ".join(_ctx_words)
+                    _mm = re.search(
+                        r"(?<![^\W_])" + re.escape(_ctx_w)
+                        + r"(?![^\W_])", _disp_w)
+                    if not _mm:
+                        continue
+                    _before = _disp_w[:_mm.start()].strip()
+                    if not _before or _before == _var_w \
+                            or _before.endswith(" " + _var_w):
+                        # G-011：短语后紧跟的词若不是变体词，即该短语
+                        # 只是更长地名的前缀（如 Guinea-Bissau），不算。
+                        _after = _disp_w[_mm.end():].strip()
+                        if _after and _after.split(" ", 1)[0] not in _var_words:
+                            continue
+                        _winners.append(_loc)
+                        _win_ctxs.append(_ctx)
+                _uniq = list(dict.fromkeys(_winners))
+                if len(_uniq) == 1:
+                    loc = _uniq[0]
+                    _win_ctx = _win_ctxs[_winners.index(_uniq[0])]
+                elif not _winners:
+                    for _ctx, _loc in cands:
+                        _ctx_words = re.findall(
+                            r"[^\W_]+", str(_ctx or "").lower())
+                        _sig = set(_ctx_words) - _var_words
+                        if not _sig:
+                            continue
+                        _allowed = _var_words | set(_ctx_words)
+                        _ok = True
+                        for _w in _sig:
+                            _found = False
+                            for _i, _dw in enumerate(_disp_words):
+                                if _dw != _w:
+                                    continue
+                                _prev = _disp_words[_i - 1] if _i > 0 else None
+                                _next = _disp_words[_i + 1] \
+                                    if _i + 1 < len(_disp_words) else None
+                                if (_prev is None or _prev in _allowed) \
+                                        and (_next is None or _next in _allowed):
+                                    _found = True
+                                    break
+                            if not _found:
+                                _ok = False
+                                break
+                        if _ok:
+                            _winners.append(_loc)
+                            _win_ctxs.append(_ctx)
+                    _uniq = list(dict.fromkeys(_winners))
+                    if len(_uniq) == 1:
+                        loc = _uniq[0]
+                        _win_ctx = _win_ctxs[_winners.index(_uniq[0])]
+        # 本变体在原始串中的全部出现（ASCII 用词界正则，非 ASCII 用子串；
+        # fix440b G2：同一变体的全部出现都要替换，旧版只换首次出现）。
         if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
-            m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
-            if m:
-                disp = disp[:m.start()] + loc + disp[m.end():]
-        elif variant in disp:
-            disp = disp.replace(variant, loc, 1)
-    return disp
+            # fix440b G2：同一变体的全部出现都要替换（旧版只换首次出现）。
+            _spans = [(m.start(), m.end()) for m in re.finditer(
+                r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])",
+                _orig)]
+        elif variant in _orig:
+            _spans = []
+            _i = _orig.find(variant)
+            while _i != -1:
+                _spans.append((_i, _i + len(variant)))
+                _i = _orig.find(variant, _i + len(variant))
+        else:
+            _spans = []
+        for _span in _spans:
+            if loc is None:
+                _blocked.append(_span)
+                continue
+            if any(s < _span[1] and _span[0] < e for s, e, _ in _repl) or \
+                    any(s < _span[1] and _span[0] < e for s, e in _blocked):
+                continue
+            _before = _orig[:_span[0]]
+            _mw = re.search(r"([A-Za-z0-9_]+)\s+$", _before)
+            # fix440-merge：前词+变体须是上下文整串的某个逗号分段本身
+            # 或某分段的前缀，才算“更长地名的后半段”；裸子串匹配会把
+            # "Paris and Paris" 的第二个 Paris 误判为 "and Paris" 长名
+            # （fix440b G2），而 "East York"／"New York City" 仍被拦住。
+            if _mw:
+                _phrase = " ".join((_mw.group(1) + " " + variant).lower().split())
+                _segs = [" ".join(p.lower().split())
+                         for p in str(_src).split(",") if p.strip()]
+                if any(s == _phrase or s.startswith(_phrase + " ")
+                       for s in _segs):
+                    # fix440 GPT G-059：前词恰好是胜出候选自己的国家
+                    # （如 "Canada Riverton" 的 Canada）时，这只是
+                    # “国家＋城市”的展示串，不是 East York 类不可拆的
+                    # 长地名，放行替换；否则仍按长名保护拦住。
+                    _pre = _mw.group(1)
+                    _own_country = False
+                    if _win_ctx:
+                        for _seg in str(_win_ctx).split(","):
+                            _seg = _seg.strip()
+                            if not _seg or not _geo_ctx_countries(_seg):
+                                continue
+                            _seg_words = {w.lower() for w in
+                                          re.findall(r"[^\W_]+", _seg)}
+                            if _pre.lower() in _seg_words or \
+                                    _geo_seg_norm(_pre) in _geo_ctx_countries(_seg):
+                                _own_country = True
+                                break
+                    if not _own_country:
+                        _blocked.append(_span)
+                        continue
+            _repl.append((_span[0], _span[1], loc))
+    if not _repl:
+        return disp
+    _out = []
+    _pos = 0
+    for s, e, loc in sorted(_repl):
+        _out.append(_orig[_pos:s])
+        _out.append(loc)
+        _pos = e
+    _out.append(_orig[_pos:])
+    return "".join(_out)
 
 def _loc_region(text, ctx=None):
     """州/省名 -> 界面语言 (任一语言变体先归一到英文再查表; 未收录原样)。
@@ -3392,20 +4214,22 @@ def _loc_region(text, ctx=None):
     格鲁吉亚），不得取美国州译文；ctx 未指明国家/多国歧义时沿用旧行为。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
-    if LANG == "en" or not text:
+    if not text:
         return text
+    if LANG == "en":
+        # fix440a r1b-11：en 界面亦须把本地化州名反查回英文（加利福尼亚州 -> California）。
+        return _ANY_REGION2EN.get(text.strip(), text)
     t = str(text).strip()
     if _GEO_EXTRA.get("lang") == LANG:
-        _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["region"].items() if n == t]
+        _pairs = list(_geo_index("region").get(t, []))
         if ctx is not None and _pairs:
             # GPT-H1：先按上下文过滤再判唯一——多条目同译文时只验首条
             # 会随插入序拒掉有效译文；无匹配条目时不取译文、亦不回落
             # 无上下文静态表（B-06a-2 规则）。注意：仅当确有条目时才
             # 过滤——无条目时沿旧行为退静态表（空 _pairs 提前返回会
             # 截断静态表回落，致 f_city/json_geo/p2a 三支回归失败）。
-            _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
             _pairs = [(c, v) for (c, v) in _pairs
-                      if _geo_ctx_ok(c, t, _ctx_words)]
+                      if _geo_ctx_ok(c, t, ctx)]
             if not _pairs:
                 return text
         _matches = [v for _, v in _pairs]
@@ -3429,8 +4253,76 @@ def _loc_region(text, ctx=None):
 
 
 _CITY_CTX_COUNTRY_ALIASES = {"usa": "US", "us": "US", "u.s.": "US",
-                             "america": "US", "uk": "GB",
+                             "u.s.a.": "US", "america": "US", "uk": "GB",
                              "great britain": "GB"}
+
+
+# fix440a L-03：州/省名 -> 国家码（仅静态表守卫用）。由 _REGION_L10N 英文键分组导出。
+_US_STATES = ("Alabama", "Alaska", "Arizona", "Arkansas", "California",
+              "Colorado", "Connecticut", "Delaware", "Florida", "Georgia",
+              "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas",
+              "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts",
+              "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana",
+              "Nebraska", "Nevada", "New Hampshire", "New Jersey",
+              "New Mexico", "New York", "North Carolina", "North Dakota",
+              "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island",
+              "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah",
+              "Vermont", "Virginia", "Washington", "West Virginia",
+              "Wisconsin", "Wyoming", "District of Columbia")
+_CA_PROVINCES = ("Ontario", "Quebec", "British Columbia", "Alberta",
+                 "Manitoba", "Saskatchewan", "Nova Scotia", "New Brunswick",
+                 "Newfoundland and Labrador", "Prince Edward Island")
+_AU_STATES = ("New South Wales", "Victoria", "Queensland",
+              "Western Australia", "South Australia", "Tasmania",
+              "Northern Territory", "Australian Capital Territory")
+_REGION_HOME = {n: "US" for n in _US_STATES}
+_REGION_HOME.update({n: "CA" for n in _CA_PROVINCES})
+_REGION_HOME.update({n: "AU" for n in _AU_STATES})
+_REGION_HOME.update({"England": "GB", "Scotland": "GB", "Wales": "GB",
+                     "Bavaria": "DE"})
+_US_STATE_ABBR = {"AL": "US", "AK": "US", "AZ": "US", "AR": "US",
+                  "CA": "US", "CO": "US", "CT": "US", "DE": "US",
+                  "FL": "US", "GA": "US", "HI": "US", "ID": "US",
+                  "IL": "US", "IN": "US", "IA": "US", "KS": "US",
+                  "KY": "US", "LA": "US", "ME": "US", "MD": "US",
+                  "MA": "US", "MI": "US", "MN": "US", "MS": "US",
+                  "MO": "US", "MT": "US", "NE": "US", "NV": "US",
+                  "NH": "US", "NJ": "US", "NM": "US", "NY": "US",
+                  "NC": "US", "ND": "US", "OH": "US", "OK": "US",
+                  "OR": "US", "PA": "US", "RI": "US", "SC": "US",
+                  "SD": "US", "TN": "US", "TX": "US", "UT": "US",
+                  "VT": "US", "VA": "US", "WA": "US", "WV": "US",
+                  "WI": "US", "WY": "US", "DC": "US"}
+
+
+# fix440 GPT G-057：跨国共用的州缩写不得当成美国唯一证据——WA 既是
+# Washington（US）也是 Western Australia（AU）；无 country 时返回多值，
+# 调用方按多国处理（归属国在场即不排除），不得只返 {"US"}。
+_AMBIG_STATE_ABBR = {"WA": {"US", "AU"}}
+
+
+def _geo_region_countries(ctx):
+    """上下文串中州/省名指明的国家码集合（fix440a L-03）：分段查 _REGION_HOME
+    （州/省英文名，本地化名先经 _ANY_REGION2EN 归一）与美州缩写表；
+    城市名等无法解析的段忽略。仅用于静态表守卫，不进 _geo_ctx_countries
+    （GP1：自由文本中 VA 不得解析为梵蒂冈国家码；此处 VA 解析为弗吉尼亚
+    州、进而指明美国，是另一条有界路径——州缩写只在守卫内指认国家）。"""
+    codes = set()
+    for tok in str(ctx or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        en = _ANY_REGION2EN.get(t) or t
+        c = _REGION_HOME.get(en)
+        if c is None and len(t) == 2 and t.isascii() and t.isalpha():
+            _amb = _AMBIG_STATE_ABBR.get(t.upper())
+            if _amb is not None:
+                codes.update(_amb)
+                continue
+            c = _US_STATE_ABBR.get(t.upper())
+        if c:
+            codes.add(c)
+    return codes
 
 
 def _city_static_ctx_ok(en, ctx, bare_code=False):
@@ -3447,6 +4339,11 @@ def _city_static_ctx_ok(en, ctx, bare_code=False):
         return True
     codes = _geo_ctx_countries(ctx, bare_code=bare_code)
     if not codes:
+        # fix440a L-03：无国家信息时再看州/省名（Virginia/VA -> US；
+        # Ontario -> CA）——仅 region 上下文、无国家字段时，州名是唯一
+        # 的国家信号；仍无信号时沿用旧行为（返 True）。
+        codes = _geo_region_countries(ctx)
+    if not codes:
         return True
     if len(codes) == 1:
         return next(iter(codes)) == home
@@ -3461,29 +4358,85 @@ def _geo_ctx_countries(stored_ctx, bare_code=False):
     （_CC_EN + 口语别名 + 2 字母代码）；城市/州名等无法解析的段忽略。
     bare_code：仅调用方 country= 这种明确国家字段可用（True）——裸码
     本身就是国家码；缓存上下文的自由文本段禁用（False，默认），否则
-    州缩写 VA 会被误读为梵蒂冈、误拒正确候选（GPT 补丁复审 GP1）。"""
+    州缩写 VA 会被误读为梵蒂冈、误拒正确候选（GPT 补丁复审 GP1）。
+    fix440a：先整串查一次——单个国名本身含逗号时（如 ru 'Бонайре,
+    Синт-Эстатиус и Саба'）分段会切碎它；整串命中即返单码，否则再分段。"""
+    _whole = str(stored_ctx or "").strip().lower()
+    if _whole:
+        _code = _CITY_CTX_COUNTRY_ALIASES.get(_whole) or _CC_EN.get(_whole) \
+            or _CC_LOCAL.get(_whole)
+        if _code:
+            return {_code}
     codes = set()
     for tok in str(stored_ctx or "").split(","):
         t = tok.strip()
         if not t:
             continue
         low = t.lower()
-        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low)
-        if code is None and bare_code and len(t) == 2 and t.isalpha():
+        # fix440a H-01：亦查本地化国名表（_CC_LOCAL，由 _COUNTRY_NAMES 五语表导出）。
+        code = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low) \
+            or _CC_LOCAL.get(low)
+        # fix440a r1b-9：裸码只认 ASCII 2 字母（此前任意 2 字母串含非 ASCII
+        # “未知”亦被当作国家码）；GP1 规则本身不变。
+        if code is None and bare_code and len(t) == 2 and t.isascii() \
+                and t.isalpha():
             code = t.upper()
         if code:
             codes.add(code)
     return codes
 
 
+_REGION_NAMES_LOWER = frozenset(k.lower() for k in _REGION_L10N["zh"])
+
+
 def _geo_cache_country_ok(stored_ctx, code):
     """缓存候选国家检查（G1）：条目上下文无国家信息、或含多国
     （如 Georgia, United States——州名撞国家名，无法判定）时沿用
-    旧行为（返 True）；仅含一国且与给定码不符时返 False。"""
+    旧行为（返 True）；仅含一国且与给定码不符时返 False。
+    fix440a r1b-1：唯一码若仅来自“国家/州同名”分段（如 Georgia 既是
+    国家 GE 又是美国州名），无法判定条目上下文指哪国，亦沿用旧行为。
+    fix440 GPT G-008：两义分段的两种解释都不是目标国家时应拒绝——
+    Georgia 的解释集为 {GE（国家）, US（州归属）}，目标 GR 不在其中
+    即返 False；仅当某一解释与目标兼容时才放行；归属国查不到的
+    两义分段无法穷举解释，仍沿用旧行为。"""
     codes = _geo_ctx_countries(stored_ctx)
     if len(codes) != 1:
         return True
-    return next(iter(codes)) == code
+    _only = next(iter(codes))
+    _possible = {_only}
+    _all_ambig = True
+    _any_code_seg = False
+    _unknown_home = False
+    for tok in str(stored_ctx or "").split(","):
+        t = tok.strip()
+        if not t:
+            continue
+        low = t.lower()
+        _c = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low) \
+            or _CC_LOCAL.get(low)
+        if not _c:
+            continue
+        _any_code_seg = True
+        if low in _REGION_NAMES_LOWER:
+            _en = _ANY_REGION2EN.get(t)
+            if _en is None:
+                _folded = "".join(c for c in unicodedata.normalize("NFKD", t)
+                                  if not unicodedata.combining(c))
+                _en = _ANY_REGION2EN.get(_folded) or t
+            _home = _REGION_HOME.get(_en)
+            if _home:
+                _possible.add(_home)
+            else:
+                _unknown_home = True
+        else:
+            _all_ambig = False
+    if not _any_code_seg:
+        return True
+    if _all_ambig:
+        if _unknown_home:
+            return True
+        return code in _possible
+    return _only == code
 
 
 def _city_ctx_kwargs(region, country):
@@ -3494,7 +4447,10 @@ def _city_ctx_kwargs(region, country):
     守卫须走 country=（bare_code=True）才能认出 "Ontario, CA" 里的
     CA；只给自由文本 ctx 时裸码不可信（GP1），守卫会丢国家信息。
     缓存分支的 country= 过滤用 _geo_cache_country_ok，只剔除上下文
-    明确指名另一国的候选，不误伤州级条目。"""
+    明确指名另一国的候选，不误伤州级条目。
+    fix440a r1b-8：country= 为空串时按缺失处理（不得遮住有效 ctx）。"""
+    if country is not None and not str(country).strip():
+        country = None
     if region and str(region).strip():
         return {"ctx": _join_nonempty(region, country, sep=", "),
                 "country": country}
@@ -3510,26 +4466,46 @@ def _loc_city(text, ctx=None, country=None):
     （GPT-G1：无国家信息/多国歧义时沿用旧行为）。"""
     # H-10: 同 _loc_country_name，入口清洗（回退分支原样返回须是干净串）。
     text = _clean_str(text)
-    if LANG == "en" or not text:
+    if not text:
         return text
     t = str(text).strip()
+    if LANG == "en":
+        # fix440a r1b-11：en 界面把本地化城市名反查回英文（柏林 -> Berlin）。
+        # fix440 GPT G-009：反查前先读明确的国家上下文——与 country/ctx
+        # 冲突的英文映射不得返回（如湖北柏林镇不得返 Berlin）；无可靠
+        # 映射时保留原文。守卫与非英文分支的静态表守卫同款
+        # （_city_static_ctx_ok，归属国未收录时沿用旧行为）。
+        for _cand in (t, "".join(c for c in unicodedata.normalize("NFKD", t)
+                                 if not unicodedata.combining(c))):
+            _en = _ANY_CITY2EN.get(_cand)
+            if _en:
+                if not _city_static_ctx_ok(
+                        _en, country if country is not None else ctx,
+                        bare_code=(country is not None)):
+                    continue
+                return _en
+        return text
+    # fix440a r1b-8：country= 为空串时按缺失处理（不得遮住有效 ctx）。
+    if country is not None and not str(country).strip():
+        country = None
     cands = [t]
     folded = "".join(c for c in unicodedata.normalize("NFKD", t)
                      if not unicodedata.combining(c))
     if folded != t:
         cands.append(folded)
-    _ctx_rejected = False
     for cand in cands:
+        # fix440a r1b-10：拒绝标志按候选拼写分别记——前一拼写（Montréal）
+        # 的缓存拒绝不得泄漏到折叠拼写（Montreal）的静态表回落。
+        _ctx_rejected = False
         if _GEO_EXTRA.get("lang") == LANG:
-            _pairs = [(c, v) for (n, c), v in _GEO_EXTRA["city"].items() if n == cand]
+            _pairs = list(_geo_index("city").get(cand, []))
             if ctx is not None and _pairs:
                 # GPT-H1：同 _loc_region，先按上下文过滤再判唯一；无匹配
                 # 条目时记下后跳过本候选的无上下文静态表回落。仅当确有
                 # 条目时才过滤——无条目时沿旧行为退静态表（见 _loc_region
                 # 同款注记；空 _pairs 提前返回会截断静态表回落）。
-                _ctx_words = set(re.findall(r"[A-Za-z0-9]+", str(ctx).lower()))
                 _pairs = [(c, v) for (c, v) in _pairs
-                          if _geo_ctx_ok(c, cand, _ctx_words)]
+                          if _geo_ctx_ok(c, cand, ctx)]
                 if not _pairs:
                     _ctx_rejected = True
                     continue
@@ -3574,20 +4550,26 @@ def _localize_profile_copy(prof):
     if prof.get("city") or prof.get("region"):
         _jobs = []
         if prof.get("city"):
+            # fix440a r1b-1：城市任务须带国家（否则 ES/US 的 Toledo 任务完全相同，
+            # 在线兜底无法消歧）；region 缺失时 job ctx 为 "城市, 国家"。
             _jobs.append(("city", prof["city"],
                           _join_nonempty(prof.get("city"),
-                                         _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")), sep=", ")))
+                                         _ANY_REGION2EN.get(str(prof.get("region") or "").strip(), prof.get("region")),
+                                         prof.get("country"), sep=", ")))
         if prof.get("region"):
             _jobs.append(("region", prof["region"],
                           _join_nonempty(prof.get("region"), prof.get("country"), sep=", ")))
         _resolve_geo_online(_jobs)
     out = dict(prof)
-    if prof.get("country"):
+    # fix440b F4/r2b-23：按 key 存在守门——国家/州/城市字段为 []/False/{}
+    # 等非字符串时仍须清洗输出为 ""，不得把原值透传进 --json（_loc_* 入口
+    # 均已 _clean_str，见 _loc_country_name H-10 注记）。
+    if "country" in prof:
         out["country"] = _loc_country_name(prof["country"])
-    if prof.get("region"):
+    if "region" in prof:
         # B-06a-2: region 单候选须过国家上下文检查
         out["region"] = _loc_region(prof["region"], ctx=prof.get("country"))
-    if prof.get("city"):
+    if "city" in prof:
         # B-06a-2: city 单候选须过州/省 + 国家上下文检查
         # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
         out["city"] = _loc_city(prof["city"],
@@ -3635,9 +4617,18 @@ class IPWhoIs(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("success", True):
-                return {"ok": False, "err": d.get("message", "query failed")}
-            conn = d.get("connection") or {}
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b r2b-1：success 只认布尔 True——字符串 "false" 是真值，
+            # 旧 `not d.get("success", True)` 会把它当成功；无 success 且无
+            # 国家时亦为空响应，不得标 ok。
+            # fix440g G-064：只认布尔 True——1.0/1 虽 `== 1` 亦非 True，
+            # 不得判成功。
+            _succ = d.get("success", True)
+            if _succ is not True:
+                return {"ok": False, "err": _clean_str(d.get("message")) or "query failed"}
+            # fix440b F1：connection 只认 dict（真值非 dict 不得进 .get()）。
+            conn = _as_dict(d.get("connection"))
             sec = d.get("security") if isinstance(d.get("security"), dict) else {}
 
             def _b(k):
@@ -3647,21 +4638,33 @@ class IPWhoIs(Provider):
                 v = sec.get(k) if k in sec else conn.get(k)
                 return v if isinstance(v, bool) else None
 
+            # fix440g G-015：国家门槛不得丢掉有明确独立证据的响应——
+            # security 任一真旗标、或 ASN/组织可解析时，国家留空保留证据；
+            # 全无证据时仍按空国家失败（r2b-1 空 JSON 口径不变）。
+            _has_evidence = (
+                any(_b(k) is True for k in ("proxy", "hosting", "vpn", "tor"))
+                or _parse_asn(conn.get("asn")) is not None
+                or bool(_clean_str(conn.get("isp")) or _clean_str(conn.get("org"))))
+            if not _valid_country(d.get("country")) and not _has_evidence:
+                return {"ok": False, "err": "empty country"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
             return {
                 "ok": True,
-                "isp": conn.get("isp") or "",
-                "org": conn.get("org") or "",
+                "isp": _clean_str(conn.get("isp")),
+                "org": _clean_str(conn.get("org")),
                 "asn": _parse_asn(conn.get("asn")),
-                "country": d.get("country") or "",
-                "country_code": d.get("country_code") or "",
-                "region": d.get("region") or "",
-                "city": d.get("city") or "",
-                "latitude": d.get("latitude"),
-                "longitude": d.get("longitude"),
+                "country": _clean_str(d.get("country")),
+                "country_code": _clean_str(d.get("country_code")),
+                "region": _clean_str(d.get("region")),
+                "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
                 "timezone": (
-                    d.get("timezone", {}).get("id", "")
+                    _clean_str(d.get("timezone", {}).get("id", ""))
                     if isinstance(d.get("timezone"), dict)
-                    else d.get("timezone", "")
+                    else _clean_str(d.get("timezone", ""))
                 ),
                 "proxy": _b("proxy"),
                 "hosting": _b("hosting"),
@@ -3686,14 +4689,28 @@ class IPInfo(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if "error" in d:
                 return {"ok": False, "err": str(d["error"])[:80]}
-            org = d.get("org", "")
+            # fix440b r2b-1：空 JSON 不得标 ok（无国家即无可用画像）。
+            # fix440b F1：org 只认字符串——int/None 进 .split()/.startswith()
+            # 即抛错丢整源（含有效地理）。
+            org = d.get("org") if isinstance(d.get("org"), str) else ""
+            _asn = _parse_asn(org.split()[0]) if org.startswith("AS") else None
+            # fix440g G-015：国家门槛不得丢掉有明确独立证据的响应——
+            # ASN/组织可解析时国家留空保留证据；全无证据时仍失败。
+            if not _valid_country(d.get("country")) and not org.strip() \
+                    and _asn is None:
+                return {"ok": False, "err": "empty country"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
             return {
                 "ok": True,
                 "org": org,
-                "asn": _parse_asn(org.split()[0]) if org.startswith("AS") else None,
-                "country": d.get("country", ""),
+                "asn": _asn,
+                "country": d.get("country", "") if isinstance(d.get("country"), str) else "",
                 "region": d.get("region", ""),
                 "city": d.get("city", ""),
                 "ts": now_iso(),
@@ -3713,9 +4730,16 @@ class SANSISC(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            ipinfo = d.get("ip") or {}
-            cnt_raw = ipinfo.get("count")
-            count = int(cnt_raw) if cnt_raw not in (None, "") else None
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1/r2b-1：ip 只认非空 dict；空对象/null 不得标 ok
+            #（attack_count None 的空壳结果）。
+            ipinfo = _as_dict(d.get("ip"))
+            if not ipinfo:
+                return {"ok": False, "err": "missing ip field"}
+            # fix440b F8a/r2b-3：count 严格转非负整数——"abc" 不得抛错丢整
+            # 源（落 None 保其余字段），bool/小数/负数不得当计数。
+            count = _safe_nonneg_int(ipinfo.get("count"))
             return {
                 "ok": True,
                 "attack_count": count,
@@ -3740,13 +4764,16 @@ class GreyNoise(Provider):
         ok, raw = http_get(f"https://api.greynoise.io/v3/community/{_q_ip(ip)}", use_cache=True)
         if not ok:
             # http_get 的 HTTP 错误格式固定为 "HTTP {code}: ..."（见 http_get）
-            # 404 表示该 IP 未被观测到扫描，视为非噪音（正常）
+            # fix440b r2b-4：404 只表示“未观测到”，不是“已查明干净”——
+            # noise/riot 一律返 None（未知）并标 unobserved，不得以确定
+            # False 否定（网关 404 与未观测 404 在响应层面无法区分）。
             if raw.startswith("HTTP 404:"):
                 return {
                     "ok": True,
-                    "noise": False,
-                    "riot": False,
+                    "noise": None,
+                    "riot": None,
                     "classification": "",
+                    "unobserved": True,
                     "ts": now_iso(),
                 }
             return {"ok": False, "err": raw}
@@ -3754,6 +4781,9 @@ class GreyNoise(Provider):
             d = json.loads(raw)
             if not isinstance(d, dict) or "noise" not in d or "riot" not in d:
                 return {"ok": False, "err": "missing noise/riot field"}
+            # fix440b r2b-2：响应自带 ip 字段时须与查询 IP 一致。
+            if not _resp_ip_ok(d, ip):
+                return {"ok": False, "err": "ip mismatch"}
             # F08: 契约规定 JSON 布尔值; 必要字段类型无效 (如 null/
             # 字符串 "false") 即返 ok=False, 未知不得当否定。
             if not isinstance(d.get("noise"), bool) or not isinstance(d.get("riot"), bool):
@@ -3858,12 +4888,16 @@ class ProxyCheck(Provider):
             _positive = any(f is True for f in
                             (_proxy, _vpn, _tor, _hosting, _scraper,
                              _compromised))
-            try:
-                _risk = int(det["risk"]) if det.get("risk") is not None else None
-            except (TypeError, ValueError, OverflowError):
-                # inf（如 JSON 1e309）致 int() OverflowError：risk 未知，
-                # 其余字段继续返回，不丢整源（F05）。
+            # fix440b F6/r3-13：risk 只认数值（与 _clamp_score 同口径）——
+            # 数字串/布尔值一律返 None（未知），不得 int() 裸转（"85"→85、
+            # True→1、False→0）；浮点截断为整值后再钳制。
+            _rv = det.get("risk")
+            if isinstance(_rv, bool):
                 _risk = None
+            else:
+                _risk = _clamp_score(_rv)
+                if _risk is not None:
+                    _risk = int(_risk)
             # R4-H-04：风险分钳制到 [0, 100]（150 只溢出进度条，不崩溃）。
             if _risk is not None:
                 _risk = max(0, min(100, _risk))
@@ -3915,8 +4949,9 @@ class DBIP(Provider):
                 "ok": True,
                 "country": _cn.strip(),
                 "country_code": _clean_str(d.get("countryCode")),
-                "state": d.get("stateProv") or "",
-                "city": d.get("city") or "",
+                # fix440b F4：自由文本只认字符串，非字符串一律清为空串。
+                "state": _clean_str(d.get("stateProv")),
+                "city": _clean_str(d.get("city")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -3929,13 +4964,31 @@ class FreeIPAPI(Provider):
     name = "freeipapi"
 
     def check(self, ip):
-        ok, raw = http_get(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
-        if not ok:
-            ok, raw = http_get(f"https://freeipapi.com/api/json/{_q_ip(ip)}", use_cache=False)
-        if not ok:
-            return {"ok": False, "err": raw}
+        # fix440b r3-8：主端点“请求失败”才回退不够——成功但正文不可用
+        #（非 JSON / 空对象）时同样回退备用端点；两端皆不可用才失败。
+        def _fetch(url):
+            # fix440g G-060：回退不得抹掉已知 HTTP 错因——请求失败返
+            # (None, 原文)，正文不可用返 (None, None)，由调用方定夺。
+            ok, raw = http_get(url, use_cache=False)
+            if not ok:
+                return None, raw
+            try:
+                d = json.loads(raw)
+            except Exception:
+                return None, None
+            return (d if isinstance(d, dict) and d else None), None
+
+        d, _err1 = _fetch(f"https://free.freeipapi.com/api/json/{_q_ip(ip)}")
+        if d is None:
+            d, _err2 = _fetch(f"https://freeipapi.com/api/json/{_q_ip(ip)}")
+        if d is None:
+            # 两端皆不可用：优先保留备用端点的已知 HTTP 错因（如 429），
+            # 其次主端点的；皆无已知错因时才报正文不可用。
+            for _e in (_err2, _err1):
+                if isinstance(_e, str) and _e.startswith("HTTP "):
+                    return {"ok": False, "err": _e[:80]}
+            return {"ok": False, "err": "unusable response"}
         try:
-            d = json.loads(raw)
             raw_asn = d.get("asn")
             if isinstance(raw_asn, dict):
                 asn_val = str(raw_asn.get("asn", ""))
@@ -3944,14 +4997,18 @@ class FreeIPAPI(Provider):
             else:
                 asn_val = ""
             _cn = d.get("countryName")
-            if not isinstance(_cn, str) or not _cn.strip():
+            _proxy = _strict_bool(d.get("isProxy"))
+            # fix440b F3/r3-4：国家只认非空字符串；但国家缺失时若有明确
+            # 风险旗标（isProxy 真），整源不得丢弃——返 ok True 保旗标，
+            # 国家留空；无旗标时仍按空国家失败。
+            if not _valid_country(_cn) and _proxy is not True:
                 return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "proxy": _strict_bool(d.get("isProxy")),
-                "country": _cn.strip(),
+                "proxy": _proxy,
+                "country": _cn.strip() if _valid_country(_cn) else "",
                 "country_code": _clean_str(d.get("countryCode")),
-                "city": d.get("cityName", ""),
+                "city": _clean_str(d.get("cityName")),
                 "asn": _parse_asn(asn_val),
                 "ts": now_iso(),
             }
@@ -3985,11 +5042,13 @@ class ShodanInternetDB(Provider):
                 return {"ok": False, "err": str(d["error"])[:80]}
             return {
                 "ok": True,
-                "ports": d.get("ports") if isinstance(d.get("ports"), list) else [],
-                "vulns": d.get("vulns") if isinstance(d.get("vulns"), list) else [],
-                "tags": d.get("tags") if isinstance(d.get("tags"), list) else [],
-                "hostnames": d.get("hostnames") if isinstance(d.get("hostnames"), list) else [],
-                "cpes": d.get("cpes") if isinstance(d.get("cpes"), list) else [],
+                # fix440b r3-3：缺失字段是“未知”，不是“已查明为空”——未返回
+                # 的列表一律返 None（404 分支的 [] + no_data 标记不受影响）。
+                "ports": d.get("ports") if isinstance(d.get("ports"), list) else None,
+                "vulns": d.get("vulns") if isinstance(d.get("vulns"), list) else None,
+                "tags": d.get("tags") if isinstance(d.get("tags"), list) else None,
+                "hostnames": d.get("hostnames") if isinstance(d.get("hostnames"), list) else None,
+                "cpes": d.get("cpes") if isinstance(d.get("cpes"), list) else None,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4030,7 +5089,13 @@ class FeodoTracker(Provider):
         )
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        return {"ok": True, "listed": str(ip) in lst, "ts": now_iso()}
+        # fix440b F5：查询侧须与解析期同口径规范化——展开式 IPv6 字符串
+        # 与名单内压缩式失配会漏报。
+        try:
+            _nip = str(ipaddress.ip_address(str(ip)))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        return {"ok": True, "listed": _nip in lst, "ts": now_iso()}
 
 
 @register
@@ -4061,7 +5126,12 @@ class EmergingThreats(Provider):
         )
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        return {"ok": True, "listed": str(ip) in lst, "ts": now_iso()}
+        # fix440b F5：同 Feodo，查询侧规范化（名单解析期已规范化）。
+        try:
+            _nip = str(ipaddress.ip_address(str(ip)))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        return {"ok": True, "listed": _nip in lst, "ts": now_iso()}
 
 
 @register
@@ -4090,7 +5160,12 @@ class TorExitNodes(Provider):
         )
         if lst is None:
             return {"ok": False, "err": "list download failed"}
-        return {"ok": True, "is_tor_exit": str(ip) in lst, "ts": now_iso()}
+        # fix440b F5：同 Feodo，查询侧规范化（名单解析期已规范化）。
+        try:
+            _nip = str(ipaddress.ip_address(str(ip)))
+        except ValueError:
+            return {"ok": False, "err": "bad ip"}
+        return {"ok": True, "is_tor_exit": _nip in lst, "ts": now_iso()}
 
 @register
 class IPWhoisApp(Provider):
@@ -4104,20 +5179,28 @@ class IPWhoisApp(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("success"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440g G-064：success 只认布尔 True——"false" 等非空
+            # 字符串为真值，不得判成功；缺失亦失败（旧口径不变）。
+            if d.get("success") is not True:
                 return {"ok": False, "err": "query unsuccessful"}
+            # fix440b F3：国家只认非空字符串。
+            if not _valid_country(d.get("country")):
+                return {"ok": False, "err": "empty country"}
             return {
                 "ok": True,
-                "isp": d.get("isp", ""),
-                "org": d.get("org", ""),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "isp": _clean_str(d.get("isp")),
+                "org": _clean_str(d.get("org")),
                 "asn": _parse_asn(d.get("asn")),
-                "country": d.get("country", ""),
-                "country_code": d.get("country_code", ""),
-                "region": d.get("region", ""),
-                "city": d.get("city", ""),
-                "latitude": d.get("latitude"),
-                "longitude": d.get("longitude"),
-                "timezone": d.get("timezone", ""),
+                "country": _clean_str(d.get("country")),
+                "country_code": _clean_str(d.get("country_code")),
+                "region": _clean_str(d.get("region")),
+                "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
+                "timezone": _clean_str(d.get("timezone")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4142,26 +5225,55 @@ class IPApiIs(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
-            if not d.get("country"):
+            # fix440g G-016：国家与网络身份须能读嵌套记录——
+            # location.country/country_code、asn.asn/asn.org、company.name；
+            # 扁平字段仍作回退（老格式不变）。
+            loc = _as_dict(d.get("location"))
+            _country = loc.get("country") or d.get("country")
+            _country_code = loc.get("country_code") or d.get("country_code") or ""
+            # fix440b F3：国家只认非空字符串。
+            if not _valid_country(_country):
                 return {"ok": False, "err": "empty country"}
-            asn_raw = str(d.get("asn") or "").strip()
-            company = d.get("company") or ""
-            if not isinstance(company, str):
+            _asn_field = d.get("asn")
+            if isinstance(_asn_field, dict):
+                _asn_num = _asn_field.get("asn")
+                _asn_org = _asn_field.get("org")
+                asn_raw = ((str(_asn_num) + " " + str(_asn_org)).strip()
+                           if _asn_num is not None
+                           else str(_asn_org or "").strip())
+            elif _asn_field is not None:
+                asn_raw = str(_asn_field).strip()
+            else:
+                asn_raw = ""
+            _company_field = d.get("company")
+            if isinstance(_company_field, dict):
+                company = _company_field.get("name") \
+                    if isinstance(_company_field.get("name"), str) else ""
+            elif isinstance(_company_field, str):
+                company = _company_field
+            else:
                 company = ""
+            # fix440b r3-10：org 只认公司名，或 ASN 后带的名字段；裸 ASN
+            # 编号本身不是组织名，不得填进 org。
+            _org = company
+            if not _org and " " in asn_raw:
+                _org = asn_raw.split(" ", 1)[-1].strip()
             return {
                 "ok": True,
                 "isp": company,
-                "org": company or asn_raw.split(" ", 1)[-1],
+                "org": _org,
                 "asn": _parse_asn(asn_raw.split()[0]) if asn_raw else None,
-                "country": d.get("country", ""),
-                "country_code": "",
-                "region": d.get("region", ""),
-                "city": d.get("city", ""),
-                "latitude": d.get("lat"),
-                "longitude": d.get("lon"),
-                "timezone": d.get("timezone", ""),
+                "country": _clean_str(_country),
+                "country_code": _clean_str(_country_code),
+                "region": _clean_str(d.get("region")),
+                "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("lat"), -90, 90),
+                "longitude": _clean_coord(d.get("lon"), -180, 180),
+                "timezone": _clean_str(d.get("timezone")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4180,24 +5292,29 @@ class IPGuide(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            net = d.get("network") or {}
-            asys = net.get("autonomous_system") or {}
-            loc = d.get("location") or {}
-            if not (d.get("location") or {}).get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            net = _as_dict(d.get("network"))
+            asys = _as_dict(net.get("autonomous_system"))
+            loc = _as_dict(d.get("location"))
+            if not _valid_country(loc.get("country")):
                 return {"ok": False, "err": "empty country"}
+            _isp = _clean_str(asys.get("organization")) or _clean_str(asys.get("name"))
             return {
                 "ok": True,
-                "isp": asys.get("organization") or asys.get("name") or "",
-                "org": asys.get("organization") or asys.get("name") or "",
+                "isp": _isp,
+                "org": _isp,
                 "asn": _parse_asn(asys.get("asn")),
-                "country": loc.get("country", ""),
+                "country": _clean_str(loc.get("country")),
                 "country_code": "",
                 "region": "",
-                "city": loc.get("city") or "",
-                "latitude": loc.get("latitude"),
-                "longitude": loc.get("longitude"),
-                "timezone": loc.get("timezone", ""),
-                "range": net.get("cidr", ""),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "city": _clean_str(loc.get("city")),
+                "latitude": _clean_coord(loc.get("latitude"), -90, 90),
+                "longitude": _clean_coord(loc.get("longitude"), -180, 180),
+                "timezone": _clean_str(loc.get("timezone")),
+                "range": _clean_str(net.get("cidr")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4217,19 +5334,13 @@ class GeoJS(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if d.get("error"):
                 return {"ok": False, "err": str(d.get("error"))[:80]}
-            if not d.get("country"):
+            # fix440b F3：国家只认非空字符串。
+            if not _valid_country(d.get("country")):
                 return {"ok": False, "err": "empty country"}
-
-            def _f(v):
-                # H-10: float('nan')/float('inf')/float('1e309') 不抛错，
-                # 非有限值须在此拦截（否则经画像进 --json 输出裸 NaN/Infinity）。
-                try:
-                    _fv = float(v)
-                except (TypeError, ValueError):
-                    return None
-                return _fv if math.isfinite(_fv) else None
 
             return {
                 "ok": True,
@@ -4240,8 +5351,10 @@ class GeoJS(Provider):
                 "country_code": d.get("country_code", ""),
                 "region": d.get("region") or "",
                 "city": d.get("city") or "",
-                "latitude": _f(d.get("latitude")),
-                "longitude": _f(d.get("longitude")),
+                # fix440b r3-6：经纬度须范围校验（旧 _f 只拦非有限值，
+                # lat 91 / lon 200 照收）；_clean_coord 与 IpapiCo 同口径。
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
                 "timezone": d.get("timezone", ""),
                 "ts": now_iso(),
             }
@@ -4305,29 +5418,45 @@ class IPLocate(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            asn = _as_dict(d.get("asn"))
+            pv = _as_dict(d.get("privacy"))
+            ho = _as_dict(d.get("hosting"))
+            _proxy = _strict_bool(pv.get("is_proxy"))
+            _vpn = _strict_bool(pv.get("is_vpn"))
+            _tor = _strict_bool(pv.get("is_tor"))
+            _hosting = _strict_bool(pv.get("is_hosting"))
+            _abuser = _strict_bool(pv.get("is_abuser"))
+            # fix440g G-017：阳性旗标清单须含本类自己输出的 is_icloud_relay。
+            _icloud = _strict_bool(pv.get("is_icloud_relay"))
+            # fix440b F3/r3-4：国家只认非空字符串；但有明确风险旗标时整源
+            # 不得丢弃——返 ok True 保旗标，国家留空。
+            if not _valid_country(d.get("country")) and not any(
+                    f is True for f in (_proxy, _vpn, _tor, _hosting, _abuser,
+                                        _icloud)):
                 return {"ok": False, "err": "empty response"}
-            asn = d.get("asn") or {}
-            pv = d.get("privacy") or {}
-            ho = d.get("hosting") or {}
             return {
                 "ok": True,
-                "country": d.get("country", ""), "country_code": d.get("country_code", ""),
-                "region": d.get("subdivision", ""), "city": d.get("city", ""),
-                "latitude": d.get("latitude"), "longitude": d.get("longitude"),
-                "timezone": d.get("time_zone", ""),
-                "asn": _parse_asn(asn.get("asn")), "asn_type": asn.get("type", ""),
-                "isp": asn.get("name", ""), "org": asn.get("name", ""),
-                "proxy": _strict_bool(pv.get("is_proxy")),
-                "vpn": _strict_bool(pv.get("is_vpn")),
-                "tor": _strict_bool(pv.get("is_tor")),
-                "hosting": _strict_bool(pv.get("is_hosting")),
-                "is_abuser": _strict_bool(pv.get("is_abuser")),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "country": _clean_str(d.get("country")), "country_code": _clean_str(d.get("country_code")),
+                "region": _clean_str(d.get("subdivision")), "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("latitude"), -90, 90),
+                "longitude": _clean_coord(d.get("longitude"), -180, 180),
+                "timezone": _clean_str(d.get("time_zone")),
+                "asn": _parse_asn(asn.get("asn")), "asn_type": _clean_str(asn.get("type")),
+                "isp": _clean_str(asn.get("name")), "org": _clean_str(asn.get("name")),
+                "proxy": _proxy,
+                "vpn": _vpn,
+                "tor": _tor,
+                "hosting": _hosting,
+                "is_abuser": _abuser,
                 "is_anycast": _strict_bool(d.get("is_anycast")),
                 "is_satellite": _strict_bool(d.get("is_satellite")),
                 "is_icloud_relay": _strict_bool(pv.get("is_icloud_relay")),
-                "cloud_provider": ho.get("provider", ""),
-                "network": ho.get("network") or asn.get("route", ""),
+                "cloud_provider": _clean_str(ho.get("provider")),
+                "network": _clean_str(ho.get("network")) or _clean_str(asn.get("route")),
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4345,23 +5474,36 @@ class IPQuery(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            loc = d.get("location") or {}
-            isp = d.get("isp") or {}
-            risk = d.get("risk") or {}
-            if not loc.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            loc = _as_dict(d.get("location"))
+            isp = _as_dict(d.get("isp"))
+            risk = _as_dict(d.get("risk"))
+            _proxy = _strict_bool(risk.get("is_proxy"))
+            _vpn = _strict_bool(risk.get("is_vpn"))
+            _tor = _strict_bool(risk.get("is_tor"))
+            _dc = _strict_bool(risk.get("is_datacenter"))
+            _mobile = _strict_bool(risk.get("is_mobile"))
+            # fix440b F3/r3-4：国家只认非空字符串；但有明确风险旗标时整源
+            # 不得丢弃——返 ok True 保旗标，国家留空。
+            if not _valid_country(loc.get("country")) and not any(
+                    f is True for f in (_proxy, _vpn, _tor, _dc, _mobile)):
                 return {"ok": False, "err": "empty response"}
             return {
                 "ok": True,
-                "country": loc.get("country", ""), "country_code": loc.get("country_code", ""),
-                "region": loc.get("state", ""), "city": loc.get("city", ""),
-                "latitude": loc.get("latitude"), "longitude": loc.get("longitude"),
-                "timezone": loc.get("timezone", ""),
-                "asn": _parse_asn(isp.get("asn")), "isp": isp.get("isp", ""), "org": isp.get("org", ""),
-                "proxy": _strict_bool(risk.get("is_proxy")),
-                "vpn": _strict_bool(risk.get("is_vpn")),
-                "tor": _strict_bool(risk.get("is_tor")),
-                "datacenter": _strict_bool(risk.get("is_datacenter")),
-                "mobile": _strict_bool(risk.get("is_mobile")),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "country": _clean_str(loc.get("country")), "country_code": _clean_str(loc.get("country_code")),
+                "region": _clean_str(loc.get("state")), "city": _clean_str(loc.get("city")),
+                "latitude": _clean_coord(loc.get("latitude"), -90, 90),
+                "longitude": _clean_coord(loc.get("longitude"), -180, 180),
+                "timezone": _clean_str(loc.get("timezone")),
+                "asn": _parse_asn(isp.get("asn")), "isp": _clean_str(isp.get("isp")), "org": _clean_str(isp.get("org")),
+                "proxy": _proxy,
+                "vpn": _vpn,
+                "tor": _tor,
+                "datacenter": _dc,
+                "mobile": _mobile,
                 # R4-H-04：风险分只认有限数值并钳制到 [0, 100]。
                 "risk_score": _clamp_score(risk.get("risk_score")),
                 "ts": now_iso(),
@@ -4413,17 +5555,25 @@ class TwoIp(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            asn = d.get("asn") or {}
-            if not d.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F1：嵌套对象只认 dict。
+            asn = _as_dict(d.get("asn"))
+            _hosting = _strict_bool(asn.get("hosting"))
+            # fix440b F3/r3-4：国家只认非空字符串；但 hosting 为真时整源
+            # 不得丢弃——返 ok True 保旗标，国家留空。
+            if not _valid_country(d.get("country")) and _hosting is not True:
                 return {"ok": False, "err": "empty response"}
             return {
                 "ok": True,
-                "country": d.get("country", ""), "country_code": d.get("code", ""),
-                "region": d.get("region", ""), "city": d.get("city", ""),
-                "latitude": d.get("lat"), "longitude": d.get("lon"),
-                "timezone": d.get("timezone", ""),
-                "asn": _parse_asn(asn.get("id")), "isp": asn.get("name", ""),
-                "hosting": _strict_bool(asn.get("hosting")),
+                # fix440b F4：自由文本只认字符串；r3-6：经纬度须范围校验。
+                "country": _clean_str(d.get("country")), "country_code": _clean_str(d.get("code")),
+                "region": _clean_str(d.get("region")), "city": _clean_str(d.get("city")),
+                "latitude": _clean_coord(d.get("lat"), -90, 90),
+                "longitude": _clean_coord(d.get("lon"), -180, 180),
+                "timezone": _clean_str(d.get("timezone")),
+                "asn": _parse_asn(asn.get("id")), "isp": _clean_str(asn.get("name")),
+                "hosting": _hosting,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4447,20 +5597,45 @@ class OTX(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
             if "reputation" not in d and "pulse_info" not in d:
                 return {"ok": False, "err": "unexpected response"}
             cloud = ""
-            for v in d.get("validation") or []:
+            # fix440b F1：validation 只认 list，元素只认 dict。
+            for v in d.get("validation") if isinstance(d.get("validation"), list) else []:
+                if not isinstance(v, dict):
+                    continue
                 msg = str(v.get("message", ""))
                 if "provider=" in msg:
                     cloud = msg.split("provider=")[-1].strip()
+            # fix440b F2：reputation/pulses 安全转非负 int——字符串 "10"→10，
+            # 非法值/None/bool/负数落 None，整源不丢；缺失字段亦为 None（r3-3），
+            # 不得补 0 冒充“已查明为零”（_factor_rows 的 (x or 0) 口径仍安全）。
+            _pi = _as_dict(d.get("pulse_info"))
+            # fix440g G-062：错型隔离后、完全没有可用数据的响应不得计成功——
+            # reputation/pulses/云厂商/国家/城市/ASN 全空时整源失败，不得
+            # 仅因 pulse_info 键存在即 ok（缺失字段仍为 None，r3-3 不变）。
+            # fix440-merge：G-062 全空门与 F2 的边界——门只在“无合规期望字段”
+            # 时才触发：reputation 键在位、或 pulse_info 为 dict，即为合规响应
+            # 形态（值非法/None 仍按 F2 落 None、整源不丢）；仅当两者皆无
+            # （如 pulse_info 为 list 错型且无 reputation 键）时，全空才判失败。
+            _rep = _safe_nonneg_int(d["reputation"]) if "reputation" in d else None
+            _pul = _safe_nonneg_int(_pi["count"]) if "count" in _pi else None
+            _country = _clean_str(d.get("country_name"))
+            _city = _clean_str(d.get("city"))
+            _asn = _parse_asn(d.get("asn"))
+            _wellformed = ("reputation" in d) or isinstance(d.get("pulse_info"), dict)
+            if not _wellformed and _rep is None and _pul is None and not cloud \
+                    and not _country and not _city and _asn is None:
+                return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "reputation": d.get("reputation", 0),
-                "pulses": (d.get("pulse_info") or {}).get("count", 0),
+                "reputation": _rep,
+                "pulses": _pul,
                 "cloud_provider": cloud,
-                "country": d.get("country_name", ""), "city": d.get("city", ""),
-                "asn": _parse_asn(d.get("asn")),
+                "country": _country, "city": _city,
+                "asn": _asn,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4477,14 +5652,36 @@ class BlocklistDE(Provider):
         if not ok:
             return {"ok": False, "err": raw}
         try:
-            ma = re.search(r"attacks:\s*(\d+)", raw)
-            mr = re.search(r"reports:\s*(\d+)", raw)
-            if not ma and not mr:
+            # fix440b r3-7：字段名不得误命中 "previous_attacks"（须以行首或
+            # 非单词字符为界），数值须是整数（"1.5" 不得截成 1，值后须跟非
+            # 数字非点号）；缺失字段返 None（r3-3），不得补 0 冒充“已查明为零”。
+            # fix440-merge：实测 live 响应是单行 "attacks: 0<br />reports: 0<br />"
+            #（S2 直取 api.blocklist.de，2026-11-27）——旧 (?m)^...(\d+)\s*$ 要求
+            # 行尾，值后是 "<br />" 故双双失配、整源报 unexpected response；
+            # 改为界＋值后断言，不再要求行尾。
+            # fix440g G-014：上述“界＋断言”仍不是真正的字段边界——
+            # `[^A-Za-z_]` 接受数字（`v2attacks: 91` 抢命中），`(?![\d.])`
+            # 接受 `e`（`1e3` 截成 1）。改为按换行或 <br> 切分字段，再
+            # 要求值完整匹配整数（段首即字段名、段尾即数值末尾）。
+            _attacks = _reports = None
+            for _seg in re.split(r"<br\s*/?>|\r\n|\r|\n", raw):
+                _seg = _seg.strip()
+                if not _seg:
+                    continue
+                _m = re.match(r"attacks:\s*(\d+)$", _seg)
+                if _m:
+                    if _attacks is None:
+                        _attacks = int(_m.group(1))
+                    continue
+                _m = re.match(r"reports:\s*(\d+)$", _seg)
+                if _m and _reports is None:
+                    _reports = int(_m.group(1))
+            if _attacks is None and _reports is None:
                 return {"ok": False, "err": "unexpected response"}
             return {
                 "ok": True,
-                "attacks": int(ma.group(1)) if ma else 0,
-                "reports": int(mr.group(1)) if mr else 0,
+                "attacks": _attacks,
+                "reports": _reports,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4498,17 +5695,39 @@ class RDAP(Provider):
 
     def check(self, ip):
         d = None
+        # fix440b r3-9：区分“端点都查不到”与“端点返回有效 JSON 但无网络
+        # 身份”——前者是查找失败（报末因），后者才报无记录。
+        _last_err = None
+        _saw_json = False
+        # fix440g G-013：起止段须包含查询 IP 才算有效范围——查询地址
+        # 预解析一次供各端点复用（解析失败时退化为旧口径：只验有序）。
+        try:
+            _q_obj = ipaddress.ip_address(ip)
+        except Exception:
+            _q_obj = None
+        # fix440g G-061：两个明确的 404 是否定答复（无记录），不是查询
+        # 故障——仅当全部尝试均为 HTTP 404 时才报无记录；混有超时/不可达/
+        # 无效正文时仍报查找失败。
+        _tries = 0
+        _http_404s = 0
         for base in ("https://rdap.arin.net/registry/ip/",
                      "https://rdap.db.ripe.net/ip/"):
             ok, raw = http_get(base + _q_ip(ip), use_cache=False)
+            _tries += 1
             if not ok:
+                _last_err = raw
+                if isinstance(raw, str) and raw.startswith("HTTP 404:"):
+                    _http_404s += 1
                 continue
             try:
                 cand = json.loads(raw)
             except Exception:
+                _last_err = "invalid response"
                 continue
             if not isinstance(cand, dict):
+                _last_err = "invalid response"
                 continue
+            _saw_json = True
             _ents = cand.get("entities")
             if _ents is not None and not isinstance(_ents, list):
                 continue
@@ -4519,9 +5738,28 @@ class RDAP(Provider):
             # 或空白名（如 "   "）均视为无名，不得截断端点回退（3-2）。
             _has_name = isinstance(cand.get("name"), str) \
                 and bool(cand.get("name").strip())
-            if not _has_name and not cand.get("cidr0_cidrs"):
+            # fix440b r3-2：只有起止地址的记录同样有效（两端须为合法 IP 且
+            # start<=end），不得以“无 cidr0_cidrs”拒收。
+            # fix440g G-012：起止分属 IPv4/IPv6 时比较抛 TypeError——与
+            # ValueError 同处理（范围无效），不得逃出 check() 丢掉已解析的
+            # name、也不得截断第二端点。
+            # fix440g G-013：仅凭两端有序不得认定 _has_range——起止段还须
+            # 包含查询 IP，否则该端点不作范围证据（无名无 CIDR 时跳过回退）。
+            _has_range = False
+            _sa = cand.get("startAddress")
+            _ea = cand.get("endAddress")
+            if isinstance(_sa, str) and isinstance(_ea, str):
+                try:
+                    _sa_obj = ipaddress.ip_address(_sa)
+                    _ea_obj = ipaddress.ip_address(_ea)
+                    _has_range = _sa_obj <= _ea_obj
+                    if _has_range and _q_obj is not None:
+                        _has_range = _sa_obj <= _q_obj <= _ea_obj
+                except (ValueError, TypeError):
+                    _has_range = False
+            if not _has_name and not cand.get("cidr0_cidrs") and not _has_range:
                 continue  # 空字典/无网络身份：不得截断回退
-            if not _has_name:
+            if not _has_name and not _has_range:
                 # CONF-FIXES-2.2：无名称候选须至少含一个有效 CIDR，否则继续下一基地；
                 # 旧“接受在前、校验在后”会使全无效列表截断回退且 CIDR 留空。
                 _has_valid_cidr = False
@@ -4542,7 +5780,12 @@ class RDAP(Provider):
             d = cand
             break
         if d is None:
-            return {"ok": False, "err": "no rdap record"}
+            if _saw_json:
+                return {"ok": False, "err": "no rdap record"}
+            if _tries and _tries == _http_404s:
+                return {"ok": False, "err": "no rdap record"}
+            return {"ok": False, "err": f"rdap lookup failed: {_last_err}"[:80]
+                    if _last_err else "no rdap record"}
         cidr = ""
         try:
             _ip_obj = ipaddress.ip_address(ip)
@@ -4556,17 +5799,29 @@ class RDAP(Provider):
                 continue
             _cidr = f"{pfx}/{c.get('length')}"
             try:
-                ipaddress.ip_network(_cidr, strict=False)
+                _net = ipaddress.ip_network(_cidr, strict=False)
             except Exception:
                 continue  # 未通过 ip_network 校验的 CIDR 不保存（缺 length 时为 ".../None"）
-            if not cidr:
+            # fix440b r3-1：只有包含目标 IP 的 CIDR 才是目标网段；首个合法
+            # CIDR 不含目标时不得冒充（cidr 留空）。
+            if _ip_obj is not None and _ip_obj in _net:
                 cidr = _cidr
-            if _ip_obj is not None:
+                break
+        if not cidr and _ip_obj is not None:
+            # fix440b r3-2：无 cidr0_cidrs 时用起止地址推导网段。
+            _sa = d.get("startAddress")
+            _ea = d.get("endAddress")
+            if isinstance(_sa, str) and isinstance(_ea, str):
                 try:
-                    if _ip_obj in ipaddress.ip_network(_cidr, strict=False):
-                        cidr = _cidr
-                        break
-                except Exception:
+                    _sa_obj = ipaddress.ip_address(_sa)
+                    _ea_obj = ipaddress.ip_address(_ea)
+                    for _net in ipaddress.summarize_address_range(_sa_obj, _ea_obj):
+                        if _ip_obj in _net:
+                            cidr = str(_net)
+                            break
+                except (ValueError, TypeError):
+                    # fix440g G-012：起止分属 IPv4/IPv6 时汇总亦抛 TypeError，
+                    # 与 ValueError 同处理（推导不出网段，cidr 留空）。
                     pass
         org = ""
         for e in d.get("entities") or []:
@@ -4577,6 +5832,17 @@ class RDAP(Provider):
                 _h = e.get("handle")
                 if isinstance(_h, str) and _h:
                     org = _h
+                    break
+                # fix440b r3-14：无 handle 时从 vCard fn 取注册主体名。
+                _vc = e.get("vcardArray")
+                if isinstance(_vc, list) and len(_vc) == 2 and isinstance(_vc[1], list):
+                    for _prop in _vc[1]:
+                        if (isinstance(_prop, list) and len(_prop) >= 4
+                                and _prop[0] == "fn" and isinstance(_prop[3], str)
+                                and _prop[3].strip()):
+                            org = _prop[3].strip()
+                            break
+                if org:
                     break
         return {
             "ok": True,
@@ -4688,25 +5954,44 @@ class HackerTarget(Provider):
             ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={_q_ip(ip)}",
                                  use_cache=False)
             if ok2:
-                parts = [p.strip() for p in raw2.strip().strip('"').split('","')]
-                if len(parts) >= 4:
-                    asn, prefix, netname = parts[1], parts[2], parts[3]
-            def _f(x):
-                # H-10: 同 GeoJS._f，非有限值拦截（float('1e309') 为 inf 不抛错）。
+                # fix440b F7/r3-12：aslookup 是引号 CSV——含引号的网络名
+                # （"Example ""Labs"""）须按 CSV 转义解析，手工拆 '","' 会
+                # 把名字切碎；字段不足 4 个时仍取已有的 ASN/前缀。
                 try:
-                    _fx = float(x)
-                except (TypeError, ValueError):
-                    return None
-                return _fx if math.isfinite(_fx) else None
-
+                    _parts = next(csv.reader(io.StringIO(raw2.strip())))
+                except Exception:
+                    _parts = []
+                _parts = [p.strip() for p in _parts]
+                if len(_parts) >= 2:
+                    asn = _parts[1]
+                if len(_parts) >= 3:
+                    prefix = _parts[2]
+                if len(_parts) >= 4:
+                    netname = _parts[3]
             def _s(x):
                 return "" if x in (None, "None", "N/A") else x
+            # fix440b r3-6：经纬度须范围校验（旧 _f 只拦非有限值）；
+            # _clean_coord 与 IpapiCo 同口径。
+            _country = _s(kv.get("country", ""))
+            _region = _s(kv.get("state", ""))
+            _city = _s(kv.get("city", ""))
+            _lat = _clean_coord(kv.get("latitude"), -90, 90)
+            _lon = _clean_coord(kv.get("longitude"), -180, 180)
+            _asn = _parse_asn(asn)
+            # fix440b r3-11：国家/州/城市/经纬度/ASN 全空时无可用结果，
+            # 不得标 ok True。
+            # fix440g G-063：空结果判定须计入刚解析成功的有效前缀/网络名——
+            # aslookup 已取得含目标 IP 的前缀与网络名时保留它们，不得仅因
+            # ASN 为空即 empty geo。
+            if not _country and not _region and not _city and _lat is None \
+                    and _lon is None and not _asn and not prefix and not netname:
+                return {"ok": False, "err": "empty geo"}
             return {
                 "ok": True,
-                "country": _s(kv.get("country", "")), "region": _s(kv.get("state", "")),
-                "city": _s(kv.get("city", "")),
-                "latitude": _f(kv.get("latitude")), "longitude": _f(kv.get("longitude")),
-                "asn": _parse_asn(asn), "prefix": prefix, "netname": netname,
+                "country": _country, "region": _region,
+                "city": _city,
+                "latitude": _lat, "longitude": _lon,
+                "asn": _asn, "prefix": prefix, "netname": netname,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -4724,9 +6009,12 @@ class CountryIs(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F3/r3-11：国家码只认去空白后非空的字符串。
+            if not _valid_country(d.get("country")):
                 return {"ok": False, "err": "empty response"}
-            return {"ok": True, "country_code": d.get("country", ""), "ts": now_iso()}
+            return {"ok": True, "country_code": d.get("country").strip(), "ts": now_iso()}
         except Exception as e:
             return {"ok": False, "err": str(e)[:80]}
 
@@ -4928,7 +6216,7 @@ def _build_unified_profile(s, ip=None):
 
 SCORING_RULES = {
     "zh": """
-评分规则 (v4.14.38 免 Key 公开版):
+评分规则 (v4.14.39 免 Key 公开版):
   [威胁行为 0-100] 实际恶意行为证据
     StopForumSpam 垃圾举报命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻击记录 (5 + count//5, 上限25)
@@ -4960,7 +6248,7 @@ SCORING_RULES = {
     主动模式双栈对照: IPv6 出口/泄漏判定/流媒体与测速分栈实测
 """,
     "zh-TW": """
-評分規則 (v4.14.38 免 Key 公開版):
+評分規則 (v4.14.39 免 Key 公開版):
   [威脅行為 0-100] 實際惡意行為證據
     StopForumSpam 垃圾舉報命中 (每次+3, 上限25)
     SANS ISC 蜜罐攻擊記錄 (5 + count//5, 上限25)
@@ -4992,7 +6280,7 @@ SCORING_RULES = {
     主動模式雙棧對照: IPv6 出口/洩漏判定/串流與測速分棧實測
 """,
     "en": """
-Scoring rules (v4.14.38 Keyless Public Edition):
+Scoring rules (v4.14.39 Keyless Public Edition):
   [Threat 0-100] Evidence of malicious behavior
     StopForumSpam abuse hits (+3 each, max 25)
     SANS ISC honeypot attacks (5 + count//5, max 25)
@@ -5025,7 +6313,7 @@ Scoring rules (v4.14.38 Keyless Public Edition):
     Active mode is dual-stack: IPv6 egress/leak check, per-stack streaming & speed
 """,
     "ja": """
-スコアリングルール (v4.14.38 キー不要公開版):
+スコアリングルール (v4.14.39 キー不要公開版):
   [脅威行為 0-100] 悪意ある活動の証拠
     StopForumSpam スパム報告 (+3/件, 最大25)
     SANS ISC ハニーポット攻撃記録 (5 + count//5, 最大25)
@@ -5057,7 +6345,7 @@ Scoring rules (v4.14.38 Keyless Public Edition):
     アクティブモードはデュアルスタック: IPv6出口/リーク判定/ストリーミングと速度をスタック別に実測
 """,
     "ru": """
-Правила оценки (v4.14.38 Публичная версия без ключей):
+Правила оценки (v4.14.39 Публичная версия без ключей):
   [Угрозы 0-100] Доказательства вредоносной активности
     StopForumSpam жалобы (+3 за каждую, макс. 25)
     SANS ISC атаки (5 + count//5, макс. 25)
@@ -5089,7 +6377,7 @@ Scoring rules (v4.14.38 Keyless Public Edition):
     Активный режим — двойной стек: выход IPv6/проверка утечки, стриминг и скорость по стекам
 """,
     "fa": """
-قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.38):
+قوانین امتیازدهی (نسخه عمومی بدون کلید v4.14.39):
   [رفتار تهدید 0-100] شواهد فعالیت مخرب
     StopForumSpam گزارش اسپم (+3 هر مورد، حداکثر 25)
     SANS ISC حملات ثبت‌شده (5 + count//5، حداکثر 25)
@@ -5513,6 +6801,7 @@ def run_passive(ip, json_mode=False):
     total_p = len(avail_providers)
     done_cnt = [0]
     progress_closed = [False]  # 采集超时后迟到进度不再打印
+    _timed_out = [False]  # fix440g G-018：采集超时标记——超时后清行不得再取锁
 
     def _query_one(p):
         try:
@@ -5542,20 +6831,60 @@ def run_passive(ip, json_mode=False):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            with _progress_lock:
-                progress_closed[0] = True
+            # r5a-6：超时处理不得取 _progress_lock——卡住的进度渲染
+            # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
+            # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
+            progress_closed[0] = True
+            _timed_out[0] = True
+            # fix440g G-019：超时后不再换池——旧 r5a-7 换池让每轮超时的
+            # 运行中 worker 各占一个旧池、无上限跨轮累积（shutdown
+            # (wait=False) 只取消排队任务，不停运行中任务）。改为复用
+            # 单池：滞留 worker 总数恒 ≤ max_workers（14），排队 future
+            # 由下方循环 cancel（永不启动）；coordgeo 仍提交在同一 _ex
+            # 上。残留风险：若全部 worker 同时被挂起的 provider 占满，
+            # 后续轮次的快源须等 worker 释放才执行；但排队中从未启动的
+            # 源在下方收尾循环标 skipped、不误标 timeout（g05a case 7），
+            # 误标本身已消除。彻底根治须 provider 侧可取消/超时，此处
+            # 不展开。正常完成时不动池。
+        except KeyboardInterrupt:
+            # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
+            # 后重新抛出（finally 复位进度状态）。
+            for _f in _futs:
+                _f.cancel()
+            raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
-                sources[_p.key] = {"ok": False, "err": "timeout"}
+                # fix440-merge：超时收尾须分三态，不得一律标 timeout——
+                # (1) 已完成但 as_completed 超时前未来得及取回：取真实结果；
+                # (2) 从未启动（池被上一轮挂起的 worker 占满、排队中）：
+                # 标 skipped 而非 timeout（g05a case 7：从未执行的源不得
+                # 误标 timeout），cancel 后永不启动；(3) 运行中未完成：
+                # 仍标 timeout。单池复用（G-019/G-022）的残留风险只剩
+                # 快源须等 worker 释放才执行，误标本身已消除。
+                if _f.done() and not _f.cancelled():
+                    try:
+                        _k2, _v2 = _f.result()
+                        sources[_p.key] = _v2
+                        continue
+                    except Exception:
+                        sources[_p.key] = {"ok": False, "err": "timeout"}
+                        continue
+                if not _f.running():
+                    sources[_p.key] = {"ok": False, "err": "skipped"}
+                else:
+                    sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        with _progress_lock:
-            progress_closed[0] = True
-        # 共享池不 shutdown：复用方持有，关掉即断后续调用
+        # r5a-6：同上，无锁赋值。
+        progress_closed[0] = True
+        # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
-    if not json_mode:
+    # fix440g G-018：超时后清行不得再取 _progress_lock——卡住的进度渲染
+    # 可能正持有它（见上），取锁即把报告卡住；超时轮次直接不清行
+    # （残留进度行仅为 cosmetic），未超时时仍按旧口径持锁清行。
+    if not json_mode and not _timed_out[0]:
         with _progress_lock:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     # OPT-4：画像只读 sources（score_* 亦只读、不写 sources），故 _prof
     # 可前移到评分之前；逆地理随即提交到共享池，与评分/完整度/verdict
@@ -5695,7 +7024,8 @@ def _type_block(t):
 
 
 def _print_streaming_inference(res):
-    s = res["sources"]
+    # L1：print_report 缺 sources 时亦不得在此崩。
+    s = res.get("sources") or {}
     prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
     _section(T("sec_stream_passive"))
     country = prof.get("country", "") or ""
@@ -5827,6 +7157,8 @@ def _print_streaming_inference(res):
     is_korea = _cc_match("north korea", "kp", "dprk", "朝鲜", "朝鮮")
     is_india = _cc_match("india", "in", "印度")
     is_hk = _cc_match("hong kong", "hk", "香港")
+    is_macau = _cc_match("macau", "mo", "澳门", "澳門")
+    is_belarus = _cc_match("belarus", "by", "白俄罗斯", "白俄羅斯")
     is_afghanistan = _cc_match("afghanistan", "af", "阿富汗")
     is_somalia = _cc_match("somalia", "so", "索马里", "索馬里")
     is_uzbekistan = _cc_match("uzbekistan", "uz", "乌兹别克斯坦", "烏茲別克斯坦")
@@ -5849,6 +7181,11 @@ def _print_streaming_inference(res):
 
     # 国家级防火墙与制裁锁区表 (Sources: OONI, Freedom House 2025/2026, OFAC GL D-2 & Syria 2025 Rule, GitHub Blog)
     def _fw_check(service_name):
+        # fix440 r4-7：主动探针 test_chatgpt 按地区屏蔽 HK/MO/BY，
+        # 被动推断须与之一致——同一地区不得一面主动 blocked、一面
+        # 被动高置信可用。
+        if service_name == "ChatGPT" and (is_hk or is_macau or is_belarus):
+            return True
         if is_china_mainland:
             # 中国大陆 GFW: 封锁 16 项境外服务，放行本土 DeepSeek 与直连可用的 GitHub
             return service_name in {
@@ -5926,7 +7263,11 @@ def _print_streaming_inference(res):
         isinstance(_s, dict) and _s.get("ok")
         and (_strict_bool(_s.get("proxy")) is not None
              or _strict_bool(_s.get("vpn")) is not None)
-        for _s in (pc, wi, fp, il, iq))
+        for _s in (pc, wi, fp, il, iq)) or (
+        # fix440 r4-9：x4bvpn.listed 是真实的 VPN 布尔票，须计入——
+        # 它是唯一真实票时也不得因此把 high 置信判为不可达。
+        isinstance(xv, dict) and xv.get("ok")
+        and _strict_bool(xv.get("listed")) is not None)
     _fraud_ok = bool(isinstance(sc, dict) and sc.get("ok")
                      and sc.get("fraud_score") is not None)
     _threat_ok = any(isinstance(_s, dict) and _s.get("ok")
@@ -6009,7 +7350,11 @@ def _print_streaming_inference(res):
             _ip = (T("infer_limit"), "mid")
         elif is_tor or is_tor_exit or is_proxy or is_vpn:
             _ip = (T("infer_limit"), "mid")
-        elif is_dc or is_res:
+        elif is_dc:
+            # fix440 r4-8：宽松分支亦执行机房 IP 置信度上限——机房
+            # 分支封顶 mid，与 _infer_avail 的 cap_mid 口径一致。
+            _ip = _infer_avail(cap_mid=True)
+        elif is_res:
             _ip = _infer_avail()
         else:
             _ip = (T("unknown"), "mid")
@@ -6085,16 +7430,19 @@ def _print_streaming_inference(res):
 def _print_completeness(res):
     """数据完整度与置信度 (报告尾部, 两模式共用)。"""
     _section(T("sec_complete"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
+    c = res.get("completeness") or {}
+    # fix440g G-067：`.get(k, "?")` 只处理缺键——显式 None 亦映射为 "?"，
+    # 但合法的 0 不得被掩盖（须用 `is None` 判别，不用 `or`）。
+    _q = lambda v: "?" if v is None else v
+    print(f"  {T('success_query')}: {_q(c.get('ok', '?'))}/{_q(c.get('total', '?'))} ({_q(c.get('pct', '?'))}%)")
+    if c.get("failed"):
         # 04-01：限流的源加 " (429)" 后缀；04-08：>=2 个源同时限流时
         # 加共享出口配额耗尽提示（不改变评分）。
-        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
     print(f"  {_c(C.dim, T('fail_note'))}")
     if len(c.get("rate_limited") or []) >= 2:
         print(f"  {_c(C.dim, T('rate_limit_hint'))}")
-    print(f"  {T('confidence')}: {c['confidence']}/100")
+    print(f"  {T('confidence')}: {_q(c.get('confidence', '?'))}/100")
 
     print()
     for _dl in T('disclaimer').split("\n"):
@@ -6103,17 +7451,22 @@ def _print_completeness(res):
 
 
 def _print_basic_block(s, prof):
+    # L1：手造/残缺 res 可达——源字典取值 None 或 prof 缺失不得崩。
+    s = s or {}
+    prof = prof or {}
     _section(T("sec_basic"))
-    wi = s.get("ipwhois", {})
-    ii = s.get("ipinfo", {})
-    db = s.get("dbip", {})
+    wi = (s.get("ipwhois") or {})
+    ii = (s.get("ipinfo") or {})
+    db = (s.get("dbip") or {})
     if prof.get("ok"):
         isp_str = prof.get("isp") or "?"
         org_str = prof.get("org") or ""
         _as_sfx = f" (AS{prof['asn']})" if prof.get("asn") else ""
         _isp_disp = isp_str + (f" / {org_str}" if org_str and org_str != isp_str else "")
+        # L9：ISP/org 全量拼接会超 80 列，按显示宽截断（AS 后缀保留）。
+        _isp_disp = _truncate_disp(_isp_disp, max(0, 80 - 2 - _disp_width(T("isp") + ":") - 1 - _disp_width(_as_sfx)))
         print(f"  {_c(C.dim, T('isp') + ':')} {_c(C.bold, _isp_disp)}" + (_c(C.cyan, _as_sfx) if _as_sfx else ""))
-    rs = s.get("ripestat", {})
+    rs = (s.get("ripestat") or {})
     if rs.get("ok"):
         if rs.get("age_years") is not None:
             age = f"{rs['age_years']} {(_ru_plural(rs['age_years'], 'год', 'года', 'лет') if LANG == 'ru' else T('years'))}"
@@ -6124,27 +7477,34 @@ def _print_basic_block(s, prof):
         vis = _strip_cc(rs.get("visibility") or "?")
         first = _strip_cc(rs.get("first_seen") or "?")
         print(f"  {_c(C.dim, 'BGP:')} {_c(C.bold, age)} {_c(C.dim, '|')} {_c(C.dim, T('bgp_visibility') + ':')} {vis} {_c(C.dim, '|')} {_c(C.dim, T('bgp_first') + ':')} {first}")
-    pt = s.get("ptr", {})
+    pt = (s.get("ptr") or {})
     if pt.get("ok"):
         if pt.get("ptr"):
-            fcr = "✓" if pt.get("fcrdns") else "✗"
-            _fc = C.green if pt.get("fcrdns") else C.red
+            # r5a-1：fcrdns 未验证（None/缺失）是“未知”，不得画成红色 ✗
+            # （与已验证不匹配完全相同）；仅严格 False 才画红 ✗。
+            _fcr = _strict_bool(pt.get("fcrdns"))
+            if _fcr is True:
+                fcr, _fc = "✓", C.green
+            elif _fcr is False:
+                fcr, _fc = "✗", C.red
+            else:
+                fcr, _fc = "?", C.yellow
             print(f"  {_c(C.dim, 'PTR')} [{_c(_fc, fcr)}]: {_c(C.bold, pt['ptr'])}")
         else:
             print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('ptr_none'))}")
     else:
         print(f"  {_c(C.dim, 'PTR:')} {_c(C.yellow, T('unverifiable'))}")
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
     if pc.get("ok") and pc.get("range"):
         print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, pc['range'])}")
     else:
-        _rd = s.get("rdap", {})
+        _rd = (s.get("rdap") or {})
         if _rd.get("ok") and _rd.get("cidr"):
             print(f"  {_c(C.dim, T('ip_range') + ':')} {_c(C.bold, _rd['cidr'])}")
 
     # 地理位置组: 国家码徽章排头并列 (位置/时区/坐标/地图/经纬度识别/多源对比)
     # [1.6] 多源位置
-    pc = s.get("proxycheck", {})
+    pc = (s.get("proxycheck") or {})
 
     def _has_loc(*vals):
         # 定位记录判空：按全部展示字段判（省州亦计入），空白字符串视为空，
@@ -6164,39 +7524,39 @@ def _print_basic_block(s, prof):
     if pc.get("ok") and _has_loc(_clean_str(pc.get("country")), _clean_str(pc.get("city"))):
         locs.append(("proxycheck", _join_nonempty(_clean_str(pc.get("country")), _clean_str(pc.get("city"))),
                      _clean_str(pc.get("country")), _clean_str(pc.get("city"))))
-    fp = s.get("freeipapi", {})
+    fp = (s.get("freeipapi") or {})
     if fp.get("ok") and _has_loc(_clean_str(fp.get("country")), _clean_str(fp.get("city"))):
         locs.append(("freeipapi", _join_nonempty(_clean_str(fp.get("country")), _clean_str(fp.get("city"))),
                      _clean_str(fp.get("country")), _clean_str(fp.get("city"))))
-    wap = s.get("ipwhoisapp", {})
+    wap = (s.get("ipwhoisapp") or {})
     if wap.get("ok") and _has_loc(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))):
         locs.append(("ipwhois.app", _join_nonempty(_clean_str(wap.get("country")), _clean_str(wap.get("region")), _clean_str(wap.get("city"))),
                      _clean_str(wap.get("country")), _clean_str(wap.get("city"))))
-    ais = s.get("ipapiis", {})
+    ais = (s.get("ipapiis") or {})
     if ais.get("ok") and _has_loc(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))):
         locs.append(("ipapi.is", _join_nonempty(_clean_str(ais.get("country")), _clean_str(ais.get("region")), _clean_str(ais.get("city"))),
                      _clean_str(ais.get("country")), _clean_str(ais.get("city"))))
-    igd = s.get("ipguide", {})
+    igd = (s.get("ipguide") or {})
     if igd.get("ok") and _has_loc(_clean_str(igd.get("country")), _clean_str(igd.get("city"))):
         locs.append(("ip.guide", _join_nonempty(_clean_str(igd.get("country")), _clean_str(igd.get("city"))),
                      _clean_str(igd.get("country")), _clean_str(igd.get("city"))))
-    ilc = s.get("iplocate", {})
+    ilc = (s.get("iplocate") or {})
     if ilc.get("ok") and _has_loc(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))):
         locs.append(("iplocate.io", _join_nonempty(_clean_str(ilc.get("country")), _clean_str(ilc.get("region")), _clean_str(ilc.get("city"))),
                      _clean_str(ilc.get("country")), _clean_str(ilc.get("city"))))
-    iqc = s.get("ipquery", {})
+    iqc = (s.get("ipquery") or {})
     if iqc.get("ok") and _has_loc(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))):
         locs.append(("ipquery.io", _join_nonempty(_clean_str(iqc.get("country")), _clean_str(iqc.get("region")), _clean_str(iqc.get("city"))),
                      _clean_str(iqc.get("country")), _clean_str(iqc.get("city"))))
-    coc = s.get("ipapico", {})
+    coc = (s.get("ipapico") or {})
     if coc.get("ok") and _has_loc(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))):
         locs.append(("ipapi.co", _join_nonempty(_clean_str(coc.get("country")), _clean_str(coc.get("region")), _clean_str(coc.get("city"))),
                      _clean_str(coc.get("country")), _clean_str(coc.get("city"))))
-    tic = s.get("twoip", {})
+    tic = (s.get("twoip") or {})
     if tic.get("ok") and _has_loc(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))):
         locs.append(("2ip.io", _join_nonempty(_clean_str(tic.get("country")), _clean_str(tic.get("region")), _clean_str(tic.get("city"))),
                      _clean_str(tic.get("country")), _clean_str(tic.get("city"))))
-    gjs = s.get("geojs", {})
+    gjs = (s.get("geojs") or {})
     if gjs.get("ok") and _has_loc(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))):
         locs.append(("GeoJS", _join_nonempty(_clean_str(gjs.get("country")), _clean_str(gjs.get("region")), _clean_str(gjs.get("city"))),
                      _clean_str(gjs.get("country")), _clean_str(gjs.get("city"))))
@@ -6274,7 +7634,10 @@ def _print_basic_block(s, prof):
                 return _CC[txt]
             if txt in _CC_EN:
                 return _CC_EN[txt].lower()
-            txt = re.sub(r"\b(?:sheng|province|city|shi)\b", " ", txt)
+            # r5a-9：不得删独立单词 City——"Union City" 与 "Union"
+            # 是两个城市，删后会错误合并为同一位置组；sheng/province/
+            # shi 仍 strip（"Beijing Shi" 与 "Beijing" 是同一城市）。
+            txt = re.sub(r"\b(?:sheng|province|shi)\b", " ", txt)
             return " ".join(txt.split())
 
         # 求同存异: 相同 (国家, 行政区, 城市) 合并为一行, 不同位置逐行对齐列出
@@ -6292,7 +7655,7 @@ def _print_basic_block(s, prof):
                 _order.append(k)
             _groups[k][1].append(name)
         _order.sort(key=lambda k: -len(_groups[k][1]))
-    _cg = s.get("coordgeo", {})
+    _cg = (s.get("coordgeo") or {})
     _pcc = prof.get("country_code") or ""
     if not _pcc and locs and _order:
         # B-8-4：回退只取与画像国家一致的最大位置组——此前不校验，
@@ -6327,7 +7690,9 @@ def _print_basic_block(s, prof):
     if _has_geo:
         print(f"  {_c(C.bold, _c(C.cyan, T('geo_group')))}")
         if _loc_str:
-            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_str}")
+            # L9：长城市名会撑破 80 列，按显示宽截断。
+            _loc_disp = _truncate_disp(_loc_str, max(0, 80 - 2 - 5 - _disp_width(T("location") + ":") - 1))
+            print(f"  {_fl(_pcc)}{_c(C.dim, T('location') + ':')} {_loc_disp}")
         if prof.get("timezone"):
             print(f"  {_fl(_pcc)}{_c(C.dim, T('timezone') + ':')} {_loc_tz(prof['timezone'])}")
         if prof.get("latitude") is not None and prof.get("longitude") is not None:
@@ -6357,7 +7722,23 @@ def _print_basic_block(s, prof):
                 _disp = _join_nonempty(_f_co_t,
                                        _extra_sub(_f_mid_t, 'region', _disp),
                                        _extra_sub(_f_ci_t, 'city', _disp))
-                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp}{_c(C.dim, ' (' + ', '.join(_names) + ')') if _names else ''}")
+                _names_sfx = (' (' + ', '.join(_names) + ')') if _names else ''
+                # L9：长城市/行政区会撑破 80 列，按显示宽截断。
+                # 后缀本身过长时（多源同组）须先缩后缀、给位置留至少 20 列——
+                # 否则位置预算归零、位置文本被挤到空串，且行宽仍超 80
+                # （7 源同组实测：后缀 73 列，位置全失、行宽 102）。
+                _disp_budget = (80 - 2 - _disp_width(_gf)
+                                - _disp_width(_lbl + ':') - 1
+                                - _disp_width(_names_sfx))
+                if _disp_budget < 20 and _names_sfx:
+                    _names_sfx = _truncate_disp(_names_sfx, max(
+                        0, 80 - 2 - _disp_width(_gf)
+                        - _disp_width(_lbl + ':') - 1 - 20))
+                    _disp_budget = (80 - 2 - _disp_width(_gf)
+                                    - _disp_width(_lbl + ':') - 1
+                                    - _disp_width(_names_sfx))
+                _disp_t = _truncate_disp(_disp, max(0, _disp_budget))
+                print(f"  {_gf}{_c(C.dim, _lbl + ':')} {_disp_t}{_c(C.dim, _names_sfx)}")
         else:
             print(f"  {T('no_loc_data')}")
     elif not locs:
@@ -6372,46 +7753,103 @@ def _factor_rows(s, wi_server, v6=False):
     其余 13 行与 v4 同源（此前 v6 独立维护的 6 行漏了 iplocate/ipquery/2ip/X4BNet/IPsum/blocklist.de/OTX，
     致 v6 因子百分比系统性偏低，如 X4BNet listed 时 VPN 因子误显 0%）。
     Shodan 漏洞不计入恶意列（漏洞暴露≠恶意行为；漏洞证据仍在威胁分与信号区）。"""
+    def _num(v):
+        # r5a-4：数值清洗——数值与数字串转 float；其余返 None。
+        # level "0" 字符串不再直接参与 >= 比较抛 TypeError。
+        if isinstance(v, bool):
+            return None
+        # fix440g G-023：整数不得做浮点有限性检查——math.isfinite 会把
+        # 超大整数转 float 而抛 OverflowError；int 直接返回（比较运算
+        # 本身对任意大整数都安全）。
+        if isinstance(v, int):
+            return v
+        if isinstance(v, float):
+            return v if math.isfinite(v) else None
+        if isinstance(v, str):
+            try:
+                _f = float(v.strip())
+            except (TypeError, ValueError, OverflowError):
+                return None
+            return _f if math.isfinite(_f) else None
+        return None
+
+    def _gt(v, n):
+        # fix440g G-024：数值比较的未知守卫——_num 为 None（字段存在但
+        # 解析失败）时返 None（未知，不计入分母），不得经 `or 0` 变成 False。
+        _n = _num(v)
+        return None if _n is None else _n > n
+
+    def _ge(v, n):
+        _n = _num(v)
+        return None if _n is None else _n >= n
+
+    def _any_pos(*vs):
+        # fix440g G-024（多值版）：任一值 >0 即 True；无正值、但有字段
+        # 存在而解析失败时记未知（None）；缺字段（None）按旧口径不计入
+        # 判定（缺失≠否定，全缺时由调用方守卫先行返 None）。
+        _ns = [_num(v) for v in vs if v is not None]
+        if any(_n is not None and _n > 0 for _n in _ns):
+            return True
+        if any(_n is None for _n in _ns):
+            return None
+        return False
+
     def _h(d, cond):
+        # r5a-4：cond 为值或零参可调用——失败源（ok 非真）不求值即返 None，
+        # 本应跳过的失败源不再因实参求值抛错；cond 为 None 表示判定字段
+        # 缺失（r5a-3），返 None（未知，不计入分母），不得计成否定票。
         if not d.get("ok"):
+            return None
+        if callable(cond):
+            cond = cond()
+        if cond is None:
             return None
         return True if cond else False
 
-    sf = s.get("stopforumspam", {})
-    us = s.get("urlscan", {})
-    sa = s.get("sansisc", {})
-    gn = s.get("greynoise", {})
-    fe = s.get("feodo", {})
-    et = s.get("et_compromised", {})
-    sp = s.get("spamhaus", {})
-    te = s.get("tor_exit", {})
-    pc = s.get("proxycheck", {})
-    wi = s.get("ipwhois", {})
-    fp = s.get("freeipapi", {})
-    il = s.get("iplocate", {})
-    iq = s.get("ipquery", {})
-    ti = s.get("twoip", {})
-    xv = s.get("x4bvpn", {})
-    isum = s.get("ipsum", {})
-    bd = s.get("blocklistde", {})
-    ox = s.get("otx", {})
+    # fix440g G-025：显式为 None 的源须按缺失处理——`s.get(k, {})` 只处理
+    # 缺键，键存在而值为 None 时仍得 None、随后 `.get()` 抛 AttributeError；
+    # 此处归一化后再传矩阵。
+    sf = s.get("stopforumspam") or {}
+    us = s.get("urlscan") or {}
+    sa = s.get("sansisc") or {}
+    gn = s.get("greynoise") or {}
+    fe = s.get("feodo") or {}
+    et = s.get("et_compromised") or {}
+    sp = s.get("spamhaus") or {}
+    te = s.get("tor_exit") or {}
+    pc = s.get("proxycheck") or {}
+    wi = s.get("ipwhois") or {}
+    fp = s.get("freeipapi") or {}
+    il = s.get("iplocate") or {}
+    iq = s.get("ipquery") or {}
+    ti = s.get("twoip") or {}
+    xv = s.get("x4bvpn") or {}
+    isum = s.get("ipsum") or {}
+    bd = s.get("blocklistde") or {}
+    ox = s.get("otx") or {}
     rows = [
         ("StopForumSpam", [None, None, None, None,
                            _h(sf, _sfs_hit(sf)), None]),
         ("urlscan.io", [None, None, None, None, None,
-                        _h(us, (us.get("total") or 0) > 0)]),
+                        _h(us, lambda: None if us.get("total") is None
+                            else _gt(us.get("total"), 0))]),
         ("SANS ISC", [None, None, None, None, None,
                       None if sa.get("attack_count") is None else _h(sa, bool(sa.get("attack_count")))]),
         ("Shodan", [None, None, None, None, None, None]),
         ("GreyNoise", [None, None, None, None, None,
-                       _h(gn, gn.get("classification") == "malicious")]),
+                       _h(gn, lambda: None if gn.get("classification") is None
+                           else gn.get("classification") == "malicious")]),
         ("Feodo", [None, None, None, None,
-                   _h(fe, _strict_bool(fe.get("listed")) is True), None]),
+                   _h(fe, lambda: None if fe.get("listed") is None
+                       else _strict_bool(fe.get("listed")) is True), None]),
         ("EmergingThreats", [None, None, None, None,
-                             _h(et, _strict_bool(et.get("listed")) is True), None]),
+                             _h(et, lambda: None if et.get("listed") is None
+                                 else _strict_bool(et.get("listed")) is True), None]),
         ("Spamhaus DROP", [None, None, None, None,
-                           _h(sp, _strict_bool(sp.get("listed")) is True), None]),
-        ("Tor Exit", [None, None, _h(te, _strict_bool(te.get("is_tor_exit")) is True),
+                           _h(sp, lambda: None if sp.get("listed") is None
+                               else _strict_bool(sp.get("listed")) is True), None]),
+        ("Tor Exit", [None, None, _h(te, lambda: None if te.get("is_tor_exit") is None
+                      else _strict_bool(te.get("is_tor_exit")) is True),
                       None, None, None]),
         ("proxycheck", [
             None if pc.get("proxy") is None else _h(pc, _strict_bool(pc.get("proxy")) is True),
@@ -6447,19 +7885,25 @@ def _factor_rows(s, wi_server, v6=False):
             None, None]),
         ("X4BNet VPN", [
             None,
-            _h(xv, _strict_bool(xv.get("listed")) is True),
+            _h(xv, lambda: None if xv.get("listed") is None
+                else _strict_bool(xv.get("listed")) is True),
             None, None, None, None]),
         ("IPsum", [
             None, None, None, None,
-            _h(isum, (isum.get("level") or 0) >= 2),
+            _h(isum, lambda: None if isum.get("level") is None
+                else _ge(isum.get("level"), 2)),
             None]),
         ("blocklist.de", [
             None, None, None, None,
-            _h(bd, (bd.get("attacks") or 0) > 0 or (bd.get("reports") or 0) > 0),
+            _h(bd, lambda: None if bd.get("attacks") is None
+                and bd.get("reports") is None
+                else _any_pos(bd.get("attacks"), bd.get("reports"))),
             None]),
         ("OTX", [
             None, None, None, None, None,
-            _h(ox, (ox.get("reputation") or 0) > 0 or (ox.get("pulses") or 0) > 0)]),
+            _h(ox, lambda: None if ox.get("reputation") is None
+                and ox.get("pulses") is None
+                else _any_pos(ox.get("reputation"), ox.get("pulses")))]),
     ]
     if v6:
         _v4only = {"StopForumSpam", "urlscan.io", "SANS ISC", "GreyNoise",
@@ -6470,165 +7914,191 @@ def _factor_rows(s, wi_server, v6=False):
 
 def print_report(res, include_streaming_inference=True, sysinfo=None,
                  tail_completeness=True, dns_rec=False, footnote="passive"):
-    _sec_begin()
-    s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    scs = res["scores"]
-    ip = res["ip"]
+    try:
+        _sec_begin()
+        s = res.get("sources") or {}
+        prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
+        scs = res.get("scores") or {}
+        ip = res.get("ip", "?")
 
-    print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-    print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
-    # [1] 基础信息 (支持多源融合兜底)
-    _print_basic_block(s, prof)
-    wi = s.get("ipwhois", {})
+        # [1] 基础信息 (支持多源融合兜底)
+        _print_basic_block(s, prof)
+        wi = (s.get("ipwhois") or {})
 
-    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
+        # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前)
+        if sysinfo:
+            print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
-    _section(T("sec_type"), sub=True)
-    type_sources = []
-    pc = s.get("proxycheck", {})
-    if pc.get("ok") and pc.get("type"):
-        type_sources.append(("proxycheck", pc["type"]))
-    if wi.get("ok"):
-        if wi.get("hosting"):
-            type_sources.append(("ipwho.is", T("dc")))
-        else:
-            dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-            if dc:
-                type_sources.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
+        # [1.5] 类型属性 (第三方原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
+        _section(T("sec_type"), sub=True)
+        type_sources = []
+        pc = (s.get("proxycheck") or {})
+        if pc.get("ok") and pc.get("type"):
+            type_sources.append(("proxycheck", pc["type"]))
+        if wi.get("ok"):
+            # fix440g G-066：逐源文本不得用 Python 真值作肯定/否定判断——
+            # hosting="false" 等非布尔值须按未知处理，不得显示机房；只有
+            # 严格布尔 True 才认机房（False/未知走启发式/未知分支）。
+            if _strict_bool(wi.get("hosting")) is True:
+                type_sources.append(("ipwho.is", T("dc")))
+            else:
+                dc, _ = is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                if dc:
+                    type_sources.append((T("heuristic"), T("dc")))
+                elif is_residential_isp(wi.get("isp", ""), wi.get("org", "")):
+                    type_sources.append((T("heuristic"), T("residential")))
+                else:
+                    type_sources.append((T("heuristic"), T("unknown")))
+        il = (s.get("iplocate") or {})
+        if il.get("ok"):
+            if _strict_bool(il.get("hosting")) is True or il.get("asn_type") == "hosting":
+                type_sources.append(("iplocate.io", T("dc")))
+            elif il.get("asn_type") == "isp":
                 type_sources.append((T("heuristic"), T("residential")))
             else:
-                type_sources.append((T("heuristic"), T("unknown")))
-    il = s.get("iplocate", {})
-    if il.get("ok"):
-        if il.get("hosting") or il.get("asn_type") == "hosting":
-            type_sources.append(("iplocate.io", T("dc")))
-        elif il.get("asn_type") == "isp":
-            type_sources.append((T("heuristic"), T("residential")))
+                type_sources.append(("iplocate.io", T("unknown")))
+        iq = (s.get("ipquery") or {})
+        if iq.get("ok"):
+            if _strict_bool(iq.get("datacenter")) is True:
+                type_sources.append(("ipquery.io", T("dc")))
+            elif _strict_bool(iq.get("mobile")) is True:
+                type_sources.append(("ipquery.io", T("mobile")))
+            else:
+                type_sources.append((T("heuristic"), T("residential")
+                                     if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
+                                     else T("unknown")))
+        if not wi.get("ok") and prof.get("ok"):
+            dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if dc:
+                type_sources.append((T("heuristic"), T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                type_sources.append((T("heuristic"), T("residential")))
+        if type_sources:
+            print("  " + _pad(_truncate_disp(T("database"), 12), 12) + "".join(_pad(_truncate_disp(n, 16), 16) for n, _ in type_sources))
+            cells = []
+            for _, t in type_sources:
+                colored, _ = _type_block(t)
+                # L9：未知长类型名原样进表会超 80 列，按显示宽截断。
+                cells.append(_pad(_truncate_disp(colored, 16), 16))
+            print("  " + _pad(_truncate_disp(T("usage_type"), 12), 12) + "".join(cells))
         else:
-            type_sources.append(("iplocate.io", T("unknown")))
-    iq = s.get("ipquery", {})
-    if iq.get("ok"):
-        if iq.get("datacenter"):
-            type_sources.append(("ipquery.io", T("dc")))
-        elif iq.get("mobile"):
-            type_sources.append(("ipquery.io", T("mobile")))
+            print(f"  {T('no_type_data')}")
+
+        # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
+        _section(T("sec_matrix"))
+
+        _NA = None
+        _Q = "?"
+
+        il = (s.get("iplocate") or {})
+        iq = (s.get("ipquery") or {})
+
+        dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                      if wi.get("ok") else (None, ""))
+        if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+            # r5a-2：源明确给出 hosting  verdict 时以源为准，本地 ISP 启发式
+            # 不得反转它（hosting=False + Amazon 启发式此前误判服务器因子 100%）。
+            dc_w = _strict_bool(wi.get("hosting"))
+        wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
+
+        _rows = _factor_rows(s, wi_server)
+        # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
+        _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                    T("f_blacklist"), T("f_malicious")]
+        _lw = _bar_label_width()
+        for _ci, _fname in enumerate(_factors):
+            _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+            if _decided:
+                _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            else:
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+        # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
+        _section(T("sec_fraud"))
+        sc = (s.get("scamalytics") or {})
+        # fix440g G-020/G-021：行显示、算术与脚注判断共用同一个已归一化的
+        # 可选分数（_opt_score）：缺失/None/字符串分一律为未知（None），
+        # 行印 "—"；缺失综合分时不计算纯净度；真实数值 0 保留。
+        def _dim(_key):
+            _dv = scs.get(_key)
+            if isinstance(_dv, (list, tuple)) and len(_dv):
+                return _opt_score(_dv[0])
+            return None
+
+        _srows = [("Scamalytics",
+                   _opt_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn, _dk in ((T("dim_threat"), "threat"),
+                         (T("dim_fraud"), "fraud"),
+                         (T("dim_reputation"), "reputation"),
+                         (T("dim_platform"), "platform")):
+            _srows.append((_dn, _dim(_dk), ""))
+        _combined = _opt_score(scs.get("combined"))
+        if _combined is not None:
+            _purity = 100 - _combined
+            if _purity >= 85:
+                _pl, _pc = T("purity_best"), C.green
+            elif _purity >= 70:
+                _pl, _pc = T("purity_good"), C.green
+            elif _purity >= 50:
+                _pl, _pc = T("purity_fair"), C.yellow
+            elif _purity >= 30:
+                _pl, _pc = T("purity_poor"), C.yellow
+            else:
+                _pl, _pc = T("purity_bad"), C.red
+            _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
+            _srows.append((T("purity"), _purity, _pl))
         else:
-            type_sources.append((T("heuristic"), T("residential")
-                                 if is_residential_isp(iq.get("isp", ""), iq.get("org", ""))
-                                 else T("unknown")))
-    if not wi.get("ok") and prof.get("ok"):
-        dc, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if dc:
-            type_sources.append((T("heuristic"), T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            type_sources.append((T("heuristic"), T("residential")))
-    if type_sources:
-        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in type_sources))
-        cells = []
-        for _, t in type_sources:
-            colored, _ = _type_block(t)
-            cells.append(_pad(colored, 16))
-        print("  " + _pad(T("usage_type"), 12) + "".join(cells))
-    else:
-        print(f"  {T('no_type_data')}")
+            _srows.append((T("combined"), None, ""))
+            _srows.append((T("purity"), None, ""))
+        _lw3 = _bar_label_width()
+        for _n, _v, _extra in _srows:
+            if _v is None:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            elif _n == T("purity"):
+                print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
+            elif _extra:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
+            else:
+                print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
+        _verdict = res.get("verdict")
+        if _verdict:
+            print(f"  {_pad(T('verdict'), _lw3)}{_c(C.bold, _verdict)}")
+        print(f"  {_c(C.dim, T('purity_note'))}")
+        # fix440g G-021：脚注判断与行显示共用已归一化的平台分（未知时不触发）。
+        _plat = _dim("platform")
+        if _plat is not None and _plat >= 30:
+            print(f"  {_c(C.dim, T('platform_note'))}")
 
-    # [2] 风险因子矩阵 (威胁情报与因子矩阵融合: 源为行, 因子为列, 细节作脚注)
-    _section(T("sec_matrix"))
-
-    _NA = None
-    _Q = "?"
-
-    il = s.get("iplocate", {})
-    iq = s.get("ipquery", {})
-
-    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-                  if wi.get("ok") else (None, ""))
-    if wi.get("ok") and wi.get("hosting"):
-        dc_w = True
-    wi_server = dc_w if wi.get("ok") and dc_w is not None else _Q
-
-    _rows = _factor_rows(s, wi_server)
-    # 按因子聚合为进度条: 占比 = 判「是」源数 / 有判定源数 (未覆盖/失败不计入)
-    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
-                T("f_blacklist"), T("f_malicious")]
-    _lw = _bar_label_width()
-    for _ci, _fname in enumerate(_factors):
-        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
-        if _decided:
-            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
-        else:
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-
-    # [3] 欺诈与维度评分 (与 [2] 同格式: 类别 + 进度条 + 百分比, 逐项并列)
-    _section(T("sec_fraud"))
-    sc = s.get("scamalytics", {})
-    _srows = [("Scamalytics",
-               sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
-    for _dn, _dv in ((T("dim_threat"), scs["threat"]),
-                     (T("dim_fraud"), scs["fraud"]),
-                     (T("dim_reputation"), scs["reputation"]),
-                     (T("dim_platform"), scs["platform"])):
-        _srows.append((_dn, _dv[0], ""))
-    _combined = scs["combined"]
-    _purity = 100 - _combined
-    if _purity >= 85:
-        _pl, _pc = T("purity_best"), C.green
-    elif _purity >= 70:
-        _pl, _pc = T("purity_good"), C.green
-    elif _purity >= 50:
-        _pl, _pc = T("purity_fair"), C.yellow
-    elif _purity >= 30:
-        _pl, _pc = T("purity_poor"), C.yellow
-    else:
-        _pl, _pc = T("purity_bad"), C.red
-    _srows.append((T("combined"), _combined, _risk_bar(_combined)[1]))
-    _srows.append((T("purity"), _purity, _pl))
-    _lw3 = _bar_label_width()
-    for _n, _v, _extra in _srows:
-        if _v is None:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-        elif _n == T("purity"):
-            print(f"  {_pad(_n, _lw3)}[{_good_bar(_v)}] {_v}% {_c(_pc, _extra)}")
-        elif _extra:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}% {_extra}")
-        else:
-            print(f"  {_pad(_n, _lw3)}[{_risk_bar(_v)[0]}] {_v}%")
-    print(f"  {_c(C.dim, T('purity_note'))}")
-    if scs["platform"][0] >= 30:
-        print(f"  {_c(C.dim, T('platform_note'))}")
-
-    if include_streaming_inference:
-        _print_streaming_inference(res)
-    if dns_rec:
-        recommend_dns_for_ip(prof.get("country", ""))
-    if tail_completeness:
-        _print_completeness(res)
-    if include_streaming_inference:
-        _done_txt = "✓ " + T("done")
-        print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
-        if footnote == "proxy_diag":
-            # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
-            # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
-            print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
-        else:
-            print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
-            print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
-    _geo_attr = _geo_attribution(prof)
-    if _geo_attr:
-        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
-        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
-        print(f"  {_c(C.dim, _geo_attr)}")
-    # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
-    # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
-    # 显式恢复 _SEC["on"]=True（计数保留）。
-    _SEC["on"] = False
+        if include_streaming_inference:
+            _print_streaming_inference(res)
+        if dns_rec:
+            recommend_dns_for_ip(prof.get("country", ""))
+        if tail_completeness:
+            _print_completeness(res)
+        if include_streaming_inference:
+            _done_txt = "✓ " + T("done")
+            print(f"\n{_c(C.bold, _c(C.green, _done_txt))}")
+            if footnote == "proxy_diag":
+                # R3-M-17：嵌在代理诊断里的信誉报告，脚注须按主动/被动分支分别打印——
+                # 上方只是被动信誉查询，其余诊断步骤为主动实测，不得印“本模式为被动查询”。
+                print(f"  {_c(C.yellow, _L('※ 上方为出口 IP 的被动信誉查询；代理诊断其余步骤（握手／出口／DNS／延迟／测速）为主动实测', '※ Above is the passive reputation lookup for the egress IP; the other proxy-diagnostic steps (handshake / egress / DNS / latency / speed) are active tests', '※ 上記は出口 IP のパッシブなレピュテーション照会です。プロキシ診断の他の手順（ハンドシェイク／出口／DNS／遅延／速度）はアクティブテストです', '※ Выше — пассивная проверка репутации выходного IP; остальные шаги диагностики прокси (рукопожатие / выход / DNS / задержка / скорость) — активные тесты', '※ بالا، استعلام غیرفعال اعتبار IP خروجی است؛ سایر مراحل تشخیص پروکسی (دست‌دهی／خروج／DNS／تأخیر／سرعت) تست فعال هستند', zhtw='※ 上方為出口 IP 的被動信譽查詢；代理診斷其餘步驟（握手／出口／DNS／延遲／測速）為主動實測'))}")
+            else:
+                print(f"  {_c(C.yellow, _L('※ 本模式为被动查询，不含主动流媒体实测 / 邮局测试', '※ Passive mode: no active streaming/mail tests', '※ 本モードはパッシブクエリであり、アクティブなストリーミング実測・メールテストは含みませんのでご注意ください', '※ Пассивный режим: без активных тестов стриминга и почты', '※ حالت پسیو (غیرفعال): بدون تست فعال استریمینگ/ایمیل', zhtw='※ 本模式為被動查詢，不含主動流媒體實測 / 郵局測試'))}")
+                print(f"  {_c(C.cyan, _L('  如需实测请用 [1] 本机自检', '  Use [1] Self-check for active tests', '  実測するには [1] セルフチェックを使用してください', '  Для активных тестов используйте [1] «Самопроверка»', '  اگر تست فعال می‌خواهید، از [1] خودآزمایی استفاده کنید', zhtw='  如需實測請用 [1] 本機自檢'))}")
+        _geo_attr = _geo_attribution(prof)
+        if _geo_attr:
+            # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+            # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+            print(f"  {_c(C.dim, _geo_attr)}")
+        # R3-M-17：报告出口重置章节编号状态，防 [N] 编号泄漏到后续菜单段落。
+        # 主动流程内（run_active/_run_active6）须在报告后继续编号的，由调用方
+        # 显式恢复 _SEC["on"]=True（计数保留）。
+    finally:
+        _SEC["on"] = False
 
 
 # ============================================================
@@ -6659,6 +8129,7 @@ def run_passive6(ip, json_mode=False):
     total_p = len(avail)
     done_cnt = [0]
     progress_closed = [False]  # 采集超时后迟到进度不再打印（与 run_passive 同口径）
+    _timed_out = [False]  # fix440g G-018：采集超时标记——超时后清行不得再取锁
 
     def _query_one(p):
         try:
@@ -6688,20 +8159,53 @@ def run_passive6(ip, json_mode=False):
                 _k, _v = _f.result()
                 sources[_k] = _v
         except _CFTimeoutError:
-            with _progress_lock:
-                progress_closed[0] = True
+            # r5a-6：超时处理不得取 _progress_lock——卡住的进度渲染
+            # 可能正持有它，取锁即把超时处理本身卡住；单元素列表赋值
+            # 是 GIL 原子的，无锁亦安全（迟到渲染最多多打一行）。
+            progress_closed[0] = True
+            _timed_out[0] = True
+            # fix440g G-022：与 run_passive 的 G-019 同根——超时后不再换池，
+            # 改为复用单池（滞留 worker 总数恒 ≤ max_workers（10），排队
+            # future 由下方循环 cancel）；旧换池每轮留 10 个运行中线程，
+            # 三轮即 30 个。残留风险同 v4（见 run_passive 注释）。
+        except KeyboardInterrupt:
+            # r5a-8：中断后排队查询不得再启动——全部 pending future 取消
+            # 后重新抛出（finally 复位进度状态）。
+            for _f in _futs:
+                _f.cancel()
+            raise
         for _f, _p in _futs.items():
             if _p.key not in sources:
-                sources[_p.key] = {"ok": False, "err": "timeout"}
+                # fix440-merge：超时收尾须分三态，不得一律标 timeout——
+                # (1) 已完成但 as_completed 超时前未来得及取回：取真实结果；
+                # (2) 从未启动（池被上一轮挂起的 worker 占满、排队中）：
+                # 标 skipped 而非 timeout（g05a case 7：从未执行的源不得
+                # 误标 timeout），cancel 后永不启动；(3) 运行中未完成：
+                # 仍标 timeout。单池复用（G-019/G-022）的残留风险只剩
+                # 快源须等 worker 释放才执行，误标本身已消除。
+                if _f.done() and not _f.cancelled():
+                    try:
+                        _k2, _v2 = _f.result()
+                        sources[_p.key] = _v2
+                        continue
+                    except Exception:
+                        sources[_p.key] = {"ok": False, "err": "timeout"}
+                        continue
+                if not _f.running():
+                    sources[_p.key] = {"ok": False, "err": "skipped"}
+                else:
+                    sources[_p.key] = {"ok": False, "err": "timeout"}
                 _f.cancel()
     finally:
-        with _progress_lock:
-            progress_closed[0] = True
-        # 共享池不 shutdown：复用方持有，关掉即断后续调用
+        # r5a-6：同上，无锁赋值。
+        progress_closed[0] = True
+        # 共享池平时不 shutdown（复用方持有）；超时换池见上 r5a-7。
 
-    if not json_mode:
+    # fix440g G-018（v6 同口径）：超时后清行不得再取 _progress_lock，
+    # 超时轮次直接不清行，未超时时仍按旧口径持锁清行。
+    if not json_mode and not _timed_out[0]:
         with _progress_lock:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
 
     total = len(avail)
     ok_count = sum(1 for p in avail if sources.get(p.key, {}).get("ok"))
@@ -6784,11 +8288,13 @@ def run_passive6(ip, json_mode=False):
 def _print_report6_tail(res):
     """[5] 完整度与免责 (L-02: 报告尾巴, 供主动模式末尾打印, 避免中途出现)。"""
     _section(T("sec_complete6"))
-    c = res["completeness"]
-    print(f"  {T('success_query')}: {c['ok']}/{c['total']} ({c['pct']}%)")
-    if c["failed"]:
+    c = res.get("completeness") or {}
+    # fix440g G-067（v6）：同 _print_completeness——显式 None 亦映射为 "?"。
+    _q = lambda v: "?" if v is None else v
+    print(f"  {T('success_query')}: {_q(c.get('ok', '?'))}/{_q(c.get('total', '?'))} ({_q(c.get('pct', '?'))}%)")
+    if c.get("failed"):
         # 04-01 / 04-08（v6）：同 _print_completeness。
-        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c)[:8])}")
+        print(f"  {T('failed_sources')}: {', '.join(_failed_display_names(c))}")
     # O1（上一版）：v6 尾巴与 v4 _print_completeness 同口径，补 [无法核实] 脚注
     # （失败源不计入风险分，不代表干净）；被动 print_report6 与主动
     # 调用方共用此尾巴，一并受益，v4 不动。
@@ -6804,177 +8310,211 @@ def _print_report6_tail(res):
 def print_report6(res, embedded=False, sysinfo=None, tail_completeness=True):
     if not embedded:
         _sec_begin()
-    s = res["sources"]
-    prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
-    ip = res["ip"]
+    try:
+        s = res.get("sources") or {}
+        prof = res.get("profile") or _build_unified_profile(s, ip=res.get("ip"))
+        ip = res.get("ip", "?")
 
-    if not embedded:
-        print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
-        print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res['ts']}")
+        if not embedded:
+            print(f"\n{_c(C.bold, T('title') + f' v{VERSION}')}")
+            print(f"  {_c(C.bold, _c(C.cyan, ip))}  |  {res.get('ts', '?')}")
 
-    _print_basic_block(s, prof)
+        _print_basic_block(s, prof)
 
-    # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
-    if sysinfo:
-        print_system_info(sysinfo[0], sysinfo[1])
+        # 系统信息 (主动模式: 并入 [1], 位于 IP 类型属性之前; 与 print_report 同构)
+        if sysinfo:
+            print_system_info(sysinfo[0], sysinfo[1])
 
-    # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
-    _section(T("sec_type"), sub=True)
-    _ts6 = []
-    _pc6 = s.get("proxycheck", {})
-    if _pc6.get("ok") and _pc6.get("type"):
-        _ts6.append(("proxycheck", _pc6["type"]))
-    _wi6 = s.get("ipwhois", {})
-    if _wi6.get("ok"):
-        if _wi6.get("hosting"):
-            _ts6.append(("ipwho.is", T("dc")))
-        else:
-            _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
-            if _dc6:
-                _ts6.append((T("heuristic"), T("dc")))
-            elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+        # [1.5] 类型属性 (与 v4 同构: 逐源原始判断原样呈现；启发式推断另标 heuristic，不冒充源判)
+        _section(T("sec_type"), sub=True)
+        _ts6 = []
+        _pc6 = (s.get("proxycheck") or {})
+        if _pc6.get("ok") and _pc6.get("type"):
+            _ts6.append(("proxycheck", _pc6["type"]))
+        _wi6 = (s.get("ipwhois") or {})
+        if _wi6.get("ok"):
+            # fix440g G-066：同 v4——hosting 只认严格布尔 True。
+            if _strict_bool(_wi6.get("hosting")) is True:
+                _ts6.append(("ipwho.is", T("dc")))
+            else:
+                _dc6, _ = is_datacenter_heuristic(_wi6.get("isp", ""), _wi6.get("org", ""))
+                if _dc6:
+                    _ts6.append((T("heuristic"), T("dc")))
+                elif is_residential_isp(_wi6.get("isp", ""), _wi6.get("org", "")):
+                    _ts6.append((T("heuristic"), T("residential")))
+                else:
+                    _ts6.append((T("heuristic"), T("unknown")))
+        _il6 = (s.get("iplocate") or {})
+        if _il6.get("ok"):
+            if _strict_bool(_il6.get("hosting")) is True or _il6.get("asn_type") == "hosting":
+                _ts6.append(("iplocate.io", T("dc")))
+            elif _il6.get("asn_type") == "isp":
                 _ts6.append((T("heuristic"), T("residential")))
             else:
-                _ts6.append((T("heuristic"), T("unknown")))
-    _il6 = s.get("iplocate", {})
-    if _il6.get("ok"):
-        if _il6.get("hosting") or _il6.get("asn_type") == "hosting":
-            _ts6.append(("iplocate.io", T("dc")))
-        elif _il6.get("asn_type") == "isp":
-            _ts6.append((T("heuristic"), T("residential")))
+                _ts6.append(("iplocate.io", T("unknown")))
+        _iq6 = (s.get("ipquery") or {})
+        if _iq6.get("ok"):
+            if _strict_bool(_iq6.get("datacenter")) is True:
+                _ts6.append(("ipquery.io", T("dc")))
+            elif _strict_bool(_iq6.get("mobile")) is True:
+                _ts6.append(("ipquery.io", T("mobile")))
+            else:
+                _ts6.append((T("heuristic"), T("residential")
+                             if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
+                             else T("unknown")))
+        if not _wi6.get("ok") and prof.get("ok"):
+            _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
+            if _dc6:
+                _ts6.append((T("heuristic"), T("dc")))
+            elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
+                _ts6.append((T("heuristic"), T("residential")))
+        if _ts6:
+            print("  " + _pad(_truncate_disp(T("database"), 12), 12) + "".join(_pad(_truncate_disp(n, 16), 16) for n, _ in _ts6))
+            _cells6 = []
+            for _, _t in _ts6:
+                _colored6, _ = _type_block(_t)
+                # L9：同 v4，类型单元格按显示宽截断。
+                _cells6.append(_pad(_truncate_disp(_colored6, 16), 16))
+            print("  " + _pad(_truncate_disp(T("usage_type"), 12), 12) + "".join(_cells6))
         else:
-            _ts6.append(("iplocate.io", T("unknown")))
-    _iq6 = s.get("ipquery", {})
-    if _iq6.get("ok"):
-        if _iq6.get("datacenter"):
-            _ts6.append(("ipquery.io", T("dc")))
-        elif _iq6.get("mobile"):
-            _ts6.append(("ipquery.io", T("mobile")))
+            print(f"  {T('no_type_data')}")
+
+        # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
+        _section(T("sec_matrix"))
+        print(f"  {_c(C.dim, T('v6_prefix_note'))}")
+
+        _NA = None
+        pc = (s.get("proxycheck") or {})
+        wi = (s.get("ipwhois") or {})
+        sp = (s.get("spamhaus") or {})
+        sh = (s.get("shodan_idb") or {})
+        dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
+                      if wi.get("ok") else (None, ""))
+        if wi.get("ok") and _strict_bool(wi.get("hosting")) is not None:
+            # r5a-2：同 v4——源 hosting verdict 优先于启发式。
+            dc_w = _strict_bool(wi.get("hosting"))
+        wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
+        _rows = _factor_rows(s, wi_server, v6=True)
+        _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
+                    T("f_blacklist"), T("f_malicious")]
+        _lw = _bar_label_width()
+        for _ci, _fname in enumerate(_factors):
+            _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
+            if _decided:
+                _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            else:
+                print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+
+        # [3] 信誉信号 (逐源透传)
+        _section(T("sec_signals6"))
+        sc = (s.get("scamalytics") or {})
+        if sc.get("ok"):
+            _v = _coerce_score(sc.get("fraud_score"))
+            if _v is None:
+                print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            else:
+                print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
         else:
-            _ts6.append((T("heuristic"), T("residential")
-                         if is_residential_isp(_iq6.get("isp", ""), _iq6.get("org", ""))
-                         else T("unknown")))
-    if not _wi6.get("ok") and prof.get("ok"):
-        _dc6, _ = is_datacenter_heuristic(prof.get("isp", ""), prof.get("org", ""))
-        if _dc6:
-            _ts6.append((T("heuristic"), T("dc")))
-        elif is_residential_isp(prof.get("isp", ""), prof.get("org", "")):
-            _ts6.append((T("heuristic"), T("residential")))
-    if _ts6:
-        print("  " + _pad(T("database"), 12) + "".join(_pad(n, 16) for n, _ in _ts6))
-        _cells6 = []
-        for _, _t in _ts6:
-            _colored6, _ = _type_block(_t)
-            _cells6.append(_pad(_colored6, 16))
-        print("  " + _pad(T("usage_type"), 12) + "".join(_cells6))
-    else:
-        print(f"  {T('no_type_data')}")
-
-    # [2] 因子聚合 (仅 v6 有效源; 前缀粒度)
-    _section(T("sec_matrix"))
-    print(f"  {_c(C.dim, T('v6_prefix_note'))}")
-
-    _NA = None
-    pc = s.get("proxycheck", {})
-    wi = s.get("ipwhois", {})
-    sp = s.get("spamhaus", {})
-    sh = s.get("shodan_idb", {})
-    dc_w, _pat = (is_datacenter_heuristic(wi.get("isp", ""), wi.get("org", ""))
-                  if wi.get("ok") else (None, ""))
-    if wi.get("ok") and wi.get("hosting"):
-        dc_w = True
-    wi_server = dc_w if wi.get("ok") and dc_w is not None else "?"
-    _rows = _factor_rows(s, wi_server, v6=True)
-    _factors = [T("f_proxy"), T("f_vpn"), T("f_tor"), T("f_server"),
-                T("f_blacklist"), T("f_malicious")]
-    _lw = _bar_label_width()
-    for _ci, _fname in enumerate(_factors):
-        _decided = [c[_ci] for _, c in _rows if c[_ci] in (True, False)]
-        if _decided:
-            _pct = round(100 * sum(1 for v in _decided if v) / len(_decided))
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(_pct)[0]}] {_pct}%")
+            print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        if pc.get("ok") and pc.get("risk") is not None:
+            _v = pc.get("risk")
+            print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
         else:
-            print(f"  {_pad(_fname, _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+        _iq6s = (s.get("ipquery") or {})
+        if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
+            _v = _iq6s["risk_score"]
+            print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
+        if sp.get("ok"):
+            # fix440g G-066：listed 三分——True 命中、False 未命中、未知
+            # （None/非布尔）印 "—"，不得把未知显示成绿色未命中。
+            _lst6 = _strict_bool(sp.get("listed"))
+            if _lst6 is True:
+                _lst = _c(C.red, T("v6_listed"))
+            elif _lst6 is False:
+                _lst = _c(C.green, T("v6_not_listed"))
+            else:
+                _lst = _c(C.dim, "—")
+            print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
+        if sh.get("ok"):
+            # fix440g G-065：ports=None（未知）与 ports=[]（已核实为空）
+            # 显示须区分——未知印 "—"，不得与“无”逐字相同。
+            _ports = sh.get("ports")
+            if _ports is None:
+                _ptxt = _c(C.dim, "—")
+            elif _ports:
+                # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
+                # 打印前逐个 _strip_cc，防终端转义注入。
+                _ptxt = ", ".join(_strip_cc(p) for p in _ports)
+            else:
+                _ptxt = T("none")
+            print(f"  {_pad('Shodan', _lw)}{_ptxt}")
 
-    # [3] 信誉信号 (逐源透传)
-    _section(T("sec_signals6"))
-    sc = s.get("scamalytics", {})
-    if sc.get("ok"):
-        _v = sc.get("fraud_score", 0)
-        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(_v)[0]}] {_v} {_c(C.dim, '(' + T('v6_op_est') + ')')}")
-    else:
-        print(f"  {_pad('Scamalytics', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    if pc.get("ok") and pc.get("risk") is not None:
-        _v = pc.get("risk")
-        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(_v)[0]}] {_v}")
-    else:
-        print(f"  {_pad('proxycheck', _lw)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-    _iq6s = s.get("ipquery", {})
-    if _iq6s.get("ok") and _iq6s.get("risk_score") is not None:
-        _v = _iq6s["risk_score"]
-        print(f"  {_pad('ipquery', _lw)}[{_risk_bar(_v)[0]}] {_v}")
-    if sp.get("ok"):
-        _lst = (_c(C.red, T("v6_listed")) if sp.get("listed")
-                else _c(C.green, T("v6_not_listed")))
-        print(f"  {_pad('Spamhaus DROPv6', max(_lw, _disp_width('Spamhaus DROPv6') + 2))}{_lst}")
-    if sh.get("ok"):
-        _ports = sh.get("ports") or []
-        # H-10: 端口元素为上游外部文本（正常为 int；异常形态下可为含转义的串），
-        # 打印前逐个 _strip_cc，防终端转义注入。
-        _ptxt = ", ".join(_strip_cc(p) for p in _ports[:12]) if _ports else T("none")
-        print(f"  {_pad('Shodan', _lw)}{_ptxt}")
+        # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
+        _section(T("sec_fraud"))
+        _scs6 = res.get("scores") or {}
+        # fix440g G-021（v6）：行显示、算术与脚注判断共用同一个已归一化的
+        # 可选分数（_opt_score），与 print_report 同口径。
+        def _dim6(_key):
+            _dv6 = _scs6.get(_key)
+            if isinstance(_dv6, (list, tuple)) and len(_dv6):
+                return _opt_score(_dv6[0])
+            return None
 
-    # [4] 欺诈与维度评分 (与 v4 同公式; 仅计入支持 IPv6 的数据源, 前缀级估计)
-    _section(T("sec_fraud"))
-    _scs6 = res.get("scores") or {}
-    _srows6 = [("Scamalytics",
-                sc.get("fraud_score", 0) if sc.get("ok") else None, "")]
-    for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
-                       (T("dim_reputation"), "reputation"),
-                       (T("dim_platform"), "platform")):
-        _dv6 = _scs6.get(_dk6)
-        _srows6.append((_dn6, _dv6[0] if _dv6 else None, ""))
-    _comb6 = _scs6.get("combined")
-    _pcol6 = C.green
-    if _comb6 is not None:
-        _pur6 = 100 - _comb6
-        if _pur6 >= 85:
-            _pl6, _pcol6 = T("purity_best"), C.green
-        elif _pur6 >= 70:
-            _pl6, _pcol6 = T("purity_good"), C.green
-        elif _pur6 >= 50:
-            _pl6, _pcol6 = T("purity_fair"), C.yellow
-        elif _pur6 >= 30:
-            _pl6, _pcol6 = T("purity_poor"), C.yellow
-        else:
-            _pl6, _pcol6 = T("purity_bad"), C.red
-        _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
-        _srows6.append((T("purity"), _pur6, _pl6))
-    _lw6 = _bar_label_width()
-    for _n6, _v6, _e6 in _srows6:
-        if _v6 is None:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
-        elif _n6 == T("purity"):
-            print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
-        elif _e6:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
-        else:
-            print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
-    print(f"  {_c(C.dim, T('v6_score_note'))}")
-    print(f"  {_c(C.dim, T('purity_note'))}")
-    if (_scs6.get("platform") or (0,))[0] >= 30:
-        print(f"  {_c(C.dim, T('platform_note'))}")
+        _srows6 = [("Scamalytics",
+                    _opt_score(sc.get("fraud_score")) if sc.get("ok") else None, "")]
+        for _dn6, _dk6 in ((T("dim_threat"), "threat"), (T("dim_fraud"), "fraud"),
+                           (T("dim_reputation"), "reputation"),
+                           (T("dim_platform"), "platform")):
+            _srows6.append((_dn6, _dim6(_dk6), ""))
+        _comb6 = _opt_score(_scs6.get("combined"))
+        _pcol6 = C.green
+        if _comb6 is not None:
+            _pur6 = 100 - _comb6
+            if _pur6 >= 85:
+                _pl6, _pcol6 = T("purity_best"), C.green
+            elif _pur6 >= 70:
+                _pl6, _pcol6 = T("purity_good"), C.green
+            elif _pur6 >= 50:
+                _pl6, _pcol6 = T("purity_fair"), C.yellow
+            elif _pur6 >= 30:
+                _pl6, _pcol6 = T("purity_poor"), C.yellow
+            else:
+                _pl6, _pcol6 = T("purity_bad"), C.red
+            _srows6.append((T("combined"), _comb6, _risk_bar(_comb6)[1]))
+            _srows6.append((T("purity"), _pur6, _pl6))
+        _lw6 = _bar_label_width()
+        for _n6, _v6, _e6 in _srows6:
+            if _v6 is None:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(0)[0]}] {_c(C.dim, '—')}")
+            elif _n6 == T("purity"):
+                print(f"  {_pad(_n6, _lw6)}[{_good_bar(_v6)}] {_v6}% {_c(_pcol6, _e6)}")
+            elif _e6:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}% {_e6}")
+            else:
+                print(f"  {_pad(_n6, _lw6)}[{_risk_bar(_v6)[0]}] {_v6}%")
+        _verdict6 = res.get("verdict")
+        if _verdict6:
+            print(f"  {_pad(T('verdict'), _lw6)}{_c(C.bold, _verdict6)}")
+        print(f"  {_c(C.dim, T('v6_score_note'))}")
+        print(f"  {_c(C.dim, T('purity_note'))}")
+        # fix440g G-021（v6）：脚注判断与行显示共用已归一化的平台分。
+        _plat6 = _dim6("platform")
+        if _plat6 is not None and _plat6 >= 30:
+            print(f"  {_c(C.dim, T('platform_note'))}")
 
-    # [5] 完整度
-    if tail_completeness:
-        _print_report6_tail(res)
-    _geo_attr = _geo_attribution(prof)
-    if _geo_attr:
-        # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
-        # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
-        print(f"  {_c(C.dim, _geo_attr)}")
-    # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
-    _SEC["on"] = False
+        # [5] 完整度
+        if tail_completeness:
+            _print_report6_tail(res)
+        _geo_attr = _geo_attribution(prof)
+        if _geo_attr:
+            # 04-04：离线 Geo 数据实际被用到了才署名；来源按缓存 meta 区分
+            # DB-IP Lite（CC BY 4.0）与 RIR 委托统计（G62-L2）。
+            print(f"  {_c(C.dim, _geo_attr)}")
+        # R3-M-17：报告出口重置章节编号状态（与 print_report 同口径）。
+    finally:
+        _SEC["on"] = False
 
 
 def get_egress_ip(budget=None):
@@ -7624,11 +9164,15 @@ _FORCE_STACK = None  # 自检范围覆盖: None=自动/询问, "4"/"6"=仅测该
 _getaddrinfo_sem = threading.BoundedSemaphore(16)
 
 
-def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5):
+def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5,
+                       register=False):
     """带超时的 getaddrinfo: 标准库解析无超时参数, DNS 失联时会无限阻塞;
     放守护线程里等, 超时按解析失败抛 OSError, 不让任何调用方挂死。
     并发 bound: 最多 16 路同时解析 (信号量), 超量调用在同一 timeout
-    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。"""
+    预算内排队, 排不到即按失败返回, 不无限堆积守护线程。
+    r5b-9/O1：缺省不登记横幅 worker——非横幅路径（流媒体探针、代理
+    诊断、DNS 检测、测速）的 DNS 线程不得进横幅等待集，否则横幅
+    join 会等与横幅无关的线程；横幅 opener 仍经 _open_bounded 登记。"""
     _t0 = time.monotonic()
     if not _getaddrinfo_sem.acquire(timeout=timeout):
         raise OSError(f"DNS resolution concurrency limit reached: {host}")
@@ -7649,7 +9193,8 @@ def _getaddrinfo_timed(host, port, family=0, type=socket.SOCK_STREAM, timeout=5)
         _t = threading.Thread(target=_run, daemon=True)
         _t.start()
         _started = True
-        _banner_net_register_worker(_t)
+        if register:
+            _banner_net_register_worker(_t)
         _t.join(max(0.0, timeout - (time.monotonic() - _t0)))
         if _t.is_alive():
             raise OSError(f"DNS resolution timed out: {host}")
@@ -7822,6 +9367,57 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
         _n = total_len if total_len is not None else len(raw)
         return _n >= min(cl, cap)
     return True
+
+
+def _content_length_valid(headers):
+    """Content-Length 头是否合法（fix440 r4-13；G-078）：无头为合法；
+    有头时须为纯 ASCII 数字串且可转为 int，否则非法；重复出现时各值
+    须一致（get_all() 检查，矛盾值不得判完整）。仅判合法性，不核对
+    长度——供读满采样上限的分支使用（上限不得绕过合法性检查）。"""
+    try:
+        if headers is None:
+            return True
+        if hasattr(headers, "get_all"):
+            _vals = headers.get_all("Content-Length")
+            _vals = list(_vals) if _vals is not None else []
+        else:
+            _v = headers.get("Content-Length")
+            _vals = [] if _v is None else [_v]
+    except Exception:
+        return True
+    if not _vals:
+        return True
+    _nums = []
+    for _v in _vals:
+        _v = str(_v).strip()
+        if not (_v.isascii() and _v.isdigit()):
+            return False
+        try:
+            _nums.append(int(_v))
+        except (ValueError, OverflowError):
+            return False
+    return len(set(_nums)) == 1
+
+
+def _decode_body(raw, headers):
+    """按 Content-Type charset 解码正文（fix440 r4-11）：charset 声明
+    非 UTF-8 时（如 utf-16le）按声明解码，否则锁区短语会在 UTF-8
+    解码后消失；无声明／未知 charset／解码失败时回落 UTF-8
+    errors=replace。"""
+    _ct = ""
+    try:
+        _ct = str((headers or {}).get("content-type", "") or "")
+    except Exception:
+        _ct = ""
+    _m = re.search(r"(?:^|;)\s*charset\s*=\s*\"?([^\";\s]+)\"?", _ct,
+                   re.IGNORECASE)  # G-079：须按完整参数名读取——
+    # "x-charset" 的后半段不得被命中（参数须以 ; 或串首为界）。
+    if _m:
+        try:
+            return raw.decode(_m.group(1).strip(), errors="replace")
+        except Exception:
+            pass
+    return raw.decode("utf-8", errors="replace")
 
 
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
@@ -8021,7 +9617,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
 
         def _partial():
             # 已读到的部分正文（解压后）：HTTPError 三处早返时保留挑战页特征。
-            return b"".join(_st["out"]).decode("utf-8", errors="replace")
+            return _decode_body(b"".join(_st["out"]), _hdrs)
 
         _comp_read = 0
         _hit_cap = False
@@ -8030,7 +9626,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if _remain <= 0:
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, "read deadline exceeded", "", False, {}
+                # fix440 r4-12：读超时亦保留已取的最终 URL 与响应头——
+                # URL 锁区证据独立于正文，不得因读体失败清掉。
+                return None, "read deadline exceeded", _loc, False, _hdrs
             try:
                 _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
             except http.client.IncompleteRead as e:
@@ -8040,13 +9638,13 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             except Exception as e:
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, str(e)[:100], "", False, {}
+                return None, str(e)[:100], _loc, False, _hdrs
             if _chunk is None:
                 # M-04：读超时即整体失败（code None），与旧单次读行为一致；
                 # HTTPError 响应保留状态码与已读正文（挑战页特征不丢）。
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, "read deadline exceeded", "", False, {}
+                return None, "read deadline exceeded", _loc, False, _hdrs
             if not _chunk:
                 _st["eof"] = True
                 break  # 干净 EOF
@@ -8080,7 +9678,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         if _st["trunc"]:
             _complete = False
         elif _hit_cap or _st["n"] >= _STREAM_CAP:
-            _complete = True  # 干净读满本地采样上限，不是失败
+            # 干净读满本地采样上限，不是失败；但 Content-Length 非法时
+            # 仍不完整——采样上限不得绕过 CL 合法性检查（fix440 r4-13）。
+            _complete = _content_length_valid(getattr(r, "headers", None))
         elif _gz["obj"] is not None:
             # 压缩分支：末成员须完整结束、无残留未喂字节，且按压缩传输
             # 字节数核对 CL（H-02：gzip 分支此前完全不核 CL）。
@@ -8095,7 +9695,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             # 用旧语义（干净 EOF 或达 cap 即完整）。
             _complete = (False if _gz["kind"] == "deflate"
                          else _resp_complete(_raw, getattr(r, "headers", None)))
-        return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
+        return _status, _decode_body(_raw, _hdrs), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
         try:
@@ -8108,27 +9708,64 @@ _unlock_cache = {}
 _unlock_lock = threading.Lock()
 
 
+_TWO_LABEL_PUBLIC_SUFFIXES = frozenset({
+    # 常见双段公共后缀（fix440 r4-5）：末两段比较会把共享此类后缀的
+    # 不同注册域当成同一域，须先剥到注册域再比较。
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "co.jp", "co.kr", "com.au",
+    "net.au", "org.au", "co.nz", "com.br", "com.cn", "net.cn", "org.cn",
+    "co.in", "com.mx", "com.ar", "com.tr", "co.za", "com.tw", "co.il",
+})
+
+
+def _reg_domain(name):
+    """取注册域（fix440 r4-5）：末两段为公共后缀时取末三段，否则取
+    末两段；不足两段时取全名。"""
+    _n = (name or "").strip().rstrip(".").lower()
+    if not _n:
+        return ""
+    _parts = _n.split(".")
+    if len(_parts) <= 2:
+        return _n
+    if ".".join(_parts[-2:]) in _TWO_LABEL_PUBLIC_SUFFIXES:
+        return ".".join(_parts[-3:]) if len(_parts) >= 3 else _n
+    return ".".join(_parts[-2:])
+
+
+def _cnames_share_reg_domain(sys_cnames, pub_cnames):
+    """两路 CNAME 是否共享同一注册域（fix440 r4-5）：比较注册域，
+    不是末两段——edge.alpha.co.uk 与 edge.beta.co.uk 注册域不同，
+    不算共享；a1.cloudfront.net 与 a2.cloudfront.net 共享。"""
+    if not sys_cnames or not pub_cnames:
+        return False
+    _sys = {_reg_domain(c) for c in sys_cnames if c}
+    _pub = {_reg_domain(c) for c in pub_cnames if c}
+    _sys.discard("")
+    _pub.discard("")
+    return bool(_sys & _pub)
+
+
 def get_unlock_type(domain, local_ip=None):
     """结合 CNAME 链与多公共 DNS (1.1.1.1/8.8.8.8) 对比，区分原生解锁与 DNS 解锁。
     三态：True 原生 / False DNS 解锁 / None 不可判定（缺输入或仅有弱信号时不下确定结论）。
-    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→False；
+    真值表（overlap/suffix）：(T,T)→True，(T,F)→True，(F,T)→None，(F,F)→None
+    （fix440 D-12/r4-3：无重叠、无同注册域后缀时，合法多 PoP GeoDNS
+    与 DNS 解锁无法区分，保守返 None；本函数不再下确定 False 结论）。
     前缀：v4 /24、v6 /64，均经 ipaddress 归一化（v4 由现行 /16 收紧至 /24，若原生误判 False 可放宽回 /16）。
     查询族按目标定：IPv6 出口（local_ip 含 : 或 _FORCE_FAMILY==6）查 AAAA，否则查 A；
-    缓存键含 qtype，且 None 结果不缓存（瞬时失败不钉死为结论）。
+    无 IPv4 出口时即使未传 local_ip 也查 AAAA（fix440 r4-2）。
+    fix440 r4-4：不再缓存判定结果——缓存无有效期，DNS 答案变化后
+    仍返回旧结论；每次调用重新查询（_unlock_cache 保留为空 dict，
+    仅供旧 clear() 调用点兼容）。
     H-03：系统 NS 按序遍历 [:3] 直至拿到响应（ns[0] 失败不再直接返 None）；
     公共对比 DNS 按出口切换：_FORCE_FAMILY==6 或无 IPv4 出口时用 IPv6 对
     (2606:4700:4700::1111 / 2001:4860:4860::8888)，否则用 IPv4 对。"""
     _ns_list = _get_system_nameservers()
-    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)) else 1
+    qtype = 28 if (_FORCE_FAMILY == 6 or (local_ip and ":" in local_ip)
+                   or not _has_ipv4_egress()) else 1
     if _FORCE_FAMILY == 6 or not _has_ipv4_egress():
         _pub = ("2606:4700:4700::1111", "2001:4860:4860::8888")
     else:
         _pub = ("1.1.1.1", "8.8.8.8")
-    cache_key = (domain, local_ip or "", tuple(_ns_list[:3]), qtype)
-    with _unlock_lock:
-        if cache_key in _unlock_cache:
-            return _unlock_cache[cache_key]
-
     sys_ns = None
     sys_ips = sys_cnames = None
     for _cand in _ns_list[:3]:
@@ -8143,12 +9780,13 @@ def get_unlock_type(domain, local_ip=None):
         # None，后续两路结果注定作废，直接返 None，零行为改变，最坏省 5.0 秒。
         return None
     if sys_ns == _pub[0]:
-        # OPT-02 复用：sys 查询与公共查询是同一服务器、同一域名、
-        # 同一 qtype，结果直接复用，不再重复查。
-        pub_ips_1, pub_cnames_1 = sys_ips, sys_cnames
+        # fix440 r4-1：系统 DNS 恰为公共对照 DNS 时，复用系统答案作
+        # 公共答案是自比较，非空即强制 True；该路公共对照作废，只用
+        # 另一路公共 DNS 作比较。
+        pub_ips_1, pub_cnames_1 = None, None
         pub_ips_2, pub_cnames_2 = _dns_query_udp(domain, qtype=qtype, server=_pub[1], timeout=2.5, return_cnames=True)
     elif sys_ns == _pub[1]:
-        pub_ips_2, pub_cnames_2 = sys_ips, sys_cnames
+        pub_ips_2, pub_cnames_2 = None, None
         pub_ips_1, pub_cnames_1 = _dns_query_udp(domain, qtype=qtype, server=_pub[0], timeout=2.5, return_cnames=True)
     else:
         # OPT-02 并发：两路公共查询无共享状态（_dns_query_udp 每次新建
@@ -8173,8 +9811,13 @@ def get_unlock_type(domain, local_ip=None):
             # 按实际地址族定粒度：点分判断会把 ::ffff:192.0.2.1 这类点分嵌入
             # IPv6 误送 IPv4 解析，失败后原串与对端 /64 归一化结果永不重叠，
             # 把“不可判定”变成错误的确定 False（F22）。
+            # fix440 r4-6：IPv4 映射 IPv6（::ffff:a.b.c.d）先解包为内嵌
+            # IPv4 再按 /24 比较——否则不同 IPv4 池同落一个 /64，误判重叠。
             try:
                 _a = ipaddress.ip_address(_ip)
+                if isinstance(_a, ipaddress.IPv6Address) \
+                        and _a.ipv4_mapped is not None:
+                    _a = _a.ipv4_mapped
                 if isinstance(_a, ipaddress.IPv4Address):
                     return str(ipaddress.IPv4Network((_a, 24),
                                                      strict=False).network_address)
@@ -8185,21 +9828,18 @@ def get_unlock_type(domain, local_ip=None):
         sys_prefixes = {_pfx(ip) for ip in sys_ips}
         pub_prefixes = {_pfx(ip) for ip in pub_ips}
         overlap = bool(sys_prefixes & pub_prefixes)
-        suffix = bool(sys_cnames and pub_cnames and any(
-            sc.split(".")[-2:] == pc.split(".")[-2:] for sc in sys_cnames for pc in pub_cnames
-        ))
+        suffix = _cnames_share_reg_domain(sys_cnames, pub_cnames)
         # 真值表（§0-4/§0-II-a，字面执行）：overlap→True；仅 suffix→None（保守，无法区分合法多 PoP
-        # 与保留官方 CNAME 的 DNS 解锁）；余者→False（双方有效、无重叠、无同后缀）。
+        # 与保留官方 CNAME 的 DNS 解锁）；余者→None（fix440 D-12/r4-3：
+        # 无重叠、无同注册域后缀时，合法 GeoDNS 多 PoP 与 DNS 解锁无法
+        # 区分，不得下确定 False 结论）。
         if overlap:
             res = True
         elif suffix:
             res = None
         else:
-            res = False
+            res = None
 
-    if res is not None:
-        with _unlock_lock:
-            _unlock_cache[cache_key] = res
     return res
 
 
@@ -8211,31 +9851,191 @@ def _unlock_label(v):
     return T("unknown")
 
 
+_HIDDEN_OPEN_RE = re.compile(r"<!--|<script\b[^>]*>|<style\b[^>]*>",
+                            re.IGNORECASE)
+_HIDDEN_CLOSE_SCRIPT_RE = re.compile(r"</script\s*>", re.IGNORECASE)
+_HIDDEN_CLOSE_STYLE_RE = re.compile(r"</style\s*>", re.IGNORECASE)
+
+
+def _strip_hidden_html(body):
+    """剥离 HTML 注释与 <script>/<style> 块（G-029/G-030）：单次向前
+    扫描，未闭合的起符直接截断到采样末尾——不得从每个起符重新扫描
+    到末尾（旧 <!--.*?--> 在多未闭合注释下二次方耗时）。剥离后 JS/
+    注释里的假 <title>/<h1> 与锁区文案不再参与可见信号判定。"""
+    b = body or ""
+    if not b:
+        return b
+    out = []
+    pos = 0
+    while True:
+        m = _HIDDEN_OPEN_RE.search(b, pos)
+        if m is None:
+            out.append(b[pos:])
+            break
+        out.append(b[pos:m.start()])
+        _tok = m.group(0)
+        if _tok.startswith("<!--"):
+            _end = b.find("-->", m.end())
+            if _end < 0:
+                break
+            pos = _end + 3
+        elif _tok[1:7].lower() == "script":
+            _cm = _HIDDEN_CLOSE_SCRIPT_RE.search(b, m.end())
+            if _cm is None:
+                break
+            pos = _cm.end()
+        else:
+            _cm = _HIDDEN_CLOSE_STYLE_RE.search(b, m.end())
+            if _cm is None:
+                break
+            pos = _cm.end()
+    return "".join(out)
+
+
+def _visible_text(body):
+    """可见文本（G-028）：剥离 script/style/注释与全部标签后余下的
+    文本，标签以空格代换防粘连。JS/JSON 里的锁区文案不是可见提示，
+    不得据此判 blocked；正文散文里的明确锁区句仍算（D-09a）。"""
+    _t = _strip_hidden_html(body or "")
+    _t = re.sub(r"<[^>]*>", " ", _t)
+    return _t.lower()
+
+
 def _denied_error_page(body):
     """\"Access Denied\" 错误页结构（B-10-3；原 _tiktok_denied 的逻辑，
     现为 TikTok/Grok 共用）：
-    (1) <title>Access Denied</title>——错误页标题结构，长度不限；
-    (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
+    (1) <title>Access Denied</title>——错误页标题结构，长度不限，
+    标题后可带后缀（如 "Access Denied - TikTok"，D-03）；
+    (2) 短 HTML 错误页（<16 KiB）里 <title>/<h1> 含该短语（D-05：
+    正文散文仅提及该短语不算，须落在标题结构里）。
     JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
     SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
-    阈值不再定生死。"""
-    b = body or ""
-    if re.search(r"<title[^>]*>\s*access denied\s*</title>",
+    阈值不再定生死。r4-14：截断前缀只看标题结构，不再拿前缀长度
+    当整页长度、把前缀散文提及判 blocked。"""
+    b = _strip_hidden_html(body or "")
+    if re.search(r"<title[^>]*>\s*access denied\b[^<]*</title>",
                  b, re.IGNORECASE):
         return True
     # B-10-4：短 HTML 检查与标题检查一致，大小写不敏感——"Access Denied"
     # 须按小写比对，否则小写/大写拒绝页被漏判为 unlocked。
-    _low = b.lower()
-    if len(b) < 16384 and "access denied" in _low:
-        if ("<html" in _low or "<head" in _low or "<body" in _low
-                or "<h1" in _low):
-            return True
+    if len(b) < 16384 and _error_title_or_h1(b, r"access\s+denied"):
+        return True
     return False
 
 
 def _tiktok_denied(body):
     """TikTok "Access Denied" 只认错误页结构（R4-H-01 残留）：见 _denied_error_page。"""
     return _denied_error_page(body)
+
+
+def _url_path_has_nsfw(final_url):
+    """最终 URL 路径段是否含 nsfw（fix440 D-02）：只看路径，查询串
+    （如 ?ref=nsfw）与片段不算；大小写不敏感。"""
+    try:
+        return "nsfw" in urllib.parse.urlparse(final_url or "").path.lower()
+    except Exception:
+        return False
+
+
+_NETFLIX_UI_LANGS = frozenset({
+    "en", "pt", "es", "fr", "de", "it", "nl", "ja", "zh", "ko", "ar",
+    "hi", "tr", "pl", "ru", "uk", "sv", "da", "fi", "nb", "nn", "no",
+    "cs", "sk", "hu", "ro", "bg", "hr", "sr", "sl", "et", "lv", "lt",
+    "el", "he", "id", "ms", "th", "vi", "fa", "ur", "bn",
+})
+
+
+def _netflix_region_from_url(final_url):
+    """Netflix 最终 URL 的地区段（fix440 D-01；G-074/G-075）：仅
+    netflix.com 域名下的路径才取地区（portal.example 等外域路径不
+    算）；locale 形为 lang-region（如 en-gb、pt-br），地区是横杠后
+    段，不是前段；region-lang 形（如 us-en）取非语言码那段；单段语
+    言码（如 /en/）不是地区，返回 ""。G-074：双段须按有效国家码消
+    歧——EN 不是国家码（fr-en 取 FR）；"12" 不是国家码（en-12 留
+    空）；两段皆有效时取后段（BCP47 默认），皆无效留空。"""
+    try:
+        _u = urllib.parse.urlparse(final_url or "")
+        _host = (_u.hostname or "").lower()
+        if _host.endswith("."):
+            _host = _host[:-1]
+        if not (_host == "netflix.com" or _host.endswith(".netflix.com")):
+            return ""
+        _segs = [s for s in _u.path.split("/") if s]
+        if not _segs:
+            return ""
+        _seg = _segs[0].lower()
+    except Exception:
+        return ""
+    _codes = set(_CC_EN.values())
+    if "-" in _seg:
+        _a, _b = _seg.split("-", 1)
+        if len(_a) == 2 and len(_b) == 2:
+            _a_ok = _a.isalpha() and _a.upper() in _codes
+            _b_ok = _b.isalpha() and _b.upper() in _codes
+            if _a_ok and not _b_ok:
+                return _a.upper()
+            if _b_ok:
+                return _b.upper()
+            return ""
+        return ""
+    if len(_seg) == 2 and _seg.isalpha() and _seg.upper() in _codes:
+        return _seg.upper()
+    return ""
+
+
+def _scoped_object_text(body, scope):
+    """取正文中 "scope": {...} 对象的花括号配对文本（G-031）：从首个
+    "scope": { 起按花括号计数取到配对右括号；找不到或括号不配对时
+    返回 ""。只做花括号计数，不解析字符串内容——对象内字符串值含
+    花括号时可能提前截断，调用方仍有首个匹配回落。"""
+    m = re.search(r'"' + re.escape(scope) + r'"\s*:\s*\{', body or "")
+    if not m:
+        return ""
+    _start = m.end() - 1
+    _depth = 0
+    for _i in range(_start, len(body)):
+        _ch = body[_i]
+        if _ch == "{":
+            _depth += 1
+        elif _ch == "}":
+            _depth -= 1
+            if _depth == 0:
+                return body[_start:_i + 1]
+    return ""
+
+
+def _scoped_json_field(body, field):
+    """JSON 正文字段取值（fix440 r4-20；G-031）：viewer/user 等观看者
+    作用域内的字段优先（如 {"viewer":{"region":"US"}}），避免内容作者等
+    其他对象的同名字段冒充服务地区；无作用域字段时回落首个匹配。
+    G-031：旧正则 [^}]{0,400}? 不能越过嵌套右花括号，viewer 内有空
+    对象（如 "geo":{}）时跳过真正的 viewer.region、误取 video.user
+    的同名字段。现先按 JSON 解析整段正文（viewer 优先于其他作用
+    域），非 JSON 正文再用花括号配对扫描作用域对象，仍无时回落首
+    个匹配。"""
+    b = body or ""
+    if not b:
+        return ""
+    _scopes = ("viewer", "currentUser", "profile", "account", "user")
+    try:
+        _d = json.loads(b)
+    except Exception:
+        _d = None
+    if isinstance(_d, dict):
+        for _s in _scopes:
+            _v = _d.get(_s)
+            if isinstance(_v, dict):
+                _f = _v.get(field)
+                if isinstance(_f, str) and re.fullmatch(r"[A-Z]{2}", _f):
+                    return _f
+    for _s in _scopes:
+        _obj = _scoped_object_text(b, _s)
+        if _obj:
+            m = re.search(r'"' + field + r'"\s*:\s*"([A-Z]{2})"', _obj)
+            if m:
+                return m.group(1)
+    m = re.search(r'"' + field + r'"\s*:\s*"([A-Z]{2})"', b)
+    return m.group(1) if m else ""
 
 
 def test_tiktok(local_ip=None):
@@ -8249,8 +10049,8 @@ def test_tiktok(local_ip=None):
     if code == 200 and not complete and not _tiktok_denied(body):
         return T("unknown"), "", None
     if code == 200 and not _tiktok_denied(body):
-        m = re.search(r'"region"\s*:\s*"([A-Z]{2})"', body)
-        region = f"[{m.group(1)}]" if m else ""
+        region = _scoped_json_field(body, "region")
+        region = f"[{region}]" if region else ""
         return T("unlocked"), region, get_unlock_type("www.tiktok.com", local_ip)
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -8260,23 +10060,45 @@ def test_tiktok(local_ip=None):
 
 def _disney_url_blocked(final_url):
     """Disney+ 锁区 URL 信号（R4-H-01）：最终 URL 来自重定向链，不受正文
-    截断影响。"""
-    u = (final_url or "").lower()
-    return "/unavailable" in u or "preview.disneyplus.com/unavailable" in u
+    截断影响。fix440 D-08：只看路径段（/unavailable 或其子路径），
+    查询串（如 ?next=/unavailable）不算；旧第二条件
+    preview.disneyplus.com/unavailable 已被路径条件完全包含，删除。"""
+    try:
+        _p = urllib.parse.urlparse(final_url or "").path.lower()
+    except Exception:
+        return False
+    # G-076：按解析后路径分段匹配，unavailable 是任一完整路径段即
+    # 算（/en-gb/unavailable/ 的前置 locale 段不得把它排除）。
+    return "unavailable" in [s for s in _p.split("/") if s]
 
 
 def _disney_head_blocked(body):
     """Disney+ 锁区正文信号（R4-H-01）：只认 <title> 或前 8 KiB 头部里的
     明确锁区短语。页脚法律文案（如 "Not available in U.S. territories."）
-    在 512 KiB 采样深处，不在此列，不得误判。"""
-    b = body or ""
+    在 512 KiB 采样深处，不在此列，不得误判。fix440 D-10：除英文外
+    另认德/法/西/葡/意五语的“在你地区不可用”对应短语（探针发
+    Accept-Language: en-US，服务端应回英文，多语为纵深）。"""
+    b = _strip_hidden_html(body or "")
     head = b[:8192]
     m = re.search(r"<title[^>]*>(.*?)</title>", b, re.IGNORECASE | re.DOTALL)
     title = m.group(1) if m else ""
     hay = (head + "\n" + title).lower()
     return ("disney+ is not available" in hay
             or "not available in your region" in hay
-            or "not available in your country" in hay)
+            or "not available in your country" in hay
+            or "in deiner region nicht verfügbar" in hay
+            or "in ihrer region nicht verfügbar" in hay
+            or "in deinem land nicht verfügbar" in hay
+            or "pas disponible dans votre région" in hay
+            or "pas disponible dans votre pays" in hay
+            or "n'est pas disponible dans votre région" in hay
+            or "no está disponible en tu región" in hay
+            or "no disponible en tu región" in hay
+            or "no está disponible en tu país" in hay
+            or "não está disponível na sua região" in hay
+            or "não disponível na sua região" in hay
+            or "non è disponibile nella tua regione" in hay
+            or "non disponibile nella tua regione" in hay)
 
 
 def test_disney(local_ip=None):
@@ -8315,11 +10137,20 @@ def _error_title_or_h1(body, phrase):
     （512 KiB 采样上限下约 13 秒）；且 [^<]* 禁内层标签，<h1><span>
     …</span></h1> 形嵌套标题误判为未锁区。现改为 str.find 线性定位
     标题起止、去内层标签后再搜短语：单次前向扫描、无回溯，嵌套标
-    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。"""
+    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。
+    fix440 D 腿（D-06/r4-15）：先剥离 <script>/<style> 与 HTML 注释，
+    再扫描——JS 字符串与注释里的完整 <title>/<h1> 是假标题，不算。
+    fix440 D 腿（r4-16）：定位与切片须在同一字符串上进行——旧码用
+    小写串的下标切原串，Unicode 小写展开（如 İ→i̇）会使下标错位、
+    真实标题漏判；现定位、切片、比对全在小写后的同一副本上做。
+    G-030：注释/script/style 剥离改走 _strip_hidden_html 单次向前
+    扫描（未闭合起符截断到末尾），不再用 <!--.*?--> 从每个起符重
+    新扫描到末尾。"""
     b = body or ""
     if not b:
         return False
-    _bl = b.lower()
+    _clean = _strip_hidden_html(b)
+    _bl = _clean.lower()
     for _tag in ("title", "h1"):
         _pos = 0
         _open_tag = "<" + _tag
@@ -8335,7 +10166,7 @@ def _error_title_or_h1(body, phrase):
             if _close < 0:
                 _pos = _gt + 1
                 continue
-            _text = re.sub(r"<[^>]*>", "", b[_gt + 1:_close])
+            _text = re.sub(r"<[^>]*>", "", _bl[_gt + 1:_close])
             if re.search(phrase, _text, re.IGNORECASE):
                 return True
             _pos = _close + len(_close_tag)
@@ -8344,8 +10175,9 @@ def _error_title_or_h1(body, phrase):
 
 def _reddit_blocked(body):
     """Reddit 锁区信号（B-10-3）："Blocked" 须在 <title>/<h1> 里；
-    JS 代码（如 isBlocked=false）与散文提及不算。"""
-    return _error_title_or_h1(body, r"blocked")
+    JS 代码（如 isBlocked=false）与散文提及不算。fix440 D 腿（D-04/
+    r4-17）：词界 \b 限定，"unblocked" 不得命中 "blocked"。"""
+    return _error_title_or_h1(body, r"\bblocked\b")
 
 
 def _claude_unavailable(body):
@@ -8355,11 +10187,12 @@ def _claude_unavailable(body):
 
 
 def _netflix_unavailable(final_url, body):
-    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 含 nsfw，
-    或 "Not Available" 出现在错误页结构（<title>/<h1>）里；正文散文
-    或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾因此误判
-    blocked）。URL 信号不受正文截断影响。"""
-    if "nsfw" in (final_url or ""):
+    """Netflix 不可用信号（两探针共用，F23；B-10-3）：最终 URL 路径段
+    含 nsfw，或 "Not Available" 出现在错误页结构（<title>/<h1>）里；
+    正文散文或 JS/JSON 中仅提及该短语不算（完整 200 页的书评页曾
+    因此误判 blocked）。URL 信号不受正文截断影响。fix440 D-02：
+    nsfw 只看路径段、大小写不敏感，查询串（如 ?ref=nsfw）不算。"""
+    if _url_path_has_nsfw(final_url):
         return True
     return _error_title_or_h1(body, r"not\s+available")
 
@@ -8373,25 +10206,29 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and _body_is_challenge(body):
         return T("unknown"), "", None
-    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 已含
+    # 首探针证据不完整即判 unknown，不落入次探针；但最终 URL 路径已含
     # nsfw 信号时除外（URL 信号不受正文截断影响，须落入次探针，6-3）。
-    if code == 200 and not complete and not _netflix_unavailable(final_url, body):
+    # fix440 r4-19：只有 URL 证据能绕过 unknown 门，截断正文里的标题
+    # 不行（标题可能来自未读完的页面，不可信）。
+    if code == 200 and not complete and not _url_path_has_nsfw(final_url):
         return T("unknown"), "", None
     if code == 200 and not _netflix_unavailable(final_url, body):
-        m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body) or re.search(
-            r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url
-        )
-        region = f"[{m.group(1).upper()}]" if m else ""
+        _country = _scoped_json_field(body, "country") \
+            or _netflix_region_from_url(final_url)
+        region = f"[{_country}]" if _country else ""
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
     # 首探针 5xx／429 同样不是地区封锁证据：落入次探针前先过共用
     # fallthrough（6-2；此前只对次探针 code2 过该规则，首探针 503＋
     # 次探针 403 会被误判 blocked）。
-    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code <= 399 and "nsfw" in (final_url or "").lower():
-        return T("blocked"), "", None
-    _ft = _http_fallthrough(code)
-    if _ft is not None:
-        return _ft, "", None
+    # M-07 改（fix440 r4-18）：3xx 本身不是锁区证据，路径 nsfw 信号
+    # 亦须次探针确认——此处不再直接判 blocked，跳过 fallthrough 落入
+    # 次探针；无路径 nsfw 信号的 3xx 仍走 fallthrough 判 unknown。
+    if 300 <= code <= 399 and _url_path_has_nsfw(final_url):
+        pass
+    else:
+        _ft = _http_fallthrough(code)
+        if _ft is not None:
+            return _ft, "", None
 
     code2, body2, final_url2, complete2, hdrs2 = _active_get("https://www.netflix.com/title/80018499")
     if code2 is None:
@@ -8400,17 +10237,17 @@ def test_netflix(local_ip=None):
         return T("unknown"), "", None
     if code2 == 200 and _body_is_challenge(body2):
         return T("unknown"), "", None
-    if code2 == 200 and not complete2 and not _netflix_unavailable(final_url2, body2):
+    if code2 == 200 and not complete2 and not _url_path_has_nsfw(final_url2):
         return T("unknown"), "", None
     if code2 == 200 and not _netflix_unavailable(final_url2, body2):
-        m = re.search(r'"country"\s*:\s*"([A-Z]{2})"', body2) or re.search(
-            r"netflix\.com/([a-z]{2})(?:-[a-z]+)?/", final_url2
-        )
+        _country2 = _scoped_json_field(body2, "country") \
+            or _netflix_region_from_url(final_url2)
         orig_tag = _L("自制?", "Orig?", "オリ?", "Ориг?", "اصلی?", zhtw="自製?")
-        region = f"[{m.group(1).upper()}/{orig_tag}]" if m else f"[{orig_tag}]"
+        region = f"[{_country2}/{orig_tag}]" if _country2 else f"[{orig_tag}]"
         return T("unlocked"), region, get_unlock_type("www.netflix.com", local_ip)
-    # M-07：3xx 先验命中锁区 URL（nsfw）仍判 blocked，须排在 fallthrough 之前。
-    if 300 <= code2 <= 399 and "nsfw" in (final_url2 or "").lower():
+    # M-07：3xx 先验命中锁区 URL（路径 nsfw）仍判 blocked，须排在 fallthrough 之前。
+    # 首探针已确认过一次，此为双探针确认后的结论（fix440 r4-18）。
+    if 300 <= code2 <= 399 and _url_path_has_nsfw(final_url2):
         return T("blocked"), "", None
     _ft = _http_fallthrough(code2)
     if _ft is not None:
@@ -8432,7 +10269,19 @@ def test_youtube(local_ip=None):
         # 按旧口径判 blocked（夹具正向对照）。
         if not complete:
             return T("unknown"), "", None
-        if "YouTube Premium is not available in your country" in body:
+        # fix440 D-11：此处测的是 YouTube 本身，不是 Premium——
+        # "YouTube Premium is not available in your country" 只说明
+        # Premium 未覆盖该地区，不得据此判 YouTube blocked；只有
+        # YouTube 本身不可用的信号（通用锁区句或标题结构）才判 blocked。
+        # G-027：标题分支须要求主语是 YouTube 本身——"YouTube Premium
+        # is not available ..." 的主语是 Premium，不算；标题须形如
+        # "YouTube is not available ..." 才判 blocked。
+        _low = body.lower()
+        if ("youtube is not available in your country" in _low
+                or "youtube is not available in your region" in _low
+                or _error_title_or_h1(
+                    body, r"youtube\s+(is\s+)?not\s+available"
+                          r"|youtube\s+is\s+unavailable")):
             return T("blocked"), "", None
         m = re.search(r'"countryCode"\s*:\s*"([A-Z]{2})"', body) or re.search(r'"GL"\s*:\s*"([A-Z]{2})"', body)
         region = f"[{m.group(1)}]" if m else ""
@@ -8455,6 +10304,14 @@ def test_primevideo(local_ip=None):
     if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
+        # fix440 D-09：完整 200 正文明确写地区不可用时判 blocked，
+        # 不再无条件 reachable。G-028：只认可见提示——脚本/JSON 里的
+        # geoError 文案（如 <script> 内 "Not available in your region"）
+        # 不是当前错误页的可见提示，不得据此判 blocked。
+        _vis = _visible_text(body)
+        if ("not available in your region" in _vis
+                or "not available in your country" in _vis):
+            return T("blocked"), "", None
         m = re.search(r'"currentTerritory"\s*:\s*"([A-Z]{2})"', body) or re.search(
             r'"territory"\s*:\s*"([A-Z]{2})"', body
         )
@@ -8523,8 +10380,24 @@ def test_chatgpt(local_ip=None):
         return T("unknown"), "", None
     if api_code in (200, 401):
         return T("unlocked"), f"[{loc}]" if loc else "", get_unlock_type("chatgpt.com", local_ip)
-    if api_code == 403 and ("unsupported_country" in api_body.lower() or "blocked" in api_body.lower()):
+    # G-032：显式否定的字段值不是肯定证据——{"blocked":false} 不得因
+    # 子串 "blocked" 先命中而判 blocked；否定值走 D-07 unknown 分支。
+    # 肯定证据只认：unsupported_country（非 :false 形式）或 blocked
+    #（非 :false 形式）；D-07b 的 "unsupported_country: ..." 裸文本
+    # 仍算肯定。
+    _api_low = api_body.lower()
+    _blocked_neg = re.search(r'"blocked"\s*:\s*"?false"?\b', _api_low) is not None
+    _unsup_neg = re.search(r'"unsupported_country"\s*:\s*"?false"?\b',
+                           _api_low) is not None
+    _blocked_yes = "blocked" in _api_low and not _blocked_neg
+    _unsup_yes = "unsupported_country" in _api_low and not _unsup_neg
+    if api_code == 403 and (_unsup_yes or _blocked_yes):
         return T("blocked"), f"[{loc}]" if loc else "", None
+    # fix440 D-07：403 正文既无 unsupported_country 也无 blocked
+    # （如限流、CF 1020 类正文）不是锁区证据，判 unknown——与首探针
+    # “403 不直接判 blocked”的口径一致。
+    if api_code == 403:
+        return T("unknown"), "", None
     _ft = _http_fallthrough(api_code)
     if _ft is not None:
         return _ft, "", None
@@ -8619,8 +10492,24 @@ def test_grok(local_ip=None):
     return T("blocked"), "", None
 
 
+def _final_url_host_ok(final_url, *allowed):
+    """最终 URL 归属校验（fix440 r4-10）：裸 200 即判 unlocked 的探针
+    须确认最终页面确实属于被测服务——代理/劫持返回的无关站 200 不得
+    冒充解锁。allowed 为可接受的域名（自身及子域均可）。归属不明
+    时调用方判 unknown，不判 blocked。"""
+    try:
+        _host = (urllib.parse.urlparse(final_url or "").hostname or "").lower()
+    except Exception:
+        return False
+    if not _host:
+        return False
+    if _host.endswith("."):
+        _host = _host[:-1]  # G-077：去掉单个末尾 DNS 根点再比较
+    return any(_host == _a or _host.endswith("." + _a) for _a in allowed)
+
+
 def test_instagram(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.instagram.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.instagram.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8629,6 +10518,8 @@ def test_instagram(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "instagram.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.instagram.com", local_ip)
@@ -8639,7 +10530,7 @@ def test_instagram(local_ip=None):
 
 
 def test_facebook(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.facebook.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.facebook.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8648,6 +10539,8 @@ def test_facebook(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "facebook.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.facebook.com", local_ip)
@@ -8658,7 +10551,7 @@ def test_facebook(local_ip=None):
 
 
 def test_x(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://x.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://x.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8671,6 +10564,8 @@ def test_x(local_ip=None):
     if code == 302:
         # F26：默认跟随重定向时暴露出来的 302 必是重定向未完成
         #（循环 / 缺可用 Location），不是成功，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "x.com", "twitter.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("x.com", local_ip)
@@ -8700,7 +10595,7 @@ def test_line(local_ip=None):
 
 
 def test_whatsapp(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://www.whatsapp.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://www.whatsapp.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8709,6 +10604,8 @@ def test_whatsapp(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "whatsapp.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("www.whatsapp.com", local_ip)
@@ -8719,7 +10616,7 @@ def test_whatsapp(local_ip=None):
 
 
 def test_github(local_ip=None):
-    code, body, _, _complete, hdrs = _active_get("https://github.com/")
+    code, body, final_url, _complete, hdrs = _active_get("https://github.com/")
     if code is None:
         return T("failed"), "", None
     if _is_challenge(code, body, hdrs):
@@ -8728,6 +10625,8 @@ def test_github(local_ip=None):
         return T("unknown"), "", None
     if code == 200 and not _complete:
         # F25：正文不完整时挑战信息可能在未读部分，不得判解锁。
+        return T("unknown"), "", None
+    if code == 200 and not _final_url_host_ok(final_url, "github.com"):
         return T("unknown"), "", None
     if code == 200:
         return T("unlocked"), "", get_unlock_type("github.com", local_ip)
@@ -8768,6 +10667,12 @@ def test_appletv(local_ip=None):
     if code == 200 and not _complete:
         return T("unknown"), "", None
     if code == 200:
+        # fix440 D-09：同 test_primevideo，完整正文明确锁区时判 blocked。
+        # G-028：只认可见提示，脚本/JSON 里的锁区文案不算。
+        _vis = _visible_text(body)
+        if ("not available in your region" in _vis
+                or "not available in your country" in _vis):
+            return T("blocked"), "", None
         return T("reachable"), "", None
     _ft = _http_fallthrough(code)
     if _ft is not None:
@@ -10824,7 +12729,7 @@ def _run_streaming_table_impl(egress, json_mode=False):
         }
 
         if not json_mode:
-            print("\r" + " " * max(10, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
+            print("\r" + " " * max(0, min(76, shutil.get_terminal_size((80, 24)).columns - 2)) + "\r", end="", flush=True)
             print(f"  {_c(C.bold, cat_name)}:")
             print("    " + "".join(_pad(n, 11) for n, _ in results))
             print("    " + "".join(_st(st) for _, (st, _, _) in results))
@@ -12350,8 +14255,9 @@ def batch_node_test(nodes, ping_count=5):
         results = list(ex.map(_one, nodes))
 
     def _key(r):
-        tcp_ok = bool(r["tcp"].get("ok"))
-        hs_ok = r.get("socks5", {}).get("ok", True)
+        tcp_ok = bool((r.get("tcp") or {}).get("ok"))
+        hs_ok = ((r.get("socks5") or {}).get("ok")
+                 if (r.get("node") or {}).get("proto") == "socks5" else True)
         usable = tcp_ok and hs_ok
         avg = r["tcp"].get("avg_ms")
         return (0 if usable else 1, avg if avg is not None else 1e9)
@@ -12359,18 +14265,62 @@ def batch_node_test(nodes, ping_count=5):
     return results
 
 
+def _node_line_reason(line):
+    """无效节点行的脱敏失败原因（G-026）：只返回固定文案，绝不含原
+    行内容（行内可能含明文账密）。"""
+    s = (line or "").strip()
+    if "://" in s and not s.lower().startswith("socks5://"):
+        return "unsupported scheme"
+    _rest = s[len("socks5://"):] if s.lower().startswith("socks5://") else s
+    if "@" in _rest:
+        _rest = _rest.rsplit("@", 1)[1]
+    if _rest.startswith("["):
+        _hend = _rest.find("]")
+        if _hend < 0 or _hend + 1 >= len(_rest) or _rest[_hend + 1] != ":":
+            return "invalid node format"
+        _port = _rest[_hend + 2:]
+    elif ":" in _rest:
+        _port = _rest.rsplit(":", 1)[1]
+    else:
+        return "missing port"
+    if not _port.isascii() or not _port.isdigit():
+        return "invalid port"
+    try:
+        _pn = int(_port)
+    except ValueError:
+        return "invalid port"
+    if not 0 < _pn < 65536:
+        return "port out of range"
+    return "invalid node format"
+
+
 def _node_label(nd):
     """批测表标签：一律由校验后的 proto/host/port 重建，不回显 raw
-    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。"""
-    host = _strip_cc(nd["host"])  # 纵深：即使解析层漏网，标签也不含控制字符
-    if ":" in host and not host.startswith("["):
-        host = "[%s]" % host
-    if nd["proto"] == "socks5" and (nd.get("user") is not None
-                                   or nd.get("pass") is not None):
-        return ("socks5://***@%s:%s" % (host, nd["port"]))[:38]
-    if nd["proto"] == "socks5":
-        return ("socks5://%s:%s" % (host, nd["port"]))[:38]
-    return ("%s:%s" % (host, nd["port"]))[:38]
+    （裸 userinfo 行曾使账密经 raw 进排名表与日志）。
+    L4：长主机名只截 host 段，端口恒保留（旧实现整串 [:38] 会把端口
+    截掉，文本表丢端口而 JSON 保留，造成文本/JSON 分歧）。
+    G-070：[ 与 ]:port 均属不可截的前后缀，只截地址本身——长 IPv6
+    不得截掉表示端口边界的 ]。"""
+    host = _strip_cc(nd.get("host") or "?")  # 纵深：即使解析层漏网，标签也不含控制字符
+    if host.startswith("[") and host.endswith("]") and len(host) >= 2:
+        _br_open, _br_close, _addr = "[", "]", host[1:-1]
+    elif ":" in host:
+        _br_open, _br_close, _addr = "[", "]", host
+    else:
+        _br_open, _br_close, _addr = "", "", host
+    _port = nd.get("port", "?")
+    if nd.get("proto") == "socks5" and (nd.get("user") is not None
+                                        or nd.get("pass") is not None):
+        _pre, _suf = "socks5://***@", ":%s" % _port
+    elif nd.get("proto") == "socks5":
+        _pre, _suf = "socks5://", ":%s" % _port
+    else:
+        _pre, _suf = "", ":%s" % _port
+    # 按显示宽截 host 段（CJK 双宽计 2 列），前后缀恒保留，总宽恒 <= 38。
+    _budget = max(0, 38 - _disp_width(_pre) - _disp_width(_suf)
+                  - _disp_width(_br_open) - _disp_width(_br_close))
+    _host = _truncate_disp(_addr, _budget)
+    return _pre + _br_open + _host + _br_close + _suf
 
 
 def _sanitize_batch_results(results):
@@ -12392,26 +14342,37 @@ def _sanitize_batch_results(results):
 def _print_batch_results(results):
     """打印排名表, 最优节点绿色标出。"""
     print()
-    hdr = ("  " + _pad("#", 2) + " " + _pad(T("batch_col_node"), 38) + " "
-           + _pad(T("batch_col_avg"), 9) + " " + _pad(T("batch_col_jitter"), 9)
-           + " " + _pad(T("batch_col_loss"), 7) + " " + T("batch_col_proto"))
+    hdr = ("  " + _pad("#", 2) + " " + _pad(_truncate_disp(T("batch_col_node"), 38), 38) + " "
+           + _pad(_truncate_disp(T("batch_col_avg"), 9), 9) + " " + _pad(_truncate_disp(T("batch_col_jitter"), 9), 9)
+           + " " + _pad(_truncate_disp(T("batch_col_loss"), 7), 7) + " " + T("batch_col_proto"))
     print(_c(C.cyan, hdr))
     best_marked = False
     for i, r in enumerate(results, 1):
-        nd = r["node"]
+        r = r or {}
+        nd = r.get("node") or {}
+        if not nd:
+            continue  # 缺 node 的行无标签可打，跳过（L1）
         label = _node_label(nd)
-        tcp = r["tcp"]
+        tcp = r.get("tcp") or {}
         if tcp.get("ok"):
-            avg = "%.1fms" % tcp["avg_ms"]
-            jit = "%.1fms" % tcp["jitter_ms"]
-            loss = "%.0f%%" % tcp["loss_pct"]
+            avg = ("%.1fms" % tcp["avg_ms"]
+                   if tcp.get("avg_ms") is not None else "-")
+            jit = ("%.1fms" % tcp["jitter_ms"]
+                   if tcp.get("jitter_ms") is not None else "-")
+            loss = ("%.0f%%" % tcp["loss_pct"]
+                    if tcp.get("loss_pct") is not None else "-")
         else:
             avg = jit = loss = "-"
-        if nd["proto"] == "socks5":
-            hs = T("bn_ok") if r.get("socks5", {}).get("ok") else "✗"
+        if nd.get("proto") == "socks5":
+            hs = T("bn_ok") if (r.get("socks5") or {}).get("ok") else "✗"
         else:
             hs = "-"
-        usable = tcp.get("ok") and (r.get("socks5", {}).get("ok", True))
+        # r5b-1：SOCKS5 节点握手结果缺失时不得按可用计——否则同节点
+        # 又在握手列画 ✗、又被标 ★ 选去测速。
+        if nd.get("proto") == "socks5":
+            usable = bool(tcp.get("ok") and (r.get("socks5") or {}).get("ok"))
+        else:
+            usable = bool(tcp.get("ok"))
         line = ("  " + _pad(str(i), 2) + " " + _pad(label, 38) + " "
                 + _pad(avg, 9) + " " + _pad(jit, 9) + " " + _pad(loss, 7)
                 + " " + hs)
@@ -12466,33 +14427,75 @@ def _batch_best_throughput(results):
         if tbest:
             print(_c(C.green, T("batch_tp_ok") % (tbest["down_mbps"],
                                                  _loc_hub_name(tbest["region"]))))
+        else:
+            # r5b-8：测速抛错/无结果时须有最终状态，不得止于 testing 行。
+            print(_c(C.red, T("batch_tp_fail")))
         return
 
 
 def run_batch_nodes(json_mode=False):
-    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。"""
+    """菜单/CLI 入口: 逐行粘贴节点, 空行开始批量测速排名。
+    JSON 模式返回 {"results": [...], "partial": bool,
+    "invalid_lines": [{"line": 行号, "reason": 脱敏原因}]}（r5b-7：
+    解析失败行须标明，不得静默丢弃；G-026：明细不得含原始行——行
+    内可能含明文账密；G-069：只输入无效行时亦返回空 results＋
+    partial:true＋脱敏明细，而非 None）。results 经
+    _sanitize_batch_results 脱敏（不含 user/pass/raw）。"""
+    def _read_line():
+        # r5b-6：交互终端粘贴带认证节点时，input() 会由终端行规程回显
+        # 密码明文；stdin 为 TTY 时关 ECHO 读行，管道/重定向仍用 input()。
+        # 不用 getpass：它以 TCSADRAIN 改 termios，须等回显队列排空才
+        # 返回；对方（pty master）未读回显时即死锁（实测挂死 >120s）。
+        # TCSANOW 立即生效，无此问题；termios 不可用时（Windows）回落。
+        try:
+            if sys.stdin.isatty():
+                import termios
+                _fd = sys.stdin.fileno()
+                _old = termios.tcgetattr(_fd)
+                _new = termios.tcgetattr(_fd)
+                _new[3] = _new[3] & ~termios.ECHO
+                try:
+                    termios.tcsetattr(_fd, termios.TCSANOW, _new)
+                    return sys.stdin.readline()
+                finally:
+                    termios.tcsetattr(_fd, termios.TCSANOW, _old)
+        except Exception:
+            pass
+        return input()
+
     nodes = []
+    invalid_lines = []
+    _line_no = 0
     if not json_mode:
         print(T("batch_hint"))
     while True:
         try:
-            ln = input()
+            ln = _read_line()
         except EOFError:
             break
         if ln.strip() == "":
             break
         if ln.strip().lower() == "b":
             return None
+        _line_no += 1
         nd = _parse_node_line(ln)
         if nd:
             nodes.append(nd)
-        elif not json_mode:
+        elif json_mode:
+            invalid_lines.append({"line": _line_no,
+                                  "reason": _node_line_reason(ln)})
+        else:
             print(T("invalid_input"))
     if not nodes:
+        if json_mode and invalid_lines:
+            return {"results": [], "partial": True,
+                    "invalid_lines": invalid_lines}
         return None
     results = batch_node_test(nodes)
     if json_mode:
-        return results
+        return {"results": _sanitize_batch_results(results),
+                "partial": bool(invalid_lines),
+                "invalid_lines": invalid_lines}
     _print_batch_results(results)
     _batch_best_throughput(results)
     return results
@@ -12529,6 +14532,7 @@ _banner_net_thread = None
 _banner_net_deadline = None
 _banner_net_workers = []
 _banner_net_workers_lock = threading.Lock()
+_banner_net_register_count = [0]  # r5b-10：清理节流计数（见登记函数）
 
 
 def _logo_spread(lines, target=76):
@@ -12653,6 +14657,10 @@ def _urlopen_bounded(req, budget):
             lambda: urllib.request.urlopen(req, timeout=min(5, budget)),
             time.monotonic() + budget,
             register=_banner_net_register_worker)
+    except urllib.error.HTTPError:
+        # L11：即时 HTTPError 不再吞为 None——_open_bounded 已在抛出前
+        # 关闭错误响应，调用方（横幅地理步）须据此记失败、不缓存。
+        raise
     except Exception:
         return None
 
@@ -12662,7 +14670,9 @@ def _banner_net_info():
     渲染时按界面语言本地化) + IPv6 出口地址。
     整条任务总截止 _banner_net_budget 秒：每步按剩余时间封顶超时，过期则快败跳过余步。
     S5 L-01 残留：地理取数失败（限流/超时/坏体）时不写入永久缓存，
-    下次调用重取；地理未尝试（无出口 IP）时仍按旧行为缓存。"""
+    下次调用重取。M2：无出口 IP 时亦不缓存（旧行为缓存空结果，进程内
+    永不恢复）。r5b-9：DNS 探测已删（结果从未被横幅读取），探测顺序
+    变为出口 IP 优先。"""
     global _banner_net_cache, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
@@ -12672,16 +14682,11 @@ def _banner_net_info():
     def _rem():
         return max(0.0, _deadline - time.monotonic())
     info = {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False,
+            "ipv6_verified": False,
             "geo_country": "", "geo_city": "", "geo_net": "", "geo_org": ""}
-    if _rem() > 0:
-        try:
-            info["dns_ok"] = bool(_getaddrinfo_timed("cloudflare.com", 53,
-                                                      socket.AF_UNSPEC,
-                                                      socket.SOCK_DGRAM,
-                                                      timeout=min(5, _rem())))
-        except Exception:
-            info["dns_ok"] = False
+    # r5b-9/O1：DNS 探测已删——dns_ok 全文件只有写、没有读（print_banner
+    # 从不引用），删后探测顺序变为出口 IP 优先，不再为一行不显示的数据
+    # 等 DNS。_getaddrinfo_timed 的 register 缺省亦为 False（见该函数）。
     # S5 L-01 残留：地理失败标记——仅地理步抛错/失败体时置真，末尾
     # 凭此决定是否写入永久缓存；无出口 IP 时地理步未跑，不置真。
     _geo_failed = False
@@ -12713,7 +14718,9 @@ def _banner_net_info():
                 # R4-L-01：先校验 success（失败体不得填地理字段并缓存），
                 # 再按字典类型取值；conn 非字典的 AttributeError 会被下方
                 # except 吞掉，故校验须在取值之前，不依赖“会抛错”。
-                if not isinstance(d, dict) or not d.get("success", True):
+                # r5b-2：success 缺失或为字符串 "false" 均视作失败体——
+                # 缺省 True 会让无 success 的失败体照常填地理并进缓存。
+                if not isinstance(d, dict) or d.get("success") is not True:
                     raise ValueError("ipwho.is query failed")
                 conn = d.get("connection") if isinstance(d.get("connection"), dict) else {}
                 sec = d.get("security") if isinstance(d.get("security"), dict) else {}
@@ -12721,11 +14728,20 @@ def _banner_net_info():
                 # 缓存只存原始字段，本地化推迟到渲染时（切语言不失效缓存）
                 info["geo_country"] = d.get("country") or ""
                 info["geo_city"] = d.get("city") or ""
-                # M-11: 保留机房标记精度: connection 透传 hosting 时认它,
-                # 否则按 org 启发式判定。R4-L-01：security/connection 的
-                # hosting 均须严格布尔判真（字符串 "false" 不得判真），
-                # security 优先于 connection（与 IPWhoIs.check 同口径）。
-                if (sec.get("hosting") is True) or (conn.get("hosting") is True) or is_datacenter_heuristic(org, org)[0]:
+                # M-11: 保留机房标记精度。r5b-3：机房判定执行声明的字段
+                # 优先级 security＞connection＞启发式，与 IPWhoIs.check
+                # 的 _b 同口径（按 security＞connection 取第一个布尔值，
+                # 非布尔值跳过；严格布尔，字符串 "false"/数字/null 皆为
+                # 未知）；显式 False 是定论，启发式不得反转它，仅当两源
+                # 皆未知时才作后备。
+                _hv = None
+                for _src in (sec, conn):
+                    _v = _src.get("hosting")
+                    if isinstance(_v, bool):
+                        _hv = _v
+                        break
+                if _hv is True or (_hv is None
+                                  and is_datacenter_heuristic(org, org)[0]):
                     info["geo_net"] = "dc"
                 elif is_residential_isp(org, org):
                     info["geo_net"] = "residential"
@@ -12739,9 +14755,13 @@ def _banner_net_info():
     except Exception:
         pass
     # IPv6: 取真实出口地址 (灯 = 有全球单播出口地址, 不再只测连通性)
+    # r5b-4：预算耗尽致探测集未跑完时 ipv6 置 None（未知），不得当 False
+    # 缓存；仅当探测集完整跑完仍无地址时才判 False。
     _v6addr = None
+    _v6_skipped = False
     for _host in ("api6.ipify.org", "ipv6.icanhazip.com"):
         if _rem() <= 0:
+            _v6_skipped = True
             break
         try:
             _cand = (_https_get_pinned6(_host, "/", timeout=min(3, _rem())) or "").strip()
@@ -12778,13 +14798,16 @@ def _banner_net_info():
                     s6.close()
                 except Exception:
                     pass
+    if _v6addr is None and _rem() <= 0:
+        # 预算在探测集跑完前耗尽：有一步没跑上，判未知而非无 IPv6。
+        _v6_skipped = True
     info["ipv6_addr"] = _v6addr
-    info["ipv6"] = bool(_v6addr)
+    info["ipv6"] = None if (_v6addr is None and _v6_skipped) else bool(_v6addr)
     _banner_net_last_info = info
     _banner_net_last_attempt = _t0
-    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；其余情形
-    # （成功、无出口 IP）仍缓存。
-    if not _geo_failed:
+    # S5 L-01 残留：地理失败不写永久缓存（下次调用重取）；M2：无出口 IP
+    # 时不缓存；r5b-4：IPv6 未探明时不缓存。三者任一成立即不写永久缓存。
+    if not _geo_failed and info.get("egress") and not _v6_skipped:
         _banner_net_cache = info
     return info
 
@@ -12819,19 +14842,24 @@ def _banner_geo_text(net):
 def _banner_net_register_worker(t):
     """登记一个守护工作线程（退出前 _banner_net_join 有界等待用）。
 
-    注意登记无调用方检查：_getaddrinfo_timed 对每路 DNS 工作线程都
-    登记（包括流媒体探针、代理诊断、DNS 检测、测速等非横幅路径），
-    故等待集可能包含活着的非横幅 DNS worker。登记点在线程 start()
-    之后（_getaddrinfo_timed 中还在 _started=True 之后），顺序不得变。
+    注意：_getaddrinfo_timed 缺省不再登记（r5b-9/O1），登记点只剩
+    横幅 opener 的 _open_bounded 路径。登记点在线程 start() 之后，
+    顺序不得变。
+    r5b-10：全量清理（enumerate＋列表扫描）每 32 次登记才做一次——
+    逐次清理是 O(n²)：200 次登记约 19,900 次扫描；节流后约 700 次。
+    之间死亡的 worker 最多滞留 31 次登记，join 时按 is_alive 跳过，
+    无行为变化。
     """
     with _banner_net_workers_lock:
-        # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
-        # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
-        # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
-        _live = threading.enumerate()
-        _banner_net_workers[:] = [w for w in _banner_net_workers
-                                  if w.is_alive()
-                                  or any(x is w for x in _live)]
+        _banner_net_register_count[0] += 1
+        if _banner_net_register_count[0] % 32 == 0:
+            # is_alive() 会被别处受打断的 join 毒化（恒 False 但线程仍在跑）：
+            # 清理登记时须按对象身份（enumerate）保留仍在跑的线程，否则
+            # 毒化 worker 会在下一次登记时被静默移出等待集（9-1 同根）。
+            _live = threading.enumerate()
+            _banner_net_workers[:] = [w for w in _banner_net_workers
+                                      if w.is_alive()
+                                      or any(x is w for x in _live)]
         _banner_net_workers.append(t)
 
 
@@ -13036,7 +15064,10 @@ def _banner_net_info_async():
     相同），使取数中途被 Ctrl-C 打断时退出路径的 join 仍有预算可等已
     登记 worker，不因 deadline 为空而立即返回；取数完成后缓存即生效，
     后续横幅直接命中缓存。"""
-    global _banner_net_deadline
+    # r5b-5：重试分支写回 _banner_net_last_info/_last_attempt，故须声明
+    # global——否则赋值使二者变局部变量，函数入口读到未绑定变量即抛
+    # UnboundLocalError（实测：两重试线程双双崩溃、零取数，夹具会假 PASS）。
+    global _banner_net_deadline, _banner_net_last_info, _banner_net_last_attempt
     if _banner_net_cache is not None:
         return _banner_net_cache
     _need_fetch = False
@@ -13057,12 +15088,23 @@ def _banner_net_info_async():
     if _banner_net_last_info is not None:
         if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
             return _banner_net_last_info
-        # B-15a-1：重试开新取数须刷新 deadline（首轮 deadline 已过期；
-        # 沿用它会使随后 join 立即返回、新登记 worker 无人等）。
-        _banner_net_deadline = time.monotonic() + _banner_net_budget
-        return _banner_net_info()
+        # r5b-5：重试分支须在锁内二次检查并写回结果——否则并发重试的
+        # 两个调用方各发一次取数。取完把结果写回 last_info/last_attempt，
+        # 后来者复用同一结果。B-15a-1：重试开新取数须刷新 deadline
+        # （首轮 deadline 已过期；沿用它会使随后 join 立即返回、新登记
+        # worker 无人等）。
+        with _banner_net_lock:
+            if _banner_net_cache is not None:
+                return _banner_net_cache
+            if time.monotonic() - _banner_net_last_attempt < _BANNER_NET_RETRY_AFTER:
+                return _banner_net_last_info
+            _banner_net_deadline = time.monotonic() + _banner_net_budget
+            _res = _banner_net_info()
+            _banner_net_last_info = _res
+            _banner_net_last_attempt = time.monotonic()
+            return _res
     return {"egress": None, "geo": "", "ipv6": False, "ipv6_addr": None,
-            "ipv6_verified": False, "dns_ok": False}
+            "ipv6_verified": False}
 
 
 def _white(s):
@@ -13091,26 +15133,49 @@ def print_banner():
             with open("/etc/os-release", encoding="utf-8", errors="replace") as f:
                 for ln in f:
                     if ln.startswith("PRETTY_NAME="):
-                        os_name = ln.split("=", 1)[1].strip().strip('"')
+                        # r5b-13：只剥首尾配对引号（" 或 '）——旧 .strip('"')
+                        # 把单引号值原样留引号、把双引号值两端多剥；首尾
+                        # 不成对（如 "abc'）一律保留原样。
+                        _v = ln.split("=", 1)[1].strip()
+                        if len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in ("\"", "'"):
+                            _v = _v[1:-1]
+                        os_name = _v
                         break
         except Exception:
             pass
-    cores = os.cpu_count() or 0
+    # r5b-14：cpu_count() 为 None 是“未知”，不得显示 0 核。
+    _cores = os.cpu_count()
+    cores = _cores if _cores is not None else "?"
     pyv = "%d.%d.%d" % sys.version_info[:3]
-    print(" %s:  %s" % (_c(C.cyan, T("bn_system")),
-                         _white("%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv))))
-    cores_word = _ru_plural(cores, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and cores == 1 else T("bn_cores"))
-    cpu = (si.get("cpu") or "?")[:36]
-    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")),
-                         _white("%s (%d%s) · %s %s · %s %s" % (
-                             cpu, cores, cores_word,
-                             T("sys_mem"), si.get("mem", "?"),
-                             T("sys_disk"), si.get("disk", "?")))))
+    # M3：各行内容按显示宽截断到边框内（W=78；行 = 1 空格＋标签＋": "＋值，
+    # 值预算 = 78 - 1 - 标签宽 - 3）。截断在拼行前对素文本做（_truncate_disp
+    # 是 ANSI 安全的），再上色；硬件行的 [:36] 字符切由整行截断取代
+    # （CJK 双宽下 36 字符仍可超宽）。
+    _sys_val = _truncate_disp(
+        "%s · %s · Python %s" % (os_name, si.get("arch", "?"), pyv),
+        max(0, W - 1 - _disp_width(T("bn_system")) - 3))
+    print(" %s:  %s" % (_c(C.cyan, T("bn_system")), _white(_sys_val)))
+    cores_word = _ru_plural(_cores or 0, " ядро", " ядра", " ядер") if LANG == "ru" else (" core" if LANG == "en" and _cores == 1 else T("bn_cores"))
+    # G-072：先为核数、内存、磁盘留出列宽，再按显示宽度截 CPU——长型号
+    # 不得挤掉其他硬件信息；78 列限制不动。
+    _hw_budget = max(0, W - 1 - _disp_width(T("bn_hardware")) - 3)
+    _hw_tail = " (%s%s) · %s %s · %s %s" % (
+        cores, cores_word,
+        T("sys_mem"), si.get("mem", "?"),
+        T("sys_disk"), si.get("disk", "?"))
+    _hw_val = _truncate_disp(
+        _truncate_disp(si.get("cpu") or "?",
+                       max(0, _hw_budget - _disp_width(_hw_tail)))
+        + _hw_tail, _hw_budget)
+    print(" %s:  %s" % (_c(C.cyan, T("bn_hardware")), _white(_hw_val)))
     # 网络行
     if net["egress"]:
         _geo_txt = _banner_geo_text(net)
-        v4 = "%s %s" % (_c(C.green, "●"),
-                        _white(net["egress"] + ((" " + _geo_txt) if _geo_txt else "")))
+        # M3：geo 文本与出口 IP 一并截断到行预算（"IPv4 ● " 占 7 列）。
+        _v4_txt = _truncate_disp(
+            net["egress"] + ((" " + _geo_txt) if _geo_txt else ""),
+            max(0, W - 1 - _disp_width(T("bn_network")) - 3 - 7))
+        v4 = "%s %s" % (_c(C.green, "●"), _white(_v4_txt))
     else:
         v4 = "%s %s" % (_c(C.dim, "○"), _white(T("bn_none")))
     print(" %s:  %s" % (_c(C.cyan, T("bn_network")), _white("IPv4 ") + v4))
@@ -13119,6 +15184,9 @@ def print_banner():
         v6t = " " + net["ipv6_addr"]
     elif net["ipv6"]:
         v6t = ""
+    elif net.get("ipv6") is None:
+        # r5b-4 三态：IPv6 未探明显示“未测”，而非“无”。
+        v6t = " " + T("bn_untested")
     else:
         v6t = " " + T("bn_none")
     print("%s%s%s" % (" " * (_disp_width(T("bn_network")) + 4),
@@ -13150,7 +15218,18 @@ def print_menu():
         (_menu_item(13, T("m_shortcut")), ""),
     ]
     for left, right in rows:
-        print("  " + _pad(left, colw) + right)
+        # L2：行宽上限取审计证伪口径 82（F14：五语言最大行宽 ≤82 均非
+        # 溢出，仅 fa 87 是缺陷；80 不是本函数的门禁）。
+        # fix440-merge：无条件按列截断（左 40／右 38）把 ja/en/ru 共
+        # 4 处未超宽的菜单项文本也截断了（428 R06-menu-13-ru 复现：
+        # ru 第 13 项截成 "(ach..."，命令名丢失）。改为行预算制：行
+        # 宽 ≤82 时原样输出（左列超 40 亦不截，只右列起始列后移）；
+        # 仅 fa (5,11) 行 87 超限，截右列至 40（L2 仲裁修法原样）。
+        if 2 + max(_disp_width(left), colw) + _disp_width(right) <= 82:
+            print("  " + _pad(left, colw) + right)
+        else:
+            print("  " + _pad(_truncate_disp(left, colw), colw)
+                  + _truncate_disp(right, 82 - 2 - colw))
     print(_c(C.cyan, "═" * 78))
     print("  " + _c(C.cyan, "0.") + " " + T("m_quit"))
     print(_c(C.cyan, "═" * 78))
@@ -13197,8 +15276,14 @@ def check_update():
         else:
             with r:
                 try:
-                    tag = json.loads(_read_limited(r, timeout=8).decode(
-                        "utf-8")).get("tag_name", "")
+                    _d = json.loads(_read_limited(r, timeout=8).decode(
+                        "utf-8"))
+                    # r5b-11：顶层非 dict（如 "[]"）时 .get 会抛
+                    # AttributeError、被误归为 unknown；显式校验并抛
+                    # ValueError，走 cause 'response'（响应侧错误）。
+                    if not isinstance(_d, dict):
+                        raise ValueError("update response is not a JSON object")
+                    tag = _d.get("tag_name", "")
                 finally:
                     _resp_shutdown(r)
     except (TimeoutError, socket.timeout):
@@ -13208,14 +15293,20 @@ def check_update():
         cause = "timeout"
     except urllib.error.URLError as e:
         tag = ""
-        reason = getattr(e, "reason", None)
-        if isinstance(reason, (TimeoutError, socket.timeout)):
-            cause = "timeout"
-        elif isinstance(reason, socket.gaierror):
-            cause = "dns"
-        elif isinstance(reason, (ConnectionError, OSError)):
-            cause = "connection"
+        # r5b-11：HTTPError 是 URLError 子类、携状态码——已知响应侧错误，
+        # 不得落入 reason 分支归为 unknown；先判 HTTPError。
+        if isinstance(e, urllib.error.HTTPError):
+            cause = "http_%s" % e.code
+            reason = None
         else:
+            reason = getattr(e, "reason", None)
+        if cause is None and isinstance(reason, (TimeoutError, socket.timeout)):
+            cause = "timeout"
+        elif cause is None and isinstance(reason, socket.gaierror):
+            cause = "dns"
+        elif cause is None and isinstance(reason, (ConnectionError, OSError)):
+            cause = "connection"
+        elif cause is None:
             cause = "unknown"
     except ValueError:
         # 响应体不可解析/超限：属响应侧问题，非请求异常。
@@ -13226,7 +15317,10 @@ def check_update():
         cause = "unknown"
     if not isinstance(tag, str):
         tag = ""
-    latest = tag.lstrip("v")
+    # r5b-12：只剥一个前导 "v"——lstrip("v") 会把 "vv4.14.39" 剥成
+    # "4.14.39" 当作新版本；留一个 "v" 后 _parse_version 失败，走
+    # cause 'response'（响应侧错误）。
+    latest = tag[1:] if tag.startswith("v") else tag
     if latest and _parse_version(latest) is None:
         latest = ""
     if not latest and cause is None:
@@ -16050,6 +18144,49 @@ def shortcut_remove(scope="user", interactive=False, input_fn=None,
                        % (paths["state_path"], e),
                        "無法刪除狀態檔案 %s：%s" % (paths["state_path"], e)))
                 _cleanup_failed = True
+        if not _cleanup_failed:
+            # D-1：状态文件已删净时清掉锁文件与受管理目录——0 字节
+            # <state>.lock 与空 acheck/ 目录是 remove 的残留。删锁文件
+            # 与另一持锁者竞态：先以 LOCK_EX|LOCK_NB 抢锁，抢到才删，
+            # 抢不到静默留置（残余竞态：对方在抢锁与 unlink 之间打开旧
+            # 路径并加锁，锁在已删 inode 上；窗口极小、后果仅为一次互斥
+            # 失效，见报告）。目录仅空时才删（rmdir 非空即失败保留）。
+            _lock_path = paths["state_path"] + ".lock"
+            # G-073：删除路径不得创建文件、不得跟随符号链接——旧
+            # os.open(O_CREAT|O_RDWR) 会跟随悬空符号链接，在管理目录
+            # 外创建目标空文件。先 lstat：符号链接直接 unlink；常规文
+            # 件才以不创建方式打开（O_NOFOLLOW 防竞态替换）再抢锁删链。
+            try:
+                _lock_st = os.lstat(_lock_path)
+            except OSError:
+                _lock_st = None
+            if _lock_st is not None and stat.S_ISLNK(_lock_st.st_mode):
+                try:
+                    os.unlink(_lock_path)
+                except OSError:
+                    pass
+                _lock_fd = None
+            else:
+                try:
+                    _lock_fd = os.open(_lock_path,
+                                       os.O_RDWR | os.O_NOFOLLOW)
+                except OSError:
+                    _lock_fd = None
+            if _lock_fd is not None:
+                try:
+                    fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    try:
+                        os.unlink(_lock_path)
+                    except OSError:
+                        pass
+                except OSError:
+                    pass  # 另一进程持锁：留置锁文件
+                finally:
+                    os.close(_lock_fd)
+            try:
+                os.rmdir(paths["data_dir"])
+            except OSError:
+                pass  # 非空（有用户文件或锁文件留置）则保留
         # 受管理副本未删干净时保留状态文件，避免状态与磁盘不一致。
     else:
         new_state = dict(state)
@@ -16514,18 +18651,18 @@ def _print_cli_help():
   --ipv6-only     配合 --active: 仅检测 IPv6
   --proxy HOST:PORT
                   代理诊断模式 (SOCKS5 握手、代理出口 IP、出口 IP 信誉、DNS 泄漏、TCP 延迟)
-  --proxy-user USER / --proxy-pass PASS
-                  代理认证 (可选)
+  --proxy-user USER / --proxy-pass PASS （须同时给出）
+                  代理认证 (可选；只给其一会报错退出)
   --speed         多地区测速 (各地区节点下载, 多连接峰值口径)
   --no-speed      自检时跳过网速测试
   --with-speed    自检时强制进行网速测试
   --no-geo-update  禁用离线 Geo 数据自动更新
   --geo-update     强制同步刷新一次离线 Geo 数据
   --batch 节点列表  批量节点测速优选 (逗号分隔 host:port 或 socks5:// 代理)
-  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy 组合使用；--shortcut 仅 status 支持 --json)
+  --json          以标准 JSON 格式输出结果 (可单独配合 IP 使用，或与 --active/--proxy/--speed/--batch/--explain 组合使用；--shortcut 仅 status 支持 --json)
   --explain       输出评分维度与扣分规则说明
   --shortcut install|status|change|remove
-                  管理命令入口：安装 / 查看状态 / 改名 / 移除
+                  管理命令入口：安装 / 查看状态 / 改名 / 移除（不带值默认为 status）
   --system        配合 --shortcut 使用系统级位置 (默认用户级)
   --accept-ac-risk 接受 ac 已知命名风险 (非交互安装 ac 时必填)
   --names 名称列表  配合 --shortcut install：指定安装的入口名（逗号分隔）
@@ -16563,18 +18700,18 @@ Options:
   --ipv6-only     With --active: IPv6 only
   --proxy HOST:PORT
                   Proxy diagnostics (SOCKS5 handshake, proxy egress IP, egress IP reputation, DNS leak check, TCP latency)
-  --proxy-user USER / --proxy-pass PASS
-                  Proxy authentication (optional)
+  --proxy-user USER / --proxy-pass PASS (both required together)
+                  Proxy authentication (optional; both or neither — one alone is an error)
   --speed         Multi-region speed test (regional download nodes, multi-connection peak)
   --no-speed      Skip the speed test during self-check
   --with-speed    Force the speed test during self-check
   --no-geo-update  Disable automatic offline geo data updates
   --geo-update     Force a synchronous offline geo data refresh
   --batch NODES   Batch node test (comma-separated host:port or socks5:// proxies)
-  --json          Output results in JSON format (works with passive IP, --active or --proxy; for --shortcut, only status supports --json)
+  --json          Output results in JSON format (works with passive IP, --active, --proxy, --speed, --batch or --explain; for --shortcut, only status supports --json)
   --explain       Show transparent scoring rules and weights
   --shortcut install|status|change|remove
-                  Manage command shortcuts: install / status / change / remove
+                  Manage command shortcuts: install / status / change / remove (bare --shortcut defaults to status)
   --system        With --shortcut: use system-wide locations (default is user-level)
   --accept-ac-risk Accept the known naming risk of ac (required for non-interactive ac install)
   --names NAMES     With --shortcut install: shortcut names to install (comma-separated)
@@ -16613,18 +18750,18 @@ Examples:
   --ipv6-only     配合 --active: 僅檢測 IPv6
   --proxy HOST:PORT
                   代理診斷模式 (SOCKS5 握手、代理出口 IP、出口 IP 信譽、DNS 洩漏、TCP 延遲)
-  --proxy-user USER / --proxy-pass PASS
-                  代理驗證 (可選)
+  --proxy-user USER / --proxy-pass PASS （須同時給出）
+                  代理驗證 (可選；只給其一會報錯退出)
   --speed         多地區測速 (各地區節點下載, 多連接峰值口徑)
   --no-speed      自檢時跳過網速測試
   --with-speed    自檢時強制進行網速測試
   --no-geo-update  停用離線 Geo 資料自動更新
   --geo-update     強制同步重新整理一次離線 Geo 資料
   --batch 節點清單  批次節點測速優選 (逗號分隔 host:port 或 socks5:// 代理)
-  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy 組合使用；--shortcut 僅 status 支援 --json)
+  --json          以標準 JSON 格式輸出結果 (可單獨配合 IP 使用, 或與 --active/--proxy/--speed/--batch/--explain 組合使用；--shortcut 僅 status 支援 --json)
   --explain       輸出評分維度與扣分規則說明
   --shortcut install|status|change|remove
-                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除
+                  管理命令入口：安裝 / 查看狀態 / 改名 / 移除（不帶值預設為 status）
   --system        配合 --shortcut 使用系統級位置 (預設使用者級)
   --accept-ac-risk 接受 ac 已知命名風險 (非互動安裝 ac 時必填)
   --names 名稱清單  配合 --shortcut install：指定安裝的入口名（逗號分隔）
@@ -16662,18 +18799,18 @@ Examples:
   --ipv6-only     --active と併用: IPv6 のみ
   --proxy HOST:PORT
                   プロキシ診断 (SOCKS5 ハンドシェイク、プロキシ出口 IP、出口 IP の評価、DNS リーク、TCP 遅延)
-  --proxy-user USER / --proxy-pass PASS
-                  プロキシ認証 (任意)
+  --proxy-user USER / --proxy-pass PASS （両方同時に指定）
+                  プロキシ認証 (任意；片方のみはエラー)
   --speed         多地域スピードテスト (地域別ノードのダウンロード、多重接続のピーク値)
   --no-speed      セルフチェック時に速度テストをスキップ
   --with-speed    セルフチェック時に速度テストを強制実行
   --no-geo-update  オフライン Geo データの自動更新を無効化
   --geo-update     オフライン Geo データを強制的に同期更新
   --batch ノード一覧  ノード一括テスト (カンマ区切りの host:port または socks5:// プロキシ)
-  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy と併用可；--shortcut では status のみ --json に対応)
+  --json          結果を JSON 形式で出力 (IP 単独、--active、--proxy、--speed、--batch、--explain と併用可；--shortcut では status のみ --json に対応)
   --explain       スコアリングのルールと重みを表示
   --shortcut install|status|change|remove
-                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除
+                  コマンド入口の管理：インストール / 状態確認 / 改名 / 削除（値なしは status）
   --system        --shortcut と併用：システム全体の場所を使用 (既定はユーザー単位)
   --accept-ac-risk ac の既知の命名リスクを受け入れる (非対話で ac を入れる場合に必須)
   --names 名前一覧  --shortcut install と併用：インストールする入口名（カンマ区切り）
@@ -16711,18 +18848,18 @@ Examples:
   --ipv6-only     С --active: только IPv6
   --proxy HOST:PORT
                   Диагностика прокси (рукопожатие SOCKS5, выходной IP прокси, репутация выхода, утечка DNS, задержка TCP)
-  --proxy-user USER / --proxy-pass PASS
-                  Аутентификация прокси (необязательно)
+  --proxy-user USER / --proxy-pass PASS (указываются только вместе)
+                  Аутентификация прокси (необязательно; один без другого — ошибка)
   --speed         Мультирегиональный тест скорости (загрузка с региональных узлов, пиковая многопоточная скорость)
   --no-speed      Пропустить тест скорости при самопроверке
   --with-speed    Принудительно выполнять тест скорости при самопроверке
   --no-geo-update  Отключить автообновление офлайн-геоданных
   --geo-update     Принудительно синхронно обновить офлайн-геоданные
   --batch СПИСОК  Пакетный тест узлов (host:port или socks5:// прокси через запятую)
-  --json          Вывод в JSON (с IP, --active или --proxy; для --shortcut --json поддерживает только status)
+  --json          Вывод в JSON (с IP, --active, --proxy, --speed, --batch или --explain; для --shortcut --json поддерживает только status)
   --explain       Правила и веса скоринга
   --shortcut install|status|change|remove
-                  Управление ярлыками: установка / состояние / переименование / удаление
+                  Управление ярлыками: установка / состояние / переименование / удаление (без значения — status)
   --system        С --shortcut: системные каталоги (по умолчанию — уровень пользователя)
   --accept-ac-risk Принять известный риск имени ac (обязательно для неинтерактивной установки ac)
   --names ИМЕНА     С --shortcut install: имена ярлыков через запятую
@@ -16760,8 +18897,8 @@ Examples:
   --ipv6-only     همراه --active: فقط IPv6
   --proxy HOST:PORT
                   عیب‌یابی پروکسی (دست‌دهی SOCKS5، IP خروجی پروکسی، اعتبار خروجی، نشت DNS، تأخیر TCP)
-  --proxy-user USER / --proxy-pass PASS
-                  احراز هویت پروکسی (اختیاری)
+  --proxy-user USER / --proxy-pass PASS (هر دو با هم)
+                  احراز هویت پروکسی (اختیاری؛ تنها یکی خطاست)
   --speed         تست سرعت چندمنطقه‌ای (دانلود از گره‌های منطقه‌ای، اوج سرعت با اتصالات همزمان)
   --no-speed      رد کردن تست سرعت هنگام خودبررسی
   --with-speed    اجرای اجباری تست سرعت هنگام خودبررسی
@@ -16769,10 +18906,10 @@ Examples:
   --geo-update     به‌روزرسانی همگام اجباری داده‌های جغرافیایی آفلاین
   --batch فهرست گره‌ها
                   تست دسته‌ای گره‌ها (host:port یا پروکسی socks5:// جداشده با کاما)
-  --json          خروجی JSON (با IP، --active یا --proxy؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
+  --json          خروجی JSON (با IP، --active، --proxy، --speed، --batch یا --explain؛ برای --shortcut فقط status از --json پشتیبانی می‌کند)
   --explain       نمایش قوانین و وزن‌های امتیازدهی
   --shortcut install|status|change|remove
-                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف
+                  مدیریت میانبرهای فرمان: نصب / وضعیت / تغییر نام / حذف (بدون مقدار، status است)
   --system        همراه --shortcut: استفاده از مسیرهای سیستمی (پیش‌فرض سطح کاربر)
   --accept-ac-risk پذیرش ریسک شناخته‌شدهٔ نام ac (برای نصب غیرتعاملی ac الزامی است)
   --names نام‌ها     همراه --shortcut install: نام میانبرها (جدا شده با کاما)
