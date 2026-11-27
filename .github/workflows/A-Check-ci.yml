@@ -15,6 +15,10 @@ name: A-Check CI
 #            系统信息（与实时 sysctl 对照）、DNS darwin scutil 分支、快捷
 #            方式用户级全循环（CLI）、.app 启动器 osascript 拦截；系统级
 #            快捷方式为可选步骤。Finder 双击与真实 Terminal 开窗仍不可测。
+#   os-smoke 的 Windows 腿另有深测：快捷方式 Windows 门（全部子命令拒绝
+#            ＋不写盘）、系统信息白盒（GlobalMemoryStatusEx 等与 PowerShell
+#            独立读数对表）、DNS ipconfig 分支白盒、run.bat 加深、CONIN$ 探针。
+#            交互菜单本身在无控制台的 runner 上不可测（探针只记录结论）。
 # 不覆盖：170 份回归夹具（在 ~/workspace/.astra_review/fix-tools/，不在仓库内，
 # 故 CI 跑不到；如要进 CI，须先把夹具审过后提交进仓库，另立项决定）。
 # 也不覆盖：联网行为（被动/主动检测、流媒体探针），由悉尼实机腿覆盖。
@@ -759,3 +763,316 @@ jobs:
           test ! -e /usr/local/bin/acheck
           sudo "$PY" acheck.py --shortcut status --system </dev/null | grep -q "未安装任何入口"
           echo "OK: shortcut system scope cycle complete"
+
+      # ---- Windows deep tests (GitHub runner is real Windows; no local
+      # Windows VM is feasible on any test box). See
+      # ~/workspace/finalcheck/win-ci-deep/DESIGN.md. ----
+      - name: Runner environment (Windows, informational)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          (Get-CimInstance Win32_OperatingSystem).Caption
+          [System.Environment]::OSVersion.Version
+          (Get-CimInstance Win32_Processor).Name
+          (Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory
+          (Get-CimInstance Win32_ComputerSystem).Model
+          (Get-CimInstance Win32_ComputerSystem).Manufacturer
+          $env:PROCESSOR_ARCHITECTURE
+          python --version
+          where.exe python
+          where.exe acheck; if ($LASTEXITCODE -ne 0) { echo "where acheck: no hit (expected)" }
+          where.exe ac; if ($LASTEXITCODE -ne 0) { echo "where ac: no hit (expected)" }
+          # where.exe exits 1 on no match and $LASTEXITCODE stays 1 even
+          # after the echo above; the Actions pwsh shell fails the step
+          # on a non-zero final native exit code, so reset it explicitly.
+          exit 0
+
+      - name: Shortcuts Windows gate (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, sys
+          # The driver itself runs under plain `python -`: stdio defaults
+          # to cp1252 on Windows, so printing Chinese (e.g. the win32
+          # message inside the JSON error doc) raises UnicodeEncodeError.
+          # Reconfigure to UTF-8 first (same as acheck._init_console).
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
+          MSG = "Windows 不支持"
+          def run(args):
+              return subprocess.run([sys.executable, "acheck.py", *args],
+                                    stdin=subprocess.DEVNULL, capture_output=True,
+                                    text=True, encoding="utf-8", errors="replace")
+          home = os.path.expanduser("~")
+          ls_dir = os.path.join(home, ".local", "share", "acheck")
+          ad_dir = os.path.join(os.environ.get("APPDATA", ""), "acheck")
+          def snapshot():
+              return {"ls": os.path.exists(ls_dir), "ad": os.path.exists(ad_dir)}
+          before = snapshot()
+          assert not before["ls"] and not before["ad"], f"state exists before test: {before}"
+          def expect_refuse(desc, args):
+              p = run(args)
+              assert p.returncode == 2, f"{desc}: rc={p.returncode} want 2; out={p.stdout!r} err={p.stderr!r}"
+              assert MSG in p.stderr, f"{desc}: stderr lacks win32 message: {p.stderr!r}"
+              print(f"OK: {desc} (rc=2, win32 message)")
+          expect_refuse("status", ["--shortcut", "status"])
+          expect_refuse("bare --shortcut", ["--shortcut"])
+          expect_refuse("install", ["--shortcut", "install", "--names", "acheck"])
+          expect_refuse("remove", ["--shortcut", "remove"])
+          expect_refuse("change", ["--shortcut", "change", "--old-name", "a", "--new-name", "b"])
+          expect_refuse("status --system", ["--shortcut", "status", "--system"])
+          p = run(["--shortcut", "status", "--json"])
+          assert p.returncode == 2, f"status --json rc={p.returncode}"
+          assert p.stderr == "", f"status --json stderr not empty: {p.stderr!r}"
+          d = json.loads(p.stdout)
+          assert MSG in d.get("error", ""), d
+          assert d.get("scope") == "user", d
+          print("OK: status --json", d)
+          p = run(["--shortcut", "status", "--system", "--json"])
+          assert p.returncode == 2, f"status --system --json rc={p.returncode}"
+          d = json.loads(p.stdout)
+          assert MSG in d.get("error", ""), d
+          assert d.get("scope") == "system", d
+          print("OK: status --system --json", d)
+          p = run(["--shortcut", "install", "--names", "acheck", "--json"])
+          assert p.returncode == 2, f"install --json rc={p.returncode}"
+          assert "不支持 --json" in p.stderr, f"install --json stderr: {p.stderr!r}"
+          print("OK: install --json refused first (F2)")
+          after = snapshot()
+          assert not after["ls"] and not after["ad"], f"state created by refused commands: {after}"
+          print("OK: shortcut Windows gate complete, nothing written")
+          PY
+
+      - name: Live system values (Windows, for white-box comparison)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $os = Get-CimInstance Win32_OperatingSystem
+          $cpu = Get-CimInstance Win32_Processor
+          $cs = Get-CimInstance Win32_ComputerSystem
+          $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+          $live = @{
+            caption = $os.Caption
+            os_version = [string][System.Environment]::OSVersion.Version
+            cpu = $cpu.Name
+            processor_id = $env:PROCESSOR_IDENTIFIER
+            total_phys = $cs.TotalPhysicalMemory
+            disk_size = $disk.Size
+            model = $cs.Model
+            manufacturer = $cs.Manufacturer
+            arch = $env:PROCESSOR_ARCHITECTURE
+          }
+          $live | ConvertTo-Json | Out-File -Encoding utf8 "$env:RUNNER_TEMP\win-live.json"
+          Get-Content "$env:RUNNER_TEMP\win-live.json"
+
+      - name: System info white-box (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          python - <<'PY'
+          import json, os, re, sys
+          # stdio is cp1252 under plain `python -` on Windows; the info
+          # dict carries Chinese virt labels -- reconfigure first.
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
+          sys.path.insert(0, os.getcwd())
+          import acheck
+          live = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "win-live.json"), encoding="utf-8"))
+          info = acheck.get_system_info()
+          print("live:", json.dumps(live, ensure_ascii=False))
+          print("info:", json.dumps(info, ensure_ascii=False))
+          assert info["os"].startswith("Windows"), info
+          token = info["os"].split("Windows", 1)[1].strip()
+          assert token, f"empty release token in {info['os']!r}"
+          # platform.release() on Server 2025 reports "2025Server"
+          # (digits + Server suffix); on client builds it is "10"/"11".
+          # Accept the token when its digit run is in the caption and a
+          # "Server" marker agrees; otherwise fall back to the
+          # build-number mapping ("11" iff build >= 22000).
+          m = re.search(r"\d+", token)
+          assert m, f"no digits in release token {token!r}"
+          if m.group() not in live["caption"] or ("server" in token.lower() and "server" not in live["caption"].lower()):
+              build = int(live["os_version"].split(".")[2])
+              want = "11" if build >= 22000 else "10"
+              assert token == want, f"os token {token!r} not in caption {live['caption']!r} and != build mapping {want!r} (build {build})"
+          # platform.processor() on Windows returns PROCESSOR_IDENTIFIER
+          # ("AMD64 Family 25 Model 1 Stepping 1, AuthenticAMD"), NOT the
+          # Win32_Processor marketing name ("AMD EPYC 7763 ..."); compare
+          # against the env var, which is the real source. The marketing
+          # name stays recorded in live["cpu"] for the record only.
+          assert info["cpu"].strip() == live["processor_id"].strip(), (info["cpu"], live["processor_id"])
+          assert info["mem"] == f"{live['total_phys'] // 1024**3}GB", (info["mem"], live["total_phys"])
+          assert info["disk"] == f"{live['disk_size'] // 1024**3}GB", (info["disk"], live["disk_size"])
+          assert info["arch"] == live["arch"], (info["arch"], live["arch"])
+          # virt label: same keyword rules as the code (F29 / CONF-13a)
+          vm_label = "虚拟机"; phys_label = "物理机"
+          model = (live["model"] or "").lower()
+          mfr = (live["manufacturer"] or "").lower()
+          kws = ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "bochs")
+          if any(k in model for k in kws):
+              want_virt = vm_label
+          elif any(k in mfr for k in ("virtual", "vmware", "hyper-v", "kvm", "xen", "parallels", "qemu", "innotek", "bochs")):
+              want_virt = vm_label
+          elif any(k in mfr for k in ("amazon ec2", "google")):
+              want_virt = "?"
+          else:
+              want_virt = phys_label
+          assert info["virt"] == want_virt, f"virt {info['virt']!r} want {want_virt!r} (model={live['model']!r} mfr={live['manufacturer']!r})"
+          print("OK: get_system_info matches live Windows values")
+          PY
+
+      - name: DNS win32 ipconfig branch (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          ACHECK_NO_GEO_UPDATE: "1"
+        run: |
+          # NOTE (round 4): do NOT run `ipconfig /all` directly from Git
+          # Bash: MSYS2 converts the `/all` argument to a Windows path and
+          # ipconfig fails with a usage error on stdout (which the redirect
+          # swallows into the file), so `bash -e` aborts silently.
+          # NOTE (round 5): `cmd /c "ipconfig /all"` is no better -- MSYS2
+          # converts the `/c` itself, cmd starts interactively, prints its
+          # 3-line banner and exits 0 on EOF, so the "file" is just the
+          # banner. The working form is the double-slash escape: MSYS2
+          # turns `//all` back into `/all` and ipconfig receives it intact.
+          if ! ipconfig //all > "$RUNNER_TEMP/ipconfig.txt"; then echo "ERROR: ipconfig failed" >&2; exit 1; fi
+          test -s "$RUNNER_TEMP/ipconfig.txt" || { echo "ERROR: ipconfig output empty" >&2; exit 1; }
+          grep -q "Windows IP Configuration" "$RUNNER_TEMP/ipconfig.txt" || { echo "ERROR: not real ipconfig output:" >&2; head -5 "$RUNNER_TEMP/ipconfig.txt" >&2; exit 1; }
+          echo "ipconfig captured: $(wc -l < "$RUNNER_TEMP/ipconfig.txt") lines"
+          python - <<'PY'
+          import ipaddress, os, sys
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
+          sys.path.insert(0, os.getcwd())
+          import acheck
+          text = open(os.path.join(os.environ["RUNNER_TEMP"], "ipconfig.txt"), encoding="utf-8", errors="replace").read()
+          # Independent state machine over ipconfig output: a line containing
+          # "DNS" starts a DNS section (first address after the colon);
+          # indented continuation lines contribute their first token; the
+          # section ends on a blank line or a new field line at the same
+          # or lower indent containing ':'.
+          raw = []
+          in_dns = False
+          dns_indent = 0
+          for line in text.splitlines():
+              if "DNS" in line:
+                  in_dns = True
+                  dns_indent = len(line) - len(line.lstrip())
+                  parts = line.split(":", 1)
+                  if len(parts) == 2:
+                      cand = parts[1].strip()
+                      if cand:
+                          raw.append(cand)
+                  continue
+              if in_dns:
+                  if not line.strip():
+                      in_dns = False
+                      continue
+                  indent = len(line) - len(line.lstrip())
+                  if ":" in line and indent <= dns_indent:
+                      in_dns = False
+                      continue
+                  raw.append(line.strip().split()[0])
+          def usable_addrs(cands):
+              out = []
+              for cand in cands:
+                  try:
+                      ip = ipaddress.ip_address(cand)
+                  except ValueError:
+                      try:
+                          ip = ipaddress.ip_address(cand.split("%", 1)[0])
+                      except ValueError:
+                          continue
+                  out.append(str(ip))
+              return out
+          parsed = usable_addrs(raw)
+          assert parsed, "ipconfig output had no DNS candidates; cannot prove the ipconfig path ran"
+          want = [x for x in parsed if acheck._ns_addr_usable(x)]
+          if not want:
+              print("WARNING: all parsed DNS filtered out; checking fallback rule")
+              if acheck._FORCE_FAMILY == 6 or not acheck._has_ipv4_egress():
+                  want = ["2606:4700:4700::1111", "2001:4860:4860::8888"]
+              else:
+                  want = ["1.1.1.1", "8.8.8.8"]
+          got = acheck._get_system_nameservers()
+          assert got == want, f"ipconfig branch mismatch: got={got} want={want} raw={raw}"
+          print(f"OK: win32 ipconfig branch -> {got}")
+          PY
+
+      - name: CONIN$ / no-tty probe (Windows, diagnostic)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import subprocess, sys
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
+          p = subprocess.Popen([sys.executable, "acheck.py"],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, text=True,
+                               encoding="utf-8", errors="replace")
+          try:
+              out, _ = p.communicate(timeout=30)
+          except subprocess.TimeoutExpired:
+              p.kill()
+              p.communicate()
+              raise SystemExit("ERROR: menu blocked on CONIN$ instead of EOF-cancel "
+                               "(expected rc 130 + 已取消); console behavior changed")
+          # Runner console input is at EOF: the menu renders (banner + full
+          # menu with live Windows values) and the first input() raises
+          # EOFError -> "已取消" + exit 130 (designed cancel path, see
+          # acheck.py menu loop). Assert that whole chain.
+          assert p.returncode == 130, f"menu rc={p.returncode} want 130; tail={out[-500:]!r}"
+          for want in ("IP 信誉检测", "请求下发执行代号 [0-13]", "已取消",
+                       "0. 退出脚本", "13. 管理命令入口", "系统:",
+                       "Windows", "Python 3.13"):
+              assert want in out, f"menu output lacks {want!r}; tail={out[-800:]!r}"
+          print("OK: menu renders on Windows runner; EOF at first prompt -> 已取消 rc=130")
+          PY
+
+      - name: run.bat deepening (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # NOTE: do NOT call `cmd /c run.bat ...` from Git Bash -- MSYS2
+          # converts the `/c` itself (same trap as ipconfig R5), cmd starts
+          # interactively and the output file is just its banner, which is
+          # not JSON. Invoke run.bat directly: Git Bash runs .bat files via
+          # cmd itself, and the `--...` args are untouched by conversion.
+          # NOTE: run.bat is EXPECTED to exit non-zero on the --shortcut
+          # gate (rc 2). Under `bash -e`, a bare failing command aborts
+          # the step before `rc=$?` ever runs (R7: step died with rc 2
+          # and no ERROR line). So every run.bat call uses
+          # `rc=0; <cmd> || rc=$?` -- the `||` list exempts it from -e.
+          rc=0; ./run.bat --explain --json > "$RUNNER_TEMP/rb-explain.json" 2>&1 || rc=$?
+          test "$rc" -eq 0 || { echo "ERROR: run.bat --explain --json rc=$rc"; cat "$RUNNER_TEMP/rb-explain.json"; exit 1; }
+          python -m json.tool "$RUNNER_TEMP/rb-explain.json" > /dev/null || { echo "ERROR: run.bat --explain --json output is not valid JSON"; exit 1; }
+          echo "OK: run.bat --explain --json forwards and is valid JSON"
+          rc=0; ./run.bat --shortcut status > "$RUNNER_TEMP/rb-sc.txt" 2>&1 || rc=$?
+          test "$rc" -eq 2 || { echo "ERROR: run.bat --shortcut status rc=$rc want 2"; cat "$RUNNER_TEMP/rb-sc.txt"; exit 1; }
+          grep -q "Windows 不支持" "$RUNNER_TEMP/rb-sc.txt" || { echo "ERROR: run.bat --shortcut status lacks win32 message:"; cat "$RUNNER_TEMP/rb-sc.txt"; exit 1; }
+          echo "OK: run.bat --shortcut status forwards into the Windows gate"
+          rc=0; (cd / && "$GITHUB_WORKSPACE/run.bat" --help > "$RUNNER_TEMP/rb-help.txt" 2>&1) || rc=$?
+          test "$rc" -eq 0 || { echo "ERROR: run.bat --help from C:\\ rc=$rc"; cat "$RUNNER_TEMP/rb-help.txt"; exit 1; }
+          grep -q "用法:" "$RUNNER_TEMP/rb-help.txt" || { echo "ERROR: run.bat --help lacks help text:"; cat "$RUNNER_TEMP/rb-help.txt"; exit 1; }
+          echo "OK: run.bat --help works from another directory (cd /d %~dp0)"
+          python acheck.py --help > "$RUNNER_TEMP/help.txt" 2>&1 || true
+          grep -q "用法:" "$RUNNER_TEMP/help.txt" || { echo "ERROR: --help lacks help text"; exit 1; }
+          grep -q "IP 信誉检测" "$RUNNER_TEMP/help.txt" || { echo "ERROR: --help lacks Chinese title (UTF-8 stdio?)"; exit 1; }
+          echo "OK: --help renders Chinese on Windows (UTF-8 stdio reconfigure)"
