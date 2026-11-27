@@ -8214,22 +8214,22 @@ def _unlock_label(v):
 def _denied_error_page(body):
     """\"Access Denied\" 错误页结构（B-10-3；原 _tiktok_denied 的逻辑，
     现为 TikTok/Grok 共用）：
-    (1) <title>Access Denied</title>——错误页标题结构，长度不限；
-    (2) 短 HTML 错误页（<16 KiB、含 <html/<head/<body/<h1 且含该短语）。
+    (1) <title>Access Denied</title>——错误页标题结构，长度不限，
+    标题后可带后缀（如 "Access Denied - TikTok"，D-03）；
+    (2) 短 HTML 错误页（<16 KiB）里 <title>/<h1> 含该短语（D-05：
+    正文散文仅提及该短语不算，须落在标题结构里）。
     JSON 值（如 {"description":"Access Denied"}）、裸短语、以及大型
     SSR 正文中的用户内容短语均无错误页结构，不得判 blocked；纯长度
-    阈值不再定生死。"""
+    阈值不再定生死。r4-14：截断前缀只看标题结构，不再拿前缀长度
+    当整页长度、把前缀散文提及判 blocked。"""
     b = body or ""
-    if re.search(r"<title[^>]*>\s*access denied\s*</title>",
+    if re.search(r"<title[^>]*>\s*access denied\b[^<]*</title>",
                  b, re.IGNORECASE):
         return True
     # B-10-4：短 HTML 检查与标题检查一致，大小写不敏感——"Access Denied"
     # 须按小写比对，否则小写/大写拒绝页被漏判为 unlocked。
-    _low = b.lower()
-    if len(b) < 16384 and "access denied" in _low:
-        if ("<html" in _low or "<head" in _low or "<body" in _low
-                or "<h1" in _low):
-            return True
+    if len(b) < 16384 and _error_title_or_h1(b, r"access\s+denied"):
+        return True
     return False
 
 
@@ -8315,11 +8315,21 @@ def _error_title_or_h1(body, phrase):
     （512 KiB 采样上限下约 13 秒）；且 [^<]* 禁内层标签，<h1><span>
     …</span></h1> 形嵌套标题误判为未锁区。现改为 str.find 线性定位
     标题起止、去内层标签后再搜短语：单次前向扫描、无回溯，嵌套标
-    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。"""
+    记亦覆盖；短语仍须落在标题文本内，裸提及依旧不算。
+    fix440 D 腿（D-06/r4-15）：先剥离 <script>/<style> 与 HTML 注释，
+    再扫描——JS 字符串与注释里的完整 <title>/<h1> 是假标题，不算。
+    fix440 D 腿（r4-16）：定位与切片须在同一字符串上进行——旧码用
+    小写串的下标切原串，Unicode 小写展开（如 İ→i̇）会使下标错位、
+    真实标题漏判；现定位、切片、比对全在小写后的同一副本上做。"""
     b = body or ""
     if not b:
         return False
-    _bl = b.lower()
+    _clean = re.sub(r"<!--.*?-->", "", b, flags=re.DOTALL)
+    _clean = re.sub(r"<script\b[^>]*>.*?</script\s*>", "", _clean,
+                    flags=re.IGNORECASE | re.DOTALL)
+    _clean = re.sub(r"<style\b[^>]*>.*?</style\s*>", "", _clean,
+                    flags=re.IGNORECASE | re.DOTALL)
+    _bl = _clean.lower()
     for _tag in ("title", "h1"):
         _pos = 0
         _open_tag = "<" + _tag
@@ -8335,7 +8345,7 @@ def _error_title_or_h1(body, phrase):
             if _close < 0:
                 _pos = _gt + 1
                 continue
-            _text = re.sub(r"<[^>]*>", "", b[_gt + 1:_close])
+            _text = re.sub(r"<[^>]*>", "", _bl[_gt + 1:_close])
             if re.search(phrase, _text, re.IGNORECASE):
                 return True
             _pos = _close + len(_close_tag)
@@ -8344,8 +8354,9 @@ def _error_title_or_h1(body, phrase):
 
 def _reddit_blocked(body):
     """Reddit 锁区信号（B-10-3）："Blocked" 须在 <title>/<h1> 里；
-    JS 代码（如 isBlocked=false）与散文提及不算。"""
-    return _error_title_or_h1(body, r"blocked")
+    JS 代码（如 isBlocked=false）与散文提及不算。fix440 D 腿（D-04/
+    r4-17）：词界 \b 限定，"unblocked" 不得命中 "blocked"。"""
+    return _error_title_or_h1(body, r"\bblocked\b")
 
 
 def _claude_unavailable(body):
