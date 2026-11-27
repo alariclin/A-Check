@@ -4818,17 +4818,25 @@ class RDAP(Provider):
 
     def check(self, ip):
         d = None
+        # fix440b r3-9：区分“端点都查不到”与“端点返回有效 JSON 但无网络
+        # 身份”——前者是查找失败（报末因），后者才报无记录。
+        _last_err = None
+        _saw_json = False
         for base in ("https://rdap.arin.net/registry/ip/",
                      "https://rdap.db.ripe.net/ip/"):
             ok, raw = http_get(base + _q_ip(ip), use_cache=False)
             if not ok:
+                _last_err = raw
                 continue
             try:
                 cand = json.loads(raw)
             except Exception:
+                _last_err = "invalid response"
                 continue
             if not isinstance(cand, dict):
+                _last_err = "invalid response"
                 continue
+            _saw_json = True
             _ents = cand.get("entities")
             if _ents is not None and not isinstance(_ents, list):
                 continue
@@ -4839,9 +4847,21 @@ class RDAP(Provider):
             # 或空白名（如 "   "）均视为无名，不得截断端点回退（3-2）。
             _has_name = isinstance(cand.get("name"), str) \
                 and bool(cand.get("name").strip())
-            if not _has_name and not cand.get("cidr0_cidrs"):
+            # fix440b r3-2：只有起止地址的记录同样有效（两端须为合法 IP 且
+            # start<=end），不得以“无 cidr0_cidrs”拒收。
+            _has_range = False
+            _sa = cand.get("startAddress")
+            _ea = cand.get("endAddress")
+            if isinstance(_sa, str) and isinstance(_ea, str):
+                try:
+                    _sa_obj = ipaddress.ip_address(_sa)
+                    _ea_obj = ipaddress.ip_address(_ea)
+                    _has_range = _sa_obj <= _ea_obj
+                except ValueError:
+                    _has_range = False
+            if not _has_name and not cand.get("cidr0_cidrs") and not _has_range:
                 continue  # 空字典/无网络身份：不得截断回退
-            if not _has_name:
+            if not _has_name and not _has_range:
                 # CONF-FIXES-2.2：无名称候选须至少含一个有效 CIDR，否则继续下一基地；
                 # 旧“接受在前、校验在后”会使全无效列表截断回退且 CIDR 留空。
                 _has_valid_cidr = False
@@ -4862,7 +4882,10 @@ class RDAP(Provider):
             d = cand
             break
         if d is None:
-            return {"ok": False, "err": "no rdap record"}
+            if _saw_json:
+                return {"ok": False, "err": "no rdap record"}
+            return {"ok": False, "err": f"rdap lookup failed: {_last_err}"[:80]
+                    if _last_err else "no rdap record"}
         cidr = ""
         try:
             _ip_obj = ipaddress.ip_address(ip)
@@ -4876,17 +4899,27 @@ class RDAP(Provider):
                 continue
             _cidr = f"{pfx}/{c.get('length')}"
             try:
-                ipaddress.ip_network(_cidr, strict=False)
+                _net = ipaddress.ip_network(_cidr, strict=False)
             except Exception:
                 continue  # 未通过 ip_network 校验的 CIDR 不保存（缺 length 时为 ".../None"）
-            if not cidr:
+            # fix440b r3-1：只有包含目标 IP 的 CIDR 才是目标网段；首个合法
+            # CIDR 不含目标时不得冒充（cidr 留空）。
+            if _ip_obj is not None and _ip_obj in _net:
                 cidr = _cidr
-            if _ip_obj is not None:
+                break
+        if not cidr and _ip_obj is not None:
+            # fix440b r3-2：无 cidr0_cidrs 时用起止地址推导网段。
+            _sa = d.get("startAddress")
+            _ea = d.get("endAddress")
+            if isinstance(_sa, str) and isinstance(_ea, str):
                 try:
-                    if _ip_obj in ipaddress.ip_network(_cidr, strict=False):
-                        cidr = _cidr
-                        break
-                except Exception:
+                    _sa_obj = ipaddress.ip_address(_sa)
+                    _ea_obj = ipaddress.ip_address(_ea)
+                    for _net in ipaddress.summarize_address_range(_sa_obj, _ea_obj):
+                        if _ip_obj in _net:
+                            cidr = str(_net)
+                            break
+                except ValueError:
                     pass
         org = ""
         for e in d.get("entities") or []:
@@ -4897,6 +4930,17 @@ class RDAP(Provider):
                 _h = e.get("handle")
                 if isinstance(_h, str) and _h:
                     org = _h
+                    break
+                # fix440b r3-14：无 handle 时从 vCard fn 取注册主体名。
+                _vc = e.get("vcardArray")
+                if isinstance(_vc, list) and len(_vc) == 2 and isinstance(_vc[1], list):
+                    for _prop in _vc[1]:
+                        if (isinstance(_prop, list) and len(_prop) >= 4
+                                and _prop[0] == "fn" and isinstance(_prop[3], str)
+                                and _prop[3].strip()):
+                            org = _prop[3].strip()
+                            break
+                if org:
                     break
         return {
             "ok": True,
@@ -5008,25 +5052,41 @@ class HackerTarget(Provider):
             ok2, raw2 = http_get(f"https://api.hackertarget.com/aslookup/?q={_q_ip(ip)}",
                                  use_cache=False)
             if ok2:
-                parts = [p.strip() for p in raw2.strip().strip('"').split('","')]
-                if len(parts) >= 4:
-                    asn, prefix, netname = parts[1], parts[2], parts[3]
-            def _f(x):
-                # H-10: 同 GeoJS._f，非有限值拦截（float('1e309') 为 inf 不抛错）。
+                # fix440b F7/r3-12：aslookup 是引号 CSV——含引号的网络名
+                # （"Example ""Labs"""）须按 CSV 转义解析，手工拆 '","' 会
+                # 把名字切碎；字段不足 4 个时仍取已有的 ASN/前缀。
                 try:
-                    _fx = float(x)
-                except (TypeError, ValueError):
-                    return None
-                return _fx if math.isfinite(_fx) else None
-
+                    _parts = next(csv.reader(io.StringIO(raw2.strip())))
+                except Exception:
+                    _parts = []
+                _parts = [p.strip() for p in _parts]
+                if len(_parts) >= 2:
+                    asn = _parts[1]
+                if len(_parts) >= 3:
+                    prefix = _parts[2]
+                if len(_parts) >= 4:
+                    netname = _parts[3]
             def _s(x):
                 return "" if x in (None, "None", "N/A") else x
+            # fix440b r3-6：经纬度须范围校验（旧 _f 只拦非有限值）；
+            # _clean_coord 与 IpapiCo 同口径。
+            _country = _s(kv.get("country", ""))
+            _region = _s(kv.get("state", ""))
+            _city = _s(kv.get("city", ""))
+            _lat = _clean_coord(kv.get("latitude"), -90, 90)
+            _lon = _clean_coord(kv.get("longitude"), -180, 180)
+            _asn = _parse_asn(asn)
+            # fix440b r3-11：国家/州/城市/经纬度/ASN 全空时无可用结果，
+            # 不得标 ok True。
+            if not _country and not _region and not _city and _lat is None \
+                    and _lon is None and not _asn:
+                return {"ok": False, "err": "empty geo"}
             return {
                 "ok": True,
-                "country": _s(kv.get("country", "")), "region": _s(kv.get("state", "")),
-                "city": _s(kv.get("city", "")),
-                "latitude": _f(kv.get("latitude")), "longitude": _f(kv.get("longitude")),
-                "asn": _parse_asn(asn), "prefix": prefix, "netname": netname,
+                "country": _country, "region": _region,
+                "city": _city,
+                "latitude": _lat, "longitude": _lon,
+                "asn": _asn, "prefix": prefix, "netname": netname,
                 "ts": now_iso(),
             }
         except Exception as e:
@@ -5044,9 +5104,12 @@ class CountryIs(Provider):
             return {"ok": False, "err": raw}
         try:
             d = json.loads(raw)
-            if not d.get("country"):
+            if not isinstance(d, dict):
+                return {"ok": False, "err": "unexpected response"}
+            # fix440b F3/r3-11：国家码只认去空白后非空的字符串。
+            if not _valid_country(d.get("country")):
                 return {"ok": False, "err": "empty response"}
-            return {"ok": True, "country_code": d.get("country", ""), "ts": now_iso()}
+            return {"ok": True, "country_code": d.get("country").strip(), "ts": now_iso()}
         except Exception as e:
             return {"ok": False, "err": str(e)[:80]}
 
