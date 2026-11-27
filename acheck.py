@@ -3274,6 +3274,11 @@ def _wd_pick_label(ent, langs):
     return None
 
 
+# fix440b r2b-6：_wd_label 整项调用预算——展示级查找不得对每个候选
+# 发数十次串行请求；20 次是单次查找的合理上限（正常查找 ≤6 次）。
+_WD_LABEL_MAX_CALLS = 20
+
+
 def _wd_label(name, kind, context):
     """Wikidata 检索地名条目, 返回界面语言的条目名 (去消歧后缀); 无则 None。
 
@@ -3285,9 +3290,21 @@ def _wd_label(name, kind, context):
     得把美国 Cambridge 认作英国剑桥, 未确认结果也不得返回
     (调用方不缓存 None, 故不会污染错误 context 键)。"""
     try:
+        # fix440b r2b-6：整项调用预算——_search/_resolve_qid/批量取实体/
+        # P279/P131 跳链的全部请求共享 _WD_LABEL_MAX_CALLS 次上限，超限
+        # 即停（返回失败、不再发请求）；须动态解析模块全局 http_get 以
+        # 兼容夹具 stub。
+        _calls = {"n": 0}
+
+        def _wd_get(*a, **kw):
+            if _calls["n"] >= _WD_LABEL_MAX_CALLS:
+                return False, ""
+            _calls["n"] += 1
+            return http_get(*a, **kw)
+
         def _search(term):
             q = urllib.parse.quote(term)
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+            ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
                                f"&search={q}&language=en&format=json&limit=5&type=item",
                                timeout=5, retries=1, use_cache=False)
             if not ok:
@@ -3305,7 +3322,7 @@ def _wd_label(name, kind, context):
             if low in _WD_COUNTRY_ALIASES:
                 return _WD_COUNTRY_ALIASES[low]
             q = urllib.parse.quote(term.strip())
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
+            ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbsearchentities"
                                f"&search={q}&language=en&format=json&limit=5&type=item",
                                timeout=5, retries=1, use_cache=False)
             if not ok:
@@ -3318,7 +3335,11 @@ def _wd_label(name, kind, context):
                 if (c.get("label") or "").lower() == low:
                     return c.get("id")
                 for al in c.get("aliases") or []:
-                    if isinstance(al, str) and al.lower() == low:
+                    # fix440b G1：wbsearchentities 的 aliases 元素是 dict
+                    # {"language": ..., "value": ...}，不是字符串——旧分支
+                    # isinstance(al, str) 永不命中，"Mass." 等简称解不出。
+                    _al = al.get("value") if isinstance(al, dict) else al
+                    if isinstance(_al, str) and _al.lower() == low:
                         return c.get("id")
             return None
 
@@ -3340,7 +3361,7 @@ def _wd_label(name, kind, context):
         if not langs:
             return None
         # 一次批量取全部候选的标签 + P31 声明
-        ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+        ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                            f"&ids={'|'.join(c['id'] for c in cands)}"
                            "&props=labels|claims"
                            f"&languages={'|'.join(langs)}&format=json",
@@ -3368,7 +3389,7 @@ def _wd_label(name, kind, context):
                 for _hop in range(8):
                     if not frontier:
                         break
-                    ok2, raw2 = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                    ok2, raw2 = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                                          f"&ids={'|'.join(frontier)}&props=claims&format=json",
                                          timeout=5, retries=1, use_cache=False)
                     if not ok2:
@@ -3418,7 +3439,7 @@ def _wd_label(name, kind, context):
         all_p31 = sorted({p for ps in p31_map.values() for p in ps})
         parents = {}
         if all_p31:
-            ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+            ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                                f"&ids={'|'.join(all_p31)}&props=claims&format=json",
                                timeout=5, retries=1, use_cache=False)
             if ok:
@@ -3437,8 +3458,12 @@ def _wd_label(name, kind, context):
         return None
 
 def _join_nonempty(*parts, sep=" "):
-    """拼接地名/上下文：只取非空字段，缺失字段不留字面 'None'（R2-8.2）。"""
-    return sep.join(str(p).strip() for p in parts if p and str(p).strip())
+    """拼接地名/上下文：只取非空字段，缺失字段不留字面 'None'（R2-8.2）。
+    fix440b F4/r2b-5：只拼接字符串部分——非字符串（dict/list/bool/数值）
+    不再 str() 化拼进上下文串（否则 dict 会拼成 "{'country': ...}" 进
+    Wikidata 查询串，数值会拼成 "123" 当地名）。"""
+    return sep.join(p.strip() for p in parts
+                    if isinstance(p, str) and p.strip())
 
 
 def _resolve_geo_online(jobs):
@@ -3535,11 +3560,12 @@ def _extra_sub(disp, kind, ctx_text=None):
                 continue
             loc = _winners[0]
         if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
-            m = re.search(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])", disp)
-            if m:
-                disp = disp[:m.start()] + loc + disp[m.end():]
+            # fix440b G2：同一变体的全部出现都要替换（旧版 re.search 只换
+            # 首次）——函数式替换防 loc 含反斜杠被当作转义。
+            disp = re.sub(r"(?<![A-Za-z0-9])" + re.escape(variant) + r"(?![A-Za-z0-9])",
+                          lambda _m: loc, disp)
         elif variant in disp:
-            disp = disp.replace(variant, loc, 1)
+            disp = disp.replace(variant, loc)
     return disp
 
 def _loc_region(text, ctx=None):
@@ -3741,12 +3767,15 @@ def _localize_profile_copy(prof):
                           _join_nonempty(prof.get("region"), prof.get("country"), sep=", ")))
         _resolve_geo_online(_jobs)
     out = dict(prof)
-    if prof.get("country"):
+    # fix440b F4/r2b-23：按 key 存在守门——国家/州/城市字段为 []/False/{}
+    # 等非字符串时仍须清洗输出为 ""，不得把原值透传进 --json（_loc_* 入口
+    # 均已 _clean_str，见 _loc_country_name H-10 注记）。
+    if "country" in prof:
         out["country"] = _loc_country_name(prof["country"])
-    if prof.get("region"):
+    if "region" in prof:
         # B-06a-2: region 单候选须过国家上下文检查
         out["region"] = _loc_region(prof["region"], ctx=prof.get("country"))
-    if prof.get("city"):
+    if "city" in prof:
         # B-06a-2: city 单候选须过州/省 + 国家上下文检查
         # GPT-G2：region 为空时走 country=（见 _city_ctx_kwargs）。
         out["city"] = _loc_city(prof["city"],
