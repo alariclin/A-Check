@@ -524,8 +524,36 @@ jobs:
                       raise TimeoutError(f"timed out waiting for {step['wait']!r}; tail={buf[-1500:]!r}")
                   if step.get("send"):
                       os.write(master, step["send"].encode())
+              def wait_exit(timeout):
+                  # Never bare proc.wait() on a PTY child: libedit (which
+                  # acheck.py pulls in via `import readline`) issues
+                  # tcsetattr(TCSADRAIN) when finishing a line, and that
+                  # blocks until pending output (its echo) is drained by
+                  # the master side. If nobody reads the master, the child
+                  # wedges in tcsetattr forever (proven round 4: the same
+                  # app + same keys exit 0 when the driver drains, and
+                  # /usr/bin/sample shows the stuck child in
+                  # libedit el_set -> tcsetattr -> ioctl, not in read()).
+                  # So poll the child while draining the master.
+                  nonlocal out
+                  end = time.time() + timeout
+                  while True:
+                      rc = proc.poll()
+                      if rc is not None:
+                          return rc
+                      if time.time() >= end:
+                          raise subprocess.TimeoutExpired(proc.args, timeout)
+                      r, _, _ = select.select([master], [], [], 0.2)
+                      if not r:
+                          continue
+                      try:
+                          chunk = os.read(master, 65536)
+                      except OSError:
+                          chunk = b""
+                      if chunk:
+                          out += chunk
               try:
-                  rc = proc.wait(timeout=min(20, max(0, t_end - time.time())))
+                  rc = wait_exit(min(20, max(0, t_end - time.time())))
               except subprocess.TimeoutExpired:
                   # input may have been lost while the process was busy;
                   # retry once now that it is visibly at the prompt
@@ -534,7 +562,7 @@ jobs:
                   except OSError:
                       pass
                   try:
-                      rc = proc.wait(timeout=max(0, t_end - time.time()))
+                      rc = wait_exit(max(0, t_end - time.time()))
                   except subprocess.TimeoutExpired:
                       # Diagnostic (round 4): capture where the stuck
                       # process is BEFORE killing it -- a main thread in
