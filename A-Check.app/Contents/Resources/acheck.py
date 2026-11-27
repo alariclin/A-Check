@@ -7824,6 +7824,45 @@ def _resp_complete(raw, headers, cap=_STREAM_CAP, total_len=None):
     return True
 
 
+def _content_length_valid(headers):
+    """Content-Length 头是否合法（fix440 r4-13）：无头为合法；有头时
+    须为纯 ASCII 数字串且可转为 int，否则非法。仅判合法性，不核对
+    长度——供读满采样上限的分支使用（上限不得绕过合法性检查）。"""
+    try:
+        v = headers.get("Content-Length") if headers is not None else None
+    except Exception:
+        return True
+    if v is None:
+        return True
+    v = str(v).strip()
+    if v.isascii() and v.isdigit():
+        try:
+            int(v)
+            return True
+        except (ValueError, OverflowError):
+            return False
+    return False
+
+
+def _decode_body(raw, headers):
+    """按 Content-Type charset 解码正文（fix440 r4-11）：charset 声明
+    非 UTF-8 时（如 utf-16le）按声明解码，否则锁区短语会在 UTF-8
+    解码后消失；无声明／未知 charset／解码失败时回落 UTF-8
+    errors=replace。"""
+    _ct = ""
+    try:
+        _ct = str((headers or {}).get("content-type", "") or "")
+    except Exception:
+        _ct = ""
+    _m = re.search(r"charset\s*=\s*\"?([^\";\s]+)\"?", _ct, re.IGNORECASE)
+    if _m:
+        try:
+            return raw.decode(_m.group(1).strip(), errors="replace")
+        except Exception:
+            pass
+    return raw.decode("utf-8", errors="replace")
+
+
 def _active_get(url, timeout=10, headers=None, follow_redirects=True):
     """返回 (status_code|None, body|err, final_url_or_location, complete, headers_dict)。
     headers_dict: 响应头小写键 dict（无头/异常时 {}），供挑战判定查 cf-mitigated。
@@ -8021,7 +8060,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
 
         def _partial():
             # 已读到的部分正文（解压后）：HTTPError 三处早返时保留挑战页特征。
-            return b"".join(_st["out"]).decode("utf-8", errors="replace")
+            return _decode_body(b"".join(_st["out"]), _hdrs)
 
         _comp_read = 0
         _hit_cap = False
@@ -8030,7 +8069,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             if _remain <= 0:
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, "read deadline exceeded", "", False, {}
+                # fix440 r4-12：读超时亦保留已取的最终 URL 与响应头——
+                # URL 锁区证据独立于正文，不得因读体失败清掉。
+                return None, "read deadline exceeded", _loc, False, _hdrs
             try:
                 _chunk = _read_timed(r, _STREAM_CHUNK, _remain)
             except http.client.IncompleteRead as e:
@@ -8040,13 +8081,13 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             except Exception as e:
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, str(e)[:100], "", False, {}
+                return None, str(e)[:100], _loc, False, _hdrs
             if _chunk is None:
                 # M-04：读超时即整体失败（code None），与旧单次读行为一致；
                 # HTTPError 响应保留状态码与已读正文（挑战页特征不丢）。
                 if _is_err:
                     return _status, _partial(), _loc, False, _hdrs
-                return None, "read deadline exceeded", "", False, {}
+                return None, "read deadline exceeded", _loc, False, _hdrs
             if not _chunk:
                 _st["eof"] = True
                 break  # 干净 EOF
@@ -8080,7 +8121,9 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
         if _st["trunc"]:
             _complete = False
         elif _hit_cap or _st["n"] >= _STREAM_CAP:
-            _complete = True  # 干净读满本地采样上限，不是失败
+            # 干净读满本地采样上限，不是失败；但 Content-Length 非法时
+            # 仍不完整——采样上限不得绕过 CL 合法性检查（fix440 r4-13）。
+            _complete = _content_length_valid(getattr(r, "headers", None))
         elif _gz["obj"] is not None:
             # 压缩分支：末成员须完整结束、无残留未喂字节，且按压缩传输
             # 字节数核对 CL（H-02：gzip 分支此前完全不核 CL）。
@@ -8095,7 +8138,7 @@ def _active_get(url, timeout=10, headers=None, follow_redirects=True):
             # 用旧语义（干净 EOF 或达 cap 即完整）。
             _complete = (False if _gz["kind"] == "deflate"
                          else _resp_complete(_raw, getattr(r, "headers", None)))
-        return _status, _raw.decode("utf-8", errors="replace"), _loc, _complete, _hdrs
+        return _status, _decode_body(_raw, _hdrs), _loc, _complete, _hdrs
     finally:
         _resp_shutdown(r)
         try:
