@@ -3448,7 +3448,9 @@ _CITY_L10N["fa"].update({"New York City": "نیویورک", "Oklahoma City": "ا
 # / ru Александрия / fa اسکندریه）取自埃及亚历山大；美国弗吉尼亚的
 # Alexandria 不是同一座城，上下文指明他国时不得取该译文，退回原文
 # （与 B-06a-2 单候选上下文不符时留原文的口径一致）。
-_CITY_L10N_HOME = {"Alexandria": "EG"}
+# fix440 GPT G-009：Berlin 的静态译文取自德国柏林；湖北柏林镇等同名
+# 地点上下文指明中国时，英文分支亦不得反查回 Berlin，退回原文。
+_CITY_L10N_HOME = {"Alexandria": "EG", "Berlin": "DE"}
 
 # C-01：静态州/省表译文的归属国家（同款，仅收录译文随国家而异的歧义名）。
 # Georgia 的静态译文（zh 佐治亚州 / zh-TW 喬治亞州 / ja ジョージア州
@@ -3511,11 +3513,22 @@ def _wd_claim_ids(ent, prop):
     claims = ent.get("claims")
     if not isinstance(claims, dict):
         return out
-    for st in claims.get(prop, []) or []:
+    # fix440 GPT G-050：claims[prop] 本身错型（非列表，如整数）时返空表，
+    # 不得 for 循环抛 TypeError 中止整批候选。
+    _stmts = claims.get(prop, [])
+    if not isinstance(_stmts, (list, tuple)):
+        return out
+    for st in _stmts:
         # fix440a r2b-14：非 dict 声明跳过，不致全部候选作废；
         # r2b-11：deprecated 等级声明不作类型/归属证据。
         if not isinstance(st, dict) or st.get("rank") == "deprecated":
             continue
+        # fix440 GPT G-051：带结束日期限定符（P582）的 P31 声明是历史
+        # 类型，不得作为实体当前城市的类型证据。
+        if prop == "P31":
+            _quals = st.get("qualifiers")
+            if isinstance(_quals, dict) and _quals.get("P582"):
+                continue
         ms = st.get("mainsnak")
         if not isinstance(ms, dict):
             continue
@@ -3526,6 +3539,16 @@ def _wd_claim_ids(ent, prop):
         if isinstance(v, dict) and v.get("id"):
             out.append(v["id"])
     return out
+
+
+# fix440 GPT G-053：去消歧括号只去掉 Wikidata 注释形态（city／
+# disambiguation 等通用标注）；正式地名的一部分（如 Frankfurt (Oder)
+# 的 (Oder)）须保留——无法区分时宁可保留原文。
+_WD_PAREN_ANNOTATION = frozenset({
+    "city", "town", "village", "municipality", "settlement", "commune",
+    "borough", "district", "county", "locality", "disambiguation",
+    "消歧", "消歧义",
+})
 
 
 def _wd_pick_label(ent, langs):
@@ -3540,8 +3563,16 @@ def _wd_pick_label(ent, langs):
             _lv = labels[lg]
             if not isinstance(_lv, dict):
                 continue
-            v = re.sub(r"\s*[\(\（][^\\)\）]*[\\)\）]\s*$", "",
-                       str(_lv.get("value") or "")).strip()
+            # fix440 GPT G-052：value 错型（非字符串，如 123）时跳过该
+            # 语言继续下一候选，不得 str() 强制转成假成功。
+            _raw = _lv.get("value")
+            if not isinstance(_raw, str):
+                continue
+            _m = re.search(r"\s*[\(\（]([^)\）]*)[\)\）]\s*$", _raw)
+            if _m and _m.group(1).strip().lower() in _WD_PAREN_ANNOTATION:
+                v = _raw[:_m.start()].strip()
+            else:
+                v = _raw.strip()
             # fix440a r2b-22：标签过 _clean_str（剥离控制字符）；
             # r2b-13c：剥离为空后继续试下一优先级，而非直接返 None。
             v = _clean_str(v)
@@ -3588,9 +3619,19 @@ def _wd_label(name, kind, context):
             return [c for c in json.loads(raw).get("search", [])
                     if c.get("id") and (
                         (c.get("label") or "").lower() == name.lower()
+                        # fix440 GPT G-049：候选英文 label 与完整查询
+                        # （term，如 "Riverside, Ohio"）精确相等即收，
+                        # 不得只与裸名比较。
+                        or (c.get("label") or "").lower() == term.lower()
                         # fix440a r2b-15：label 或任一 alias 精确匹配即收，
                         # 不得只认 label（Bombay 别名 Mumbai 会被丢）。
                         or any(isinstance(al, str) and al.lower() == name.lower()
+                               for al in (c.get("aliases") or []))
+                        # fix440 GPT G-048：对象型 alias 的 value 与字符
+                        # 串元素同等接受（与 _resolve_qids 的处理对齐）。
+                        or any(isinstance(al, dict)
+                               and isinstance(al.get("value"), str)
+                               and al["value"].lower() == name.lower()
                                for al in (c.get("aliases") or [])))]
 
         def _resolve_qids(term):
@@ -3667,7 +3708,9 @@ def _wd_label(name, kind, context):
             实体无 P17/P131 或 context 成分全解不出时返 False（无法确认）。"""
             # fix440a r2b-9：context 命中亦须校验——context 给出且与名不同时，
             # 实体 P17/P131 须与 context 成分相符；context 缺失或等于名时恒真。
-            if not context or context == name:
+            # fix440 GPT G-047：等于名的比较须大小写不敏感（"PARIS" 不得
+            # 因此丢 token 致 qids 为空）。
+            if not context or (context or "").strip().lower() == (name or "").lower():
                 return True
             ent = entities.get(eid, {})
             countries = set(_wd_claim_ids(ent, "P17"))
@@ -3702,9 +3745,17 @@ def _wd_label(name, kind, context):
             toks = [t.strip() for t in (context or "").split(",")]
             toks = [t for t in toks if t and t.lower() != name.lower()]
             qids = []
+            _unresolved = False
             for tok in toks:
-                qids.extend(_resolve_qids(tok))
+                _qs = _resolve_qids(tok)
+                if not _qs:
+                    _unresolved = True
+                qids.extend(_qs)
             if not qids:
+                return False
+            # fix440 GPT G-006：调用预算耗尽且仍有上下文成分未解出时，
+            # 州级证据未经验证，不得仅凭国家 QID 通过候选（返回未确认）。
+            if _unresolved and _calls["n"] >= _WD_LABEL_MAX_CALLS:
                 return False
             # B-06a-1: 须命中最具体的可解析上下文成分——任一成分命中
             # P131 链（州/省级）即确认；否则任一可解析成分若既非国家亦
@@ -3740,12 +3791,15 @@ def _wd_label(name, kind, context):
             all_p31 = sorted({p for ps in p31_map.values() for p in ps})
             parents = {}
             if all_p31:
-                ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
-                                   f"&ids={'|'.join(all_p31)}&props=claims&format=json",
-                                   timeout=5, retries=1, use_cache=False)
-                if ok:
-                    for tid, tent in json.loads(raw).get("entities", {}).items():
-                        parents[tid] = _wd_claim_ids(tent, "P279")
+                # fix440 GPT G-055：wbgetentities 每次最多 50 个 ID，分批
+                # 查询，沿用同一调用预算。
+                for _i in range(0, len(all_p31), 50):
+                    ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                                       f"&ids={'|'.join(all_p31[_i:_i + 50])}&props=claims&format=json",
+                                       timeout=5, retries=1, use_cache=False)
+                    if ok:
+                        for tid, tent in json.loads(raw).get("entities", {}).items():
+                            parents[tid] = _wd_claim_ids(tent, "P279")
             for c in cands:
                 ps = []
                 for p in p31_map.get(c["id"], []):
@@ -3765,7 +3819,9 @@ def _wd_label(name, kind, context):
         if context and context != name and not _fallback:
             cands2 = _search(name)
             if cands2:
-                ok, raw = http_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
+                # fix440 GPT G-054：第二轮裸名回退亦须走 _wd_get 预算，
+                # 不得直接 http_get 绕过上限。
+                ok, raw = _wd_get("https://www.wikidata.org/w/api.php?action=wbgetentities"
                                    f"&ids={'|'.join(c['id'] for c in cands2)}"
                                    "&props=labels|claims"
                                    f"&languages={'|'.join(langs)}&format=json",
@@ -3867,12 +3923,24 @@ def _geo_seg_norm(seg):
         return code
     en = _ANY_REGION2EN.get(s) or _ANY_CITY2EN.get(s)
     if en:
+        # fix440 GPT G-056：本地化州/省名反查出的英文名若恰好也是国家名
+        # （佐治亚州 -> Georgia），须与该英文名本身一样走国家表归一
+        # 为国家码——否则写入端（佐治亚州 -> Georgia）与读取端
+        # （Georgia -> GE）得到不同比较键。
+        _c2 = _CITY_CTX_COUNTRY_ALIASES.get(en.lower()) \
+            or _CC_EN.get(en.lower()) or _CC_LOCAL.get(en.lower())
+        if _c2:
+            return _c2
         return en
     folded = "".join(c for c in unicodedata.normalize("NFKD", s)
                      if not unicodedata.combining(c))
     if folded != s:
         en = _ANY_REGION2EN.get(folded) or _ANY_CITY2EN.get(folded)
         if en:
+            _c2 = _CITY_CTX_COUNTRY_ALIASES.get(en.lower()) \
+                or _CC_EN.get(en.lower()) or _CC_LOCAL.get(en.lower())
+            if _c2:
+                return _c2
             return en
     return " ".join(low.split())
 
@@ -3884,15 +3952,23 @@ def _geo_ctx_ok(stored_ctx, name, ctx):
     ctx：当前上下文原始串（逗号分隔；此前为 ASCII 词集）。分段先经
     _geo_seg_norm 归一（本地化名/口语别名归一为同一键），再按分段比较——
     词集比较会丢行政区边界（Virginia 通过 West Virginia 检查；Kansas
-    州名被当城市名减去），且 ASCII 正则会把非 ASCII 上下文清空为“通过”。"""
-    _stored = {_geo_seg_norm(p) for p in str(stored_ctx or "").split(",")}
-    _stored.discard("")
-    _stored.discard(_geo_seg_norm(name))
+    州名被当城市名减去），且 ASCII 正则会把非 ASCII 上下文清空为“通过”。
+    fix440 GPT G-007：条目名只减去一次（记重数）——同名 region 与
+    country 分段（如 "Georgia, Georgia"）不得一起删光，删后仍有
+    约束即继续校验。"""
+    _stored = [_geo_seg_norm(p) for p in str(stored_ctx or "").split(",")]
+    _stored = [s for s in _stored if s]
+    _name_norm = _geo_seg_norm(name)
+    if _name_norm:
+        try:
+            _stored.remove(_name_norm)
+        except ValueError:
+            pass
     if not _stored:
         return True
     _ctx = {_geo_seg_norm(p) for p in str(ctx or "").split(",")}
     _ctx.discard("")
-    return _stored <= _ctx
+    return set(_stored) <= _ctx
 
 
 def _extra_sub(disp, kind, ctx_text=None):
@@ -3926,6 +4002,7 @@ def _extra_sub(disp, kind, ctx_text=None):
         if not variant:
             continue
         loc = None
+        _win_ctx = None
         if len(cands) == 1:
             _sctx, loc = cands[0]
             if not _geo_ctx_ok(_sctx, variant, _src):
@@ -3938,18 +4015,23 @@ def _extra_sub(disp, kind, ctx_text=None):
                         _geo_seg_norm(p) != _geo_seg_norm(variant)
                         for p in _parts):
                     loc = None
+            if loc is not None:
+                _win_ctx = _sctx
         else:
             _variant_seg = _geo_seg_norm(variant)
             _winners = []
+            _win_ctxs = []
             for _ctx, _loc in cands:
                 _ctx_segs = {_geo_seg_norm(p) for p in str(_ctx or "").split(",")}
                 _ctx_segs.discard("")
                 _ctx_segs.discard(_variant_seg)
                 if _ctx_segs and _ctx_segs <= _disp_segs:
                     _winners.append(_loc)
+                    _win_ctxs.append(_ctx)
             _uniq = list(dict.fromkeys(_winners))
             if len(_uniq) == 1:
                 loc = _uniq[0]
+                _win_ctx = _win_ctxs[_winners.index(_uniq[0])]
             elif not _winners and len(_disp_segs) == 1:
                 # fix440-merge：无逗号的整串（生产 _join_nonempty 以空格
                 # 拼的 "Country B Example"）只有一个分段，分段子集永不
@@ -3959,27 +4041,80 @@ def _extra_sub(disp, kind, ctx_text=None):
                 # West（非变体），不得匹配，防单字边界误判（r1b-3 同款
                 # Virginia/West Virginia 危险）；"Country B"／
                 # "Illinois"（紧贴变体）与串首上下文均可匹配。
-                _disp_w = " ".join(re.findall(
-                    r"[A-Za-z0-9]+", str(_src).lower()))
-                _var_w = " ".join(re.findall(
-                    r"[A-Za-z0-9]+", variant.lower()))
+                # fix440 GPT G-010/G-011/G-058：短语回退改为 Unicode
+                # 词表上的两段式。第一段沿用旧的连续短语匹配，但要求
+                # 短语除变体本身外至少含一个信号词（G-010：非 ASCII
+                # 国家名被 ASCII 抽词删光后，不得把“双方国家信息都被
+                # 删掉”当成肯定证据），且短语后紧跟的词须是变体词或
+                # 无后词（G-011："Loma Guinea" 不得匹配 "Loma
+                # Guinea-Bissau" 内的前缀）。第二段（第一段无胜出者
+                # 时）为词序无关匹配：候选的每个信号词都须以整词出现，
+                # 且其相邻词只能是变体词或同候选上下文词（G-058：
+                # "Spain Toledo" 可匹配 "Toledo, Spain"；相邻词规则
+                # 同时守住 F4 的 "West Virginia" 与 G-011 的
+                # "Guinea-Bissau" 两例）。
+                _disp_words = re.findall(r"[^\W_]+", str(_src).lower())
+                _disp_w = " ".join(_disp_words)
+                _var_words = set(re.findall(r"[^\W_]+", variant.lower()))
+                _var_w = " ".join(re.findall(r"[^\W_]+", variant.lower()))
                 for _ctx, _loc in cands:
-                    _ctx_w = " ".join(re.findall(
-                        r"[A-Za-z0-9]+", str(_ctx or "").lower()))
-                    if not _ctx_w:
+                    _ctx_words = re.findall(r"[^\W_]+", str(_ctx or "").lower())
+                    if not _ctx_words:
                         continue
+                    # G-010：除变体本身外无信号词的候选不得胜出。
+                    if not (set(_ctx_words) - _var_words):
+                        continue
+                    _ctx_w = " ".join(_ctx_words)
                     _mm = re.search(
-                        r"(?<![A-Za-z0-9])" + re.escape(_ctx_w)
-                        + r"(?![A-Za-z0-9])", _disp_w)
+                        r"(?<![^\W_])" + re.escape(_ctx_w)
+                        + r"(?![^\W_])", _disp_w)
                     if not _mm:
                         continue
                     _before = _disp_w[:_mm.start()].strip()
                     if not _before or _before == _var_w \
                             or _before.endswith(" " + _var_w):
+                        # G-011：短语后紧跟的词若不是变体词，即该短语
+                        # 只是更长地名的前缀（如 Guinea-Bissau），不算。
+                        _after = _disp_w[_mm.end():].strip()
+                        if _after and _after.split(" ", 1)[0] not in _var_words:
+                            continue
                         _winners.append(_loc)
+                        _win_ctxs.append(_ctx)
                 _uniq = list(dict.fromkeys(_winners))
                 if len(_uniq) == 1:
                     loc = _uniq[0]
+                    _win_ctx = _win_ctxs[_winners.index(_uniq[0])]
+                elif not _winners:
+                    for _ctx, _loc in cands:
+                        _ctx_words = re.findall(
+                            r"[^\W_]+", str(_ctx or "").lower())
+                        _sig = set(_ctx_words) - _var_words
+                        if not _sig:
+                            continue
+                        _allowed = _var_words | set(_ctx_words)
+                        _ok = True
+                        for _w in _sig:
+                            _found = False
+                            for _i, _dw in enumerate(_disp_words):
+                                if _dw != _w:
+                                    continue
+                                _prev = _disp_words[_i - 1] if _i > 0 else None
+                                _next = _disp_words[_i + 1] \
+                                    if _i + 1 < len(_disp_words) else None
+                                if (_prev is None or _prev in _allowed) \
+                                        and (_next is None or _next in _allowed):
+                                    _found = True
+                                    break
+                            if not _found:
+                                _ok = False
+                                break
+                        if _ok:
+                            _winners.append(_loc)
+                            _win_ctxs.append(_ctx)
+                    _uniq = list(dict.fromkeys(_winners))
+                    if len(_uniq) == 1:
+                        loc = _uniq[0]
+                        _win_ctx = _win_ctxs[_winners.index(_uniq[0])]
         # 本变体在原始串中的全部出现（ASCII 用词界正则，非 ASCII 用子串；
         # fix440b G2：同一变体的全部出现都要替换，旧版只换首次出现）。
         if variant.isascii() and variant[:1].isalnum() and variant[-1:].isalnum():
@@ -4014,8 +4149,26 @@ def _extra_sub(disp, kind, ctx_text=None):
                          for p in str(_src).split(",") if p.strip()]
                 if any(s == _phrase or s.startswith(_phrase + " ")
                        for s in _segs):
-                    _blocked.append(_span)
-                    continue
+                    # fix440 GPT G-059：前词恰好是胜出候选自己的国家
+                    # （如 "Canada Riverton" 的 Canada）时，这只是
+                    # “国家＋城市”的展示串，不是 East York 类不可拆的
+                    # 长地名，放行替换；否则仍按长名保护拦住。
+                    _pre = _mw.group(1)
+                    _own_country = False
+                    if _win_ctx:
+                        for _seg in str(_win_ctx).split(","):
+                            _seg = _seg.strip()
+                            if not _seg or not _geo_ctx_countries(_seg):
+                                continue
+                            _seg_words = {w.lower() for w in
+                                          re.findall(r"[^\W_]+", _seg)}
+                            if _pre.lower() in _seg_words or \
+                                    _geo_seg_norm(_pre) in _geo_ctx_countries(_seg):
+                                _own_country = True
+                                break
+                    if not _own_country:
+                        _blocked.append(_span)
+                        continue
             _repl.append((_span[0], _span[1], loc))
     if not _repl:
         return disp
@@ -4118,6 +4271,12 @@ _US_STATE_ABBR = {"AL": "US", "AK": "US", "AZ": "US", "AR": "US",
                   "WI": "US", "WY": "US", "DC": "US"}
 
 
+# fix440 GPT G-057：跨国共用的州缩写不得当成美国唯一证据——WA 既是
+# Washington（US）也是 Western Australia（AU）；无 country 时返回多值，
+# 调用方按多国处理（归属国在场即不排除），不得只返 {"US"}。
+_AMBIG_STATE_ABBR = {"WA": {"US", "AU"}}
+
+
 def _geo_region_countries(ctx):
     """上下文串中州/省名指明的国家码集合（fix440a L-03）：分段查 _REGION_HOME
     （州/省英文名，本地化名先经 _ANY_REGION2EN 归一）与美州缩写表；
@@ -4132,6 +4291,10 @@ def _geo_region_countries(ctx):
         en = _ANY_REGION2EN.get(t) or t
         c = _REGION_HOME.get(en)
         if c is None and len(t) == 2 and t.isascii() and t.isalpha():
+            _amb = _AMBIG_STATE_ABBR.get(t.upper())
+            if _amb is not None:
+                codes.update(_amb)
+                continue
             c = _US_STATE_ABBR.get(t.upper())
         if c:
             codes.add(c)
@@ -4207,10 +4370,19 @@ def _geo_cache_country_ok(stored_ctx, code):
     （如 Georgia, United States——州名撞国家名，无法判定）时沿用
     旧行为（返 True）；仅含一国且与给定码不符时返 False。
     fix440a r1b-1：唯一码若仅来自“国家/州同名”分段（如 Georgia 既是
-    国家 GE 又是美国州名），无法判定条目上下文指哪国，亦沿用旧行为。"""
+    国家 GE 又是美国州名），无法判定条目上下文指哪国，亦沿用旧行为。
+    fix440 GPT G-008：两义分段的两种解释都不是目标国家时应拒绝——
+    Georgia 的解释集为 {GE（国家）, US（州归属）}，目标 GR 不在其中
+    即返 False；仅当某一解释与目标兼容时才放行；归属国查不到的
+    两义分段无法穷举解释，仍沿用旧行为。"""
     codes = _geo_ctx_countries(stored_ctx)
     if len(codes) != 1:
         return True
+    _only = next(iter(codes))
+    _possible = {_only}
+    _all_ambig = True
+    _any_code_seg = False
+    _unknown_home = False
     for tok in str(stored_ctx or "").split(","):
         t = tok.strip()
         if not t:
@@ -4218,11 +4390,29 @@ def _geo_cache_country_ok(stored_ctx, code):
         low = t.lower()
         _c = _CITY_CTX_COUNTRY_ALIASES.get(low) or _CC_EN.get(low) \
             or _CC_LOCAL.get(low)
-        if _c and low not in _REGION_NAMES_LOWER:
-            break
-    else:
+        if not _c:
+            continue
+        _any_code_seg = True
+        if low in _REGION_NAMES_LOWER:
+            _en = _ANY_REGION2EN.get(t)
+            if _en is None:
+                _folded = "".join(c for c in unicodedata.normalize("NFKD", t)
+                                  if not unicodedata.combining(c))
+                _en = _ANY_REGION2EN.get(_folded) or t
+            _home = _REGION_HOME.get(_en)
+            if _home:
+                _possible.add(_home)
+            else:
+                _unknown_home = True
+        else:
+            _all_ambig = False
+    if not _any_code_seg:
         return True
-    return next(iter(codes)) == code
+    if _all_ambig:
+        if _unknown_home:
+            return True
+        return code in _possible
+    return _only == code
 
 
 def _city_ctx_kwargs(region, country):
@@ -4257,10 +4447,18 @@ def _loc_city(text, ctx=None, country=None):
     t = str(text).strip()
     if LANG == "en":
         # fix440a r1b-11：en 界面把本地化城市名反查回英文（柏林 -> Berlin）。
+        # fix440 GPT G-009：反查前先读明确的国家上下文——与 country/ctx
+        # 冲突的英文映射不得返回（如湖北柏林镇不得返 Berlin）；无可靠
+        # 映射时保留原文。守卫与非英文分支的静态表守卫同款
+        # （_city_static_ctx_ok，归属国未收录时沿用旧行为）。
         for _cand in (t, "".join(c for c in unicodedata.normalize("NFKD", t)
                                  if not unicodedata.combining(c))):
             _en = _ANY_CITY2EN.get(_cand)
             if _en:
+                if not _city_static_ctx_ok(
+                        _en, country if country is not None else ctx,
+                        bare_code=(country is not None)):
+                    continue
                 return _en
         return text
     # fix440a r1b-8：country= 为空串时按缺失处理（不得遮住有效 ctx）。
