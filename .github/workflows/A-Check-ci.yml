@@ -793,6 +793,15 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, subprocess, sys
+          # The driver itself runs under plain `python -`: stdio defaults
+          # to cp1252 on Windows, so printing Chinese (e.g. the win32
+          # message inside the JSON error doc) raises UnicodeEncodeError.
+          # Reconfigure to UTF-8 first (same as acheck._init_console).
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
           MSG = "Windows 不支持"
           def run(args):
               return subprocess.run([sys.executable, "acheck.py", *args],
@@ -867,6 +876,13 @@ jobs:
         run: |
           python - <<'PY'
           import json, os, sys
+          # stdio is cp1252 under plain `python -` on Windows; the info
+          # dict carries Chinese virt labels -- reconfigure first.
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
           sys.path.insert(0, os.getcwd())
           import acheck
           live = json.load(open(os.path.join(os.environ["RUNNER_TEMP"], "win-live.json"), encoding="utf-8"))
@@ -913,6 +929,11 @@ jobs:
           ipconfig /all > "$RUNNER_TEMP/ipconfig.txt"
           python - <<'PY'
           import ipaddress, os, sys
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
           sys.path.insert(0, os.getcwd())
           import acheck
           text = open(os.path.join(os.environ["RUNNER_TEMP"], "ipconfig.txt"), encoding="utf-8", errors="replace").read()
@@ -975,6 +996,11 @@ jobs:
         run: |
           python - <<'PY'
           import subprocess, sys
+          for _s in (sys.stdout, sys.stderr):
+              try:
+                  _s.reconfigure(encoding="utf-8", errors="replace")
+              except Exception:
+                  pass
           p = subprocess.Popen([sys.executable, "acheck.py"],
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT, text=True,
